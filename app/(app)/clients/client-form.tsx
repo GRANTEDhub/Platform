@@ -131,6 +131,39 @@ export function ClientForm({
         </div>
       </section>
 
+      <section className="space-y-4">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          Grant-matching profile
+        </h2>
+        <p className="text-xs text-muted-foreground">
+          Used by the matching engine. Not financial data — visible to contractors.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Federal grant history" name="federal_grant_history" defaultValue={client?.federal_grant_history} placeholder="e.g. 2 prior HRSA awards as prime, or Unknown" />
+          <Field label="SAM / UEI status" name="sam_uei_status" defaultValue={client?.sam_uei_status} placeholder="e.g. Active, expires 2026-09" />
+          <Field label="Match / cost-share capacity" name="match_cost_share_capacity" defaultValue={client?.match_cost_share_capacity} />
+          <Field label="Annual budget" name="annual_budget" defaultValue={client?.annual_budget} />
+          <Field label="Project stage" name="project_stage" defaultValue={client?.project_stage} placeholder="e.g. planning, implementation" />
+          <Field label="RUCC codes" name="rucc_codes" defaultValue={client?.rucc_codes} />
+        </div>
+        <Field
+          label="Primary funding needs"
+          name="primary_funding_needs"
+          defaultValue={client?.primary_funding_needs?.join(", ")}
+          placeholder="Comma-separated, e.g. broadband, workforce, health access"
+        />
+        <div className="space-y-2">
+          <Label htmlFor="known_constraints">Known constraints</Label>
+          <textarea
+            id="known_constraints"
+            name="known_constraints"
+            defaultValue={client?.known_constraints ?? undefined}
+            rows={3}
+            className="flex w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
+          />
+        </div>
+      </section>
+
       <div className="flex gap-3">
         <Button type="submit">{submitLabel}</Button>
       </div>
