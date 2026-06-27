@@ -62,10 +62,10 @@ export async function GET(req: NextRequest) {
       opportunity_id?: string;
       legacy_opportunity_id?: number | string;
     }> = json.data ?? [];
-    // Use the legacy integer id for the source URL so it matches the public
-    // simpler.grants.gov/opportunities/{id} format and the URL parser.
+    // Prefer the UUID, which matches the public /opportunity/{uuid} detail URL
+    // and resolves via GET /v1/opportunities/{uuid}. Fall back to the legacy id.
     opportunityIds = opportunities
-      .map((o) => String(o.legacy_opportunity_id ?? o.opportunity_id ?? ""))
+      .map((o) => String(o.opportunity_id ?? o.legacy_opportunity_id ?? ""))
       .filter(Boolean);
   } catch (err) {
     console.error("Simpler.gov search error:", err);
@@ -83,14 +83,14 @@ export async function GET(req: NextRequest) {
     .select("source_url")
     .in(
       "source_url",
-      opportunityIds.map((id) => `https://simpler.grants.gov/opportunities/${id}`),
+      opportunityIds.map((id) => `https://simpler.grants.gov/opportunity/${id}`),
     );
   (existingGrants ?? []).forEach((g: { source_url: string | null }) => {
     if (g.source_url) existingUrls.add(g.source_url);
   });
 
   const newIds = opportunityIds.filter(
-    (id) => !existingUrls.has(`https://simpler.grants.gov/opportunities/${id}`),
+    (id) => !existingUrls.has(`https://simpler.grants.gov/opportunity/${id}`),
   );
 
   console.log(`Cron ingest: ${opportunityIds.length} found, ${newIds.length} new after dedup`);
@@ -101,7 +101,7 @@ export async function GET(req: NextRequest) {
 
   const launched: string[] = [];
   for (const opportunityId of newIds) {
-    const sourceUrl = `https://simpler.grants.gov/opportunities/${opportunityId}`;
+    const sourceUrl = `https://simpler.grants.gov/opportunity/${opportunityId}`;
     const { data: grantRow, error } = await db
       .from("grants")
       .insert({ source_url: sourceUrl, status: "processing" })
