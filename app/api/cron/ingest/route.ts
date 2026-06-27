@@ -119,7 +119,10 @@ export async function GET(req: NextRequest) {
     waitUntil(
       runPipeline(grantId, sourceUrl, undefined, db).catch(async (err) => {
         console.error(`Cron pipeline error for grant ${grantId}:`, err);
-        await db.from("grants").update({ status: "error" }).eq("id", grantId);
+        await db
+          .from("grants")
+          .update({ status: "error", error_detail: String(err?.message ?? err).slice(0, 600) })
+          .eq("id", grantId);
       }),
     );
   }
