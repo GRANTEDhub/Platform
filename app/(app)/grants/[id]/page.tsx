@@ -56,8 +56,17 @@ export default async function GrantDetailPage({ params }: { params: { id: string
 
           {grant.status === "error" && (
             <Card>
-              <CardContent className="p-6 text-sm text-destructive">
-                Something went wrong analyzing this opportunity. Check the source link and try again.
+              <CardContent className="space-y-2 p-6 text-sm">
+                <p className="font-medium text-destructive">Analysis failed</p>
+                {grant.error_detail ? (
+                  <p className="whitespace-pre-wrap font-mono text-xs text-muted-foreground">
+                    {grant.error_detail}
+                  </p>
+                ) : (
+                  <p className="text-muted-foreground">
+                    Something went wrong analyzing this opportunity. Check the source link and try again.
+                  </p>
+                )}
               </CardContent>
             </Card>
           )}

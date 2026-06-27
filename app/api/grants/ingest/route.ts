@@ -48,7 +48,10 @@ export async function POST(req: NextRequest) {
   waitUntil(
     runPipeline(grantId, url, rawText, db).catch(async (err) => {
       console.error("Pipeline error for grant", grantId, err);
-      await db.from("grants").update({ status: "error" }).eq("id", grantId);
+      await db
+        .from("grants")
+        .update({ status: "error", error_detail: String(err?.message ?? err).slice(0, 600) })
+        .eq("id", grantId);
     }),
   );
 

@@ -74,6 +74,7 @@ export interface Grant {
   verification_flags: string[] | null;
   raw_text: string | null;
   status: string;
+  error_detail: string | null;
   ingested_at: string;
 }
 
