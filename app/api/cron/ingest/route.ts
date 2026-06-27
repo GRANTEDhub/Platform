@@ -9,19 +9,13 @@ import { runPipeline } from "@/lib/grants/pipeline";
 
 export const maxDuration = 300;
 
-// Applicant types matching the client roster — only pull grants that could
-// plausibly match at least one client entity type.
-const RELEVANT_APPLICANT_TYPES = [
-  "county_governments",
-  "city_or_township_governments",
-  "special_district_governments",
-  "nonprofits_non_higher_education_with_501c3",
-  "public_and_state_institutions_of_higher_education",
-  "private_institutions_of_higher_education",
-  "small_businesses",
-  "unrestricted",
-  "other",
-];
+// NOTE: we intentionally filter only by opportunity_status here and do entity
+// narrowing downstream in jsPreFilter (per client). Filtering by applicant_type
+// at the API would require pinning the exact enum vocabulary, which can drift;
+// a stale value would 422 the whole search and silently break ingest. Pulling
+// the most-recent posted opportunities and narrowing locally is more robust for
+// a small roster. Re-introduce an applicant_type filter only after confirming
+// the current allowed values against the live spec.
 
 export async function GET(req: NextRequest) {
   // Verify this is Vercel Cron (or an authorized internal caller).
@@ -48,7 +42,6 @@ export async function GET(req: NextRequest) {
       body: JSON.stringify({
         filters: {
           opportunity_status: { one_of: ["posted"] },
-          applicant_type: { one_of: RELEVANT_APPLICANT_TYPES },
         },
         pagination: {
           page_offset: 1,
