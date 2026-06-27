@@ -553,10 +553,12 @@ export function extractSimplerGovOpportunityId(url: string): string | null {
   try {
     const parsed = new URL(url);
     if (!parsed.hostname.includes("simpler.grants.gov")) return null;
-    // Accept either the legacy integer id or a UUID. Both resolve via the
-    // GET /v1/opportunities/{id} route (int → legacy handler, uuid → canonical).
+    // Public detail URLs use the singular path with a UUID
+    // (/opportunity/<uuid>); older/legacy links use the plural path with an
+    // integer id (/opportunities/<int>). Accept both. Both resolve via the
+    // GET /v1/opportunities/{id} route (uuid → canonical, int → legacy handler).
     const match = parsed.pathname.match(
-      /\/opportunities\/(\d+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/,
+      /\/opportunit(?:y|ies)\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|\d+)/,
     );
     return match ? match[1] : null;
   } catch {
