@@ -26,6 +26,18 @@ function parse(formData: FormData) {
     contract_end: get("contract_end"),
     next_step: get("next_step"),
     notes: get("notes"),
+    // Grant-matching profile
+    rucc_codes: get("rucc_codes"),
+    annual_budget: get("annual_budget"),
+    primary_funding_needs: get("primary_funding_needs")
+      ?.split(",")
+      .map((s) => s.trim())
+      .filter(Boolean) ?? null,
+    project_stage: get("project_stage"),
+    match_cost_share_capacity: get("match_cost_share_capacity"),
+    federal_grant_history: get("federal_grant_history"),
+    sam_uei_status: get("sam_uei_status"),
+    known_constraints: get("known_constraints"),
   };
 }
 
