@@ -11,10 +11,19 @@ type CookieToSet = { name: string; value: string; options: CookieOptions };
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  // If Supabase isn't configured, don't 500 the entire site from middleware.
+  // Let the request through; page-level guards (requireUser/requireAdmin) still
+  // protect data, so this fails closed on protected pages, not open.
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.error("Auth middleware: Supabase env vars are not set");
+    return response;
+  }
+
+  try {
+    const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
       cookies: {
         getAll() {
           return request.cookies.getAll();
@@ -29,32 +38,36 @@ export async function updateSession(request: NextRequest) {
           );
         },
       },
-    },
-  );
+    });
 
-  // IMPORTANT: do not run code between createServerClient and getUser().
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    // IMPORTANT: do not run code between createServerClient and getUser().
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-  const { pathname } = request.nextUrl;
-  const isAuthRoute = pathname.startsWith("/login");
-  const isPublicAsset =
-    pathname.startsWith("/auth") || pathname === "/favicon.ico";
+    const { pathname } = request.nextUrl;
+    const isAuthRoute = pathname.startsWith("/login");
+    const isPublicAsset =
+      pathname.startsWith("/auth") || pathname === "/favicon.ico";
 
-  if (!user && !isAuthRoute && !isPublicAsset) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/login";
-    url.searchParams.set("redirectedFrom", pathname);
-    return NextResponse.redirect(url);
+    if (!user && !isAuthRoute && !isPublicAsset) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/login";
+      url.searchParams.set("redirectedFrom", pathname);
+      return NextResponse.redirect(url);
+    }
+
+    if (user && isAuthRoute) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/dashboard";
+      url.search = "";
+      return NextResponse.redirect(url);
+    }
+
+    return response;
+  } catch (err) {
+    // A transient Supabase/network failure should not take down every route.
+    console.error("Auth middleware error:", err);
+    return response;
   }
-
-  if (user && isAuthRoute) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
-    url.search = "";
-    return NextResponse.redirect(url);
-  }
-
-  return response;
 }
