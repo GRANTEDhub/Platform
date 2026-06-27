@@ -553,7 +553,11 @@ export function extractSimplerGovOpportunityId(url: string): string | null {
   try {
     const parsed = new URL(url);
     if (!parsed.hostname.includes("simpler.grants.gov")) return null;
-    const match = parsed.pathname.match(/\/opportunities\/(\d+)/);
+    // Accept either the legacy integer id or a UUID. Both resolve via the
+    // GET /v1/opportunities/{id} route (int → legacy handler, uuid → canonical).
+    const match = parsed.pathname.match(
+      /\/opportunities\/(\d+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/,
+    );
     return match ? match[1] : null;
   } catch {
     return null;
@@ -583,41 +587,42 @@ export async function fetchFromSimplerGovAPI(
 
     const json = await res.json();
     const opp = json.data ?? json; // API wraps in { data: ... }
+    // Per the v1 spec, opportunity detail (awards, applicant types, funding
+    // categories, cost share, description, deadline) lives under `summary`.
+    const summary = opp.summary ?? {};
 
-    // Map API response fields to ExtractedGrant
-    const applicantTypes: string[] = (opp.applicant_types ?? []).map(
+    const applicantTypes: string[] = (summary.applicant_types ?? []).map(
       (t: string) => APPLICANT_TYPE_MAP[t] ?? t
     );
 
-    const focusAreas: string[] = (opp.funding_categories ?? []).map(
+    const focusAreas: string[] = (summary.funding_categories ?? []).map(
       (c: string) => FUNDING_CATEGORY_MAP[c] ?? c
     );
 
-    const awardFloor = opp.award_floor != null ? String(opp.award_floor) : "";
-    const awardCeiling = opp.award_ceiling != null ? String(opp.award_ceiling) : "";
+    const awardFloor = summary.award_floor != null ? String(summary.award_floor) : "";
+    const awardCeiling = summary.award_ceiling != null ? String(summary.award_ceiling) : "";
     const totalFunding =
-      opp.estimated_total_program_funding != null
-        ? `$${Number(opp.estimated_total_program_funding).toLocaleString()}`
+      summary.estimated_total_program_funding != null
+        ? `$${Number(summary.estimated_total_program_funding).toLocaleString()}`
         : "";
 
     const extracted: ExtractedGrant = {
       funder: opp.agency_name ?? "",
       fon: opp.opportunity_number ?? "",
       title: opp.opportunity_title ?? "",
-      description: opp.summary?.description ?? opp.description ?? "",
+      description: summary.summary_description ?? "",
       total_funding: totalFunding,
       award_range_min: awardFloor ? `$${Number(awardFloor).toLocaleString()}` : "",
       award_range_max: awardCeiling ? `$${Number(awardCeiling).toLocaleString()}` : "",
       // Award amounts from the API are confirmed — not estimates
-      award_range_is_estimate: !opp.award_floor && !opp.award_ceiling,
+      award_range_is_estimate: summary.award_floor == null && summary.award_ceiling == null,
       num_awards:
-        opp.expected_number_of_awards != null ? String(opp.expected_number_of_awards) : "",
-      submission_deadline: opp.close_date ?? opp.summary?.close_date ?? "",
-      period_of_performance:
-        opp.summary?.period_of_performance_start_date && opp.summary?.period_of_performance_end_date
-          ? `${opp.summary.period_of_performance_start_date} to ${opp.summary.period_of_performance_end_date}`
-          : "",
-      cost_share: opp.is_cost_sharing === true ? "Cost sharing required" : opp.is_cost_sharing === false ? "No cost sharing required" : "Not specified",
+        summary.expected_number_of_awards != null ? String(summary.expected_number_of_awards) : "",
+      submission_deadline: summary.close_date ?? "",
+      period_of_performance: summary.forecasted_project_start_date
+        ? `Project start (forecast): ${summary.forecasted_project_start_date}`
+        : "",
+      cost_share: summary.is_cost_sharing === true ? "Cost sharing required" : summary.is_cost_sharing === false ? "No cost sharing required" : "Not specified",
       eligible_entity_types: applicantTypes,
       geographic_eligibility: "United States (federal program)",
       ineligible_entities: "",

@@ -46,8 +46,7 @@ export async function GET(req: NextRequest) {
         pagination: {
           page_offset: 1,
           page_size: 50,
-          sort_by: "post_date",
-          sort_direction: "descending",
+          sort_order: [{ order_by: "post_date", sort_direction: "descending" }],
         },
       }),
     });
@@ -59,9 +58,15 @@ export async function GET(req: NextRequest) {
     }
 
     const json = await res.json();
-    const opportunities: Array<{ opportunity_id: number | string }> =
-      json.data ?? json.results ?? [];
-    opportunityIds = opportunities.map((o) => String(o.opportunity_id));
+    const opportunities: Array<{
+      opportunity_id?: string;
+      legacy_opportunity_id?: number | string;
+    }> = json.data ?? [];
+    // Use the legacy integer id for the source URL so it matches the public
+    // simpler.grants.gov/opportunities/{id} format and the URL parser.
+    opportunityIds = opportunities
+      .map((o) => String(o.legacy_opportunity_id ?? o.opportunity_id ?? ""))
+      .filter(Boolean);
   } catch (err) {
     console.error("Simpler.gov search error:", err);
     return NextResponse.json({ error: "Simpler.gov search failed" }, { status: 502 });
