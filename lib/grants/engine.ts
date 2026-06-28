@@ -406,23 +406,90 @@ SAM/UEI Status: ${client.sam_uei_status || "Unknown"}
 Known Constraints: ${client.known_constraints || "None noted"}
 Matching Rules (AUTHORITATIVE OVERRIDES -- apply before general logic): ${client.matching_rules || "None"}`;
 
+  // Force structured output via a tool call so parsing is not a regex gamble:
+  // the model must return the schema as the tool input, which arrives already
+  // parsed. max_tokens is generous so a rich, high-fit match (full draft email
+  // + six reasoning paragraphs) can finish; truncation is surfaced explicitly
+  // below rather than silently producing unparseable output.
   const response = await anthropic.messages.create({
     model: MODEL,
-    max_tokens: 2500,
+    max_tokens: 8000,
     system: MATCHING_SYSTEM_PROMPT,
+    tools: [
+      {
+        name: "submit_match",
+        description:
+          "Return the structured grant-client match evaluation. Call this tool exactly once.",
+        input_schema: {
+          type: "object",
+          properties: {
+            fit_score: { type: "integer", enum: [1, 2, 3] },
+            proposed_role: { type: "string" },
+            recommended_prime: { type: ["string", "null"] },
+            why_this_org: { type: "array", items: { type: "string" } },
+            concept_synopsis: { type: "string" },
+            description_short: { type: "string" },
+            draft_outreach_email: { type: "string" },
+            outreach_track: { type: "string", enum: ["Track 1", "Track 2"] },
+            before_you_approve: { type: "array", items: { type: "string" } },
+            inferred_fields: { type: "array", items: { type: "string" } },
+            reasoning_context: {
+              type: "object",
+              properties: {
+                eligibility_analysis: { type: "string" },
+                fit_score_derivation: { type: "string" },
+                role_assignment_logic: { type: "string" },
+                consortium_rationale: { type: "string" },
+                concept_derivation: { type: "string" },
+                why_not_others: { type: "string" },
+              },
+            },
+            suppressed: { type: "boolean" },
+            suppress_reason: { type: ["string", "null"] },
+            disqualified: { type: "boolean" },
+            disqualify_reason: { type: ["string", "null"] },
+          },
+          required: [
+            "fit_score",
+            "proposed_role",
+            "why_this_org",
+            "concept_synopsis",
+            "description_short",
+            "draft_outreach_email",
+            "outreach_track",
+            "before_you_approve",
+            "inferred_fields",
+            "reasoning_context",
+            "suppressed",
+            "disqualified",
+          ],
+        },
+      },
+    ],
+    tool_choice: { type: "tool", name: "submit_match" },
     messages: [
       {
         role: "user",
-        content: `Evaluate this grant-client match. Return only valid JSON, no other text.\n\n${grantContext}\n\n${clientContext}`,
+        content: `Evaluate this grant-client match.\n\n${grantContext}\n\n${clientContext}`,
       },
     ],
   });
 
-  const text = response.content[0].type === "text" ? response.content[0].text : "";
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error(`Claude did not return valid JSON for client ${client.name}`);
+  // Truncation must never again masquerade as "bad JSON" -- surface it explicitly.
+  if (response.stop_reason === "max_tokens") {
+    throw new Error(
+      `Match response truncated at max_tokens for client ${client.name} -- raise max_tokens`,
+    );
+  }
 
-  const result = JSON.parse(jsonMatch[0]) as MatchResult;
+  const toolUse = response.content.find((b) => b.type === "tool_use");
+  if (!toolUse || toolUse.type !== "tool_use") {
+    throw new Error(
+      `Claude did not return a structured match for client ${client.name}`,
+    );
+  }
+
+  const result = toolUse.input as MatchResult;
   result.client_id = client.id;
   return result;
 }
