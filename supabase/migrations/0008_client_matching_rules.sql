@@ -1,0 +1,18 @@
+-- ╔══════════════════════════════════════════════════════════════════════════╗
+-- ║ Client-specific matching rules — editable, per client, no code change       ║
+-- ╚══════════════════════════════════════════════════════════════════════════╝
+-- Authoritative per-client overrides for the matching engine, e.g. "Galactic
+-- Air is for-profit, never a recipient" or "natural prime on HRSA workforce
+-- awards; partner/hub only on R/K research mechanisms". The engine reads this
+-- field and applies it BEFORE general logic, letting it both rule a client out
+-- and clear a client the general logic would have suppressed.
+--
+-- This replaces the hardcoded CLIENT-SPECIFIC RULES block formerly baked into
+-- lib/grants/engine.ts, so a rule change is a profile edit, not a developer
+-- edit + redeploy. General firm method (5-phase flow, suppression filters,
+-- for-profit-can't-prime, role taxonomy) stays in the engine.
+--
+-- Read-only in the engine, so deploying the engine change before this migration
+-- is safe (a missing column reads as "None"); the rules simply have no effect
+-- until the column exists and profiles are populated.
+alter table clients add column if not exists matching_rules text;

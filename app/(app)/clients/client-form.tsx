@@ -2,7 +2,7 @@ import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import type { Client } from "@/types/database";
 
-const ORG_TYPES = ["nonprofit", "local_government", "small_business"];
+const ORG_TYPES = ["nonprofit", "local_government", "small_business", "higher_education"];
 const STATUSES = ["active", "prospect", "paused", "closed"];
 
 function Field({

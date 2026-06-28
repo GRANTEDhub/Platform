@@ -306,15 +306,14 @@ STOP: County governments -- quorum court must approve match commitments; flag de
 CLIENT-SPECIFIC RULES (CRITICAL -- these override general logic)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- Mississippi County: Galactic Air is for-profit -- NEVER a recipient or subrecipient under any circumstances.
-- Saline County: County owns no street lights/sidewalks/gutters. SS4A = planning only, never implementation.
-- UAMS NorthWest: Benton/Washington County = RUCC 2 metro only. Cannot prime major federal programs independently of UAMS Little Rock.
-- Community Clinic: RUCC 2 metro. Prefers no match requirement. Strong FQHC partner for academic research.
-- NWA Council: ARC POWER = hard cut (Arkansas not eligible). WFF coordination required. Score pass-through/partner awareness high even when NWAC is not the prime.
-- studioDRIFT: for-profit. Cannot be prime, co-applicant, or subrecipient in federal grants. SBIR/STTR only.
-- EverHope: budget approximately $500K; high match/cost-share sensitivity; no DV shelter licensure.
-- Harbor House: capital-focused ONLY. No program-only grants.
-- NWACC: Kim Syverson is the primary gating contact. Flag for her review before advancing.
+Client-specific rules are NOT hardcoded here. Each client carries its own
+authoritative overrides in the "Matching Rules" field of its profile, supplied
+in the CLIENT block below. Treat any rule in that field as authoritative: apply
+it BEFORE the general logic above, and let it override a general conclusion
+wherever the two conflict. An override can both rule a client OUT (a constraint
+the general logic would miss) and clear a client IN (e.g. "natural prime on
+workforce awards" overriding a general research-only ceiling). If the field is
+empty or "None", apply the general logic only.
 
 Return a JSON object with this exact schema:
 {
@@ -404,7 +403,8 @@ Project Stage: ${client.project_stage || "Unknown"}
 Match/Cost Share Capacity: ${client.match_cost_share_capacity || "Unknown"}
 Federal Grant History: ${usaSpendingContext || client.federal_grant_history || "Unknown -- USASpending not checked"}
 SAM/UEI Status: ${client.sam_uei_status || "Unknown"}
-Known Constraints: ${client.known_constraints || "None noted"}`;
+Known Constraints: ${client.known_constraints || "None noted"}
+Matching Rules (AUTHORITATIVE OVERRIDES -- apply before general logic): ${client.matching_rules || "None"}`;
 
   const response = await anthropic.messages.create({
     model: MODEL,
@@ -470,6 +470,7 @@ export function jsPreFilter(
       nonprofit: ["nonprofit", "501(c)(3)", "501c3", "non-profit", "private nonprofit"],
       local_government: ["county", "local government", "municipal", "city or township", "special district"],
       small_business: ["small business", "for-profit", "profit organization"],
+      higher_education: ["higher education", "university", "college", "community college", "institutions of higher", "institution of higher", "ihe"],
       // Legacy / descriptive labels (kept for back-compat with richer profiles)
       "County Government": ["county", "local government", "municipal", "city or township"],
       "Nonprofit 501c3": ["nonprofit", "501(c)(3)", "501c3", "non-profit", "private nonprofit"],

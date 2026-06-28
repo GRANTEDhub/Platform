@@ -39,6 +39,9 @@ export interface Client {
   federal_grant_history: string | null;
   sam_uei_status: string | null;
   known_constraints: string | null;
+  // Client-specific authoritative matching overrides (editable; read by the
+  // engine and applied before general logic). See migration 0008.
+  matching_rules: string | null;
   created_at: string;
   updated_at: string;
 }
