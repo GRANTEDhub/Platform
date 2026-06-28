@@ -493,6 +493,45 @@ export function jsPreFilter(
   return null; // passed pre-filter -- proceed to Claude
 }
 
+// ─── Domestic scope filter ───────────────────────────────────────────────────
+// GRANTED is U.S.-only; international programs are flagged and excluded by
+// default. This is a cheap heuristic on funder/title (no model call) to keep
+// foreign opportunities out of the feed and out of the matching spend. The
+// matching engine's Gate 1 (domestic) remains the authoritative backstop.
+const INTERNATIONAL_MARKERS = [
+  "u.s. mission",
+  "u.s. embassy",
+  "u.s. consulate",
+  "american embassy",
+  "usaid",
+  "agency for international development",
+  "bureau of african affairs",
+  "bureau of near eastern affairs",
+  "bureau of east asian",
+  "bureau of south and central asian",
+  "bureau of western hemisphere affairs",
+  "bureau of european and eurasian",
+  "bureau of international",
+  "bureau of democracy, human rights",
+  "bureau of population, refugees",
+  "bureau of oceans and international",
+  "global health center",
+  "-ghc",
+  "global aids",
+  "office of global",
+  "overseas",
+  "foreign assistance",
+];
+
+/** True if the opportunity looks international (and should be excluded by default). */
+export function looksInternational(
+  funder: string | null | undefined,
+  title: string | null | undefined,
+): boolean {
+  const text = `${funder ?? ""} ${title ?? ""}`.toLowerCase();
+  return INTERNATIONAL_MARKERS.some((m) => text.includes(m));
+}
+
 
 
 const SIMPLER_GOV_API = "https://api.simpler.grants.gov";
