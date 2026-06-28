@@ -72,6 +72,7 @@ export interface Grant {
   incumbent_risk: string | null;
   subaward_prohibited: boolean | null;
   verification_flags: string[] | null;
+  hard_disqualifiers: string[] | null;
   raw_text: string | null;
   status: string;
   error_detail: string | null;

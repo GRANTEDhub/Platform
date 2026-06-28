@@ -80,6 +80,7 @@ export async function runPipeline(
       incumbent_risk: extracted.incumbent_risk,
       subaward_prohibited: extracted.subaward_prohibited,
       verification_flags: extracted.verification_flags,
+      hard_disqualifiers: extracted.hard_disqualifiers,
       raw_text: rawTextForStorage.slice(0, 100000),
       is_domestic: isDomestic,
     })

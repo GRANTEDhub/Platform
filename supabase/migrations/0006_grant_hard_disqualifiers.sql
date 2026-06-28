@@ -1,0 +1,11 @@
+-- ╔═══════════════════════════════════════════════════════════════════════════╗
+-- ║ Persist hard-disqualifier reasoning on the grant (standalone shred)        ║
+-- ╚═══════════════════════════════════════════════════════════════════════════╝
+-- When a grant is killed for the entire active-client roster (for-profit-only
+-- eligibility, federal-applicant-only, fully out-of-US geography, etc.), the
+-- shred computes the reason and -- until now -- discarded it. That reason is
+-- exactly what later prospect search needs: "no active client can prime this"
+-- is often the prospect angle itself. Storing it keeps the standalone shred
+-- complete and avoids an annoying backfill later. This does NOT build the
+-- prospect path; it only stops throwing away a field that path will need.
+alter table grants add column if not exists hard_disqualifiers text[];
