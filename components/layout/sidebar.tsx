@@ -4,11 +4,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
-  Users,
+  Target,
   FileSearch,
-  ClipboardCheck,
+  Users,
   Clock,
   Receipt,
+  FileSignature,
+  TrendingUp,
   Settings,
   type LucideIcon,
 } from "lucide-react";
@@ -22,11 +24,13 @@ export interface NavItem {
 
 const ICONS: Record<string, LucideIcon> = {
   dashboard: LayoutDashboard,
-  clients: Users,
+  matching: Target,
   grants: FileSearch,
-  review: ClipboardCheck,
+  clients: Users,
   time: Clock,
   invoices: Receipt,
+  contracts: FileSignature,
+  sales: TrendingUp,
   settings: Settings,
 };
 

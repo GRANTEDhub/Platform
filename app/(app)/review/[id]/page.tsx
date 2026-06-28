@@ -85,6 +85,15 @@ export default async function CardDetailPage({ params }: { params: { id: string 
             </Card>
           )}
 
+          {card.final_outreach_email && (
+            <Card>
+              <CardHeader><CardTitle>Approved email (to send)</CardTitle></CardHeader>
+              <CardContent>
+                <pre className="whitespace-pre-wrap font-sans text-sm">{card.final_outreach_email}</pre>
+              </CardContent>
+            </Card>
+          )}
+
           {Object.keys(rc).length > 0 && (
             <Card>
               <CardHeader><CardTitle>Reasoning</CardTitle></CardHeader>
@@ -103,9 +112,18 @@ export default async function CardDetailPage({ params }: { params: { id: string 
           <Card>
             <CardHeader><CardTitle>Decision</CardTitle></CardHeader>
             <CardContent>
-              <DecisionBar cardId={card.id} decision={card.decision} isAdmin={profile.role === "admin"} />
+              <DecisionBar
+                cardId={card.id}
+                decision={card.decision}
+                isAdmin={profile.role === "admin"}
+                draft={card.draft_outreach_email ?? ""}
+                finalEmail={card.final_outreach_email}
+              />
               {card.decision === "hold" && card.hold_reason && (
                 <p className="mt-3 text-xs text-muted-foreground">Hold: {card.hold_reason}</p>
+              )}
+              {card.decision === "passed" && card.decision_reason && (
+                <p className="mt-3 text-xs text-muted-foreground">Rejected: {card.decision_reason}</p>
               )}
             </CardContent>
           </Card>
