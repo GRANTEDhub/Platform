@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { GrantStatusBadge, ScoreBadge } from "@/components/grants/badges";
 import { AutoRefresh } from "./auto-refresh";
+import { RematchButton } from "./rematch-button";
 import type { Grant, ReviewCard, Client } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +15,7 @@ export const dynamic = "force-dynamic";
 type CardWithClient = ReviewCard & { clients: Pick<Client, "id" | "name" | "org_type"> | null };
 
 export default async function GrantDetailPage({ params }: { params: { id: string } }) {
-  await requireUser();
+  const profile = await requireUser();
   const supabase = createClient();
 
   const { data: grant } = await supabase
@@ -40,7 +41,12 @@ export default async function GrantDetailPage({ params }: { params: { id: string
       <PageHeader
         title={grant.title || "Processing opportunity…"}
         description={[grant.funder, grant.fon].filter(Boolean).join(" · ") || undefined}
-        action={<GrantStatusBadge status={grant.status} />}
+        action={
+          <div className="flex items-center gap-2">
+            {!grant.is_domestic && <Badge variant="warning">International — excluded</Badge>}
+            <GrantStatusBadge status={grant.status} />
+          </div>
+        }
       />
 
       <div className="grid gap-6 p-8 lg:grid-cols-3">
@@ -79,11 +85,20 @@ export default async function GrantDetailPage({ params }: { params: { id: string
           )}
 
           <Card>
-            <CardHeader><CardTitle>Matches ({matches.length})</CardTitle></CardHeader>
+            <CardHeader className="flex-row items-center justify-between space-y-0">
+              <CardTitle>Matches ({matches.length})</CardTitle>
+              {profile.role === "admin" && grant.is_domestic && !processing && (
+                <RematchButton grantId={grant.id} />
+              )}
+            </CardHeader>
             <CardContent>
               {matches.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  {processing ? "Scoring in progress…" : "No qualifying matches (score 2+) for the current roster."}
+                  {processing
+                    ? "Scoring in progress…"
+                    : grant.is_domestic
+                      ? "No qualifying matches (score 2+) for the current roster."
+                      : "International opportunity — excluded from matching by policy."}
                 </p>
               ) : (
                 <ul className="divide-y text-sm">

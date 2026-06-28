@@ -75,6 +75,7 @@ export interface Grant {
   raw_text: string | null;
   status: string;
   error_detail: string | null;
+  is_domestic: boolean;
   ingested_at: string;
 }
 

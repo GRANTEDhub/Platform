@@ -9,6 +9,7 @@ import {
   extractGrantData,
   matchGrantToClient,
   jsPreFilter,
+  looksInternational,
 } from "@/lib/grants/engine";
 import { checkPastPerformance, formatUSASpendingContext } from "@/lib/grants/usaspending";
 
@@ -48,6 +49,8 @@ export async function runPipeline(
     extracted = await extractGrantData(rawTextForStorage);
   }
 
+  const isDomestic = !looksInternational(extracted.funder, extracted.title);
+
   await db
     .from("grants")
     .update({
@@ -78,11 +81,34 @@ export async function runPipeline(
       subaward_prohibited: extracted.subaward_prohibited,
       verification_flags: extracted.verification_flags,
       raw_text: rawTextForStorage.slice(0, 100000),
+      is_domestic: isDomestic,
     })
     .eq("id", grantId);
 
-  if (extracted.hard_disqualifiers?.length > 0) {
+  // International or hard-disqualified opportunities are stored (flagged) but
+  // never scored — saves matching spend and honors the domestic-only mandate.
+  if (!isDomestic || (extracted.hard_disqualifiers?.length ?? 0) > 0) {
     await db.from("grants").update({ status: "complete" }).eq("id", grantId);
+    return;
+  }
+
+  await runMatching(grantId, db);
+}
+
+/**
+ * Scores a grant against the client roster and writes review cards for fit ≥ 2.
+ * Idempotent: clients that already have a card for this grant are skipped, so it
+ * is safe to call again to fill in matches (e.g. an admin "Re-match"). Used by
+ * both the ingest pipeline and the re-match endpoint.
+ */
+export async function runMatching(grantId: string, db: DB) {
+  const { data: grantRow } = await db
+    .from("grants")
+    .select("*")
+    .eq("id", grantId)
+    .single();
+  if (!grantRow) {
+    await db.from("grants").update({ status: "error" }).eq("id", grantId);
     return;
   }
 
@@ -92,25 +118,24 @@ export async function runPipeline(
     return;
   }
 
-  const { data: grantRow } = await db
-    .from("grants")
-    .select("*")
-    .eq("id", grantId)
-    .single();
-
-  if (!grantRow) {
-    await db.from("grants").update({ status: "error" }).eq("id", grantId);
-    return;
-  }
+  // Don't re-score clients that already have a card for this grant.
+  const { data: existingCards } = await db
+    .from("review_cards")
+    .select("client_id")
+    .eq("grant_id", grantId);
+  const alreadyCarded = new Set(
+    (existingCards ?? []).map((c: { client_id: string | null }) => c.client_id),
+  );
+  const toScore = clients.filter((c) => !alreadyCarded.has(c.id));
 
   // USASpending past performance lookups for clients with unknown history
   const usaSpendingMap = new Map<string, string>();
-  const clientsNeedingLookup = clients.filter(
-    (c) => !c.federal_grant_history || c.federal_grant_history.toLowerCase() === "unknown"
+  const clientsNeedingLookup = toScore.filter(
+    (c) => !c.federal_grant_history || c.federal_grant_history.toLowerCase() === "unknown",
   );
   if (clientsNeedingLookup.length > 0) {
     const lookupResults = await Promise.allSettled(
-      clientsNeedingLookup.map((c) => checkPastPerformance(c.name))
+      clientsNeedingLookup.map((c) => checkPastPerformance(c.name)),
     );
     lookupResults.forEach((result, i) => {
       const client = clientsNeedingLookup[i];
@@ -122,11 +147,11 @@ export async function runPipeline(
 
   // Score clients in parallel batches of 5
   const BATCH_SIZE = 5;
-  for (let i = 0; i < clients.length; i += BATCH_SIZE) {
-    const batch = clients.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < toScore.length; i += BATCH_SIZE) {
+    const batch = toScore.slice(i, i + BATCH_SIZE);
     await Promise.all(
       batch.map(async (client) => {
-        const preFilterReason = jsPreFilter(extracted, client);
+        const preFilterReason = jsPreFilter(grantRow, client);
         if (preFilterReason) {
           console.log(`Pre-filter skipped ${client.name}: ${preFilterReason}`);
           return;
@@ -155,7 +180,7 @@ export async function runPipeline(
         } catch (err) {
           console.error(`Match error for client ${client.name}:`, err);
         }
-      })
+      }),
     );
   }
 

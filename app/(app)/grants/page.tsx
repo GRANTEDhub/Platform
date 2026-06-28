@@ -9,14 +9,27 @@ import type { Grant } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
-export default async function GrantsPage() {
+export default async function GrantsPage({
+  searchParams,
+}: {
+  searchParams: { scope?: string };
+}) {
   await requireUser(); // admins + contractors
   const supabase = createClient();
-  const { data } = await supabase
-    .from("grants")
-    .select("id, title, funder, status, submission_deadline, deadline, ingested_at")
-    .order("ingested_at", { ascending: false })
-    .limit(100);
+  const showInternational = searchParams.scope === "international";
+
+  const [{ data }, { count: intlCount }] = await Promise.all([
+    supabase
+      .from("grants")
+      .select("id, title, funder, status, submission_deadline, deadline, ingested_at")
+      .eq("is_domestic", !showInternational)
+      .order("ingested_at", { ascending: false })
+      .limit(100),
+    supabase
+      .from("grants")
+      .select("id", { count: "exact", head: true })
+      .eq("is_domestic", false),
+  ]);
   const grants = (data ?? []) as Partial<Grant>[];
 
   return (
@@ -24,6 +37,16 @@ export default async function GrantsPage() {
       <PageHeader
         title="Grant Intelligence"
         description="Domestic federal opportunities, shredded and matched against the client roster."
+        action={
+          <Link
+            href={showInternational ? "/grants" : "/grants?scope=international"}
+            className="rounded-md border bg-card px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent/60"
+          >
+            {showInternational
+              ? "← Back to domestic"
+              : `International (${intlCount ?? 0})`}
+          </Link>
+        }
       />
       <div className="grid gap-8 p-8 lg:grid-cols-[1fr_22rem]">
         <div className="overflow-hidden rounded-lg border bg-card">
