@@ -93,6 +93,9 @@ export interface ReviewCard {
   concept_synopsis: string | null;
   description_short: string | null;
   draft_outreach_email: string | null;
+  // Human-approved/edited body that will be sent. Separate from the AI draft
+  // above so the original is preserved (see migration 0007).
+  final_outreach_email: string | null;
   outreach_track: string | null;
   before_you_approve: string[] | null;
   inferred_fields: string[] | null;
@@ -106,9 +109,13 @@ export interface ReviewCard {
   } | null;
   decision: CardDecision;
   hold_reason: string | null;
+  // Reason captured when a match is rejected (Pass).
+  decision_reason: string | null;
   decided_by: string | null;
-  created_at: string;
   decided_at: string | null;
+  // Send tracking. Populated by the (not-yet-built) send step.
+  sent_at: string | null;
+  sent_to: string | null;
 }
 
 export interface ClientOverview {
