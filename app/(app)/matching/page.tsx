@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
-import { ScoreBadge, DecisionBadge } from "@/components/grants/badges";
+import { MatchRow } from "@/components/grants/match-row";
 import { groupCardsByOrg, type MatchCard } from "@/lib/grants/grouping";
 
 export const dynamic = "force-dynamic";
@@ -68,7 +68,7 @@ export default async function MatchingPage({
           <section key={g.orgId} className="overflow-hidden rounded-lg border bg-card">
             <div className="flex items-center justify-between border-b bg-muted/40 px-4 py-3">
               <div>
-                <Link href={`/clients/${g.orgId}`} className="font-semibold hover:underline">
+                <Link href={`/clients/${g.orgId}/grants`} className="font-semibold hover:underline">
                   {g.orgName}
                 </Link>
                 {g.orgSubtitle && (
@@ -83,24 +83,7 @@ export default async function MatchingPage({
             </div>
             <table className="w-full text-sm">
               <tbody>
-                {g.cards.map((c) => (
-                  <tr key={c.id} className="border-b last:border-0 hover:bg-muted/30">
-                    <td className="px-4 py-3">
-                      <Link href={`/review/${c.id}`} className="font-medium hover:underline">
-                        {c.grants?.title || "Untitled opportunity"}
-                      </Link>
-                      <p className="text-xs text-muted-foreground">
-                        {c.grants?.funder}
-                        {c.proposed_role ? ` · ${c.proposed_role}` : ""}
-                      </p>
-                    </td>
-                    <td className="px-4 py-3"><ScoreBadge score={c.fit_score} /></td>
-                    <td className="px-4 py-3"><DecisionBadge decision={c.decision} /></td>
-                    <td className="px-4 py-3 text-right text-xs text-muted-foreground">
-                      {c.grants?.submission_deadline || "—"}
-                    </td>
-                  </tr>
-                ))}
+                {g.cards.map((c) => <MatchRow key={c.id} card={c} />)}
               </tbody>
             </table>
           </section>

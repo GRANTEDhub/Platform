@@ -64,9 +64,14 @@ export default async function ClientDetailPage({
           .filter(Boolean)
           .join(" · ")}
         action={
-          <Link href={`/clients/${client.id}/edit`}>
-            <Button variant="outline">Edit</Button>
-          </Link>
+          <div className="flex gap-2">
+            <Link href={`/clients/${client.id}/grants`}>
+              <Button variant="outline">Grant activity</Button>
+            </Link>
+            <Link href={`/clients/${client.id}/edit`}>
+              <Button variant="outline">Edit</Button>
+            </Link>
+          </div>
         }
       />
 
