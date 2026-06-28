@@ -96,6 +96,32 @@ export async function runPipeline(
   await runMatching(grantId, db);
 }
 
+// Observability: persist one row per (grant, client) scoring attempt -- the
+// score, the reasoning, and the reason it did or did not become a card.
+// Wrapped so a logging failure can never break the matching path.
+type AttemptRow = {
+  grant_id: string;
+  client_id: string;
+  outcome: string;
+  fit_score?: number | null;
+  suppressed?: boolean;
+  suppress_reason?: string | null;
+  disqualified?: boolean;
+  disqualify_reason?: string | null;
+  prefilter_reason?: string | null;
+  error_detail?: string | null;
+  result?: unknown;
+};
+
+async function recordAttempt(db: DB, row: AttemptRow) {
+  try {
+    const { error } = await db.from("match_attempts").insert(row);
+    if (error) console.error("Failed to record match attempt:", error.message);
+  } catch (err) {
+    console.error("Failed to record match attempt:", err);
+  }
+}
+
 /**
  * Scores a grant against the client roster and writes review cards for fit ≥ 2.
  * Idempotent: clients that already have a card for this grant are skipped, so it
@@ -155,12 +181,43 @@ export async function runMatching(grantId: string, db: DB) {
         const preFilterReason = jsPreFilter(grantRow, client);
         if (preFilterReason) {
           console.log(`Pre-filter skipped ${client.name}: ${preFilterReason}`);
+          await recordAttempt(db, {
+            grant_id: grantId,
+            client_id: client.id,
+            outcome: "prefiltered",
+            prefilter_reason: preFilterReason,
+          });
           return;
         }
         try {
           const usaSpendingContext = usaSpendingMap.get(client.id);
           const match = await matchGrantToClient(grantRow, client, usaSpendingContext);
-          if (!match.suppressed && !match.disqualified && match.fit_score >= 2) {
+          const qualifies =
+            !match.suppressed && !match.disqualified && match.fit_score >= 2;
+          const outcome = match.disqualified
+            ? "disqualified"
+            : match.suppressed
+              ? "suppressed"
+              : qualifies
+                ? "carded"
+                : "below_threshold";
+
+          // Record EVERY attempt -- below_threshold, suppressed, and
+          // disqualified included -- so calibration can see why a client did
+          // not match, not just the ones that became cards.
+          await recordAttempt(db, {
+            grant_id: grantId,
+            client_id: client.id,
+            outcome,
+            fit_score: match.fit_score ?? null,
+            suppressed: match.suppressed ?? false,
+            suppress_reason: match.suppress_reason ?? null,
+            disqualified: match.disqualified ?? false,
+            disqualify_reason: match.disqualify_reason ?? null,
+            result: match,
+          });
+
+          if (qualifies) {
             await db.from("review_cards").insert({
               grant_id: grantId,
               client_id: client.id,
@@ -180,6 +237,12 @@ export async function runMatching(grantId: string, db: DB) {
           }
         } catch (err) {
           console.error(`Match error for client ${client.name}:`, err);
+          await recordAttempt(db, {
+            grant_id: grantId,
+            client_id: client.id,
+            outcome: "error",
+            error_detail: String(err instanceof Error ? err.message : err).slice(0, 600),
+          });
         }
       }),
     );

@@ -121,6 +121,24 @@ export interface ReviewCard {
   sent_to: string | null;
 }
 
+// One row per (grant, client) scoring attempt — the engine's observability log.
+// review_cards holds only qualifying matches; this holds every outcome.
+export interface MatchAttempt {
+  id: string;
+  grant_id: string | null;
+  client_id: string | null;
+  outcome: "carded" | "below_threshold" | "suppressed" | "disqualified" | "prefiltered" | "error";
+  fit_score: number | null;
+  suppressed: boolean;
+  suppress_reason: string | null;
+  disqualified: boolean;
+  disqualify_reason: string | null;
+  prefilter_reason: string | null;
+  error_detail: string | null;
+  result: Record<string, unknown> | null;
+  created_at: string;
+}
+
 export interface ClientOverview {
   id: string;
   name: string;
