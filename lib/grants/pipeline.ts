@@ -123,10 +123,11 @@ async function recordAttempt(db: DB, row: AttemptRow) {
 }
 
 /**
- * Scores a grant against the client roster and writes review cards for fit ≥ 2.
- * Idempotent: clients that already have a card for this grant are skipped, so it
- * is safe to call again to fill in matches (e.g. an admin "Re-match"). Used by
- * both the ingest pipeline and the re-match endpoint.
+ * Scores a grant against the full client roster. Re-runnable (e.g. an admin
+ * "Re-match"): every client is re-scored each run and every attempt is logged
+ * to match_attempts. A qualifying score keeps ONE card per (grant, client) --
+ * refreshing the engine output on an un-acted card, never overwriting a card an
+ * admin has already decided. Uniqueness is enforced by a DB constraint.
  */
 export async function runMatching(grantId: string, db: DB) {
   const { data: grantRow } = await db
@@ -145,15 +146,8 @@ export async function runMatching(grantId: string, db: DB) {
     return;
   }
 
-  // Don't re-score clients that already have a card for this grant.
-  const { data: existingCards } = await db
-    .from("review_cards")
-    .select("client_id")
-    .eq("grant_id", grantId);
-  const alreadyCarded = new Set(
-    (existingCards ?? []).map((c: { client_id: string | null }) => c.client_id),
-  );
-  const toScore = clients.filter((c) => !alreadyCarded.has(c.id));
+  // Re-score the entire roster every run; the per-card dedup below keeps one.
+  const toScore = clients;
 
   // USASpending past performance lookups for clients with unknown history
   const usaSpendingMap = new Map<string, string>();
@@ -218,9 +212,9 @@ export async function runMatching(grantId: string, db: DB) {
           });
 
           if (qualifies) {
-            await db.from("review_cards").insert({
-              grant_id: grantId,
-              client_id: client.id,
+            // One card per (grant, client). Refresh the engine output on an
+            // un-acted card; never overwrite a decision an admin already made.
+            const cardFields = {
               fit_score: match.fit_score,
               proposed_role: match.proposed_role,
               recommended_prime: match.recommended_prime,
@@ -232,8 +226,24 @@ export async function runMatching(grantId: string, db: DB) {
               before_you_approve: match.before_you_approve,
               inferred_fields: match.inferred_fields,
               reasoning_context: match.reasoning_context,
-              decision: "pending",
-            });
+            };
+            const { data: existingCard } = await db
+              .from("review_cards")
+              .select("id, decision")
+              .eq("grant_id", grantId)
+              .eq("client_id", client.id)
+              .maybeSingle();
+            if (!existingCard) {
+              await db.from("review_cards").insert({
+                grant_id: grantId,
+                client_id: client.id,
+                ...cardFields,
+                decision: "pending",
+              });
+            } else if (existingCard.decision === "pending") {
+              await db.from("review_cards").update(cardFields).eq("id", existingCard.id);
+            }
+            // else: an admin already decided this card -- leave it untouched.
           }
         } catch (err) {
           console.error(`Match error for client ${client.name}:`, err);

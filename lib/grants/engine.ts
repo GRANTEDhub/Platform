@@ -414,6 +414,10 @@ Matching Rules (AUTHORITATIVE OVERRIDES -- apply before general logic): ${client
   const response = await anthropic.messages.create({
     model: MODEL,
     max_tokens: 8000,
+    // Low temperature for stable scoring: borderline 2-vs-3 calls must not
+    // flip run to run. Stability is the prerequisite for calibration; the
+    // rubric boundary itself is tuned separately.
+    temperature: 0,
     system: MATCHING_SYSTEM_PROMPT,
     tools: [
       {
@@ -443,6 +447,14 @@ Matching Rules (AUTHORITATIVE OVERRIDES -- apply before general logic): ${client
                 concept_derivation: { type: "string" },
                 why_not_others: { type: "string" },
               },
+              required: [
+                "eligibility_analysis",
+                "fit_score_derivation",
+                "role_assignment_logic",
+                "consortium_rationale",
+                "concept_derivation",
+                "why_not_others",
+              ],
             },
             suppressed: { type: "boolean" },
             suppress_reason: { type: ["string", "null"] },

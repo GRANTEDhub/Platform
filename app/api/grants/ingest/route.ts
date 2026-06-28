@@ -33,17 +33,39 @@ export async function POST(req: NextRequest) {
 
   const db = createServiceClient();
   const sourceUrl = url || "manual-paste";
-  const { data: grantRow, error } = await db
-    .from("grants")
-    .insert({ source_url: sourceUrl, status: "processing" })
-    .select("id")
-    .single();
 
-  if (error || !grantRow) {
-    return NextResponse.json({ error: "Failed to create grant record" }, { status: 500 });
+  // Re-ingesting the same opportunity URL must reuse its grant row, not spawn a
+  // new one (which would fragment cards across duplicate grants). Raw-text
+  // pastes share the "manual-paste" sentinel, so only dedup real URLs.
+  let grantId: string | undefined;
+  if (url) {
+    const { data: existing } = await db
+      .from("grants")
+      .select("id")
+      .eq("source_url", sourceUrl)
+      .order("ingested_at", { ascending: false })
+      .limit(1);
+    if (existing && existing.length > 0) {
+      grantId = existing[0].id;
+      await db.from("grants").update({ status: "processing" }).eq("id", grantId);
+    }
   }
 
-  const grantId: string = grantRow.id;
+  if (!grantId) {
+    const { data: grantRow, error } = await db
+      .from("grants")
+      .insert({ source_url: sourceUrl, status: "processing" })
+      .select("id")
+      .single();
+    if (error || !grantRow) {
+      return NextResponse.json({ error: "Failed to create grant record" }, { status: 500 });
+    }
+    grantId = grantRow.id;
+  }
+
+  if (!grantId) {
+    return NextResponse.json({ error: "Failed to resolve grant record" }, { status: 500 });
+  }
 
   waitUntil(
     runPipeline(grantId, url, rawText, db).catch(async (err) => {
