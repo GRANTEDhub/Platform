@@ -19,6 +19,7 @@
     "date-fns": "^3.6.0",
     "lucide-react": "^0.453.0",
     "next": "14.2.35",
+    "pdf-parse": "^1.1.1",
     "react": "^18",
     "react-dom": "^18",
     "stripe": "^17.5.0",
@@ -26,6 +27,7 @@
   },
   "devDependencies": {
     "@types/node": "^20",
+    "@types/pdf-parse": "^1.1.5",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "autoprefixer": "^10.0.1",
