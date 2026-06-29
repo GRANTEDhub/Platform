@@ -253,9 +253,17 @@ export async function runMatching(grantId: string, db: DB) {
             result: match,
           });
 
+          // One card per (grant, client). Look up the existing card first so a
+          // re-match can refresh it, leave a human-decided one alone, OR remove
+          // it when the client no longer qualifies.
+          const { data: existingCard } = await db
+            .from("review_cards")
+            .select("id, decision")
+            .eq("grant_id", grantId)
+            .eq("client_id", client.id)
+            .maybeSingle();
+
           if (qualifies) {
-            // One card per (grant, client). Refresh the engine output on an
-            // un-acted card; never overwrite a decision an admin already made.
             const cardFields = {
               fit_score: match.fit_score,
               proposed_role: match.proposed_role,
@@ -269,12 +277,6 @@ export async function runMatching(grantId: string, db: DB) {
               inferred_fields: match.inferred_fields,
               reasoning_context: match.reasoning_context,
             };
-            const { data: existingCard } = await db
-              .from("review_cards")
-              .select("id, decision")
-              .eq("grant_id", grantId)
-              .eq("client_id", client.id)
-              .maybeSingle();
             if (!existingCard) {
               await db.from("review_cards").insert({
                 grant_id: grantId,
@@ -286,6 +288,12 @@ export async function runMatching(grantId: string, db: DB) {
               await db.from("review_cards").update(cardFields).eq("id", existingCard.id);
             }
             // else: an admin already decided this card -- leave it untouched.
+          } else if (existingCard && existingCard.decision === "pending") {
+            // Re-score dropped this client below the surface threshold (e.g.
+            // 2 -> 0 under the seat ceiling). It no longer surfaces, so remove
+            // the stale un-acted card. A human-decided card (approved / passed /
+            // hold) is preserved -- never silently erase a GO/NO/HOLD.
+            await db.from("review_cards").delete().eq("id", existingCard.id);
           }
         } catch (err) {
           console.error(`Match error for client ${client.name}:`, err);
