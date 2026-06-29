@@ -35,6 +35,9 @@ interface DocCandidate {
   desc: string;
   ext: string;
   score: number;
+  // Where it came from: a real attachment vs the competition "how to apply"
+  // instructions package (always boilerplate; never the program NOFO).
+  source: "attachment" | "instructions";
 }
 
 const POSITIVE = /\b(nofo|notice of funding|full announcement|funding opportunity|solicitation|foa)\b/i;
@@ -49,7 +52,12 @@ function getExt(nameOrUrl: string): string {
 // Structured attachments + per-competition instruction files.
 function harvestDocCandidates(detail: Record<string, unknown>): DocCandidate[] {
   const out: DocCandidate[] = [];
-  const push = (url?: unknown, name?: unknown, desc?: unknown) => {
+  const push = (
+    source: "attachment" | "instructions",
+    url?: unknown,
+    name?: unknown,
+    desc?: unknown,
+  ) => {
     if (typeof url !== "string" || !url) return;
     const nm = typeof name === "string" ? name : "";
     out.push({
@@ -58,16 +66,17 @@ function harvestDocCandidates(detail: Record<string, unknown>): DocCandidate[] {
       desc: typeof desc === "string" ? desc : "",
       ext: getExt(nm || url),
       score: 0,
+      source,
     });
   };
 
   const attachments = (detail.attachments ?? []) as Array<Record<string, unknown>>;
-  for (const a of attachments) push(a.download_path, a.file_name, a.file_description);
+  for (const a of attachments) push("attachment", a.download_path, a.file_name, a.file_description);
 
   const competitions = (detail.competitions ?? []) as Array<Record<string, unknown>>;
   for (const c of competitions) {
     const instr = (c.competition_instructions ?? []) as Array<Record<string, unknown>>;
-    for (const i of instr) push(i.download_path, i.file_name, i.file_description);
+    for (const i of instr) push("instructions", i.download_path, i.file_name, i.file_description);
   }
   return out;
 }
@@ -139,6 +148,15 @@ function classifyText(text: string): DocClass {
   ) {
     return "stub";
   }
+  // Procedural application guide (e.g. the NSF Grants.gov Application Guide).
+  // Detect it by its TITLE/opening -- a guide announces itself as a "guide",
+  // while a real solicitation opens with the program name/number even though it
+  // cites PAPPG / Grants.gov / SF-424 later in the body. Counting those
+  // citations would false-reject real NSF solicitations, so anchor on the head.
+  const head = t.slice(0, 700).toLowerCase();
+  if (/(application|applicant|user|submission|proposal preparation)\s+guide|grants\.gov\b.{0,30}\bguide/i.test(head)) {
+    return "reject";
+  }
   if (NEGATIVE.test(t) && !POSITIVE.test(t)) return "reject";
   const hasEligibility = /eligib/i.test(t);
   const hasCriteria = /(review criteria|evaluation criteria|scoring|selection criteria|merit review|\bpoints\b)/i.test(t);
@@ -190,16 +208,26 @@ export async function resolveNofoText(
 ): Promise<NofoResolution> {
   const apiKey = process.env.SIMPLER_GOV_API_KEY;
   const ranked = rankCandidates(harvestDocCandidates(detail), oppNumber);
-  let sawStub = false;
 
-  // 1. Attachments + competition instructions, best-ranked first.
-  for (const c of ranked.slice(0, 4)) {
+  // The NOFO can only come from a real attachment -- NEVER from the competition
+  // "instructions" package (generic how-to-apply boilerplate), a /instructions/
+  // path, or an application-guide-named file. Excluding these (rather than just
+  // down-ranking them) is what forces NSF/SAMHSA-style empty-attachment grants
+  // to fall through to additional_info_url instead of accepting the decoy.
+  const nofoCandidates = ranked.filter(
+    (c) =>
+      c.source === "attachment" &&
+      !/\/instructions\//i.test(c.url) &&
+      !(NEGATIVE.test(`${c.name} ${c.desc}`) && !POSITIVE.test(`${c.name} ${c.desc}`)),
+  );
+  const sawBoilerplate = ranked.length > nofoCandidates.length;
+
+  // 1. Real attachments only, best-ranked first.
+  for (const c of nofoCandidates.slice(0, 4)) {
     const buf = await fetchBuffer(c.url, apiKey);
     if (!buf) continue;
     const text = await parseDoc(buf, c.ext);
-    if (!text) continue;
-    const cls = classifyText(text);
-    if (cls === "nofo") {
+    if (text && classifyText(text) === "nofo") {
       return {
         text,
         source: c.url,
@@ -207,7 +235,6 @@ export async function resolveNofoText(
         reason: `parsed program NOFO (${c.ext}) from ${c.name || "attachment"}`,
       };
     }
-    if (cls === "stub") sawStub = true;
   }
 
   // 2. Follow the agency additional_info_url (mandatory for SAMHSA/NSF).
@@ -217,7 +244,14 @@ export async function resolveNofoText(
     const rawHtml = await fetchRawHtml(link);
     if (rawHtml) {
       const linkCands = rankCandidates(
-        docLinksFromHtml(rawHtml, link).map((u) => ({ url: u, name: u, desc: "", ext: getExt(u), score: 0 })),
+        docLinksFromHtml(rawHtml, link).map((u) => ({
+          url: u,
+          name: u,
+          desc: "",
+          ext: getExt(u),
+          score: 0,
+          source: "attachment" as const,
+        })),
         oppNumber,
       );
       for (const c of linkCands.slice(0, 3)) {
@@ -247,8 +281,10 @@ export async function resolveNofoText(
 
   // 3. Fail loud -> keep the summary shred, record why.
   const why = [
-    ranked.length ? `${ranked.length} doc candidate(s) not a usable NOFO` : "no attachment/instruction docs",
-    sawStub ? "instruction doc was a stub pointer" : null,
+    nofoCandidates.length
+      ? `${nofoCandidates.length} attachment candidate(s) did not validate as a NOFO`
+      : "no real NOFO attachment (attachments empty or only instructions/boilerplate)",
+    sawBoilerplate ? "instructions/boilerplate docs excluded" : null,
     link ? "additional_info_url did not yield a NOFO" : "no additional_info_url present",
   ]
     .filter(Boolean)
