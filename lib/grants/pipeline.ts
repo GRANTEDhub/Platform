@@ -199,11 +199,17 @@ export async function runMatching(grantId: string, db: DB) {
   // USASpending past performance lookups for clients with unknown history
   const usaSpendingMap = new Map<string, string>();
   const clientsNeedingLookup = toScore.filter(
-    (c) => !c.federal_grant_history || c.federal_grant_history.toLowerCase() === "unknown",
+    (c) =>
+      // Verified history is authoritative -- skip the live lookup entirely,
+      // regardless of what federal_grant_history holds.
+      !c.federal_history_verified &&
+      (!c.federal_grant_history || c.federal_grant_history.toLowerCase() === "unknown"),
   );
   if (clientsNeedingLookup.length > 0) {
     const lookupResults = await Promise.allSettled(
-      clientsNeedingLookup.map((c) => checkPastPerformance(c.name)),
+      // Query the registered/parent recipient name when one is set; otherwise
+      // the display name.
+      clientsNeedingLookup.map((c) => checkPastPerformance(c.usaspending_search_name ?? c.name)),
     );
     lookupResults.forEach((result, i) => {
       const client = clientsNeedingLookup[i];

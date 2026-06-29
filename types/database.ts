@@ -37,6 +37,11 @@ export interface Client {
   project_stage: string | null;
   match_cost_share_capacity: string | null;
   federal_grant_history: string | null;
+  // USASpending lookup overrides (migration 0015). search_name: query this
+  // instead of `name` when set. verified: suppress the live lookup and treat
+  // the stored federal_grant_history as authoritative.
+  usaspending_search_name: string | null;
+  federal_history_verified: boolean;
   sam_uei_status: string | null;
   known_constraints: string | null;
   // Client-specific authoritative matching overrides (editable; read by the

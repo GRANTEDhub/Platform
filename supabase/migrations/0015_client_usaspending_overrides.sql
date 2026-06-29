@@ -1,0 +1,22 @@
+-- ╔══════════════════════════════════════════════════════════════════════════╗
+-- ║ USASpending lookup overrides — search-name + verified-history bypass         ║
+-- ╚══════════════════════════════════════════════════════════════════════════╝
+-- The past-performance lookup queries USASpending by client name. Three load
+-- cases break that: a display name that differs from the registered recipient
+-- name (Community Clinic = "St. Francis House NWA, Inc."), a recent rebrand with
+-- no history under the new name yet (EverHope, ex-NWACS), and a campus whose
+-- name resolves to a parent system and inflates the result (UAMS NorthWest).
+--
+-- usaspending_search_name: the string the lookup should query INSTEAD of name,
+-- when set. Leaves client.name free to stay the human display name everywhere
+-- else. Null = use name as before.
+--
+-- federal_history_verified: when true, the live lookup is suppressed entirely
+-- and the stored federal_grant_history is treated as authoritative -- the
+-- explicit "do not override" marker, so a future blank/"unknown" reset of the
+-- history field cannot silently re-enable a wrong lookup.
+--
+-- Read-only in the engine; deploying the code before this migration is unsafe
+-- (the filter reads federal_history_verified). Apply this migration FIRST.
+alter table clients add column if not exists usaspending_search_name text;
+alter table clients add column if not exists federal_history_verified boolean not null default false;
