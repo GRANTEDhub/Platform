@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   Target,
+  Radar,
   FileSearch,
   Users,
   Clock,
@@ -25,6 +26,7 @@ export interface NavItem {
 const ICONS: Record<string, LucideIcon> = {
   dashboard: LayoutDashboard,
   matching: Target,
+  intel: Radar,
   grants: FileSearch,
   clients: Users,
   time: Clock,

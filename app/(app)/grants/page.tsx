@@ -35,7 +35,7 @@ export default async function GrantsPage({
   return (
     <div>
       <PageHeader
-        title="Grant Intelligence"
+        title="Opportunities"
         description="Domestic federal opportunities, shredded and matched against the client roster."
         action={
           <Link
