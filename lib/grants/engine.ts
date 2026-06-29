@@ -752,7 +752,11 @@ export function jsPreFilter(
   }
 
   // For-profit clients can never be recipients in federal grants
-  if (client.org_type === "Small Business" || client.org_type === "small_business") {
+  if (
+    client.org_type === "Small Business" ||
+    client.org_type === "small_business" ||
+    client.org_type === "for_profit"
+  ) {
     const allowsSmallBusiness = eligibleTypes.some(
       (t) => t.includes("small business") || t.includes("for-profit") || t.includes("unrestricted")
     );
@@ -768,7 +772,10 @@ export function jsPreFilter(
       nonprofit: ["nonprofit", "501(c)(3)", "501c3", "non-profit", "private nonprofit"],
       local_government: ["county", "local government", "municipal", "city or township", "special district"],
       small_business: ["small business", "for-profit", "profit organization"],
+      for_profit: ["small business", "for-profit", "profit organization"],
       higher_education: ["higher education", "university", "college", "community college", "institutions of higher", "institution of higher", "ihe"],
+      fqhc: ["nonprofit", "501(c)(3)", "501c3", "non-profit", "private nonprofit"],
+      transit_authority: ["county", "local government", "municipal", "city or township", "special district"],
       // Legacy / descriptive labels (kept for back-compat with richer profiles)
       "County Government": ["county", "local government", "municipal", "city or township"],
       "Nonprofit 501c3": ["nonprofit", "501(c)(3)", "501c3", "non-profit", "private nonprofit"],
