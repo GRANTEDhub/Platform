@@ -126,28 +126,47 @@ export async function GET(req: NextRequest) {
     result.competitionsFull = detail.competitions ?? null;
     result.allUrls = findUrls(detail, "");
 
-    // ── 2. Fetch + parse one real NOFO PDF, inside this serverless function ──
-    const pdfUrl = docUrls.find((u) => /\.pdf(\?|$)/i.test(u)) ?? docUrls[0];
-    result.pickedPdfUrl = pdfUrl ?? null;
-    if (pdfUrl) {
+    // ── 2. Fetch + parse one real NOFO doc, inside this serverless function.
+    //       Route on type: PDF -> pdf-parse, DOCX -> mammoth (validates both
+    //       parsers in the real runtime). Prefer a PDF, else a DOCX, else first.
+    const docUrl =
+      docUrls.find((u) => /\.pdf(\?|$)/i.test(u)) ??
+      docUrls.find((u) => /\.docx(\?|$)/i.test(u)) ??
+      docUrls[0];
+    result.pickedDocUrl = docUrl ?? null;
+    if (docUrl) {
       try {
-        const fileRes = await fetch(pdfUrl, { headers: { "X-API-Key": apiKey } });
-        result.pdfFetchStatus = fileRes.status;
-        result.pdfContentType = fileRes.headers.get("content-type");
+        const fileRes = await fetch(docUrl, { headers: { "X-API-Key": apiKey } });
+        result.docFetchStatus = fileRes.status;
+        const ct = fileRes.headers.get("content-type") || "";
+        result.docContentType = ct;
         if (fileRes.ok) {
           const buf = Buffer.from(await fileRes.arrayBuffer());
-          result.pdfBytes = buf.length;
-          // Dynamic import + Buffer arg avoids pdf-parse's top-level test-file read.
-          const pdfParse = (await import("pdf-parse")).default;
-          const parsed = await pdfParse(buf);
-          result.pdf = {
-            pages: parsed.numpages,
-            chars: parsed.text.length,
-            sample: parsed.text.replace(/\s+/g, " ").trim().slice(0, 400),
-          };
+          result.docBytes = buf.length;
+          const isDocx = /\.docx(\?|$)/i.test(docUrl) || ct.includes("wordprocessingml");
+          if (isDocx) {
+            const mammothMod = await import("mammoth");
+            const mammoth = mammothMod.default ?? mammothMod;
+            const out = await mammoth.extractRawText({ buffer: buf });
+            result.parser = "mammoth(docx)";
+            result.doc = {
+              chars: out.value.length,
+              sample: out.value.replace(/\s+/g, " ").trim().slice(0, 400),
+            };
+          } else {
+            // Dynamic import + Buffer arg avoids pdf-parse's top-level test-file read.
+            const pdfParse = (await import("pdf-parse")).default;
+            const parsed = await pdfParse(buf);
+            result.parser = "pdf-parse";
+            result.doc = {
+              pages: parsed.numpages,
+              chars: parsed.text.length,
+              sample: parsed.text.replace(/\s+/g, " ").trim().slice(0, 400),
+            };
+          }
         }
       } catch (err) {
-        result.pdfError = String(err instanceof Error ? err.message : err);
+        result.docError = String(err instanceof Error ? err.message : err);
       }
     }
 

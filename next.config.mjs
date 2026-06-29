@@ -4,7 +4,7 @@ const nextConfig = {
   // pdf-parse reads files at runtime; keep it out of the webpack bundle so it
   // works inside the serverless function. (Required for the Step-2 NOFO parse.)
   experimental: {
-    serverComponentsExternalPackages: ["pdf-parse"],
+    serverComponentsExternalPackages: ["pdf-parse", "mammoth"],
   },
 };
 
