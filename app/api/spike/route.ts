@@ -29,6 +29,25 @@ function findDocUrls(obj: unknown, out: string[] = []): string[] {
   return out;
 }
 
+// Recursively collect EVERY url string with its exact JSON path, so we can see
+// which field holds the outbound agency/NOFO link (SAMHSA/NSF link-following).
+function findUrls(
+  obj: unknown,
+  path: string,
+  out: { path: string; url: string }[] = [],
+): { path: string; url: string }[] {
+  if (typeof obj === "string") {
+    if (/^https?:\/\//i.test(obj.trim())) out.push({ path, url: obj });
+  } else if (Array.isArray(obj)) {
+    obj.forEach((v, i) => findUrls(v, `${path}[${i}]`, out));
+  } else if (obj && typeof obj === "object") {
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      findUrls(v, path ? `${path}.${k}` : k, out);
+    }
+  }
+  return out;
+}
+
 export async function GET(req: NextRequest) {
   // ── Guard ── throwaway secret, independent of CRON_SECRET / the cron.
   const secret = process.env.SPIKE_SECRET;
@@ -99,6 +118,13 @@ export async function GET(req: NextRequest) {
     result.attachmentField = attachmentKey ? detail[attachmentKey] : null;
     const docUrls = findDocUrls(detail);
     result.candidateDocUrls = docUrls.slice(0, 10);
+
+    // Full nested dump to locate the outbound agency/NOFO link (SAMHSA/NSF put
+    // it inside summary or competitions, not at top level). allUrls gives the
+    // exact JSON path of every link so we know which field to follow.
+    result.summaryFull = detail.summary ?? null;
+    result.competitionsFull = detail.competitions ?? null;
+    result.allUrls = findUrls(detail, "");
 
     // ── 2. Fetch + parse one real NOFO PDF, inside this serverless function ──
     const pdfUrl = docUrls.find((u) => /\.pdf(\?|$)/i.test(u)) ?? docUrls[0];
