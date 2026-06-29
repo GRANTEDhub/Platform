@@ -46,6 +46,25 @@ export interface Client {
   updated_at: string;
 }
 
+// Stage A (Step 3): the grant's ideal applicant/consortium, constructed from the
+// full NOFO independent of our roster. Multi-archetype: a grant can legitimately
+// support 1-3 distinct prime shapes (county vs nonprofit vs IHE leading from
+// different angles). Clients map onto a SEAT in this profile, and the seat sets
+// the score ceiling.
+export interface ApplicantArchetype {
+  label: string;
+  ideal_prime_shape: string;
+  core_role: string;
+  partner_seats: string[];
+}
+
+export interface IdealApplicantProfile {
+  core_funded_role: string;
+  summary: string;
+  archetypes: ApplicantArchetype[];
+  eligibility_note?: string;
+}
+
 export interface Grant {
   id: string;
   source_url: string | null;
@@ -84,6 +103,8 @@ export interface Grant {
   // only (with shred_reason explaining why the deep shred wasn't available).
   shred_depth: "full" | "summary";
   shred_reason: string | null;
+  // Step 3 / Stage A: the grant's ideal applicant/consortium (multi-archetype).
+  ideal_applicant_profile: IdealApplicantProfile | null;
   ingested_at: string;
 }
 

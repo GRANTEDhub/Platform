@@ -3,7 +3,7 @@
 // + AI Calibration Email Logs compiled by Samantha from Shannon's expert overrides.
 
 import { getAnthropicClient, MODEL } from "@/lib/anthropic";
-import type { Client, Grant } from "@/types/database";
+import type { Client, Grant, IdealApplicantProfile } from "@/types/database";
 
 export interface ExtractedGrant {
   funder: string;
@@ -364,6 +364,86 @@ export async function extractGrantData(rawText: string): Promise<ExtractedGrant>
   if (!jsonMatch) throw new Error("Claude did not return valid JSON for grant extraction");
 
   return JSON.parse(jsonMatch[0]) as ExtractedGrant;
+}
+
+// ─── Stage A (Step 3): Ideal Applicant / Consortium Profile ──────────────────
+// Constructed from the full NOFO, anchored on the grant, independent of our
+// roster. Multi-archetype (1-3 prime shapes). Clients later map onto a seat in
+// this profile, and the seat sets the score ceiling. This is what stops the
+// engine reaching from client to grant ("eligible, so a 2?") and instead makes
+// clients earn their way onto the grant's ideal structure.
+const IDEAL_PROFILE_SYSTEM_PROMPT = `You construct the IDEAL APPLICANT / CONSORTIUM PROFILE for a U.S. federal grant, for GRANTED, a domestic grant consulting firm. Anchor entirely on the GRANT, never on any client.
+
+Derive the profile from the NOFO's SUBSTANCE -- the funded activities, the review/scoring criteria, and the program design -- NOT from the eligibility list. Eligibility is a weak, downweighted input: "allows nonprofits" does NOT make a nonprofit the ideal applicant.
+
+Produce:
+- core_funded_role: the central activity the money actually pays for. One phrase (e.g. "regional coordination / backbone", "direct service delivery", "applied research", "capital construction"). This is the gate the whole downstream score hangs on.
+- summary: 1-2 sentences on who this grant is built for.
+- archetypes: 1 to 3 DISTINCT valid prime shapes. Output more than one ONLY when the grant legitimately supports different entity types priming from different angles (e.g. a county, a nonprofit, OR an IHE each leading a different version). Each archetype:
+  - label: short name of the prime shape (e.g. "Regional coordination backbone")
+  - ideal_prime_shape: what kind of entity is BUILT to lead this angle, by natural function (not "who is eligible")
+  - core_role: the funded role this archetype's prime performs
+  - partner_seats: the consortium seats this prime implies (e.g. "IHE research partner", "employer partners", "third-party evaluator")
+- eligibility_note: brief note on the stated eligibility, explicitly secondary.
+
+Be concrete and grant-specific. Do not use em dashes. Return via the submit_profile tool.`;
+
+export async function constructIdealApplicantProfile(
+  nofoText: string,
+): Promise<IdealApplicantProfile> {
+  const anthropic = getAnthropicClient();
+  const response = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 3000,
+    temperature: 0,
+    system: IDEAL_PROFILE_SYSTEM_PROMPT,
+    tools: [
+      {
+        name: "submit_profile",
+        description: "Return the grant's ideal applicant/consortium profile. Call exactly once.",
+        input_schema: {
+          type: "object",
+          properties: {
+            core_funded_role: { type: "string" },
+            summary: { type: "string" },
+            archetypes: {
+              type: "array",
+              minItems: 1,
+              maxItems: 3,
+              items: {
+                type: "object",
+                properties: {
+                  label: { type: "string" },
+                  ideal_prime_shape: { type: "string" },
+                  core_role: { type: "string" },
+                  partner_seats: { type: "array", items: { type: "string" } },
+                },
+                required: ["label", "ideal_prime_shape", "core_role", "partner_seats"],
+              },
+            },
+            eligibility_note: { type: "string" },
+          },
+          required: ["core_funded_role", "summary", "archetypes"],
+        },
+      },
+    ],
+    tool_choice: { type: "tool", name: "submit_profile" },
+    messages: [
+      {
+        role: "user",
+        content: `Construct the ideal applicant/consortium profile from this NOFO.\n\n${nofoText.slice(0, 120000)}`,
+      },
+    ],
+  });
+
+  if (response.stop_reason === "max_tokens") {
+    throw new Error("Ideal-profile response truncated at max_tokens");
+  }
+  const toolUse = response.content.find((b) => b.type === "tool_use");
+  if (!toolUse || toolUse.type !== "tool_use") {
+    throw new Error("Claude did not return a structured ideal applicant profile");
+  }
+  return toolUse.input as IdealApplicantProfile;
 }
 
 export async function matchGrantToClient(

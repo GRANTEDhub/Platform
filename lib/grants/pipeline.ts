@@ -8,9 +8,11 @@ import {
   fetchGrantTextFromUrl,
   extractGrantData,
   matchGrantToClient,
+  constructIdealApplicantProfile,
   jsPreFilter,
   looksInternational,
 } from "@/lib/grants/engine";
+import type { IdealApplicantProfile } from "@/types/database";
 import { resolveNofoText, mergeDeepShred } from "@/lib/grants/nofo";
 import { checkPastPerformance, formatUSASpendingContext } from "@/lib/grants/usaspending";
 
@@ -74,6 +76,20 @@ export async function runPipeline(
 
   const isDomestic = !looksInternational(extracted.funder, extracted.title);
 
+  // Stage A (Step 3): construct the grant's ideal applicant profile from the
+  // full NOFO. Only for grants that will actually be scored (domestic, not
+  // hard-disqualified) and only when we have the real NOFO text (full shred) --
+  // a summary is too thin to anchor a trustworthy profile. Fault-isolated.
+  let idealProfile: IdealApplicantProfile | null = null;
+  const willScore = isDomestic && (extracted.hard_disqualifiers?.length ?? 0) === 0;
+  if (willScore && shredDepth === "full") {
+    try {
+      idealProfile = await constructIdealApplicantProfile(rawTextForStorage);
+    } catch (err) {
+      console.error("Ideal applicant profile failed for grant", grantId, err);
+    }
+  }
+
   await db
     .from("grants")
     .update({
@@ -108,6 +124,7 @@ export async function runPipeline(
       is_domestic: isDomestic,
       shred_depth: shredDepth,
       shred_reason: shredReason,
+      ideal_applicant_profile: idealProfile,
     })
     .eq("id", grantId);
 
