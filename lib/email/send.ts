@@ -8,9 +8,14 @@
 // Callers MUST gate this behind canSendEmail() (lib/email/guard.ts). This
 // function assumes it is allowed to send and only validates the payload.
 
+import { Resend } from "resend";
 import type { ReviewCard, Client } from "@/types/database";
 
-const FROM = "support@grantedco.com";
+// Sends from the verified Resend domain (send.grantedco.com). Replies are
+// directed to a monitored human inbox so the conversation happens over email
+// (Phase 1). Both overridable by env; defaults are the verified addresses.
+const FROM = process.env.EMAIL_FROM || "alerts@send.grantedco.com";
+const REPLY_TO = process.env.EMAIL_REPLY_TO || "support@grantedco.com";
 const SUBJECT = "Grant Alert! | GRANTED";
 
 // Deliberately permissive format check -- catches null/"unknown"/obviously
@@ -21,6 +26,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export interface SentResult {
   to: string;
   subject: string;
+  id: string | null;
 }
 
 export async function sendAlertEmail(card: ReviewCard, client: Client): Promise<SentResult> {
@@ -36,14 +42,18 @@ export async function sendAlertEmail(card: ReviewCard, client: Client): Promise<
     throw new Error(`No approved email body to send for ${client.name}`);
   }
 
-  const payload = { from: FROM, to, subject: SUBJECT, text: body };
+  // Reached only after canSendEmail() passed and the recipient validated above.
+  const resend = new Resend(process.env.RESEND_PLATFORM_API);
+  const { data, error } = await resend.emails.send({
+    from: FROM,
+    to,
+    replyTo: REPLY_TO,
+    subject: SUBJECT,
+    text: body,
+  });
+  if (error) {
+    throw new Error(`Resend send failed for ${client.name}: ${error.message}`);
+  }
 
-  // TODO(resend): wire the Resend SDK call here once RESEND_API_KEY and a
-  // verified grantedco.com sending domain are available. This stub logs the
-  // fully assembled payload so the shape is testable without the key. It must
-  // be REPLACED with the real call -- do not leave it logging-only once the key
-  // exists, or approvals will silently no-op in production.
-  console.log("[email:TODO(resend)] would send:", JSON.stringify(payload));
-
-  return { to, subject: SUBJECT };
+  return { to, subject: SUBJECT, id: data?.id ?? null };
 }
