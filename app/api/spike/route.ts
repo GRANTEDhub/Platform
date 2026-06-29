@@ -6,7 +6,8 @@
 //   2. Whether pdf-parse can fetch + parse a real NOFO PDF here.
 //
 // READ-ONLY: imports no database client, writes nothing. Pure fetch + parse.
-// GUARDED: requires the CRON_SECRET (Bearer header or ?key=); 401 otherwise.
+// GUARDED: requires SPIKE_SECRET -- a throwaway env var you set just for this
+// test, independent of CRON_SECRET (Bearer header or ?key=); 401 otherwise.
 // ──────────────────────────────────────────────────────────────────────────
 import { NextRequest, NextResponse } from "next/server";
 
@@ -29,8 +30,8 @@ function findDocUrls(obj: unknown, out: string[] = []): string[] {
 }
 
 export async function GET(req: NextRequest) {
-  // ── Guard ──
-  const secret = process.env.CRON_SECRET;
+  // ── Guard ── throwaway secret, independent of CRON_SECRET / the cron.
+  const secret = process.env.SPIKE_SECRET;
   const auth = req.headers.get("authorization");
   const key = req.nextUrl.searchParams.get("key");
   if (!secret || (auth !== `Bearer ${secret}` && key !== secret)) {
