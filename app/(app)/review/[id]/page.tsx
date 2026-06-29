@@ -47,6 +47,12 @@ export default async function CardDetailPage({ params }: { params: { id: string 
               <ScoreBadge score={card.fit_score} />
             </CardHeader>
             <CardContent className="space-y-4 text-sm">
+              {rc.fit_score_derivation && (
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">How this score was reached</p>
+                  <p className="mt-1 leading-relaxed">{rc.fit_score_derivation}</p>
+                </div>
+              )}
               <Detail label="Proposed role" value={card.proposed_role} />
               {card.recommended_prime && <Detail label="Recommended prime" value={card.recommended_prime} />}
               {(card.why_this_org?.length || 0) > 0 && (
@@ -77,20 +83,17 @@ export default async function CardDetailPage({ params }: { params: { id: string 
             </Card>
           )}
 
-          {card.draft_outreach_email && (
+          {(card.final_outreach_email || card.draft_outreach_email) && (
             <Card>
-              <CardHeader><CardTitle>Draft outreach{card.outreach_track ? ` · ${card.outreach_track}` : ""}</CardTitle></CardHeader>
+              <CardHeader><CardTitle>
+                {card.final_outreach_email
+                  ? "Approved email (to send)"
+                  : `Draft outreach${card.outreach_track ? ` · ${card.outreach_track}` : ""}`}
+              </CardTitle></CardHeader>
               <CardContent>
-                <pre className="whitespace-pre-wrap font-sans text-sm">{card.draft_outreach_email}</pre>
-              </CardContent>
-            </Card>
-          )}
-
-          {card.final_outreach_email && (
-            <Card>
-              <CardHeader><CardTitle>Approved email (to send)</CardTitle></CardHeader>
-              <CardContent>
-                <pre className="whitespace-pre-wrap font-sans text-sm">{card.final_outreach_email}</pre>
+                <pre className="whitespace-pre-wrap font-sans text-sm">
+                  {card.final_outreach_email || card.draft_outreach_email}
+                </pre>
               </CardContent>
             </Card>
           )}
@@ -100,7 +103,6 @@ export default async function CardDetailPage({ params }: { params: { id: string 
               <CardHeader><CardTitle>Reasoning</CardTitle></CardHeader>
               <CardContent className="space-y-3 text-sm">
                 {rc.eligibility_analysis && <Detail label="Eligibility" value={rc.eligibility_analysis} />}
-                {rc.fit_score_derivation && <Detail label="Score derivation" value={rc.fit_score_derivation} />}
                 {rc.role_assignment_logic && <Detail label="Role logic" value={rc.role_assignment_logic} />}
                 {rc.consortium_rationale && <Detail label="Consortium" value={rc.consortium_rationale} />}
                 {rc.why_not_others && <Detail label="Why not others" value={rc.why_not_others} />}
@@ -140,7 +142,6 @@ export default async function CardDetailPage({ params }: { params: { id: string 
             <CardHeader><CardTitle>Opportunity</CardTitle></CardHeader>
             <CardContent className="space-y-3 text-sm">
               <Detail label="Funder" value={card.grants?.funder} />
-              <Detail label="FON" value={card.grants?.fon} />
               <Detail label="Deadline" value={card.grants?.submission_deadline} />
               <Detail
                 label="Award range"
@@ -150,7 +151,6 @@ export default async function CardDetailPage({ params }: { params: { id: string 
                     : undefined
                 }
               />
-              <Detail label="Cost share" value={card.grants?.cost_share} />
               {card.grants?.id && (
                 <Link href={`/grants/${card.grants.id}`} className="block text-primary hover:underline">
                   Full grant detail →
