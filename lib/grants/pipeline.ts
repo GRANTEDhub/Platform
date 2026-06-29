@@ -8,9 +8,12 @@ import {
   fetchGrantTextFromUrl,
   extractGrantData,
   matchGrantToClient,
+  constructIdealApplicantProfile,
   jsPreFilter,
   looksInternational,
 } from "@/lib/grants/engine";
+import type { IdealApplicantProfile } from "@/types/database";
+import { resolveNofoText, mergeDeepShred } from "@/lib/grants/nofo";
 import { checkPastPerformance, formatUSASpendingContext } from "@/lib/grants/usaspending";
 
 type DB = ReturnType<typeof createServiceClient>;
@@ -35,21 +38,57 @@ export async function runPipeline(
 ) {
   let extracted;
   let rawTextForStorage = rawText || "";
+  let shredDepth: "full" | "summary" = "summary";
+  let shredReason: string | null = null;
 
   const simplerGovId = url ? extractSimplerGovOpportunityId(url) : null;
 
   if (simplerGovId) {
-    const { extracted: apiExtracted, rawJson } = await fetchFromSimplerGovAPI(simplerGovId);
+    const { extracted: apiExtracted, rawJson, detail } = await fetchFromSimplerGovAPI(simplerGovId);
     extracted = apiExtracted;
     rawTextForStorage = rawJson;
+
+    // Step 2: find + parse the real program NOFO and overlay analytical depth
+    // (scoring rubric, delivery/convener model) the API summary never carries.
+    // Fails loud: if no real NOFO validates, keep the summary shred + a reason.
+    try {
+      const nofo = await resolveNofoText(detail, apiExtracted.fon || "");
+      shredReason = nofo.reason;
+      if (nofo.text) {
+        const deep = await extractGrantData(nofo.text);
+        extracted = mergeDeepShred(apiExtracted, deep);
+        rawTextForStorage = nofo.text;
+        shredDepth = "full";
+      }
+    } catch (err) {
+      shredDepth = "summary";
+      shredReason = `deep shred failed: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`;
+    }
   } else {
     if (url && !rawText) {
       rawTextForStorage = await fetchGrantTextFromUrl(url);
     }
     extracted = await extractGrantData(rawTextForStorage);
+    // Manual paste / direct URL is full NOFO text by definition.
+    shredDepth = "full";
+    shredReason = "manual full-text ingest";
   }
 
   const isDomestic = !looksInternational(extracted.funder, extracted.title);
+
+  // Stage A (Step 3): construct the grant's ideal applicant profile from the
+  // full NOFO. Only for grants that will actually be scored (domestic, not
+  // hard-disqualified) and only when we have the real NOFO text (full shred) --
+  // a summary is too thin to anchor a trustworthy profile. Fault-isolated.
+  let idealProfile: IdealApplicantProfile | null = null;
+  const willScore = isDomestic && (extracted.hard_disqualifiers?.length ?? 0) === 0;
+  if (willScore && shredDepth === "full") {
+    try {
+      idealProfile = await constructIdealApplicantProfile(rawTextForStorage);
+    } catch (err) {
+      console.error("Ideal applicant profile failed for grant", grantId, err);
+    }
+  }
 
   await db
     .from("grants")
@@ -80,8 +119,12 @@ export async function runPipeline(
       incumbent_risk: extracted.incumbent_risk,
       subaward_prohibited: extracted.subaward_prohibited,
       verification_flags: extracted.verification_flags,
+      hard_disqualifiers: extracted.hard_disqualifiers,
       raw_text: rawTextForStorage.slice(0, 100000),
       is_domestic: isDomestic,
+      shred_depth: shredDepth,
+      shred_reason: shredReason,
+      ideal_applicant_profile: idealProfile,
     })
     .eq("id", grantId);
 
@@ -95,11 +138,38 @@ export async function runPipeline(
   await runMatching(grantId, db);
 }
 
+// Observability: persist one row per (grant, client) scoring attempt -- the
+// score, the reasoning, and the reason it did or did not become a card.
+// Wrapped so a logging failure can never break the matching path.
+type AttemptRow = {
+  grant_id: string;
+  client_id: string;
+  outcome: string;
+  fit_score?: number | null;
+  suppressed?: boolean;
+  suppress_reason?: string | null;
+  disqualified?: boolean;
+  disqualify_reason?: string | null;
+  prefilter_reason?: string | null;
+  error_detail?: string | null;
+  result?: unknown;
+};
+
+async function recordAttempt(db: DB, row: AttemptRow) {
+  try {
+    const { error } = await db.from("match_attempts").insert(row);
+    if (error) console.error("Failed to record match attempt:", error.message);
+  } catch (err) {
+    console.error("Failed to record match attempt:", err);
+  }
+}
+
 /**
- * Scores a grant against the client roster and writes review cards for fit ≥ 2.
- * Idempotent: clients that already have a card for this grant are skipped, so it
- * is safe to call again to fill in matches (e.g. an admin "Re-match"). Used by
- * both the ingest pipeline and the re-match endpoint.
+ * Scores a grant against the full client roster. Re-runnable (e.g. an admin
+ * "Re-match"): every client is re-scored each run and every attempt is logged
+ * to match_attempts. A qualifying score keeps ONE card per (grant, client) --
+ * refreshing the engine output on an un-acted card, never overwriting a card an
+ * admin has already decided. Uniqueness is enforced by a DB constraint.
  */
 export async function runMatching(grantId: string, db: DB) {
   const { data: grantRow } = await db
@@ -108,7 +178,12 @@ export async function runMatching(grantId: string, db: DB) {
     .eq("id", grantId)
     .single();
   if (!grantRow) {
-    await db.from("grants").update({ status: "error" }).eq("id", grantId);
+    // Every error-status exit records a reason -- a status of 'error' with a
+    // null error_detail is never acceptable (it leaves a silent dead-end).
+    await db
+      .from("grants")
+      .update({ status: "error", error_detail: "Grant row not found when scoring (deleted mid-run?)" })
+      .eq("id", grantId);
     return;
   }
 
@@ -118,24 +193,23 @@ export async function runMatching(grantId: string, db: DB) {
     return;
   }
 
-  // Don't re-score clients that already have a card for this grant.
-  const { data: existingCards } = await db
-    .from("review_cards")
-    .select("client_id")
-    .eq("grant_id", grantId);
-  const alreadyCarded = new Set(
-    (existingCards ?? []).map((c: { client_id: string | null }) => c.client_id),
-  );
-  const toScore = clients.filter((c) => !alreadyCarded.has(c.id));
+  // Re-score the entire roster every run; the per-card dedup below keeps one.
+  const toScore = clients;
 
   // USASpending past performance lookups for clients with unknown history
   const usaSpendingMap = new Map<string, string>();
   const clientsNeedingLookup = toScore.filter(
-    (c) => !c.federal_grant_history || c.federal_grant_history.toLowerCase() === "unknown",
+    (c) =>
+      // Verified history is authoritative -- skip the live lookup entirely,
+      // regardless of what federal_grant_history holds.
+      !c.federal_history_verified &&
+      (!c.federal_grant_history || c.federal_grant_history.toLowerCase() === "unknown"),
   );
   if (clientsNeedingLookup.length > 0) {
     const lookupResults = await Promise.allSettled(
-      clientsNeedingLookup.map((c) => checkPastPerformance(c.name)),
+      // Query the registered/parent recipient name when one is set; otherwise
+      // the display name.
+      clientsNeedingLookup.map((c) => checkPastPerformance(c.usaspending_search_name ?? c.name)),
     );
     lookupResults.forEach((result, i) => {
       const client = clientsNeedingLookup[i];
@@ -154,15 +228,54 @@ export async function runMatching(grantId: string, db: DB) {
         const preFilterReason = jsPreFilter(grantRow, client);
         if (preFilterReason) {
           console.log(`Pre-filter skipped ${client.name}: ${preFilterReason}`);
+          await recordAttempt(db, {
+            grant_id: grantId,
+            client_id: client.id,
+            outcome: "prefiltered",
+            prefilter_reason: preFilterReason,
+          });
           return;
         }
         try {
           const usaSpendingContext = usaSpendingMap.get(client.id);
           const match = await matchGrantToClient(grantRow, client, usaSpendingContext);
-          if (!match.suppressed && !match.disqualified && match.fit_score >= 2) {
-            await db.from("review_cards").insert({
-              grant_id: grantId,
-              client_id: client.id,
+          const qualifies =
+            !match.suppressed && !match.disqualified && match.fit_score >= 2;
+          const outcome = match.disqualified
+            ? "disqualified"
+            : match.suppressed
+              ? "suppressed"
+              : qualifies
+                ? "carded"
+                : "below_threshold";
+
+          // Record EVERY attempt -- below_threshold, suppressed, and
+          // disqualified included -- so calibration can see why a client did
+          // not match, not just the ones that became cards.
+          await recordAttempt(db, {
+            grant_id: grantId,
+            client_id: client.id,
+            outcome,
+            fit_score: match.fit_score ?? null,
+            suppressed: match.suppressed ?? false,
+            suppress_reason: match.suppress_reason ?? null,
+            disqualified: match.disqualified ?? false,
+            disqualify_reason: match.disqualify_reason ?? null,
+            result: match,
+          });
+
+          // One card per (grant, client). Look up the existing card first so a
+          // re-match can refresh it, leave a human-decided one alone, OR remove
+          // it when the client no longer qualifies.
+          const { data: existingCard } = await db
+            .from("review_cards")
+            .select("id, decision")
+            .eq("grant_id", grantId)
+            .eq("client_id", client.id)
+            .maybeSingle();
+
+          if (qualifies) {
+            const cardFields = {
               fit_score: match.fit_score,
               proposed_role: match.proposed_role,
               recommended_prime: match.recommended_prime,
@@ -174,11 +287,33 @@ export async function runMatching(grantId: string, db: DB) {
               before_you_approve: match.before_you_approve,
               inferred_fields: match.inferred_fields,
               reasoning_context: match.reasoning_context,
-              decision: "pending",
-            });
+            };
+            if (!existingCard) {
+              await db.from("review_cards").insert({
+                grant_id: grantId,
+                client_id: client.id,
+                ...cardFields,
+                decision: "pending",
+              });
+            } else if (existingCard.decision === "pending") {
+              await db.from("review_cards").update(cardFields).eq("id", existingCard.id);
+            }
+            // else: an admin already decided this card -- leave it untouched.
+          } else if (existingCard && existingCard.decision === "pending") {
+            // Re-score dropped this client below the surface threshold (e.g.
+            // 2 -> 0 under the seat ceiling). It no longer surfaces, so remove
+            // the stale un-acted card. A human-decided card (approved / passed /
+            // hold) is preserved -- never silently erase a GO/NO/HOLD.
+            await db.from("review_cards").delete().eq("id", existingCard.id);
           }
         } catch (err) {
           console.error(`Match error for client ${client.name}:`, err);
+          await recordAttempt(db, {
+            grant_id: grantId,
+            client_id: client.id,
+            outcome: "error",
+            error_detail: String(err instanceof Error ? err.message : err).slice(0, 600),
+          });
         }
       }),
     );

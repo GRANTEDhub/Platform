@@ -37,10 +37,37 @@ export interface Client {
   project_stage: string | null;
   match_cost_share_capacity: string | null;
   federal_grant_history: string | null;
+  // USASpending lookup overrides (migration 0015). search_name: query this
+  // instead of `name` when set. verified: suppress the live lookup and treat
+  // the stored federal_grant_history as authoritative.
+  usaspending_search_name: string | null;
+  federal_history_verified: boolean;
   sam_uei_status: string | null;
   known_constraints: string | null;
+  // Client-specific authoritative matching overrides (editable; read by the
+  // engine and applied before general logic). See migration 0008.
+  matching_rules: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// Stage A (Step 3): the grant's ideal applicant/consortium, constructed from the
+// full NOFO independent of our roster. Multi-archetype: a grant can legitimately
+// support 1-3 distinct prime shapes (county vs nonprofit vs IHE leading from
+// different angles). Clients map onto a SEAT in this profile, and the seat sets
+// the score ceiling.
+export interface ApplicantArchetype {
+  label: string;
+  ideal_prime_shape: string;
+  core_role: string;
+  partner_seats: string[];
+}
+
+export interface IdealApplicantProfile {
+  core_funded_role: string;
+  summary: string;
+  archetypes: ApplicantArchetype[];
+  eligibility_note?: string;
 }
 
 export interface Grant {
@@ -72,10 +99,17 @@ export interface Grant {
   incumbent_risk: string | null;
   subaward_prohibited: boolean | null;
   verification_flags: string[] | null;
+  hard_disqualifiers: string[] | null;
   raw_text: string | null;
   status: string;
   error_detail: string | null;
   is_domestic: boolean;
+  // Step 2: 'full' = parsed from the real program NOFO; 'summary' = API summary
+  // only (with shred_reason explaining why the deep shred wasn't available).
+  shred_depth: "full" | "summary";
+  shred_reason: string | null;
+  // Step 3 / Stage A: the grant's ideal applicant/consortium (multi-archetype).
+  ideal_applicant_profile: IdealApplicantProfile | null;
   ingested_at: string;
 }
 
@@ -92,6 +126,9 @@ export interface ReviewCard {
   concept_synopsis: string | null;
   description_short: string | null;
   draft_outreach_email: string | null;
+  // Human-approved/edited body that will be sent. Separate from the AI draft
+  // above so the original is preserved (see migration 0007).
+  final_outreach_email: string | null;
   outreach_track: string | null;
   before_you_approve: string[] | null;
   inferred_fields: string[] | null;
@@ -105,9 +142,50 @@ export interface ReviewCard {
   } | null;
   decision: CardDecision;
   hold_reason: string | null;
+  // Reason captured when a match is rejected (Pass).
+  decision_reason: string | null;
   decided_by: string | null;
-  created_at: string;
   decided_at: string | null;
+  // Send tracking. Populated by the (not-yet-built) send step.
+  sent_at: string | null;
+  sent_to: string | null;
+}
+
+// One row per (grant, client) scoring attempt — the engine's observability log.
+// review_cards holds only qualifying matches; this holds every outcome.
+export interface MatchAttempt {
+  id: string;
+  grant_id: string | null;
+  client_id: string | null;
+  outcome: "carded" | "below_threshold" | "suppressed" | "disqualified" | "prefiltered" | "error";
+  fit_score: number | null;
+  suppressed: boolean;
+  suppress_reason: string | null;
+  disqualified: boolean;
+  disqualify_reason: string | null;
+  prefilter_reason: string | null;
+  error_detail: string | null;
+  result: Record<string, unknown> | null;
+  created_at: string;
+}
+
+// Append-only analyst QA judgment on a match (the calibration dataset). Keyed on
+// the stable grant+client identity; provenance pointers are nullable so feedback
+// survives re-scores. Snapshots the engine's state at feedback time.
+export interface MatchFeedback {
+  id: string;
+  grant_id: string | null;
+  client_id: string | null;
+  review_card_id: string | null;
+  match_attempt_id: string | null;
+  agree: boolean;
+  corrected_score: number | null;
+  reason: string | null;
+  engine_score: number | null;
+  engine_seat_ref: string | null;
+  engine_reasoning: Record<string, unknown> | null;
+  created_by: string | null;
+  created_at: string;
 }
 
 export interface ClientOverview {

@@ -1,0 +1,11 @@
+-- ╔══════════════════════════════════════════════════════════════════════════╗
+-- ║ Stage A (Step 3): ideal applicant / consortium profile, first-class on grant║
+-- ╚══════════════════════════════════════════════════════════════════════════╝
+-- The grant's ideal applicant -- constructed from the full NOFO, independent of
+-- our roster -- becomes a first-class, auditable field. Multi-archetype: 1-3
+-- valid prime shapes (county vs nonprofit vs IHE leading from different angles).
+-- Clients map onto a SEAT in this profile, and the seat sets the score ceiling
+-- (prime=3, supporting=2, adjacency=1). Stored on the grant because it is
+-- computed once per grant and reused per client (and later by BizDev/prospecting
+-- to find non-client orgs that fit the ideal).
+alter table grants add column if not exists ideal_applicant_profile jsonb;

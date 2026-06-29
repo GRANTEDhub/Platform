@@ -3,7 +3,7 @@
 // + AI Calibration Email Logs compiled by Samantha from Shannon's expert overrides.
 
 import { getAnthropicClient, MODEL } from "@/lib/anthropic";
-import type { Client, Grant } from "@/types/database";
+import type { Client, Grant, IdealApplicantProfile } from "@/types/database";
 
 export interface ExtractedGrant {
   funder: string;
@@ -37,7 +37,15 @@ export interface ExtractedGrant {
 
 export interface MatchResult {
   client_id: string;
-  fit_score: 1 | 2 | 3;
+  fit_score: 0 | 1 | 2 | 3;
+  // Closed-menu seat the client occupies (e.g. "P0", "S0_1", or "NONE"). The
+  // numeric ceiling is derived from this IN CODE -- the model does not pick the
+  // final number.
+  seat_ref: string;
+  // True when the grant STRUCTURALLY requires this client's entity type (the
+  // program is designed to run through this entity class, not merely allows it).
+  // Drives the eligibility floor: a required, seated entity cannot be zeroed.
+  entity_required: boolean;
   proposed_role: string;
   recommended_prime: string | null;
   why_this_org: string[];
@@ -195,72 +203,129 @@ ROUTE LOGIC (failure is not always a full kill):
 - No viable route -> KILL. Do not stretch the narrative.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PHASE 2 -- FIT SCORING (0-3 eligibility spectrum)
+PHASE 2 -- SEAT MAPPING + STRENGTH SCORE (anchored on the grant's ideal applicant)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Score 3: Strong fit. All signals align without stretch AND the card must name a specific differentiator hook -- one of:
-  existing funder relationship, publicly stated institutional need this grant directly fills, recent federal grant history as prime,
-  unique narrative anchor (geography, facility, partnership), OZ/rurality competitive lane advantage.
-  Generic eligibility + topic match alone = Score 2 at best. Never assign Score 3 without naming the hook explicitly in why_this_org.
-Score 2: Conditional fit. Reasonably aligned but needs scope refinement, added partners, or reframing to be competitive.
-Score 1: Weak / adjacent. Technically eligible on paper but not a strong practical match. Awareness only.
-Score 0: Disqualified. Hard eligibility failure. Do not pursue.
+You are GIVEN an IDEAL APPLICANT PROFILE for this grant (in the GRANT block):
+the core funded role, 1-3 valid prime archetypes, and the partner seats each
+archetype implies. It was built from the full NOFO, independent of any client.
+DO NOT re-derive it. Score by mapping the client onto it.
 
-Only create cards for scores 2 and 3.
+NEVER reason from client to grant ("they're eligible, so maybe a 2"). Reason
+from the grant's ideal structure to the client: which SEAT, if any, does this
+client genuinely occupy? The seat is the OUTPUT of the mapping; the score is the
+STRENGTH of that placement. If no profile was provided, score conservatively and
+do not invent prime fit.
+
+STAGE B -- MAP THE CLIENT TO A SEAT (this determines proposed_role):
+- Prime: the client IS one of the ideal prime archetypes -- it performs the core
+  funded role as its natural function, not merely "eligible to apply."
+- Co-Applicant / Partner: the client genuinely fills a named partner seat the
+  profile implies (e.g. the research-university anchor, an employer partner).
+- Sub / Named Collaborator: real but peripheral participation.
+- Facilitator: not in the structure, but has a documented relationship with an
+  org that should prime (see INTRODUCTION VEHICLE RULE).
+- None: not in the picture at all.
+A client technically eligible to prime but NOT matching an ideal prime archetype
+maps to its real seat (partner/sub) or to None -- never anointed Prime for
+eligibility alone.
+
+STAGE C -- SCORE = SEAT (ceiling) x STRENGTH. Score by SEAT OCCUPANCY, NEVER by
+competitive comparison. Do NOT ask "is there a stronger applicant?" -- there is
+ALWAYS a stronger applicant somewhere (a state agency, a flagship university),
+and it is IRRELEVANT. The only question is which seat THIS client occupies.
+Comparing the client against hypothetical or real stronger entities is forbidden:
+it ceilings everyone at 2 and is the exact error to avoid.
+
+- 3 -- The client OCCUPIES a prime archetype seat (performs the core funded role
+  as its natural function) AND the fit is clean and strong. Occupancy, not
+  superiority: a genuine prime-seat occupant that fits strongly is a 3 EVEN IF
+  other strong primes also exist. Do not withhold 3 because some other entity
+  could also lead.
+- 2 -- The client occupies a real SUPPORTING seat from the menu with strong fit;
+  OR it occupies a prime seat but the fit is conditional (regional not statewide,
+  needs a partner, scope refinement).
+- 1 -- The client occupies a real seat but only weakly / peripherally -- a
+  genuine toehold with marginal strength.
+- 0 -- NO genuine seat: topical/mission adjacency only, or not eligible. If you
+  describe the client as "implementation anchor only," a "delivery partner" on a
+  coordination grant, "adjacent," or "not the coordinator/convener," that is a
+  NO-SEAT finding -> seat_ref = NONE -> score 0. It does NOT surface. This is the
+  correct, expected outcome for most clients; surfacing a no-seat client wastes
+  reviewer time and is a costly error.
+
+NO-SEAT IS 0 -- never 1, never 2. A 1 or 2 REQUIRES occupying a real seat from
+the menu. Adjacency with no genuine seat is 0, no matter how topically related.
+
+ELIGIBILITY FLOOR (do not zero out a required, seated entity):
+Set entity_required = true when the grant STRUCTURALLY requires this client's
+entity TYPE -- the program is designed to run through this entity class (e.g. an
+IHE for a program that must be led/anchored by a university), not merely lists it
+among many allowed types. When entity_required is true AND the menu contains a
+seat for that entity class, you MUST map the client to that seat -- NOT NONE. A
+narrow or conditional fit (e.g. "their AI work is health-specific, not
+general-purpose") CAPS the score (1 or 2); it does NOT zero an eligible, seated
+entity. Do NOT apply "eligibility is a spectrum" in reverse to drop a required,
+seated entity to 0 on a soft fit concern -- the next narrow-but-eligible entity
+on another grant would be wrongly zeroed the same way. State the floor in
+reasoning_context when it applies ("entity-eligibility floor: required <type>,
+seated at <seat>, capped at N for <concern>"). NONE/0 remains correct only for a
+client with NO eligible role in the architecture at all.
+
+BEFORE SCORING: choose seat_ref from the SEAT MENU (in the GRANT block) -- the
+single menu id of the seat this client genuinely occupies, or NONE. The numeric
+ceiling is ENFORCED IN CODE from your seat_ref: PRIME -> max 3, SUPPORTING ->
+max 2, NONE -> 0. You cannot score above it, so choose honestly. Your fit_score
+is strength WITHIN the seat (a conditional prime fit is 2 not 3; a weak occupancy
+is 1). Record the chosen seat and the gating factor in reasoning_context.
+
+STRENGTH is a composite; factor 1 sets the CEILING, factors 2-6 decide placement
+within it (it is NOT an average):
+1. SEAT (ceiling): prime seat -> ceiling 3; genuine supporting seat -> ceiling 2;
+   adjacency only -> ceiling 1; no seat -> 0. Dominant factor.
+2. Eligibility cleanliness -- TWO filters: (a) entity type eligible AND (b)
+   program scope/purpose aligned. Broad eligibility lists create false positives;
+   clearing entity type is necessary, not sufficient. Topical adjacency != fit.
+3. Geographic fit -- RUCC/rural eligibility, service area, place-based rules
+   (RUCC 2 metro auto-fails rural-designated programs).
+4. Program history / track record -- prior awards, incumbency, past performance
+   on the relevant mechanism (prime vs sub history is distinct).
+5. Match / cost-share feasibility for THIS client -- a real disqualifier even
+   when eligible; small-budget, match-sensitive clients fail high-match programs.
+6. Population / mission alignment -- does the served population and mission
+   genuinely fit the program intent.
+
+Populate reasoning_context with the per-factor rationale: name the seat, and the
+factor that gated or set the score.
+
+Only create cards for scores 2 and 3. A 1 is awareness only; a 0 never surfaces.
 
 INTRODUCTION VEHICLE RULE:
-When an active client cannot or should not prime an opportunity, but has a documented relationship with an org that should,
-the client is still valuable as an INTRODUCTION VEHICLE. Do not kill the card -- surface it with proposed_role = "Facilitator"
-and concept_synopsis describing the warm intro play. The outreach goes THROUGH the client, not directly to the prospect.
-This keeps the client relationship active and value-generating while the introduction is happening off-application.
-Flag this explicitly in draft_outreach_email: the email goes to the client, asking them to connect GRANTED to the prospect.
+When an active client has no seat itself but has a documented relationship with
+an org that SHOULD prime, surface proposed_role = "Facilitator" with a
+concept_synopsis describing the warm-intro play; outreach goes THROUGH the
+client. Score on the value of the introduction, not a forced application fit.
 
-POSITIVE FIT SIGNALS (boosters -- cite when present):
-BOOST: Prior award lifecycle advancement -- org received a planning grant and this is the implementation phase. FRA, DOT, and EPA explicitly reward this. Flag as strong competitive advantage.
-BOOST: State strategy alignment -- project maps to a named state plan (e.g., ANRS Tier 1/2, state hazard mitigation plan). Program offices reward this explicitly.
-BOOST: Existing stakeholder relationships that the program model requires (farmer networks, drug court MOUs, producer networks). Pre-built trust cannot be created in 6 weeks.
-BOOST: Federal grant history as prime (not subrecipient) -- verify on USASpending. This directly feeds past performance scoring.
-BOOST: Wide rural footprint (41+ counties) -- strong rurality eligibility signal for statewide rural programs.
-BOOST: AI/technology component capacity (sensors, ML, UAV) -- targets high-point innovative technology criteria.
-BOOST: Pass-through / partner awareness value -- score high even when client is not the prime. Regional planning orgs (NWA Council) derive value from surfacing opportunities to eligible partners.
+STRENGTH SIGNALS (cite when present; they move placement WITHIN the seat ceiling,
+they do NOT change the seat):
+BOOST: prior award lifecycle advancement (planning -> implementation; FRA/DOT/EPA
+  reward this); named state-plan alignment; pre-existing stakeholder networks the
+  program model requires; federal grant history as prime (verify USASpending);
+  wide rural footprint for statewide rural programs; required tech/AI capacity.
+FLAG: no prime-level federal history (past-performance gap); no QA/QAPP capacity
+  where required; SAM.gov expiring < 60 days; reimbursement burden without cash
+  flow; anti-government posture; pre-2025 NOFO (monitor for reissuance); no
+  existing stakeholder network where the model requires one.
 
-NEGATIVE SIGNALS (risk flags -- penalize score, always cite):
-FLAG: No federal grant history at prime level -- past performance scoring gap. Recommend experienced co-applicant or alternative prime. Verify on USASpending before advancing.
-FLAG: No QA/QAPP capacity -- required for awards over $200K with environmental data collection. Disqualifies at award stage. Universities have this built in; nonprofits usually do not.
-FLAG: SAM.gov expiring within 60 days -- active registration required for all federal applications.
-FLAG: Reimbursement burden without confirmed cash flow -- client must front costs; confirm before advancing.
-FLAG: Anti-government posture -- trade orgs publicly resisting federal intervention are risky as named federal grant partners.
-FLAG: Pre-January 2025 NOFO -- may not have been reissued. Flag as "monitor for reissuance" rather than treating as active.
-FLAG: No existing stakeholder network -- mentorship/partnership models require pre-existing trust.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PHASE 3 -- ROLE ASSIGNMENT (6-tier taxonomy, never leave ambiguous)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Assign exactly one role per organization:
-- Prime: submits application, holds award, responsible for all compliance. Must have federal grant history.
-- Co-Applicant: joint applicant, adds geography/credentials/capacity the prime lacks.
-- Subrecipient: receives pass-through funds from prime; named in application with defined SOW and budget.
-- Named Collaborator (non-recipient): no funds received; named for technical credibility. Federal agencies live here.
-- Letter of Support: no funds, endorsement only. State administrators, orgs with conflict risk live here.
-- Facilitator (off-application): not named. Introductions only. For-profits and ineligible entities live here.
-
-HARD ROLE RULES:
-- For-profit entities: Facilitator or Named Collaborator ONLY. NEVER Prime, Co-Applicant, or Subrecipient.
-- Federal agencies: Named Collaborator ONLY. Cannot receive funds under any grant structure.
-- Award over $500K + no federal grant history at prime level: require experienced co-applicant before advancing.
-- If prime has subrecipient-only history: flag as past performance scoring risk. Distinguish prime vs. sub history.
-
-PRIME SELECTION LOGIC:
-- Prime's HQ or primary operations should be physically in the eligible region.
-- Federal grant history as prime (not subrecipient): verify on USASpending before recommending.
-- QA/QAPP capacity: universities have this built in; nonprofits usually do not.
-- NIFA/land-grant NOFOs: flag UA Division of Agriculture as default prime candidate.
-- If recommended prime has conflict of interest (e.g., state administrator): route to letter of support.
-
-CONSORTIUM COMPLETENESS CHECK:
-Map each proposed partner to a scoring criterion. Any criterion worth 20+ points with no partner coverage = incomplete team.
-Flag gaps: Who covers innovative technology? Who produces quantitative monitoring data? Who recruits required program participants? Who provides federal grant track record as prime?
+ROLE VOCABULARY (proposed_role): Prime | Co-Applicant | Sub | Named Collaborator
+| Letter of Support | Facilitator | Not Recommended.
+HARD ROLE RULES (override the mapping):
+- For-profit entities: Facilitator or Named Collaborator ONLY. NEVER Prime,
+  Co-Applicant, or Subrecipient.
+- Federal agencies: Named Collaborator ONLY.
+- A client that maps to Prime but lacks prime-level federal history on a large
+  award: flag the past-performance risk and recommend an experienced
+  co-applicant -- a strength penalty that often drops a would-be 3 to a 2.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PHASE 4 -- OUTREACH SEQUENCING
@@ -306,15 +371,14 @@ STOP: County governments -- quorum court must approve match commitments; flag de
 CLIENT-SPECIFIC RULES (CRITICAL -- these override general logic)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- Mississippi County: Galactic Air is for-profit -- NEVER a recipient or subrecipient under any circumstances.
-- Saline County: County owns no street lights/sidewalks/gutters. SS4A = planning only, never implementation.
-- UAMS NorthWest: Benton/Washington County = RUCC 2 metro only. Cannot prime major federal programs independently of UAMS Little Rock.
-- Community Clinic: RUCC 2 metro. Prefers no match requirement. Strong FQHC partner for academic research.
-- NWA Council: ARC POWER = hard cut (Arkansas not eligible). WFF coordination required. Score pass-through/partner awareness high even when NWAC is not the prime.
-- studioDRIFT: for-profit. Cannot be prime, co-applicant, or subrecipient in federal grants. SBIR/STTR only.
-- EverHope: budget approximately $500K; high match/cost-share sensitivity; no DV shelter licensure.
-- Harbor House: capital-focused ONLY. No program-only grants.
-- NWACC: Kim Syverson is the primary gating contact. Flag for her review before advancing.
+Client-specific rules are NOT hardcoded here. Each client carries its own
+authoritative overrides in the "Matching Rules" field of its profile, supplied
+in the CLIENT block below. Treat any rule in that field as authoritative: apply
+it BEFORE the general logic above, and let it override a general conclusion
+wherever the two conflict. An override can both rule a client OUT (a constraint
+the general logic would miss) and clear a client IN (e.g. "natural prime on
+workforce awards" overriding a general research-only ceiling). If the field is
+empty or "None", apply the general logic only.
 
 Return a JSON object with this exact schema:
 {
@@ -348,12 +412,14 @@ export async function extractGrantData(rawText: string): Promise<ExtractedGrant>
 
   const response = await client.messages.create({
     model: MODEL,
-    max_tokens: 2000,
+    // Higher ceiling + larger input window: real NOFOs run 100K+ chars and a
+    // full scoring rubric is sizable output. Too low truncates the rubric.
+    max_tokens: 4000,
     system: EXTRACTION_SYSTEM_PROMPT,
     messages: [
       {
         role: "user",
-        content: `Extract structured grant data from the following text. Return only valid JSON, no other text.\n\n${rawText.slice(0, 50000)}`,
+        content: `Extract structured grant data from the following text. Return only valid JSON, no other text.\n\n${rawText.slice(0, 120000)}`,
       },
     ],
   });
@@ -365,12 +431,128 @@ export async function extractGrantData(rawText: string): Promise<ExtractedGrant>
   return JSON.parse(jsonMatch[0]) as ExtractedGrant;
 }
 
+// ─── Stage A (Step 3): Ideal Applicant / Consortium Profile ──────────────────
+// Constructed from the full NOFO, anchored on the grant, independent of our
+// roster. Multi-archetype (1-3 prime shapes). Clients later map onto a seat in
+// this profile, and the seat sets the score ceiling. This is what stops the
+// engine reaching from client to grant ("eligible, so a 2?") and instead makes
+// clients earn their way onto the grant's ideal structure.
+const IDEAL_PROFILE_SYSTEM_PROMPT = `You construct the IDEAL APPLICANT / CONSORTIUM PROFILE for a U.S. federal grant, for GRANTED, a domestic grant consulting firm. Anchor entirely on the GRANT, never on any client.
+
+Derive the profile from the NOFO's SUBSTANCE -- the funded activities, the review/scoring criteria, and the program design -- NOT from the eligibility list. Eligibility is a weak, downweighted input: "allows nonprofits" does NOT make a nonprofit the ideal applicant.
+
+Produce:
+- core_funded_role: the central activity the money actually pays for. One phrase (e.g. "regional coordination / backbone", "direct service delivery", "applied research", "capital construction"). This is the gate the whole downstream score hangs on.
+- summary: 1-2 sentences on who this grant is built for.
+- archetypes: 1 to 3 DISTINCT valid prime shapes. Output more than one ONLY when the grant legitimately supports different entity types priming from different angles (e.g. a county, a nonprofit, OR an IHE each leading a different version). Each archetype:
+  - label: short name of the prime shape (e.g. "Regional coordination backbone")
+  - ideal_prime_shape: what kind of entity is BUILT to lead this angle, by natural function (not "who is eligible")
+  - core_role: the funded role this archetype's prime performs
+  - partner_seats: enumerate the COMPLETE working consortium this prime implies,
+    not just the headline partner. Cover every functional role the program needs:
+    a domain/sector TECHNICAL partner for EACH sector the program spans (name them
+    explicitly -- e.g. a clinical/health-AI technical partner, an education
+    partner, a workforce/employer partner), regional sub-coordinators or
+    implementation nodes under a statewide/national backbone, and a
+    data/evaluation partner. A real but narrow specialist (e.g. a health-focused
+    IHE on a cross-sector program) still has a seat -- the sector-technical seat --
+    so list it. Be specific; do not collapse distinct seats into one generic
+    "partner" line.
+- eligibility_note: brief note on the stated eligibility, explicitly secondary.
+
+Be concrete and grant-specific. Do not use em dashes. Return via the submit_profile tool.`;
+
+export async function constructIdealApplicantProfile(
+  nofoText: string,
+): Promise<IdealApplicantProfile> {
+  const anthropic = getAnthropicClient();
+  const response = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 3000,
+    temperature: 0,
+    system: IDEAL_PROFILE_SYSTEM_PROMPT,
+    tools: [
+      {
+        name: "submit_profile",
+        description: "Return the grant's ideal applicant/consortium profile. Call exactly once.",
+        input_schema: {
+          type: "object",
+          properties: {
+            core_funded_role: { type: "string" },
+            summary: { type: "string" },
+            archetypes: {
+              type: "array",
+              minItems: 1,
+              maxItems: 3,
+              items: {
+                type: "object",
+                properties: {
+                  label: { type: "string" },
+                  ideal_prime_shape: { type: "string" },
+                  core_role: { type: "string" },
+                  partner_seats: { type: "array", items: { type: "string" } },
+                },
+                required: ["label", "ideal_prime_shape", "core_role", "partner_seats"],
+              },
+            },
+            eligibility_note: { type: "string" },
+          },
+          required: ["core_funded_role", "summary", "archetypes"],
+        },
+      },
+    ],
+    tool_choice: { type: "tool", name: "submit_profile" },
+    messages: [
+      {
+        role: "user",
+        content: `Construct the ideal applicant/consortium profile from this NOFO.\n\n${nofoText.slice(0, 120000)}`,
+      },
+    ],
+  });
+
+  if (response.stop_reason === "max_tokens") {
+    throw new Error("Ideal-profile response truncated at max_tokens");
+  }
+  const toolUse = response.content.find((b) => b.type === "tool_use");
+  if (!toolUse || toolUse.type !== "tool_use") {
+    throw new Error("Claude did not return a structured ideal applicant profile");
+  }
+  return toolUse.input as IdealApplicantProfile;
+}
+
+// Build a closed menu of the seats a client may occupy, from the grant's ideal
+// applicant profile. The model picks exactly one id (seat_ref); the score
+// ceiling is derived from the seat TYPE in code -- prime -> 3, partner -> 2,
+// NONE/invalid -> 0. A closed menu stops the model inventing a flattering seat.
+function buildSeatMenu(
+  profile: IdealApplicantProfile | null,
+): { menu: string; seats: Map<string, "prime" | "partner"> } {
+  const seats = new Map<string, "prime" | "partner">();
+  if (!profile || !Array.isArray(profile.archetypes) || profile.archetypes.length === 0) {
+    return { menu: "No profile available -- no seats exist. seat_ref must be NONE.", seats };
+  }
+  const lines: string[] = [];
+  profile.archetypes.forEach((a, i) => {
+    const pid = `P${i}`;
+    seats.set(pid, "prime");
+    lines.push(`${pid} = PRIME seat -- "${a.label}": performs the core funded role (${a.core_role}).`);
+    (a.partner_seats || []).forEach((s, j) => {
+      const sid = `S${i}_${j}`;
+      seats.set(sid, "partner");
+      lines.push(`${sid} = SUPPORTING seat under "${a.label}": ${s}`);
+    });
+  });
+  lines.push("NONE = the client occupies NONE of the above (topical adjacency only / not in this consortium).");
+  return { menu: lines.join("\n"), seats };
+}
+
 export async function matchGrantToClient(
   grant: Grant,
   client: Client,
   usaSpendingContext?: string
 ): Promise<MatchResult> {
   const anthropic = getAnthropicClient();
+  const { menu: seatMenu, seats: seatTable } = buildSeatMenu(grant.ideal_applicant_profile);
 
   const grantContext = `GRANT:
 Title: ${grant.title}
@@ -389,7 +571,18 @@ Program Type: ${(grant as Grant & { program_type?: string }).program_type || "Un
 Subaward Prohibited: ${(grant as Grant & { subaward_prohibited?: boolean }).subaward_prohibited ? "YES -- single-applicant model only" : "No"}
 Scoring Criteria (High Value): ${((grant as Grant & { scoring_criteria_high_value?: string[] }).scoring_criteria_high_value || []).join("; ")}
 Technical Burden Flags: ${((grant as Grant & { technical_burden_flags?: string[] }).technical_burden_flags || []).join("; ")}
-Incumbent Risk: ${(grant as Grant & { incumbent_risk?: string }).incumbent_risk || "None noted"}`;
+Incumbent Risk: ${(grant as Grant & { incumbent_risk?: string }).incumbent_risk || "None noted"}
+
+IDEAL APPLICANT PROFILE (constructed from the full NOFO -- map the client onto THIS):
+${grant.ideal_applicant_profile ? JSON.stringify(grant.ideal_applicant_profile, null, 2) : "Not constructed (no full NOFO). Score conservatively; do not assume a prime seat."}
+
+SEAT MENU -- the client occupies exactly ONE of these. Return its id as seat_ref.
+Pick NONE unless the client GENUINELY occupies a listed seat; NONE is the correct,
+expected answer for most clients and is NOT a failure. A regional entity does not
+occupy a STATEWIDE prime seat just because it is the same entity type -- it takes
+the supporting seat. Honor the client's Matching Rules. Do not pick a seat the
+client does not truly fill in order to lift the score.
+${seatMenu}`;
 
   const clientContext = `CLIENT:
 Name: ${client.name}
@@ -404,26 +597,131 @@ Project Stage: ${client.project_stage || "Unknown"}
 Match/Cost Share Capacity: ${client.match_cost_share_capacity || "Unknown"}
 Federal Grant History: ${usaSpendingContext || client.federal_grant_history || "Unknown -- USASpending not checked"}
 SAM/UEI Status: ${client.sam_uei_status || "Unknown"}
-Known Constraints: ${client.known_constraints || "None noted"}`;
+Known Constraints: ${client.known_constraints || "None noted"}
+Matching Rules (AUTHORITATIVE OVERRIDES -- apply before general logic): ${client.matching_rules || "None"}`;
 
+  // Force structured output via a tool call so parsing is not a regex gamble:
+  // the model must return the schema as the tool input, which arrives already
+  // parsed. max_tokens is generous so a rich, high-fit match (full draft email
+  // + six reasoning paragraphs) can finish; truncation is surfaced explicitly
+  // below rather than silently producing unparseable output.
   const response = await anthropic.messages.create({
     model: MODEL,
-    max_tokens: 2500,
+    max_tokens: 8000,
+    // Low temperature for stable scoring: borderline 2-vs-3 calls must not
+    // flip run to run. Stability is the prerequisite for calibration; the
+    // rubric boundary itself is tuned separately.
+    temperature: 0,
     system: MATCHING_SYSTEM_PROMPT,
+    tools: [
+      {
+        name: "submit_match",
+        description:
+          "Return the structured grant-client match evaluation. Call this tool exactly once.",
+        input_schema: {
+          type: "object",
+          properties: {
+            seat_ref: { type: "string" },
+            entity_required: { type: "boolean" },
+            fit_score: { type: "integer", enum: [0, 1, 2, 3] },
+            proposed_role: { type: "string" },
+            recommended_prime: { type: ["string", "null"] },
+            why_this_org: { type: "array", items: { type: "string" } },
+            concept_synopsis: { type: "string" },
+            description_short: { type: "string" },
+            draft_outreach_email: { type: "string" },
+            outreach_track: { type: "string", enum: ["Track 1", "Track 2"] },
+            before_you_approve: { type: "array", items: { type: "string" } },
+            inferred_fields: { type: "array", items: { type: "string" } },
+            reasoning_context: {
+              type: "object",
+              properties: {
+                eligibility_analysis: { type: "string" },
+                fit_score_derivation: { type: "string" },
+                role_assignment_logic: { type: "string" },
+                consortium_rationale: { type: "string" },
+                concept_derivation: { type: "string" },
+                why_not_others: { type: "string" },
+              },
+              required: [
+                "eligibility_analysis",
+                "fit_score_derivation",
+                "role_assignment_logic",
+                "consortium_rationale",
+                "concept_derivation",
+                "why_not_others",
+              ],
+            },
+            suppressed: { type: "boolean" },
+            suppress_reason: { type: ["string", "null"] },
+            disqualified: { type: "boolean" },
+            disqualify_reason: { type: ["string", "null"] },
+          },
+          required: [
+            "seat_ref",
+            "entity_required",
+            "fit_score",
+            "proposed_role",
+            "why_this_org",
+            "concept_synopsis",
+            "description_short",
+            "draft_outreach_email",
+            "outreach_track",
+            "before_you_approve",
+            "inferred_fields",
+            "reasoning_context",
+            "suppressed",
+            "disqualified",
+          ],
+        },
+      },
+    ],
+    tool_choice: { type: "tool", name: "submit_match" },
     messages: [
       {
         role: "user",
-        content: `Evaluate this grant-client match. Return only valid JSON, no other text.\n\n${grantContext}\n\n${clientContext}`,
+        content: `Evaluate this grant-client match.\n\n${grantContext}\n\n${clientContext}`,
       },
     ],
   });
 
-  const text = response.content[0].type === "text" ? response.content[0].text : "";
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error(`Claude did not return valid JSON for client ${client.name}`);
+  // Truncation must never again masquerade as "bad JSON" -- surface it explicitly.
+  if (response.stop_reason === "max_tokens") {
+    throw new Error(
+      `Match response truncated at max_tokens for client ${client.name} -- raise max_tokens`,
+    );
+  }
 
-  const result = JSON.parse(jsonMatch[0]) as MatchResult;
+  const toolUse = response.content.find((b) => b.type === "tool_use");
+  if (!toolUse || toolUse.type !== "tool_use") {
+    throw new Error(
+      `Claude did not return a structured match for client ${client.name}`,
+    );
+  }
+
+  const result = toolUse.input as MatchResult;
   result.client_id = client.id;
+
+  // Enforce the seat -> ceiling IN CODE. The model picks a seat from the closed
+  // menu (seat_ref) and a raw strength read; the final score is the strength
+  // capped by the seat's ceiling. A no-seat / invalid ref (NONE) is a hard 0 --
+  // this is the gate the prose-only instruction could never bind. The model
+  // does not get to free-form the number above its seat.
+  const rawScore = typeof result.fit_score === "number" ? result.fit_score : 0;
+  if (grant.ideal_applicant_profile) {
+    const seatType = seatTable.get(result.seat_ref ?? "");
+    const ceiling = seatType === "prime" ? 3 : seatType === "partner" ? 2 : 0;
+    let score = Math.min(rawScore, ceiling);
+    // Eligibility floor (backstop): a structurally-required entity type must
+    // surface for review -- a soft fit concern caps but never zeros it. If the
+    // model still NONE'd a required entity, floor to 1 so it does not silently
+    // disappear (a false 0 is the worst outcome; the QA layer catches a false 1).
+    if (result.entity_required && score === 0) score = 1;
+    result.fit_score = score as 0 | 1 | 2 | 3;
+  } else {
+    // No profile to anchor seats: cannot verify a prime seat, so cap at 2.
+    result.fit_score = Math.min(rawScore, 2) as 0 | 1 | 2 | 3;
+  }
   return result;
 }
 
@@ -454,7 +752,11 @@ export function jsPreFilter(
   }
 
   // For-profit clients can never be recipients in federal grants
-  if (client.org_type === "Small Business" || client.org_type === "small_business") {
+  if (
+    client.org_type === "Small Business" ||
+    client.org_type === "small_business" ||
+    client.org_type === "for_profit"
+  ) {
     const allowsSmallBusiness = eligibleTypes.some(
       (t) => t.includes("small business") || t.includes("for-profit") || t.includes("unrestricted")
     );
@@ -470,6 +772,10 @@ export function jsPreFilter(
       nonprofit: ["nonprofit", "501(c)(3)", "501c3", "non-profit", "private nonprofit"],
       local_government: ["county", "local government", "municipal", "city or township", "special district"],
       small_business: ["small business", "for-profit", "profit organization"],
+      for_profit: ["small business", "for-profit", "profit organization"],
+      higher_education: ["higher education", "university", "college", "community college", "institutions of higher", "institution of higher", "ihe"],
+      fqhc: ["nonprofit", "501(c)(3)", "501c3", "non-profit", "private nonprofit"],
+      transit_authority: ["county", "local government", "municipal", "city or township", "special district"],
       // Legacy / descriptive labels (kept for back-compat with richer profiles)
       "County Government": ["county", "local government", "municipal", "city or township"],
       "Nonprofit 501c3": ["nonprofit", "501(c)(3)", "501c3", "non-profit", "private nonprofit"],
@@ -608,7 +914,7 @@ export function extractSimplerGovOpportunityId(url: string): string | null {
 // Fetch a single opportunity from the Simpler.gov API and map to ExtractedGrant
 export async function fetchFromSimplerGovAPI(
   opportunityId: string
-): Promise<{ extracted: ExtractedGrant; rawJson: string }> {
+): Promise<{ extracted: ExtractedGrant; rawJson: string; detail: Record<string, unknown> }> {
   const apiKey = process.env.SIMPLER_GOV_API_KEY;
   if (!apiKey) throw new Error("Missing SIMPLER_GOV_API_KEY env var");
 
@@ -684,7 +990,9 @@ export async function fetchFromSimplerGovAPI(
       ],
     };
 
-    return { extracted, rawJson: JSON.stringify(json, null, 2) };
+    // Return the parsed opportunity too, so the NOFO-deepening step (Step 2)
+    // can harvest attachments / competition instructions / additional_info_url.
+    return { extracted, rawJson: JSON.stringify(json, null, 2), detail: opp as Record<string, unknown> };
   } finally {
     clearTimeout(timeout);
   }

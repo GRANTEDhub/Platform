@@ -1,21 +1,28 @@
 import { requireUser } from "@/lib/auth";
 import { Sidebar, type NavItem } from "@/components/layout/sidebar";
 
-// Admins see everything. Contractors are scoped to grant work only —
-// no clients, time, invoices, or settings.
+// Admins see the full firm. Contractors are scoped to grant work only -- no
+// clients, time, invoices, contracts, sales, or settings.
+//
+// The nav is the admin dashboard's frame: it intentionally holds every module
+// the firm runs on -- matching, grant intel, CRM, time, invoicing, contracts,
+// and sales -- even where a module is still a placeholder. We fill rooms in one
+// at a time; the house is framed for all of them from the start.
 const ADMIN_NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: "dashboard" },
-  { href: "/clients", label: "Clients", icon: "clients" },
+  { href: "/matching", label: "Matching / Alerts", icon: "matching" },
   { href: "/grants", label: "Grant Intel", icon: "grants" },
-  { href: "/review", label: "Review Queue", icon: "review" },
+  { href: "/clients", label: "Clients", icon: "clients" },
   { href: "/time", label: "Time", icon: "time" },
   { href: "/invoices", label: "Invoices", icon: "invoices" },
+  { href: "/contracts", label: "Contracts", icon: "contracts" },
+  { href: "/sales", label: "Sales", icon: "sales" },
   { href: "/settings", label: "Settings", icon: "settings" },
 ];
 
 const CONTRACTOR_NAV: NavItem[] = [
   { href: "/grants", label: "Grant Intel", icon: "grants" },
-  { href: "/review", label: "Review Queue", icon: "review" },
+  { href: "/matching", label: "Matching / Alerts", icon: "matching" },
 ];
 
 export default async function AppLayout({
