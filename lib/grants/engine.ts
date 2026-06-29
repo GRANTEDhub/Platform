@@ -37,7 +37,7 @@ export interface ExtractedGrant {
 
 export interface MatchResult {
   client_id: string;
-  fit_score: 1 | 2 | 3;
+  fit_score: 0 | 1 | 2 | 3;
   proposed_role: string;
   recommended_prime: string | null;
   why_this_org: string[];
@@ -195,72 +195,96 @@ ROUTE LOGIC (failure is not always a full kill):
 - No viable route -> KILL. Do not stretch the narrative.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PHASE 2 -- FIT SCORING (0-3 eligibility spectrum)
+PHASE 2 -- SEAT MAPPING + STRENGTH SCORE (anchored on the grant's ideal applicant)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Score 3: Strong fit. All signals align without stretch AND the card must name a specific differentiator hook -- one of:
-  existing funder relationship, publicly stated institutional need this grant directly fills, recent federal grant history as prime,
-  unique narrative anchor (geography, facility, partnership), OZ/rurality competitive lane advantage.
-  Generic eligibility + topic match alone = Score 2 at best. Never assign Score 3 without naming the hook explicitly in why_this_org.
-Score 2: Conditional fit. Reasonably aligned but needs scope refinement, added partners, or reframing to be competitive.
-Score 1: Weak / adjacent. Technically eligible on paper but not a strong practical match. Awareness only.
-Score 0: Disqualified. Hard eligibility failure. Do not pursue.
+You are GIVEN an IDEAL APPLICANT PROFILE for this grant (in the GRANT block):
+the core funded role, 1-3 valid prime archetypes, and the partner seats each
+archetype implies. It was built from the full NOFO, independent of any client.
+DO NOT re-derive it. Score by mapping the client onto it.
 
-Only create cards for scores 2 and 3.
+NEVER reason from client to grant ("they're eligible, so maybe a 2"). Reason
+from the grant's ideal structure to the client: which SEAT, if any, does this
+client genuinely occupy? The seat is the OUTPUT of the mapping; the score is the
+STRENGTH of that placement. If no profile was provided, score conservatively and
+do not invent prime fit.
+
+STAGE B -- MAP THE CLIENT TO A SEAT (this determines proposed_role):
+- Prime: the client IS one of the ideal prime archetypes -- it performs the core
+  funded role as its natural function, not merely "eligible to apply."
+- Co-Applicant / Partner: the client genuinely fills a named partner seat the
+  profile implies (e.g. the research-university anchor, an employer partner).
+- Sub / Named Collaborator: real but peripheral participation.
+- Facilitator: not in the structure, but has a documented relationship with an
+  org that should prime (see INTRODUCTION VEHICLE RULE).
+- None: not in the picture at all.
+A client technically eligible to prime but NOT matching an ideal prime archetype
+maps to its real seat (partner/sub) or to None -- never anointed Prime for
+eligibility alone.
+
+STAGE C -- SCORE = SEAT (ceiling) x STRENGTH (placement within the ceiling):
+- 3 -- Strong fit AND prime seat. Maps to an ideal prime archetype AND the fit is
+  clean and strong. Reserve 3 for "this grant was practically written for them to
+  lead." BOTH required: a strong fit that cannot lead is not a 3.
+- 2 -- Strong fit, non-prime seat. Genuinely strong, but the client occupies a
+  real supporting seat (co-applicant/partner/vendor); the prime belongs to a
+  different archetype. Also: a prime-eligible client whose fit carries a real
+  condition (needs scope refinement, a partner, or reframing).
+- 1 -- Weak / marginal. Eligible, possibly even prime-eligible, but only topical
+  adjacency with NO genuine seat in the ideal consortium. Awareness only.
+- 0 -- No seat / not eligible. Never surfaces.
+
+The line between 2 and 1 is GENUINE CONSORTIUM SEAT vs MERE ADJACENCY -- not
+whether the client performs the core funded role. A real partner seat is a 2;
+working in the topic area with no seat is a 1, even if prime-eligible.
+
+STRENGTH is a composite; factor 1 sets the CEILING, factors 2-6 decide placement
+within it (it is NOT an average):
+1. SEAT (ceiling): prime seat -> ceiling 3; genuine supporting seat -> ceiling 2;
+   adjacency only -> ceiling 1; no seat -> 0. Dominant factor.
+2. Eligibility cleanliness -- TWO filters: (a) entity type eligible AND (b)
+   program scope/purpose aligned. Broad eligibility lists create false positives;
+   clearing entity type is necessary, not sufficient. Topical adjacency != fit.
+3. Geographic fit -- RUCC/rural eligibility, service area, place-based rules
+   (RUCC 2 metro auto-fails rural-designated programs).
+4. Program history / track record -- prior awards, incumbency, past performance
+   on the relevant mechanism (prime vs sub history is distinct).
+5. Match / cost-share feasibility for THIS client -- a real disqualifier even
+   when eligible; small-budget, match-sensitive clients fail high-match programs.
+6. Population / mission alignment -- does the served population and mission
+   genuinely fit the program intent.
+
+Populate reasoning_context with the per-factor rationale: name the seat, and the
+factor that gated or set the score.
+
+Only create cards for scores 2 and 3. A 1 is awareness only; a 0 never surfaces.
 
 INTRODUCTION VEHICLE RULE:
-When an active client cannot or should not prime an opportunity, but has a documented relationship with an org that should,
-the client is still valuable as an INTRODUCTION VEHICLE. Do not kill the card -- surface it with proposed_role = "Facilitator"
-and concept_synopsis describing the warm intro play. The outreach goes THROUGH the client, not directly to the prospect.
-This keeps the client relationship active and value-generating while the introduction is happening off-application.
-Flag this explicitly in draft_outreach_email: the email goes to the client, asking them to connect GRANTED to the prospect.
+When an active client has no seat itself but has a documented relationship with
+an org that SHOULD prime, surface proposed_role = "Facilitator" with a
+concept_synopsis describing the warm-intro play; outreach goes THROUGH the
+client. Score on the value of the introduction, not a forced application fit.
 
-POSITIVE FIT SIGNALS (boosters -- cite when present):
-BOOST: Prior award lifecycle advancement -- org received a planning grant and this is the implementation phase. FRA, DOT, and EPA explicitly reward this. Flag as strong competitive advantage.
-BOOST: State strategy alignment -- project maps to a named state plan (e.g., ANRS Tier 1/2, state hazard mitigation plan). Program offices reward this explicitly.
-BOOST: Existing stakeholder relationships that the program model requires (farmer networks, drug court MOUs, producer networks). Pre-built trust cannot be created in 6 weeks.
-BOOST: Federal grant history as prime (not subrecipient) -- verify on USASpending. This directly feeds past performance scoring.
-BOOST: Wide rural footprint (41+ counties) -- strong rurality eligibility signal for statewide rural programs.
-BOOST: AI/technology component capacity (sensors, ML, UAV) -- targets high-point innovative technology criteria.
-BOOST: Pass-through / partner awareness value -- score high even when client is not the prime. Regional planning orgs (NWA Council) derive value from surfacing opportunities to eligible partners.
+STRENGTH SIGNALS (cite when present; they move placement WITHIN the seat ceiling,
+they do NOT change the seat):
+BOOST: prior award lifecycle advancement (planning -> implementation; FRA/DOT/EPA
+  reward this); named state-plan alignment; pre-existing stakeholder networks the
+  program model requires; federal grant history as prime (verify USASpending);
+  wide rural footprint for statewide rural programs; required tech/AI capacity.
+FLAG: no prime-level federal history (past-performance gap); no QA/QAPP capacity
+  where required; SAM.gov expiring < 60 days; reimbursement burden without cash
+  flow; anti-government posture; pre-2025 NOFO (monitor for reissuance); no
+  existing stakeholder network where the model requires one.
 
-NEGATIVE SIGNALS (risk flags -- penalize score, always cite):
-FLAG: No federal grant history at prime level -- past performance scoring gap. Recommend experienced co-applicant or alternative prime. Verify on USASpending before advancing.
-FLAG: No QA/QAPP capacity -- required for awards over $200K with environmental data collection. Disqualifies at award stage. Universities have this built in; nonprofits usually do not.
-FLAG: SAM.gov expiring within 60 days -- active registration required for all federal applications.
-FLAG: Reimbursement burden without confirmed cash flow -- client must front costs; confirm before advancing.
-FLAG: Anti-government posture -- trade orgs publicly resisting federal intervention are risky as named federal grant partners.
-FLAG: Pre-January 2025 NOFO -- may not have been reissued. Flag as "monitor for reissuance" rather than treating as active.
-FLAG: No existing stakeholder network -- mentorship/partnership models require pre-existing trust.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PHASE 3 -- ROLE ASSIGNMENT (6-tier taxonomy, never leave ambiguous)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Assign exactly one role per organization:
-- Prime: submits application, holds award, responsible for all compliance. Must have federal grant history.
-- Co-Applicant: joint applicant, adds geography/credentials/capacity the prime lacks.
-- Subrecipient: receives pass-through funds from prime; named in application with defined SOW and budget.
-- Named Collaborator (non-recipient): no funds received; named for technical credibility. Federal agencies live here.
-- Letter of Support: no funds, endorsement only. State administrators, orgs with conflict risk live here.
-- Facilitator (off-application): not named. Introductions only. For-profits and ineligible entities live here.
-
-HARD ROLE RULES:
-- For-profit entities: Facilitator or Named Collaborator ONLY. NEVER Prime, Co-Applicant, or Subrecipient.
-- Federal agencies: Named Collaborator ONLY. Cannot receive funds under any grant structure.
-- Award over $500K + no federal grant history at prime level: require experienced co-applicant before advancing.
-- If prime has subrecipient-only history: flag as past performance scoring risk. Distinguish prime vs. sub history.
-
-PRIME SELECTION LOGIC:
-- Prime's HQ or primary operations should be physically in the eligible region.
-- Federal grant history as prime (not subrecipient): verify on USASpending before recommending.
-- QA/QAPP capacity: universities have this built in; nonprofits usually do not.
-- NIFA/land-grant NOFOs: flag UA Division of Agriculture as default prime candidate.
-- If recommended prime has conflict of interest (e.g., state administrator): route to letter of support.
-
-CONSORTIUM COMPLETENESS CHECK:
-Map each proposed partner to a scoring criterion. Any criterion worth 20+ points with no partner coverage = incomplete team.
-Flag gaps: Who covers innovative technology? Who produces quantitative monitoring data? Who recruits required program participants? Who provides federal grant track record as prime?
+ROLE VOCABULARY (proposed_role): Prime | Co-Applicant | Sub | Named Collaborator
+| Letter of Support | Facilitator | Not Recommended.
+HARD ROLE RULES (override the mapping):
+- For-profit entities: Facilitator or Named Collaborator ONLY. NEVER Prime,
+  Co-Applicant, or Subrecipient.
+- Federal agencies: Named Collaborator ONLY.
+- A client that maps to Prime but lacks prime-level federal history on a large
+  award: flag the past-performance risk and recommend an experienced
+  co-applicant -- a strength penalty that often drops a would-be 3 to a 2.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PHASE 4 -- OUTREACH SEQUENCING
@@ -470,7 +494,10 @@ Program Type: ${(grant as Grant & { program_type?: string }).program_type || "Un
 Subaward Prohibited: ${(grant as Grant & { subaward_prohibited?: boolean }).subaward_prohibited ? "YES -- single-applicant model only" : "No"}
 Scoring Criteria (High Value): ${((grant as Grant & { scoring_criteria_high_value?: string[] }).scoring_criteria_high_value || []).join("; ")}
 Technical Burden Flags: ${((grant as Grant & { technical_burden_flags?: string[] }).technical_burden_flags || []).join("; ")}
-Incumbent Risk: ${(grant as Grant & { incumbent_risk?: string }).incumbent_risk || "None noted"}`;
+Incumbent Risk: ${(grant as Grant & { incumbent_risk?: string }).incumbent_risk || "None noted"}
+
+IDEAL APPLICANT PROFILE (constructed from the full NOFO -- map the client onto THIS):
+${grant.ideal_applicant_profile ? JSON.stringify(grant.ideal_applicant_profile, null, 2) : "Not constructed (no full NOFO). Score conservatively; do not assume a prime seat."}`;
 
   const clientContext = `CLIENT:
 Name: ${client.name}
@@ -509,7 +536,7 @@ Matching Rules (AUTHORITATIVE OVERRIDES -- apply before general logic): ${client
         input_schema: {
           type: "object",
           properties: {
-            fit_score: { type: "integer", enum: [1, 2, 3] },
+            fit_score: { type: "integer", enum: [0, 1, 2, 3] },
             proposed_role: { type: "string" },
             recommended_prime: { type: ["string", "null"] },
             why_this_org: { type: "array", items: { type: "string" } },
