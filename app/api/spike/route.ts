@@ -124,15 +124,24 @@ export async function GET(req: NextRequest) {
     // exact JSON path of every link so we know which field to follow.
     result.summaryFull = detail.summary ?? null;
     result.competitionsFull = detail.competitions ?? null;
-    result.allUrls = findUrls(detail, "");
+    const allUrls = findUrls(detail, "");
+    result.allUrls = allUrls;
 
     // ── 2. Fetch + parse one real NOFO doc, inside this serverless function.
     //       Route on type: PDF -> pdf-parse, DOCX -> mammoth (validates both
     //       parsers in the real runtime). Prefer a PDF, else a DOCX, else first.
+    // Harvest doc candidates from ALL urls, not just candidateDocUrls: the
+    // competition_instructions docx lives under competitions[], which the old
+    // picker missed (this is exactly the harvest-union gap Step 2 must fix).
+    // PDF preferred, else DOCX, so the mammoth branch can actually fire.
+    const docCandidates = allUrls
+      .map((u) => u.url)
+      .filter((u) => /\.(pdf|docx)(\?|$)/i.test(u));
+    result.docCandidates = docCandidates;
     const docUrl =
-      docUrls.find((u) => /\.pdf(\?|$)/i.test(u)) ??
-      docUrls.find((u) => /\.docx(\?|$)/i.test(u)) ??
-      docUrls[0];
+      docCandidates.find((u) => /\.pdf(\?|$)/i.test(u)) ??
+      docCandidates.find((u) => /\.docx(\?|$)/i.test(u)) ??
+      null;
     result.pickedDocUrl = docUrl ?? null;
     if (docUrl) {
       try {
