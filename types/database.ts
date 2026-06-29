@@ -80,6 +80,10 @@ export interface Grant {
   status: string;
   error_detail: string | null;
   is_domestic: boolean;
+  // Step 2: 'full' = parsed from the real program NOFO; 'summary' = API summary
+  // only (with shred_reason explaining why the deep shred wasn't available).
+  shred_depth: "full" | "summary";
+  shred_reason: string | null;
   ingested_at: string;
 }
 

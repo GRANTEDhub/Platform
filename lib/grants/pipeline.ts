@@ -11,6 +11,7 @@ import {
   jsPreFilter,
   looksInternational,
 } from "@/lib/grants/engine";
+import { resolveNofoText, mergeDeepShred } from "@/lib/grants/nofo";
 import { checkPastPerformance, formatUSASpendingContext } from "@/lib/grants/usaspending";
 
 type DB = ReturnType<typeof createServiceClient>;
@@ -35,18 +36,40 @@ export async function runPipeline(
 ) {
   let extracted;
   let rawTextForStorage = rawText || "";
+  let shredDepth: "full" | "summary" = "summary";
+  let shredReason: string | null = null;
 
   const simplerGovId = url ? extractSimplerGovOpportunityId(url) : null;
 
   if (simplerGovId) {
-    const { extracted: apiExtracted, rawJson } = await fetchFromSimplerGovAPI(simplerGovId);
+    const { extracted: apiExtracted, rawJson, detail } = await fetchFromSimplerGovAPI(simplerGovId);
     extracted = apiExtracted;
     rawTextForStorage = rawJson;
+
+    // Step 2: find + parse the real program NOFO and overlay analytical depth
+    // (scoring rubric, delivery/convener model) the API summary never carries.
+    // Fails loud: if no real NOFO validates, keep the summary shred + a reason.
+    try {
+      const nofo = await resolveNofoText(detail, apiExtracted.fon || "");
+      shredReason = nofo.reason;
+      if (nofo.text) {
+        const deep = await extractGrantData(nofo.text);
+        extracted = mergeDeepShred(apiExtracted, deep);
+        rawTextForStorage = nofo.text;
+        shredDepth = "full";
+      }
+    } catch (err) {
+      shredDepth = "summary";
+      shredReason = `deep shred failed: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`;
+    }
   } else {
     if (url && !rawText) {
       rawTextForStorage = await fetchGrantTextFromUrl(url);
     }
     extracted = await extractGrantData(rawTextForStorage);
+    // Manual paste / direct URL is full NOFO text by definition.
+    shredDepth = "full";
+    shredReason = "manual full-text ingest";
   }
 
   const isDomestic = !looksInternational(extracted.funder, extracted.title);
@@ -83,6 +106,8 @@ export async function runPipeline(
       hard_disqualifiers: extracted.hard_disqualifiers,
       raw_text: rawTextForStorage.slice(0, 100000),
       is_domestic: isDomestic,
+      shred_depth: shredDepth,
+      shred_reason: shredReason,
     })
     .eq("id", grantId);
 

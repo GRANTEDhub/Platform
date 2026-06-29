@@ -347,12 +347,14 @@ export async function extractGrantData(rawText: string): Promise<ExtractedGrant>
 
   const response = await client.messages.create({
     model: MODEL,
-    max_tokens: 2000,
+    // Higher ceiling + larger input window: real NOFOs run 100K+ chars and a
+    // full scoring rubric is sizable output. Too low truncates the rubric.
+    max_tokens: 4000,
     system: EXTRACTION_SYSTEM_PROMPT,
     messages: [
       {
         role: "user",
-        content: `Extract structured grant data from the following text. Return only valid JSON, no other text.\n\n${rawText.slice(0, 50000)}`,
+        content: `Extract structured grant data from the following text. Return only valid JSON, no other text.\n\n${rawText.slice(0, 120000)}`,
       },
     ],
   });
@@ -688,7 +690,7 @@ export function extractSimplerGovOpportunityId(url: string): string | null {
 // Fetch a single opportunity from the Simpler.gov API and map to ExtractedGrant
 export async function fetchFromSimplerGovAPI(
   opportunityId: string
-): Promise<{ extracted: ExtractedGrant; rawJson: string }> {
+): Promise<{ extracted: ExtractedGrant; rawJson: string; detail: Record<string, unknown> }> {
   const apiKey = process.env.SIMPLER_GOV_API_KEY;
   if (!apiKey) throw new Error("Missing SIMPLER_GOV_API_KEY env var");
 
@@ -764,7 +766,9 @@ export async function fetchFromSimplerGovAPI(
       ],
     };
 
-    return { extracted, rawJson: JSON.stringify(json, null, 2) };
+    // Return the parsed opportunity too, so the NOFO-deepening step (Step 2)
+    // can harvest attachments / competition instructions / additional_info_url.
+    return { extracted, rawJson: JSON.stringify(json, null, 2), detail: opp as Record<string, unknown> };
   } finally {
     clearTimeout(timeout);
   }
