@@ -38,6 +38,10 @@ export interface ExtractedGrant {
 export interface MatchResult {
   client_id: string;
   fit_score: 0 | 1 | 2 | 3;
+  // Closed-menu seat the client occupies (e.g. "P0", "S0_1", or "NONE"). The
+  // numeric ceiling is derived from this IN CODE -- the model does not pick the
+  // final number.
+  seat_ref: string;
   proposed_role: string;
   recommended_prime: string | null;
   why_this_org: string[];
@@ -230,36 +234,31 @@ Comparing the client against hypothetical or real stronger entities is forbidden
 it ceilings everyone at 2 and is the exact error to avoid.
 
 - 3 -- The client OCCUPIES a prime archetype seat (performs the core funded role
-  as its natural function) AND the fit is clean and strong. This is occupancy,
-  not superiority: if the client genuinely IS the convener/backbone the profile
-  describes and fits strongly, it is a 3 EVEN IF other strong primes also exist.
-  Do not withhold 3 because some other entity could also lead.
-- 2 -- The client occupies a real, NAMED supporting seat from the profile (e.g.
-  the research-university partner, an employer partner) with strong fit; OR it
-  occupies a prime seat but the fit carries a real condition (needs a partner,
-  scope refinement, reframing). To score 2 you MUST name the specific seat from
-  the provided profile that this client fills.
-- 1 -- The client has NO seat in the ideal consortium -- topical/mission
-  adjacency only. If you describe the client as "implementation anchor only," a
-  "delivery partner" on a coordination grant, "adjacent," or "not the
-  coordinator/convener," that IS a no-seat finding and it scores 1, never 2.
-  Awareness only.
-- 0 -- Not eligible / not in the picture at all. Never surfaces.
+  as its natural function) AND the fit is clean and strong. Occupancy, not
+  superiority: a genuine prime-seat occupant that fits strongly is a 3 EVEN IF
+  other strong primes also exist. Do not withhold 3 because some other entity
+  could also lead.
+- 2 -- The client occupies a real SUPPORTING seat from the menu with strong fit;
+  OR it occupies a prime seat but the fit is conditional (regional not statewide,
+  needs a partner, scope refinement).
+- 1 -- The client occupies a real seat but only weakly / peripherally -- a
+  genuine toehold with marginal strength.
+- 0 -- NO genuine seat: topical/mission adjacency only, or not eligible. If you
+  describe the client as "implementation anchor only," a "delivery partner" on a
+  coordination grant, "adjacent," or "not the coordinator/convener," that is a
+  NO-SEAT finding -> seat_ref = NONE -> score 0. It does NOT surface. This is the
+  correct, expected outcome for most clients; surfacing a no-seat client wastes
+  reviewer time and is a costly error.
 
-HARD FLOOR: a client you describe as having no genuine seat -- adjacency,
-implementation-only, delivery-only on a coordination grant -- CANNOT be a 2.
-No seat forces ceiling 1. A 2 is impossible unless you can name an actual seat
-from the profile that the client occupies. The 2-vs-1 line is GENUINE NAMED SEAT
-vs MERE ADJACENCY, not whether the client performs the core funded role.
+NO-SEAT IS 0 -- never 1, never 2. A 1 or 2 REQUIRES occupying a real seat from
+the menu. Adjacency with no genuine seat is 0, no matter how topically related.
 
-BEFORE SCORING, run this check and record it in reasoning_context:
-1. Name the seat this client occupies, quoting the archetype or partner-seat
-   label from the provided profile. If you cannot quote one, the seat is "none."
-2. seat = a prime archetype -> ceiling 3; seat = a named partner seat -> ceiling
-   2; seat = none/adjacency -> ceiling 1; not eligible -> 0.
-3. The score CANNOT exceed that ceiling. Place within it using factors 2-6.
-Never lift an adjacency to 2 because the topic is related, and never withhold a
-3 from a genuine prime-seat occupant because a stronger applicant could exist.
+BEFORE SCORING: choose seat_ref from the SEAT MENU (in the GRANT block) -- the
+single menu id of the seat this client genuinely occupies, or NONE. The numeric
+ceiling is ENFORCED IN CODE from your seat_ref: PRIME -> max 3, SUPPORTING ->
+max 2, NONE -> 0. You cannot score above it, so choose honestly. Your fit_score
+is strength WITHIN the seat (a conditional prime fit is 2 not 3; a weak occupancy
+is 1). Record the chosen seat and the gating factor in reasoning_context.
 
 STRENGTH is a composite; factor 1 sets the CEILING, factors 2-6 decide placement
 within it (it is NOT an average):
@@ -493,12 +492,39 @@ export async function constructIdealApplicantProfile(
   return toolUse.input as IdealApplicantProfile;
 }
 
+// Build a closed menu of the seats a client may occupy, from the grant's ideal
+// applicant profile. The model picks exactly one id (seat_ref); the score
+// ceiling is derived from the seat TYPE in code -- prime -> 3, partner -> 2,
+// NONE/invalid -> 0. A closed menu stops the model inventing a flattering seat.
+function buildSeatMenu(
+  profile: IdealApplicantProfile | null,
+): { menu: string; seats: Map<string, "prime" | "partner"> } {
+  const seats = new Map<string, "prime" | "partner">();
+  if (!profile || !Array.isArray(profile.archetypes) || profile.archetypes.length === 0) {
+    return { menu: "No profile available -- no seats exist. seat_ref must be NONE.", seats };
+  }
+  const lines: string[] = [];
+  profile.archetypes.forEach((a, i) => {
+    const pid = `P${i}`;
+    seats.set(pid, "prime");
+    lines.push(`${pid} = PRIME seat -- "${a.label}": performs the core funded role (${a.core_role}).`);
+    (a.partner_seats || []).forEach((s, j) => {
+      const sid = `S${i}_${j}`;
+      seats.set(sid, "partner");
+      lines.push(`${sid} = SUPPORTING seat under "${a.label}": ${s}`);
+    });
+  });
+  lines.push("NONE = the client occupies NONE of the above (topical adjacency only / not in this consortium).");
+  return { menu: lines.join("\n"), seats };
+}
+
 export async function matchGrantToClient(
   grant: Grant,
   client: Client,
   usaSpendingContext?: string
 ): Promise<MatchResult> {
   const anthropic = getAnthropicClient();
+  const { menu: seatMenu, seats: seatTable } = buildSeatMenu(grant.ideal_applicant_profile);
 
   const grantContext = `GRANT:
 Title: ${grant.title}
@@ -520,7 +546,15 @@ Technical Burden Flags: ${((grant as Grant & { technical_burden_flags?: string[]
 Incumbent Risk: ${(grant as Grant & { incumbent_risk?: string }).incumbent_risk || "None noted"}
 
 IDEAL APPLICANT PROFILE (constructed from the full NOFO -- map the client onto THIS):
-${grant.ideal_applicant_profile ? JSON.stringify(grant.ideal_applicant_profile, null, 2) : "Not constructed (no full NOFO). Score conservatively; do not assume a prime seat."}`;
+${grant.ideal_applicant_profile ? JSON.stringify(grant.ideal_applicant_profile, null, 2) : "Not constructed (no full NOFO). Score conservatively; do not assume a prime seat."}
+
+SEAT MENU -- the client occupies exactly ONE of these. Return its id as seat_ref.
+Pick NONE unless the client GENUINELY occupies a listed seat; NONE is the correct,
+expected answer for most clients and is NOT a failure. A regional entity does not
+occupy a STATEWIDE prime seat just because it is the same entity type -- it takes
+the supporting seat. Honor the client's Matching Rules. Do not pick a seat the
+client does not truly fill in order to lift the score.
+${seatMenu}`;
 
   const clientContext = `CLIENT:
 Name: ${client.name}
@@ -559,6 +593,7 @@ Matching Rules (AUTHORITATIVE OVERRIDES -- apply before general logic): ${client
         input_schema: {
           type: "object",
           properties: {
+            seat_ref: { type: "string" },
             fit_score: { type: "integer", enum: [0, 1, 2, 3] },
             proposed_role: { type: "string" },
             recommended_prime: { type: ["string", "null"] },
@@ -594,6 +629,7 @@ Matching Rules (AUTHORITATIVE OVERRIDES -- apply before general logic): ${client
             disqualify_reason: { type: ["string", "null"] },
           },
           required: [
+            "seat_ref",
             "fit_score",
             "proposed_role",
             "why_this_org",
@@ -635,6 +671,21 @@ Matching Rules (AUTHORITATIVE OVERRIDES -- apply before general logic): ${client
 
   const result = toolUse.input as MatchResult;
   result.client_id = client.id;
+
+  // Enforce the seat -> ceiling IN CODE. The model picks a seat from the closed
+  // menu (seat_ref) and a raw strength read; the final score is the strength
+  // capped by the seat's ceiling. A no-seat / invalid ref (NONE) is a hard 0 --
+  // this is the gate the prose-only instruction could never bind. The model
+  // does not get to free-form the number above its seat.
+  const rawScore = typeof result.fit_score === "number" ? result.fit_score : 0;
+  if (grant.ideal_applicant_profile) {
+    const seatType = seatTable.get(result.seat_ref ?? "");
+    const ceiling = seatType === "prime" ? 3 : seatType === "partner" ? 2 : 0;
+    result.fit_score = Math.min(rawScore, ceiling) as 0 | 1 | 2 | 3;
+  } else {
+    // No profile to anchor seats: cannot verify a prime seat, so cap at 2.
+    result.fit_score = Math.min(rawScore, 2) as 0 | 1 | 2 | 3;
+  }
   return result;
 }
 
