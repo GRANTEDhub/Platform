@@ -222,21 +222,44 @@ A client technically eligible to prime but NOT matching an ideal prime archetype
 maps to its real seat (partner/sub) or to None -- never anointed Prime for
 eligibility alone.
 
-STAGE C -- SCORE = SEAT (ceiling) x STRENGTH (placement within the ceiling):
-- 3 -- Strong fit AND prime seat. Maps to an ideal prime archetype AND the fit is
-  clean and strong. Reserve 3 for "this grant was practically written for them to
-  lead." BOTH required: a strong fit that cannot lead is not a 3.
-- 2 -- Strong fit, non-prime seat. Genuinely strong, but the client occupies a
-  real supporting seat (co-applicant/partner/vendor); the prime belongs to a
-  different archetype. Also: a prime-eligible client whose fit carries a real
-  condition (needs scope refinement, a partner, or reframing).
-- 1 -- Weak / marginal. Eligible, possibly even prime-eligible, but only topical
-  adjacency with NO genuine seat in the ideal consortium. Awareness only.
-- 0 -- No seat / not eligible. Never surfaces.
+STAGE C -- SCORE = SEAT (ceiling) x STRENGTH. Score by SEAT OCCUPANCY, NEVER by
+competitive comparison. Do NOT ask "is there a stronger applicant?" -- there is
+ALWAYS a stronger applicant somewhere (a state agency, a flagship university),
+and it is IRRELEVANT. The only question is which seat THIS client occupies.
+Comparing the client against hypothetical or real stronger entities is forbidden:
+it ceilings everyone at 2 and is the exact error to avoid.
 
-The line between 2 and 1 is GENUINE CONSORTIUM SEAT vs MERE ADJACENCY -- not
-whether the client performs the core funded role. A real partner seat is a 2;
-working in the topic area with no seat is a 1, even if prime-eligible.
+- 3 -- The client OCCUPIES a prime archetype seat (performs the core funded role
+  as its natural function) AND the fit is clean and strong. This is occupancy,
+  not superiority: if the client genuinely IS the convener/backbone the profile
+  describes and fits strongly, it is a 3 EVEN IF other strong primes also exist.
+  Do not withhold 3 because some other entity could also lead.
+- 2 -- The client occupies a real, NAMED supporting seat from the profile (e.g.
+  the research-university partner, an employer partner) with strong fit; OR it
+  occupies a prime seat but the fit carries a real condition (needs a partner,
+  scope refinement, reframing). To score 2 you MUST name the specific seat from
+  the provided profile that this client fills.
+- 1 -- The client has NO seat in the ideal consortium -- topical/mission
+  adjacency only. If you describe the client as "implementation anchor only," a
+  "delivery partner" on a coordination grant, "adjacent," or "not the
+  coordinator/convener," that IS a no-seat finding and it scores 1, never 2.
+  Awareness only.
+- 0 -- Not eligible / not in the picture at all. Never surfaces.
+
+HARD FLOOR: a client you describe as having no genuine seat -- adjacency,
+implementation-only, delivery-only on a coordination grant -- CANNOT be a 2.
+No seat forces ceiling 1. A 2 is impossible unless you can name an actual seat
+from the profile that the client occupies. The 2-vs-1 line is GENUINE NAMED SEAT
+vs MERE ADJACENCY, not whether the client performs the core funded role.
+
+BEFORE SCORING, run this check and record it in reasoning_context:
+1. Name the seat this client occupies, quoting the archetype or partner-seat
+   label from the provided profile. If you cannot quote one, the seat is "none."
+2. seat = a prime archetype -> ceiling 3; seat = a named partner seat -> ceiling
+   2; seat = none/adjacency -> ceiling 1; not eligible -> 0.
+3. The score CANNOT exceed that ceiling. Place within it using factors 2-6.
+Never lift an adjacency to 2 because the topic is related, and never withhold a
+3 from a genuine prime-seat occupant because a stronger applicant could exist.
 
 STRENGTH is a composite; factor 1 sets the CEILING, factors 2-6 decide placement
 within it (it is NOT an average):
