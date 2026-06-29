@@ -23,8 +23,8 @@ export function canSendEmail(): SendGate {
   if (process.env.EMAIL_SENDING_ENABLED !== "true") {
     return { ok: false, reason: "email sending disabled (EMAIL_SENDING_ENABLED is not 'true')" };
   }
-  if (!process.env.RESEND_API_KEY) {
-    return { ok: false, reason: "RESEND_API_KEY not configured" };
+  if (!process.env.RESEND_PLATFORM_API) {
+    return { ok: false, reason: "RESEND_PLATFORM_API not configured" };
   }
   return { ok: true, reason: "production, sending enabled, key present" };
 }
