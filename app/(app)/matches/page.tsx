@@ -40,8 +40,8 @@ export default async function MatchingPage({
   return (
     <div>
       <PageHeader
-        title="Matching / Alerts"
-        description="New grant matches across the roster. Clear the day's queue: open a client, review the match, send or reject."
+        title="Grant Matches"
+        description="New grant matches across the active client roster. Clear the day's queue: open a client, review the match, send or reject."
       />
       <div className="space-y-6 p-8">
         <div className="flex items-center justify-between">
@@ -51,8 +51,8 @@ export default async function MatchingPage({
               : `${totalNew} new ${totalNew === 1 ? "match" : "matches"} across ${groups.length} ${groups.length === 1 ? "client" : "clients"}`}
           </p>
           <div className="flex gap-2">
-            <Link href="/matching" className={tab(!showAll)}>New</Link>
-            <Link href="/matching?filter=all" className={tab(showAll)}>All</Link>
+            <Link href="/matches" className={tab(!showAll)}>New</Link>
+            <Link href="/matches?filter=all" className={tab(showAll)}>All</Link>
           </div>
         </div>
 

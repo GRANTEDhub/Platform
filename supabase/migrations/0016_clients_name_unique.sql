@@ -1,0 +1,12 @@
+-- ╔══════════════════════════════════════════════════════════════════════════╗
+-- ║ One client row per name — enables safe upsert + blocks duplicate rows        ║
+-- ╚══════════════════════════════════════════════════════════════════════════╝
+-- The 20-client roster load upserts on name (ON CONFLICT (name) DO UPDATE),
+-- which requires a unique constraint on name. This also retroactively prevents
+-- the duplicate-client problem (same client inserted twice) seen earlier in
+-- development.
+--
+-- Run only after confirming no duplicate names exist -- the index build fails if
+-- duplicates remain. Apply this migration to prod BEFORE running
+-- seed_roster_20.sql (migration-first rule).
+create unique index if not exists clients_name_uniq on clients (name);

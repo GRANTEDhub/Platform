@@ -5,13 +5,18 @@ import { Sidebar, type NavItem } from "@/components/layout/sidebar";
 // clients, time, invoices, contracts, sales, or settings.
 //
 // The nav is the admin dashboard's frame: it intentionally holds every module
-// the firm runs on -- matching, grant intel, CRM, time, invoicing, contracts,
-// and sales -- even where a module is still a placeholder. We fill rooms in one
-// at a time; the house is framed for all of them from the start.
+// the firm runs on -- the opportunity feed, the two match tracks (client +
+// prospect), CRM, time, invoicing, contracts, and sales -- even where a module
+// is still a placeholder. We fill rooms in one at a time; the house is framed
+// for all of them from the start.
+//
+// Two tracks read from one shred: Grant Matches (Track 1, active clients) and
+// Grant Intel (Track 2, prospects / BizDev -- stub until the prospect engine).
 const ADMIN_NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: "dashboard" },
-  { href: "/matching", label: "Matching / Alerts", icon: "matching" },
-  { href: "/grants", label: "Grant Intel", icon: "grants" },
+  { href: "/grants", label: "Opportunities", icon: "grants" },
+  { href: "/matches", label: "Grant Matches", icon: "matching" },
+  { href: "/intel", label: "Grant Intel", icon: "intel" },
   { href: "/clients", label: "Clients", icon: "clients" },
   { href: "/time", label: "Time", icon: "time" },
   { href: "/invoices", label: "Invoices", icon: "invoices" },
@@ -20,9 +25,11 @@ const ADMIN_NAV: NavItem[] = [
   { href: "/settings", label: "Settings", icon: "settings" },
 ];
 
+// Contractors are scoped to Track 1 grant work: the opportunity feed and the
+// client match queue. Grant Intel (prospect / BizDev) is admin-only.
 const CONTRACTOR_NAV: NavItem[] = [
-  { href: "/grants", label: "Grant Intel", icon: "grants" },
-  { href: "/matching", label: "Matching / Alerts", icon: "matching" },
+  { href: "/grants", label: "Opportunities", icon: "grants" },
+  { href: "/matches", label: "Grant Matches", icon: "matching" },
 ];
 
 export default async function AppLayout({

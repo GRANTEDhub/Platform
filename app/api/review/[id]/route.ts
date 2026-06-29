@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import type { CardDecision } from "@/types/database";
+import { canSendEmail } from "@/lib/email/guard";
+import { sendAlertEmail } from "@/lib/email/send";
+import type { CardDecision, ReviewCard, Client } from "@/types/database";
 
 // Update a review-card decision. RLS + the guard_card_approval trigger enforce
 // that only admins can set 'approved' (clear a match for client delivery);
@@ -54,11 +56,6 @@ export async function PATCH(
     update.final_outreach_email = body.final_outreach_email;
   }
 
-  // TODO(send): Approval records intent and the final email body only -- it does
-  // NOT send anything. The platform has no mail provider wired yet. When the
-  // send step is built, this is where an approved card's email goes out and
-  // sent_at / sent_to (migration 0007) get populated.
-
   const { data, error } = await supabase
     .from("review_cards")
     .update(update)
@@ -79,5 +76,37 @@ export async function PATCH(
     );
   }
 
-  return NextResponse.json({ card: data });
+  // Send step. Only an approval triggers a send. The guard keys off VERCEL_ENV
+  // (see lib/email/guard.ts) so a preview deploy -- which reads this same shared
+  // database -- records the approval but physically cannot send. A bad/"unknown"
+  // recipient or a provider error is caught: the decision still stands, the send
+  // is reported as not sent, and the status is surfaced to the UI (never silent).
+  let send_status = "decision recorded";
+  if (body.decision === "approved") {
+    const gate = canSendEmail();
+    if (!gate.ok) {
+      send_status = `decision recorded, email not sent (${gate.reason})`;
+    } else {
+      try {
+        const { data: client } = await supabase
+          .from("clients")
+          .select("*")
+          .eq("id", data.client_id)
+          .single<Client>();
+        if (!client) throw new Error("client not found for card");
+        const sent = await sendAlertEmail(data as ReviewCard, client);
+        await supabase
+          .from("review_cards")
+          .update({ sent_at: new Date().toISOString(), sent_to: sent.to })
+          .eq("id", params.id);
+        send_status = `email sent to ${sent.to}`;
+      } catch (err) {
+        send_status = `decision recorded, email NOT sent: ${
+          err instanceof Error ? err.message : String(err)
+        }`;
+      }
+    }
+  }
+
+  return NextResponse.json({ card: data, send_status });
 }

@@ -44,6 +44,11 @@ export default async function GrantDetailPage({ params }: { params: { id: string
         action={
           <div className="flex items-center gap-2">
             {!grant.is_domestic && <Badge variant="warning">International — excluded</Badge>}
+            {!processing && (
+              <Badge variant={grant.shred_depth === "full" ? "success" : "warning"}>
+                {grant.shred_depth === "full" ? "Full shred" : "Summary shred"}
+              </Badge>
+            )}
             <GrantStatusBadge status={grant.status} />
           </div>
         }
@@ -77,10 +82,55 @@ export default async function GrantDetailPage({ params }: { params: { id: string
             </Card>
           )}
 
+          {!processing && grant.shred_depth === "summary" && grant.shred_reason && (
+            <Card>
+              <CardContent className="p-4 text-xs text-muted-foreground">
+                Summary shred only — {grant.shred_reason}
+              </CardContent>
+            </Card>
+          )}
+
           {grant.description && (
             <Card>
               <CardHeader><CardTitle>What it funds</CardTitle></CardHeader>
               <CardContent className="text-sm leading-relaxed">{grant.description}</CardContent>
+            </Card>
+          )}
+
+          {grant.ideal_applicant_profile && (
+            <Card>
+              <CardHeader><CardTitle>Ideal applicant profile</CardTitle></CardHeader>
+              <CardContent className="space-y-4 text-sm">
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Core funded role</p>
+                  <p className="mt-0.5 font-medium">{grant.ideal_applicant_profile.core_funded_role}</p>
+                </div>
+                {grant.ideal_applicant_profile.summary && (
+                  <p className="leading-relaxed text-muted-foreground">{grant.ideal_applicant_profile.summary}</p>
+                )}
+                <div className="space-y-3">
+                  {grant.ideal_applicant_profile.archetypes.map((a, i) => (
+                    <div key={i} className="rounded-md border bg-muted/30 p-3">
+                      <p className="font-medium">{a.label}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">Prime shape: {a.ideal_prime_shape}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">Core role: {a.core_role}</p>
+                      {(a.partner_seats?.length || 0) > 0 && (
+                        <div className="mt-2">
+                          <p className="text-xs uppercase tracking-wide text-muted-foreground">Partner seats</p>
+                          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs">
+                            {a.partner_seats.map((s, j) => <li key={j}>{s}</li>)}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {grant.ideal_applicant_profile.eligibility_note && (
+                  <p className="text-xs text-muted-foreground">
+                    Eligibility (secondary): {grant.ideal_applicant_profile.eligibility_note}
+                  </p>
+                )}
+              </CardContent>
             </Card>
           )}
 
@@ -153,6 +203,62 @@ export default async function GrantDetailPage({ params }: { params: { id: string
               <Fact label="Ineligible" value={grant.ineligible_entities} />
             </CardContent>
           </Card>
+
+          {(grant.focus_areas?.length || 0) > 0 && (
+            <Card>
+              <CardHeader><CardTitle>Focus areas</CardTitle></CardHeader>
+              <CardContent>
+                <div className="flex flex-wrap gap-1.5">
+                  {grant.focus_areas!.map((f, i) => (
+                    <Badge key={i} variant="secondary">{f}</Badge>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {grant.scoring_rubric && Object.keys(grant.scoring_rubric).length > 0 && (
+            <Card>
+              <CardHeader><CardTitle>Scoring rubric</CardTitle></CardHeader>
+              <CardContent className="space-y-1.5 text-sm">
+                {Object.entries(grant.scoring_rubric).map(([k, v]) => (
+                  <div key={k} className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">{k}</span>
+                    <span className="shrink-0 font-medium">{String(v)}</span>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {(grant.scoring_criteria_high_value?.length || 0) > 0 && (
+            <Card>
+              <CardHeader><CardTitle>High-value criteria</CardTitle></CardHeader>
+              <CardContent>
+                <ul className="list-disc space-y-1 pl-4 text-sm">
+                  {grant.scoring_criteria_high_value!.map((c, i) => <li key={i}>{c}</li>)}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+
+          {(grant.technical_burden_flags?.length || 0) > 0 && (
+            <Card>
+              <CardHeader><CardTitle>Technical burden</CardTitle></CardHeader>
+              <CardContent>
+                <ul className="list-disc space-y-1 pl-4 text-sm text-muted-foreground">
+                  {grant.technical_burden_flags!.map((f, i) => <li key={i}>{f}</li>)}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+
+          {grant.incumbent_risk && (
+            <Card>
+              <CardHeader><CardTitle>Incumbent risk</CardTitle></CardHeader>
+              <CardContent className="text-sm text-muted-foreground">{grant.incumbent_risk}</CardContent>
+            </Card>
+          )}
 
           {(grant.verification_flags?.length || 0) > 0 && (
             <Card>

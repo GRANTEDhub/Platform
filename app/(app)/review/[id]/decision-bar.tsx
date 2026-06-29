@@ -12,9 +12,9 @@ type DecidePayload = {
 };
 
 // The three-way match decision. Admins get Approve & Send / Edit & Send /
-// Reject; Hold and Reset stay as secondary controls. "Send" records the
-// decision and final email body -- actual delivery is not wired yet (see
-// TODO(send) in app/api/review/[id]/route.ts).
+// Reject; Hold and Reset stay as secondary controls. On approval the API
+// attempts a send behind the preview/prod guard and returns send_status, which
+// is surfaced below so a "recorded but not sent" outcome is never silent.
 export function DecisionBar({
   cardId,
   decision,
@@ -31,6 +31,7 @@ export function DecisionBar({
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
   const [panel, setPanel] = useState<null | "edit" | "reject" | "hold">(null);
   const [editBody, setEditBody] = useState(finalEmail ?? draft);
   const [rejectReason, setRejectReason] = useState("");
@@ -39,6 +40,7 @@ export function DecisionBar({
   async function decide(next: CardDecision, payload?: DecidePayload) {
     setBusy(true);
     setError(null);
+    setStatus(null);
     try {
       const res = await fetch(`/api/review/${cardId}`, {
         method: "PATCH",
@@ -47,6 +49,7 @@ export function DecisionBar({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed");
+      setStatus(data.send_status ?? null);
       setPanel(null);
       router.refresh();
     } catch (err) {
@@ -171,6 +174,7 @@ export function DecisionBar({
       )}
 
       {error && <p className="text-sm text-destructive">{error}</p>}
+      {status && <p className="text-sm text-muted-foreground">{status}</p>}
     </div>
   );
 }
