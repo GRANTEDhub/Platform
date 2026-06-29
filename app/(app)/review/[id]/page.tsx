@@ -153,7 +153,7 @@ export default async function CardDetailPage({ params }: { params: { id: string 
               />
               {card.grants?.id && (
                 <Link href={`/grants/${card.grants.id}`} className="block text-primary hover:underline">
-                  Full grant detail →
+                  Open shred →
                 </Link>
               )}
             </CardContent>
