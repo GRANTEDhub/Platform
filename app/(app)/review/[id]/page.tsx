@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScoreBadge, DecisionBadge } from "@/components/grants/badges";
 import { DecisionBar } from "./decision-bar";
+import { MatchFeedback } from "./match-feedback";
 import type { ReviewCard, Client, Grant } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -125,6 +126,13 @@ export default async function CardDetailPage({ params }: { params: { id: string 
               {card.decision === "passed" && card.decision_reason && (
                 <p className="mt-3 text-xs text-muted-foreground">Rejected: {card.decision_reason}</p>
               )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Score feedback</CardTitle></CardHeader>
+            <CardContent>
+              <MatchFeedback cardId={card.id} />
             </CardContent>
           </Card>
 

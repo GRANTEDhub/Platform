@@ -164,6 +164,25 @@ export interface MatchAttempt {
   created_at: string;
 }
 
+// Append-only analyst QA judgment on a match (the calibration dataset). Keyed on
+// the stable grant+client identity; provenance pointers are nullable so feedback
+// survives re-scores. Snapshots the engine's state at feedback time.
+export interface MatchFeedback {
+  id: string;
+  grant_id: string | null;
+  client_id: string | null;
+  review_card_id: string | null;
+  match_attempt_id: string | null;
+  agree: boolean;
+  corrected_score: number | null;
+  reason: string | null;
+  engine_score: number | null;
+  engine_seat_ref: string | null;
+  engine_reasoning: Record<string, unknown> | null;
+  created_by: string | null;
+  created_at: string;
+}
+
 export interface ClientOverview {
   id: string;
   name: string;
