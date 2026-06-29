@@ -42,6 +42,10 @@ export interface MatchResult {
   // numeric ceiling is derived from this IN CODE -- the model does not pick the
   // final number.
   seat_ref: string;
+  // True when the grant STRUCTURALLY requires this client's entity type (the
+  // program is designed to run through this entity class, not merely allows it).
+  // Drives the eligibility floor: a required, seated entity cannot be zeroed.
+  entity_required: boolean;
   proposed_role: string;
   recommended_prime: string | null;
   why_this_org: string[];
@@ -253,6 +257,21 @@ it ceilings everyone at 2 and is the exact error to avoid.
 NO-SEAT IS 0 -- never 1, never 2. A 1 or 2 REQUIRES occupying a real seat from
 the menu. Adjacency with no genuine seat is 0, no matter how topically related.
 
+ELIGIBILITY FLOOR (do not zero out a required, seated entity):
+Set entity_required = true when the grant STRUCTURALLY requires this client's
+entity TYPE -- the program is designed to run through this entity class (e.g. an
+IHE for a program that must be led/anchored by a university), not merely lists it
+among many allowed types. When entity_required is true AND the menu contains a
+seat for that entity class, you MUST map the client to that seat -- NOT NONE. A
+narrow or conditional fit (e.g. "their AI work is health-specific, not
+general-purpose") CAPS the score (1 or 2); it does NOT zero an eligible, seated
+entity. Do NOT apply "eligibility is a spectrum" in reverse to drop a required,
+seated entity to 0 on a soft fit concern -- the next narrow-but-eligible entity
+on another grant would be wrongly zeroed the same way. State the floor in
+reasoning_context when it applies ("entity-eligibility floor: required <type>,
+seated at <seat>, capped at N for <concern>"). NONE/0 remains correct only for a
+client with NO eligible role in the architecture at all.
+
 BEFORE SCORING: choose seat_ref from the SEAT MENU (in the GRANT block) -- the
 single menu id of the seat this client genuinely occupies, or NONE. The numeric
 ceiling is ENFORCED IN CODE from your seat_ref: PRIME -> max 3, SUPPORTING ->
@@ -429,7 +448,16 @@ Produce:
   - label: short name of the prime shape (e.g. "Regional coordination backbone")
   - ideal_prime_shape: what kind of entity is BUILT to lead this angle, by natural function (not "who is eligible")
   - core_role: the funded role this archetype's prime performs
-  - partner_seats: the consortium seats this prime implies (e.g. "IHE research partner", "employer partners", "third-party evaluator")
+  - partner_seats: enumerate the COMPLETE working consortium this prime implies,
+    not just the headline partner. Cover every functional role the program needs:
+    a domain/sector TECHNICAL partner for EACH sector the program spans (name them
+    explicitly -- e.g. a clinical/health-AI technical partner, an education
+    partner, a workforce/employer partner), regional sub-coordinators or
+    implementation nodes under a statewide/national backbone, and a
+    data/evaluation partner. A real but narrow specialist (e.g. a health-focused
+    IHE on a cross-sector program) still has a seat -- the sector-technical seat --
+    so list it. Be specific; do not collapse distinct seats into one generic
+    "partner" line.
 - eligibility_note: brief note on the stated eligibility, explicitly secondary.
 
 Be concrete and grant-specific. Do not use em dashes. Return via the submit_profile tool.`;
@@ -594,6 +622,7 @@ Matching Rules (AUTHORITATIVE OVERRIDES -- apply before general logic): ${client
           type: "object",
           properties: {
             seat_ref: { type: "string" },
+            entity_required: { type: "boolean" },
             fit_score: { type: "integer", enum: [0, 1, 2, 3] },
             proposed_role: { type: "string" },
             recommended_prime: { type: ["string", "null"] },
@@ -630,6 +659,7 @@ Matching Rules (AUTHORITATIVE OVERRIDES -- apply before general logic): ${client
           },
           required: [
             "seat_ref",
+            "entity_required",
             "fit_score",
             "proposed_role",
             "why_this_org",
@@ -681,7 +711,13 @@ Matching Rules (AUTHORITATIVE OVERRIDES -- apply before general logic): ${client
   if (grant.ideal_applicant_profile) {
     const seatType = seatTable.get(result.seat_ref ?? "");
     const ceiling = seatType === "prime" ? 3 : seatType === "partner" ? 2 : 0;
-    result.fit_score = Math.min(rawScore, ceiling) as 0 | 1 | 2 | 3;
+    let score = Math.min(rawScore, ceiling);
+    // Eligibility floor (backstop): a structurally-required entity type must
+    // surface for review -- a soft fit concern caps but never zeros it. If the
+    // model still NONE'd a required entity, floor to 1 so it does not silently
+    // disappear (a false 0 is the worst outcome; the QA layer catches a false 1).
+    if (result.entity_required && score === 0) score = 1;
+    result.fit_score = score as 0 | 1 | 2 | 3;
   } else {
     // No profile to anchor seats: cannot verify a prime seat, so cap at 2.
     result.fit_score = Math.min(rawScore, 2) as 0 | 1 | 2 | 3;
