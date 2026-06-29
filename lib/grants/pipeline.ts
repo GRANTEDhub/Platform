@@ -178,7 +178,12 @@ export async function runMatching(grantId: string, db: DB) {
     .eq("id", grantId)
     .single();
   if (!grantRow) {
-    await db.from("grants").update({ status: "error" }).eq("id", grantId);
+    // Every error-status exit records a reason -- a status of 'error' with a
+    // null error_detail is never acceptable (it leaves a silent dead-end).
+    await db
+      .from("grants")
+      .update({ status: "error", error_detail: "Grant row not found when scoring (deleted mid-run?)" })
+      .eq("id", grantId);
     return;
   }
 
