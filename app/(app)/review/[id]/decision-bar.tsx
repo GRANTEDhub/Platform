@@ -3,10 +3,12 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { HOLD_CATEGORIES, type HoldCategory } from "@/lib/hold-categories";
 import type { CardDecision } from "@/types/database";
 
 type DecidePayload = {
   hold_reason?: string;
+  hold_category?: HoldCategory;
   decision_reason?: string;
   final_outreach_email?: string;
 };
@@ -36,6 +38,7 @@ export function DecisionBar({
   const [editBody, setEditBody] = useState(finalEmail ?? draft);
   const [rejectReason, setRejectReason] = useState("");
   const [holdReason, setHoldReason] = useState("");
+  const [holdCategory, setHoldCategory] = useState<HoldCategory | null>(null);
 
   async function decide(next: CardDecision, payload?: DecidePayload) {
     setBusy(true);
@@ -160,14 +163,45 @@ export function DecisionBar({
 
       {panel === "hold" && (
         <div className="space-y-2 rounded-md border bg-card p-3">
+          <div className="space-y-1">
+            {HOLD_CATEGORIES.map((c) => (
+              <label key={c.value} className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="hold_category"
+                  checked={holdCategory === c.value}
+                  onChange={() => setHoldCategory(c.value)}
+                />
+                {c.label}
+              </label>
+            ))}
+          </div>
           <textarea
             value={holdReason}
             onChange={(e) => setHoldReason(e.target.value)}
             rows={2}
-            placeholder="Why hold? (e.g. confirm SAM.gov, awaiting quorum court)"
+            placeholder={
+              holdCategory === "other"
+                ? "Required: describe the hold."
+                : "Optional note (e.g. confirm SAM.gov, awaiting quorum court)"
+            }
             className="flex w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
           />
-          <Button size="sm" onClick={() => decide("hold", { hold_reason: holdReason })} disabled={busy}>
+          <Button
+            size="sm"
+            onClick={() => {
+              if (!holdCategory) {
+                setError("Pick a hold reason.");
+                return;
+              }
+              if (holdCategory === "other" && !holdReason.trim()) {
+                setError("A note is required for 'Other'.");
+                return;
+              }
+              decide("hold", { hold_category: holdCategory, hold_reason: holdReason });
+            }}
+            disabled={busy}
+          >
             Save hold
           </Button>
         </div>

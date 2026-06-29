@@ -142,6 +142,9 @@ export interface ReviewCard {
   } | null;
   decision: CardDecision;
   hold_reason: string | null;
+  // Structured hold reason (migration 0017). One of HOLD_CATEGORY_VALUES, or
+  // null for legacy/uncategorized holds. hold_reason is the optional note.
+  hold_category: string | null;
   // Reason captured when a match is rejected (Pass).
   decision_reason: string | null;
   decided_by: string | null;
