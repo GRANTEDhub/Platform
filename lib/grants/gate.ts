@@ -29,26 +29,32 @@ export function isDecided(decision: CardDecision): boolean {
 
 export type GateStatus = "locked" | "released" | "not_ready";
 
-// Minimal shape the gate needs from a match. Counts CLIENT-linked cards only.
-// When Track 2 prospect cards land in review_cards they must be excluded via a
-// client-vs-prospect discriminator -- that discriminator is Track 2's
-// prerequisite. Until it exists, every card is a client card and a present
-// client_id is the filter.
-type GateCard = Pick<ReviewCard, "decision"> & { client_id: string | null };
+// Minimal shape the gate needs from a match. Counts CLIENT cards only; prospect
+// cards (Track 2) must never enter the lock/release computation.
+// A card is a CLIENT card unless it is explicitly marked 'prospect' (migration
+// 0019). Keying off card_type !== 'prospect' (rather than === 'client') is
+// deliberately migration-order-safe: before the column exists, fetched rows have
+// no card_type (undefined) and are correctly treated as client cards; after,
+// only prospect cards are excluded. Prospect cards must never enter the gate.
+type GateCard = Pick<ReviewCard, "decision"> & { card_type?: string | null };
+
+function isClientCard(c: GateCard): boolean {
+  return c.card_type !== "prospect";
+}
 
 export function getGrantGateStatus(
   grant: Pick<Grant, "status">,
   cards: GateCard[],
 ): GateStatus {
   if (grant.status !== "complete") return "not_ready";
-  const clientCards = cards.filter((c) => c.client_id != null);
+  const clientCards = cards.filter(isClientCard);
   if (clientCards.length === 0) return "released"; // scored, no client stake
   return clientCards.every((c) => isDecided(c.decision)) ? "released" : "locked";
 }
 
 // Undecided (pending/hold) client matches -- for the read-only status line.
 export function undecidedClientCount(cards: GateCard[]): number {
-  return cards.filter((c) => c.client_id != null && !isDecided(c.decision)).length;
+  return cards.filter((c) => isClientCard(c) && !isDecided(c.decision)).length;
 }
 
 // Grant ids currently free to prospect: scored AND released. The Track 2
@@ -67,14 +73,14 @@ export async function releasedGrantsForProspecting(
   const ids = grants.map((g) => g.id);
   const { data: cards } = await db
     .from("review_cards")
-    .select("grant_id, client_id, decision")
+    .select("grant_id, card_type, decision")
     .in("grant_id", ids);
 
   const byGrant = new Map<string, GateCard[]>();
   for (const c of cards ?? []) {
     if (!c.grant_id) continue;
     const arr = byGrant.get(c.grant_id) ?? [];
-    arr.push({ client_id: c.client_id, decision: c.decision as CardDecision });
+    arr.push({ card_type: c.card_type, decision: c.decision as CardDecision });
     byGrant.set(c.grant_id, arr);
   }
 
