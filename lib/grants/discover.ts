@@ -42,6 +42,22 @@ HARD RULES:
 
 Return via the submit_candidates tool. Return an empty list if no real candidate orgs appear.`;
 
+// Normalize an org name for dedup: lowercase, strip punctuation, collapse
+// whitespace, drop a leading "the" and trailing legal/common suffixes (inc, llc,
+// corp, co, foundation). Catches "Heartland Forward" vs "Heartland Forward, Inc."
+// across two result snippets, and tightens client/existing-prospect matching
+// against DBA/punctuation variance.
+function normalizeOrgName(name: string | null | undefined): string {
+  let s = (name ?? "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  s = s.replace(/^the\s+/, "");
+  let prev;
+  do {
+    prev = s;
+    s = s.replace(/\s+(inc|llc|corp|co|foundation)$/, "").trim();
+  } while (s !== prev);
+  return s;
+}
+
 export async function discoverProspects(grantId: string, db: DB): Promise<DiscoverResult> {
   const { data: grant } = await db.from("grants").select("*").eq("id", grantId).single<Grant>();
   if (!grant) return { ok: false, reason: "Grant not found" };
@@ -118,7 +134,7 @@ export async function discoverProspects(grantId: string, db: DB): Promise<Discov
   // Dedup: skip orgs that match an existing client (we do not prospect our own
   // roster) or a prospect already carded on this grant; dedup within the run.
   const { data: clients } = await db.from("clients").select("name");
-  const clientNames = new Set((clients ?? []).map((c) => (c.name ?? "").toLowerCase().trim()));
+  const clientNames = new Set((clients ?? []).map((c) => normalizeOrgName(c.name)));
   const { data: existingCards } = await db
     .from("review_cards")
     .select("prospects(name)")
@@ -130,8 +146,8 @@ export async function discoverProspects(grantId: string, db: DB): Promise<Discov
         const p = r.prospects;
         if (!p) return [];
         return Array.isArray(p)
-          ? p.map((x) => x.name.toLowerCase().trim())
-          : [p.name.toLowerCase().trim()];
+          ? p.map((x) => normalizeOrgName(x.name))
+          : [normalizeOrgName(p.name)];
       },
     ),
   );
@@ -140,7 +156,7 @@ export async function discoverProspects(grantId: string, db: DB): Promise<Discov
   const grounded = extracted
     .filter((c) => c.source_url && resultUrls.has(norm(c.source_url)))
     .filter((c) => {
-      const n = (c.name ?? "").toLowerCase().trim();
+      const n = normalizeOrgName(c.name);
       if (!n || clientNames.has(n) || existingProspectNames.has(n) || seen.has(n)) return false;
       seen.add(n);
       return true;
