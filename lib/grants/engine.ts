@@ -742,6 +742,35 @@ ${formatConstraintsForPrompt(client)}`;
 // Run BEFORE any Claude calls. Eliminates obvious mismatches in milliseconds.
 // Returns a reason string if the client should be skipped, null if Claude should run.
 
+// Grant-level GLOBAL suppressions: reasons that suppress EVERY client (not
+// client-specific), decidable from the grant alone. Single source of truth,
+// shared by jsPreFilter (per-client prefilter reason) and the pipeline's
+// post-shred skip_reason capture -- so a globally-suppressed grant is recorded
+// once on the grant, not just discovered per-client during matching.
+//
+// num_awards is text; parseInt coerces it. An empty/unknown count falls back to
+// 999 (no suppression) and a non-numeric value yields NaN (no suppression) --
+// we never suppress on an unknown count.
+export function grantLevelSuppressionReason(extracted: ExtractedGrant): string | null {
+  const numAwards = parseInt(extracted.num_awards || "999", 10);
+  if (isNaN(numAwards)) return null;
+  const isTTA =
+    extracted.program_type === "TTA Cooperative Agreement" ||
+    (extracted.delivery_model || "").toLowerCase().includes("tta");
+
+  // Single national award -- goes to a national intermediary; no realistic
+  // Arkansas-anchored prime path.
+  if (numAwards === 1) {
+    return "Single national award -- no realistic Arkansas-anchored prime path";
+  }
+  // Fixed-slot TTA cooperative agreement (<= 10 slots) -- requires existing
+  // multi-state infrastructure no cold AR-anchored applicant has.
+  if (isTTA && numAwards <= 10) {
+    return `Fixed-slot TTA cooperative agreement (${numAwards} slots) -- requires existing multi-state infrastructure`;
+  }
+  return null;
+}
+
 export function jsPreFilter(
   extracted: ExtractedGrant,
   client: Client
@@ -751,23 +780,13 @@ export function jsPreFilter(
   const funderBlock = funderExclusionReason(extracted.funder, client);
   if (funderBlock) return funderBlock;
 
+  // Grant-level global suppressions (single national award / fixed-slot TTA).
+  const grantSuppression = grantLevelSuppressionReason(extracted);
+  if (grantSuppression) return grantSuppression;
+
   const eligibleTypes = (extracted.eligible_entity_types || []).map((t) =>
     t.toLowerCase()
   );
-  const numAwards = parseInt(extracted.num_awards || "999", 10);
-  const isTTA =
-    extracted.program_type === "TTA Cooperative Agreement" ||
-    (extracted.delivery_model || "").toLowerCase().includes("tta");
-
-  // Global suppression: single national award -- will go to national intermediary
-  if (numAwards === 1 && !isNaN(numAwards)) {
-    return "Single national award -- suppressed for all clients";
-  }
-
-  // Global suppression: TTA cooperative agreement with 10 or fewer fixed slots
-  if (isTTA && numAwards <= 10 && !isNaN(numAwards)) {
-    return `Fixed-slot TTA cooperative agreement (${numAwards} slots) -- requires existing multi-state infrastructure`;
-  }
 
   // For-profit clients can never be recipients in federal grants
   if (
