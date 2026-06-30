@@ -88,3 +88,83 @@ export async function releasedGrantsForProspecting(
     .filter((g) => getGrantGateStatus(g, byGrant.get(g.id) ?? []) === "released")
     .map((g) => g.id);
 }
+
+// The prospect feed: released grants, grant-centric, each with a carry-over note
+// of which clients matched and whether they were alerted (approved) or not
+// (passed). Released covers BOTH entry paths from the universal flow: a grant
+// with no client matches (released, empty clientMatches) and one where every
+// client match is decided. Excludes international and hard-disqualified grants
+// (never prospectable) and anything not finished scoring. Read-only; the Track 2
+// discovery engine (step 3) is what acts on a feed item.
+export interface ProspectFeedItem {
+  grant: {
+    id: string;
+    title: string | null;
+    funder: string | null;
+    submission_deadline: string | null;
+  };
+  clientMatches: { name: string; decision: CardDecision }[];
+}
+
+export async function getProspectFeed(
+  db: ReturnType<typeof createServiceClient>,
+): Promise<ProspectFeedItem[]> {
+  const { data: grants } = await db
+    .from("grants")
+    .select("id, title, funder, submission_deadline, hard_disqualifiers, status, is_domestic")
+    .eq("status", "complete")
+    .eq("is_domestic", true)
+    .order("ingested_at", { ascending: false });
+  if (!grants || grants.length === 0) return [];
+
+  // Hard-disqualified grants are ineligible for everyone -- no prospect can
+  // pursue them either, so they never enter the feed.
+  const eligible = grants.filter((g) => (g.hard_disqualifiers?.length ?? 0) === 0);
+  if (eligible.length === 0) return [];
+  const ids = eligible.map((g) => g.id);
+
+  const { data: cards } = await db
+    .from("review_cards")
+    .select("grant_id, card_type, decision, clients(name)")
+    .in("grant_id", ids);
+
+  // Supabase types a to-one embed (clients(name)) as an array; normalize both.
+  type Row = {
+    grant_id: string | null;
+    card_type: string | null;
+    decision: CardDecision;
+    clients: { name: string } | { name: string }[] | null;
+  };
+  const clientName = (r: Row): string | null => {
+    const cl = r.clients;
+    if (!cl) return null;
+    return Array.isArray(cl) ? cl[0]?.name ?? null : cl.name;
+  };
+  const byGrant = new Map<string, Row[]>();
+  for (const c of (cards ?? []) as Row[]) {
+    if (!c.grant_id) continue;
+    const arr = byGrant.get(c.grant_id) ?? [];
+    arr.push(c);
+    byGrant.set(c.grant_id, arr);
+  }
+
+  const feed: ProspectFeedItem[] = [];
+  for (const g of eligible) {
+    const rows = byGrant.get(g.id) ?? [];
+    const status = getGrantGateStatus(g, rows.map((r) => ({ card_type: r.card_type, decision: r.decision })));
+    if (status !== "released") continue;
+    const clientMatches = rows
+      .filter((r) => r.card_type !== "prospect" && clientName(r) !== null)
+      .map((r) => ({ name: clientName(r)!, decision: r.decision }));
+    feed.push({
+      grant: {
+        id: g.id,
+        title: g.title,
+        funder: g.funder,
+        submission_deadline: g.submission_deadline,
+      },
+      clientMatches,
+    });
+  }
+  return feed;
+}
