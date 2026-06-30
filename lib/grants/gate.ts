@@ -96,6 +96,14 @@ export async function releasedGrantsForProspecting(
 // client match is decided. Excludes international and hard-disqualified grants
 // (never prospectable) and anything not finished scoring. Read-only; the Track 2
 // discovery engine (step 3) is what acts on a feed item.
+export interface ProspectCardLite {
+  id: string;
+  fit_score: number | null;
+  proposed_role: string | null;
+  decision: CardDecision;
+  prospect: { name: string; org_type: string | null; source_url: string } | null;
+}
+
 export interface ProspectFeedItem {
   grant: {
     id: string;
@@ -104,6 +112,7 @@ export interface ProspectFeedItem {
     submission_deadline: string | null;
   };
   clientMatches: { name: string; decision: CardDecision }[];
+  prospectCards: ProspectCardLite[];
 }
 
 export async function getProspectFeed(
@@ -125,20 +134,30 @@ export async function getProspectFeed(
 
   const { data: cards } = await db
     .from("review_cards")
-    .select("grant_id, card_type, decision, clients(name)")
+    .select("id, grant_id, card_type, decision, fit_score, proposed_role, clients(name), prospects(name, org_type, source_url)")
     .in("grant_id", ids);
 
-  // Supabase types a to-one embed (clients(name)) as an array; normalize both.
+  // Supabase types a to-one embed as an array; normalize both shapes.
+  type ProspectEmbed = { name: string; org_type: string | null; source_url: string };
   type Row = {
+    id: string;
     grant_id: string | null;
     card_type: string | null;
     decision: CardDecision;
+    fit_score: number | null;
+    proposed_role: string | null;
     clients: { name: string } | { name: string }[] | null;
+    prospects: ProspectEmbed | ProspectEmbed[] | null;
   };
   const clientName = (r: Row): string | null => {
     const cl = r.clients;
     if (!cl) return null;
     return Array.isArray(cl) ? cl[0]?.name ?? null : cl.name;
+  };
+  const prospectOf = (r: Row): ProspectEmbed | null => {
+    const p = r.prospects;
+    if (!p) return null;
+    return Array.isArray(p) ? p[0] ?? null : p;
   };
   const byGrant = new Map<string, Row[]>();
   for (const c of (cards ?? []) as Row[]) {
@@ -156,6 +175,15 @@ export async function getProspectFeed(
     const clientMatches = rows
       .filter((r) => r.card_type !== "prospect" && clientName(r) !== null)
       .map((r) => ({ name: clientName(r)!, decision: r.decision }));
+    const prospectCards: ProspectCardLite[] = rows
+      .filter((r) => r.card_type === "prospect")
+      .map((r) => ({
+        id: r.id,
+        fit_score: r.fit_score,
+        proposed_role: r.proposed_role,
+        decision: r.decision,
+        prospect: prospectOf(r),
+      }));
     feed.push({
       grant: {
         id: g.id,
@@ -164,6 +192,7 @@ export async function getProspectFeed(
         submission_deadline: g.submission_deadline,
       },
       clientMatches,
+      prospectCards,
     });
   }
   return feed;

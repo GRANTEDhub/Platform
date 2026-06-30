@@ -8,12 +8,13 @@ import { ScoreBadge, DecisionBadge } from "@/components/grants/badges";
 import { holdCategoryLabel } from "@/lib/hold-categories";
 import { DecisionBar } from "./decision-bar";
 import { MatchFeedback } from "./match-feedback";
-import type { ReviewCard, Client, Grant } from "@/types/database";
+import type { ReviewCard, Client, Grant, Prospect } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
 type FullCard = ReviewCard & {
   clients: Pick<Client, "id" | "name" | "org_type" | "engagement_tier"> | null;
+  prospects: Pick<Prospect, "id" | "name" | "org_type" | "source_url"> | null;
   grants: Pick<Grant, "id" | "title" | "funder" | "fon" | "source_url" | "submission_deadline" | "cost_share" | "award_range_min" | "award_range_max" | "award_range_is_estimate"> | null;
 };
 
@@ -23,7 +24,7 @@ export default async function CardDetailPage({ params }: { params: { id: string 
 
   const { data } = await supabase
     .from("review_cards")
-    .select("*, clients(id, name, org_type, engagement_tier), grants(id, title, funder, fon, source_url, submission_deadline, cost_share, award_range_min, award_range_max, award_range_is_estimate)")
+    .select("*, clients(id, name, org_type, engagement_tier), prospects(id, name, org_type, source_url), grants(id, title, funder, fon, source_url, submission_deadline, cost_share, award_range_min, award_range_max, award_range_is_estimate)")
     .eq("id", params.id)
     .single();
 
@@ -31,12 +32,16 @@ export default async function CardDetailPage({ params }: { params: { id: string 
   if (!card) notFound();
 
   const rc = card.reasoning_context || {};
+  // Prospect cards (Track 2) carry a prospect org instead of a client. The org
+  // name + source live here; the scored analysis below stays internal.
+  const isProspect = card.card_type === "prospect";
+  const orgName = card.clients?.name || card.prospects?.name || "Match";
 
   return (
     <div>
       <PageHeader
-        title={card.clients?.name || "Match"}
-        description={card.grants?.title || undefined}
+        title={orgName}
+        description={[isProspect ? "Prospect" : null, card.grants?.title].filter(Boolean).join(" · ") || undefined}
         action={<DecisionBadge decision={card.decision} />}
       />
 
@@ -141,6 +146,26 @@ export default async function CardDetailPage({ params }: { params: { id: string 
               <MatchFeedback cardId={card.id} />
             </CardContent>
           </Card>
+
+          {isProspect && card.prospects && (
+            <Card>
+              <CardHeader><CardTitle>Prospect org</CardTitle></CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                <Detail label="Organization" value={card.prospects.name} />
+                <Detail label="Type" value={card.prospects.org_type} />
+                {card.prospects.source_url && (
+                  <a
+                    href={card.prospects.source_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block text-primary hover:underline"
+                  >
+                    Source ↗
+                  </a>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader><CardTitle>Opportunity</CardTitle></CardHeader>

@@ -3,7 +3,9 @@ import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ScoreBadge, DecisionBadge } from "@/components/grants/badges";
 import { getProspectFeed } from "@/lib/grants/gate";
+import { ProspectButton } from "./prospect-button";
 
 export const dynamic = "force-dynamic";
 
@@ -51,18 +53,10 @@ export default async function IntelPage() {
                     .join(" · ")}
                 </p>
               </div>
-              {/* Inert until the discovery engine (step 3). Live discovery runs
-                  only on grants the user explicitly flags here. */}
-              <button
-                type="button"
-                disabled
-                title="Discovery engine — coming in step 3"
-                className="shrink-0 cursor-not-allowed rounded-md border bg-muted px-3 py-1.5 text-sm font-medium text-muted-foreground opacity-60"
-              >
-                Prospect
-              </button>
+              {/* Live discovery runs only on grants the user explicitly flags. */}
+              <ProspectButton grantId={item.grant.id} />
             </CardHeader>
-            <CardContent className="space-y-2 text-sm">
+            <CardContent className="space-y-3 text-sm">
               <Link href={`/grants/${item.grant.id}`} className="text-primary hover:underline">
                 Open shred →
               </Link>
@@ -73,6 +67,45 @@ export default async function IntelPage() {
                       .map((m) => `${m.name} (${m.decision === "approved" ? "alerted" : "not alerted"})`)
                       .join(", ")}`}
               </p>
+
+              {item.prospectCards.length > 0 && (
+                <div className="rounded-md border">
+                  <p className="border-b bg-muted/40 px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Surfaced prospects ({item.prospectCards.length})
+                  </p>
+                  <ul className="divide-y">
+                    {item.prospectCards.map((pc) => (
+                      <li key={pc.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                        <div className="min-w-0">
+                          <Link href={`/review/${pc.id}`} className="font-medium hover:underline">
+                            {pc.prospect?.name || "Prospect org"}
+                          </Link>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {pc.proposed_role}
+                            {pc.prospect?.source_url ? (
+                              <>
+                                {" · "}
+                                <a
+                                  href={pc.prospect.source_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-primary hover:underline"
+                                >
+                                  source ↗
+                                </a>
+                              </>
+                            ) : null}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <ScoreBadge score={(pc.fit_score ?? 2) as 1 | 2 | 3} />
+                          <DecisionBadge decision={pc.decision} />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </CardContent>
           </Card>
         ))}
