@@ -67,7 +67,8 @@ export async function releasedGrantsForProspecting(
   const { data: grants } = await db
     .from("grants")
     .select("id, status")
-    .eq("status", "complete");
+    .eq("status", "complete")
+    .is("skip_reason", null); // grant-level-gated grants are not prospectable
   if (!grants || grants.length === 0) return [];
 
   const ids = grants.map((g) => g.id);
@@ -123,6 +124,7 @@ export async function getProspectFeed(
     .select("id, title, funder, submission_deadline, hard_disqualifiers, status, is_domestic")
     .eq("status", "complete")
     .eq("is_domestic", true)
+    .is("skip_reason", null) // grant-level-gated grants (e.g. single national award) are not prospectable
     .order("ingested_at", { ascending: false });
   if (!grants || grants.length === 0) return [];
 
