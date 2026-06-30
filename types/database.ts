@@ -12,6 +12,27 @@ export interface Profile {
   updated_at: string;
 }
 
+// Hard, code-enforced client constraints (migration 0018). These are the
+// "a miss is unacceptable" gates (legal / eligibility), enforced deterministically
+// in code rather than left to the model as advisory matching_rules prose.
+//   ineligible_funder  -> excluded pre-model (never scored)
+//   role_ceiling       -> post-model clamp: cap the role (and score)
+//   ineligible_partner -> post-model clamp: block the structured prime + force a flag
+//   entity_screen      -> guaranteed before_you_approve flag (content-dependent; not a silent exclude)
+export type ConstraintType =
+  | "ineligible_funder"
+  | "role_ceiling"
+  | "ineligible_partner"
+  | "entity_screen";
+export type ConstraintAction = "exclude" | "cap_role" | "flag";
+export interface HardConstraint {
+  type: ConstraintType;
+  value: string; // funder name | ceiling role | partner org | screen subject
+  scope?: string; // optional: only applies to grants matching this (heuristic match)
+  action: ConstraintAction;
+  note: string; // human-readable; also injected into the prompt so model + code agree
+}
+
 export interface Client {
   id: string;
   name: string;
@@ -47,6 +68,10 @@ export interface Client {
   // Client-specific authoritative matching overrides (editable; read by the
   // engine and applied before general logic). See migration 0008.
   matching_rules: string | null;
+  // Hard, code-enforced constraints (migration 0018). Structured gates that the
+  // engine enforces in code (not advisory prose): supersede matching_rules for
+  // the cases they cover. Null/absent = none.
+  hard_constraints: HardConstraint[] | null;
   created_at: string;
   updated_at: string;
 }

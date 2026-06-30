@@ -1,0 +1,25 @@
+-- ╔══════════════════════════════════════════════════════════════════════════╗
+-- ║ Hard, code-enforced client constraints — structured gates, not prose         ║
+-- ╚══════════════════════════════════════════════════════════════════════════╝
+-- The "a miss is unacceptable" gates (legal / eligibility) were advisory prose
+-- in matching_rules, which the model applied as strong suggestions, not
+-- guarantees. This stores them as a structured, typed list the engine enforces
+-- in CODE (pre-filter exclude / post-model role+prime clamp / guaranteed flag).
+--
+-- Array of HardConstraint (see types/database.ts):
+--   { type, value, scope?, action, note }
+-- Plain JSONB, no CHECK -- allowed types/actions live in app code and the
+-- payload is validated defensively on read (getClientConstraints), so the shape
+-- can evolve without a migration.
+--
+-- Precedence: hard_constraints > matching_rules > general logic. When a hard
+-- gate moves here, its duplicate clause is stripped from matching_rules so the
+-- two cannot drift (done in the separate, reviewed data-translation pass).
+--
+-- Nullable, no default: null/absent = no constraints. Enforcement reads null as
+-- "none", so deploying the engine code before this column is inert-but-safe.
+--
+-- Sam dependency: apply to prod BEFORE populating any client's constraints. The
+-- engine only ENFORCES once rows are populated; the code change alone is safe
+-- against a null column.
+alter table clients add column if not exists hard_constraints jsonb;
