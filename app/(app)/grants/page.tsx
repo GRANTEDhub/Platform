@@ -12,23 +12,36 @@ export const dynamic = "force-dynamic";
 export default async function GrantsPage({
   searchParams,
 }: {
-  searchParams: { scope?: string };
+  searchParams: { scope?: string; filter?: string };
 }) {
   await requireUser(); // admins + contractors
   const supabase = createClient();
   const showInternational = searchParams.scope === "international";
+  const showErrors = searchParams.filter === "errors";
 
-  const [{ data }, { count: intlCount }] = await Promise.all([
-    supabase
-      .from("grants")
-      .select("id, title, funder, status, submission_deadline, deadline, ingested_at")
-      .eq("is_domestic", !showInternational)
-      .order("ingested_at", { ascending: false })
-      .limit(100),
+  // The errors view shows only failed (domestic) grants -- including any the
+  // watchdog flipped out of a stuck 'processing' state. Otherwise the existing
+  // domestic/international split applies.
+  let listQuery = supabase
+    .from("grants")
+    .select("id, title, funder, status, submission_deadline, deadline, ingested_at")
+    .order("ingested_at", { ascending: false })
+    .limit(100);
+  listQuery = showErrors
+    ? listQuery.eq("is_domestic", true).eq("status", "error")
+    : listQuery.eq("is_domestic", !showInternational);
+
+  const [{ data }, { count: intlCount }, { count: errorCount }] = await Promise.all([
+    listQuery,
     supabase
       .from("grants")
       .select("id", { count: "exact", head: true })
       .eq("is_domestic", false),
+    supabase
+      .from("grants")
+      .select("id", { count: "exact", head: true })
+      .eq("is_domestic", true)
+      .eq("status", "error"),
   ]);
   const grants = (data ?? []) as Partial<Grant>[];
 
@@ -38,14 +51,33 @@ export default async function GrantsPage({
         title="Opportunities"
         description="Domestic federal opportunities, shredded and matched against the client roster."
         action={
-          <Link
-            href={showInternational ? "/grants" : "/grants?scope=international"}
-            className="rounded-md border bg-card px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent/60"
-          >
-            {showInternational
-              ? "← Back to domestic"
-              : `International (${intlCount ?? 0})`}
-          </Link>
+          showErrors ? (
+            <Link
+              href="/grants"
+              className="rounded-md border bg-card px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent/60"
+            >
+              ← All opportunities
+            </Link>
+          ) : (
+            <div className="flex items-center gap-2">
+              {(errorCount ?? 0) > 0 && (
+                <Link
+                  href="/grants?filter=errors"
+                  className="rounded-md border border-destructive/40 bg-card px-3 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10"
+                >
+                  Errors ({errorCount})
+                </Link>
+              )}
+              <Link
+                href={showInternational ? "/grants" : "/grants?scope=international"}
+                className="rounded-md border bg-card px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent/60"
+              >
+                {showInternational
+                  ? "← Back to domestic"
+                  : `International (${intlCount ?? 0})`}
+              </Link>
+            </div>
+          )
         }
       />
       <div className="grid gap-8 p-8 lg:grid-cols-[1fr_22rem]">
@@ -78,8 +110,9 @@ export default async function GrantsPage({
               {grants.length === 0 && (
                 <tr>
                   <td colSpan={3} className="px-4 py-12 text-center text-muted-foreground">
-                    No grants yet. Paste a link or NOFO on the right, or let the scheduled
-                    ingest pull new opportunities.
+                    {showErrors
+                      ? "No failed grants."
+                      : "No grants yet. Paste a link or NOFO on the right, or let the scheduled ingest pull new opportunities."}
                   </td>
                 </tr>
               )}

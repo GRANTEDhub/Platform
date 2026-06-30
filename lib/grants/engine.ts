@@ -3,6 +3,11 @@
 // + AI Calibration Email Logs compiled by Samantha from Shannon's expert overrides.
 
 import { getAnthropicClient, MODEL } from "@/lib/anthropic";
+import {
+  funderExclusionReason,
+  applyHardConstraints,
+  formatConstraintsForPrompt,
+} from "@/lib/grants/constraints";
 import type { Client, Grant, IdealApplicantProfile } from "@/types/database";
 
 export interface ExtractedGrant {
@@ -598,7 +603,9 @@ Match/Cost Share Capacity: ${client.match_cost_share_capacity || "Unknown"}
 Federal Grant History: ${usaSpendingContext || client.federal_grant_history || "Unknown -- USASpending not checked"}
 SAM/UEI Status: ${client.sam_uei_status || "Unknown"}
 Known Constraints: ${client.known_constraints || "None noted"}
-Matching Rules (AUTHORITATIVE OVERRIDES -- apply before general logic): ${client.matching_rules || "None"}`;
+Matching Rules (AUTHORITATIVE OVERRIDES -- apply before general logic): ${client.matching_rules || "None"}
+Hard Constraints (CODE-ENFORCED -- authoritative; these are enforced in code regardless of your output, listed so your reasoning and role assignment align with them):
+${formatConstraintsForPrompt(client)}`;
 
   // Force structured output via a tool call so parsing is not a regex gamble:
   // the model must return the schema as the tool input, which arrives already
@@ -722,6 +729,12 @@ Matching Rules (AUTHORITATIVE OVERRIDES -- apply before general logic): ${client
     // No profile to anchor seats: cannot verify a prime seat, so cap at 2.
     result.fit_score = Math.min(rawScore, 2) as 0 | 1 | 2 | 3;
   }
+
+  // Hard client constraints (post-model clamp). Same pattern as the seat ceiling
+  // above: deterministic code override of the model's structured output. Caps
+  // the role, blocks an ineligible structured prime, and injects guaranteed
+  // before_you_approve flags. Supersedes matching_rules for the cases it covers.
+  applyHardConstraints(result, client, grant);
   return result;
 }
 
@@ -733,6 +746,11 @@ export function jsPreFilter(
   extracted: ExtractedGrant,
   client: Client
 ): string | null {
+  // Hard constraint: a client-specific ineligible funder excludes the grant
+  // before any model call. Deterministic; supersedes any matching_rules prose.
+  const funderBlock = funderExclusionReason(extracted.funder, client);
+  if (funderBlock) return funderBlock;
+
   const eligibleTypes = (extracted.eligible_entity_types || []).map((t) =>
     t.toLowerCase()
   );

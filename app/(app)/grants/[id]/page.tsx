@@ -41,6 +41,28 @@ export default async function GrantDetailPage({ params }: { params: { id: string
   const gate = getGrantGateStatus(grant, matches);
   const undecided = undecidedClientCount(matches);
 
+  // Incomplete-scoring visibility. match_attempts is append-only, so reduce to
+  // each client's LATEST attempt (max created_at) and count those that errored.
+  // This reflects current state regardless of re-scores: a client that errored
+  // then later scored fine is not counted; one whose newest attempt is an error
+  // is. Distinguishes "complete, nobody matched" from "couldn't score N clients".
+  const { data: attempts } = await supabase
+    .from("match_attempts")
+    .select("client_id, outcome, created_at")
+    .eq("grant_id", params.id);
+
+  const latestByClient = new Map<string, { outcome: string; created_at: string }>();
+  for (const a of attempts ?? []) {
+    if (!a.client_id) continue;
+    const prev = latestByClient.get(a.client_id);
+    if (!prev || a.created_at > prev.created_at) {
+      latestByClient.set(a.client_id, { outcome: a.outcome, created_at: a.created_at });
+    }
+  }
+  const erroredClientCount = [...latestByClient.values()].filter(
+    (a) => a.outcome === "error",
+  ).length;
+
   return (
     <div>
       <AutoRefresh enabled={processing} />
@@ -140,6 +162,23 @@ export default async function GrantDetailPage({ params }: { params: { id: string
             </Card>
           )}
 
+          {erroredClientCount > 0 && !processing && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
+              <p className="text-sm font-medium text-amber-900">Scoring was incomplete</p>
+              <p className="mt-1 text-sm text-amber-800">
+                {erroredClientCount} client{erroredClientCount === 1 ? "" : "s"} couldn&apos;t be
+                scored on the last run — likely a transient API error — so{" "}
+                {erroredClientCount === 1 ? "it is" : "they are"} missing from the matches below.
+                Re-match to retry.
+              </p>
+              {profile.role === "admin" && grant.is_domestic && (
+                <div className="mt-3">
+                  <RematchButton grantId={grant.id} />
+                </div>
+              )}
+            </div>
+          )}
+
           <Card>
             <CardHeader className="flex-row items-center justify-between space-y-0">
               <CardTitle>Matches ({matches.length})</CardTitle>
@@ -152,9 +191,11 @@ export default async function GrantDetailPage({ params }: { params: { id: string
                 <p className="text-sm text-muted-foreground">
                   {processing
                     ? "Scoring in progress…"
-                    : grant.is_domestic
-                      ? "No qualifying matches (score 2+) for the current roster."
-                      : "International opportunity — excluded from matching by policy."}
+                    : !grant.is_domestic
+                      ? "International opportunity — excluded from matching by policy."
+                      : erroredClientCount > 0
+                        ? "Scoring was incomplete — see the notice above. Re-match to retry before treating this as a no-match."
+                        : "No qualifying matches (score 2+) for the current roster."}
                 </p>
               ) : (
                 <ul className="divide-y text-sm">
