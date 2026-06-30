@@ -18,6 +18,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
 
+export const dynamic = "force-dynamic";
+
 const STUCK_THRESHOLD_MINUTES = 15;
 
 export async function GET(req: NextRequest) {

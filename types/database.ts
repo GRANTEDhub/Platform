@@ -33,6 +33,20 @@ export interface HardConstraint {
   note: string; // human-readable; also injected into the prompt so model + code agree
 }
 
+// A discovered non-client org surfaced by the Track 2 prospect engine
+// (migration 0019). source_url is non-null by schema: the structural
+// hallucination guard -- a prospect with no real source cannot exist.
+export interface Prospect {
+  id: string;
+  name: string;
+  org_type: string | null;
+  location_state: string | null;
+  location_county: string | null;
+  source_url: string;
+  capability_summary: string | null;
+  created_at: string;
+}
+
 export interface Client {
   id: string;
   name: string;
@@ -128,6 +142,11 @@ export interface Grant {
   raw_text: string | null;
   status: string;
   error_detail: string | null;
+  // Grant-level skip reason for the Ledger (migration 0020). Set at the pre-shred
+  // grant-level gate (e.g. single national award). Null = not a grant-level skip;
+  // international / hard-disqualifier reasons derive from is_domestic /
+  // hard_disqualifiers instead. Disposition is derived, never stored.
+  skip_reason: string | null;
   is_domestic: boolean;
   // Step 2: 'full' = parsed from the real program NOFO; 'summary' = API summary
   // only (with shred_reason explaining why the deep shred wasn't available).
@@ -165,6 +184,11 @@ export interface ReviewCard {
     concept_derivation?: string;
     why_not_others?: string;
   } | null;
+  // Track 2 discriminator (migration 0019). 'client' (default) or 'prospect'.
+  // The client-first gate counts only client cards; a prospect card must never
+  // enter the lock/release computation. prospect_id is set on prospect cards.
+  card_type: string;
+  prospect_id: string | null;
   decision: CardDecision;
   hold_reason: string | null;
   // Structured hold reason (migration 0017). One of HOLD_CATEGORY_VALUES, or

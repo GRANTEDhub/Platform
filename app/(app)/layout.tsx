@@ -14,9 +14,9 @@ import { Sidebar, type NavItem } from "@/components/layout/sidebar";
 // Grant Intel (Track 2, prospects / BizDev -- stub until the prospect engine).
 const ADMIN_NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: "dashboard" },
-  { href: "/grants", label: "Opportunities", icon: "grants" },
-  { href: "/matches", label: "Grant Matches", icon: "matching" },
-  { href: "/intel", label: "Grant Intel", icon: "intel" },
+  { href: "/grants", label: "Ledger", icon: "grants" },
+  { href: "/matches", label: "Matches", icon: "matching" },
+  { href: "/intel", label: "Prospects", icon: "intel" },
   { href: "/clients", label: "Clients", icon: "clients" },
   { href: "/time", label: "Time", icon: "time" },
   { href: "/invoices", label: "Invoices", icon: "invoices" },
@@ -28,8 +28,8 @@ const ADMIN_NAV: NavItem[] = [
 // Contractors are scoped to Track 1 grant work: the opportunity feed and the
 // client match queue. Grant Intel (prospect / BizDev) is admin-only.
 const CONTRACTOR_NAV: NavItem[] = [
-  { href: "/grants", label: "Opportunities", icon: "grants" },
-  { href: "/matches", label: "Grant Matches", icon: "matching" },
+  { href: "/grants", label: "Ledger", icon: "grants" },
+  { href: "/matches", label: "Matches", icon: "matching" },
 ];
 
 export default async function AppLayout({

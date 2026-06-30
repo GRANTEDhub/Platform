@@ -40,6 +40,9 @@ export async function runPipeline(
   let rawTextForStorage = rawText || "";
   let shredDepth: "full" | "summary" = "summary";
   let shredReason: string | null = null;
+  // Grant-level skip reason (Ledger). Set only for grant-level suppressions
+  // decidable without the deep shred -- currently the single-national-award cut.
+  let skipReason: string | null = null;
 
   const simplerGovId = url ? extractSimplerGovOpportunityId(url) : null;
 
@@ -48,21 +51,33 @@ export async function runPipeline(
     extracted = apiExtracted;
     rawTextForStorage = rawJson;
 
-    // Step 2: find + parse the real program NOFO and overlay analytical depth
-    // (scoring rubric, delivery/convener model) the API summary never carries.
-    // Fails loud: if no real NOFO validates, keep the summary shred + a reason.
-    try {
-      const nofo = await resolveNofoText(detail, apiExtracted.fon || "");
-      shredReason = nofo.reason;
-      if (nofo.text) {
-        const deep = await extractGrantData(nofo.text);
-        extracted = mergeDeepShred(apiExtracted, deep);
-        rawTextForStorage = nofo.text;
-        shredDepth = "full";
+    // Pre-shred grant-level gate: a single national award has no realistic
+    // Arkansas-anchored prime path (this mirrors the jsPreFilter global
+    // suppression, but is decidable from the cheap API summary). Skip the
+    // expensive deep shred + Stage A + matching entirely and record the
+    // disposition -- this is the genuinely "not shredded" Ledger tier. Only the
+    // awards-count cut is pre-shred-decidable; TTA/eligibility need the shred.
+    const apiAwards = parseInt(apiExtracted.num_awards || "", 10);
+    if (apiAwards === 1) {
+      skipReason = "Single national award -- no realistic Arkansas-anchored prime path";
+      shredReason = "skipped deep shred: single national award (grant-level gate)";
+    } else {
+      // Step 2: find + parse the real program NOFO and overlay analytical depth
+      // (scoring rubric, delivery/convener model) the API summary never carries.
+      // Fails loud: if no real NOFO validates, keep the summary shred + a reason.
+      try {
+        const nofo = await resolveNofoText(detail, apiExtracted.fon || "");
+        shredReason = nofo.reason;
+        if (nofo.text) {
+          const deep = await extractGrantData(nofo.text);
+          extracted = mergeDeepShred(apiExtracted, deep);
+          rawTextForStorage = nofo.text;
+          shredDepth = "full";
+        }
+      } catch (err) {
+        shredDepth = "summary";
+        shredReason = `deep shred failed: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`;
       }
-    } catch (err) {
-      shredDepth = "summary";
-      shredReason = `deep shred failed: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`;
     }
   } else {
     if (url && !rawText) {
@@ -81,7 +96,8 @@ export async function runPipeline(
   // hard-disqualified) and only when we have the real NOFO text (full shred) --
   // a summary is too thin to anchor a trustworthy profile. Fault-isolated.
   let idealProfile: IdealApplicantProfile | null = null;
-  const willScore = isDomestic && (extracted.hard_disqualifiers?.length ?? 0) === 0;
+  const willScore =
+    isDomestic && (extracted.hard_disqualifiers?.length ?? 0) === 0 && !skipReason;
   if (willScore && shredDepth === "full") {
     try {
       idealProfile = await constructIdealApplicantProfile(rawTextForStorage);
@@ -124,13 +140,15 @@ export async function runPipeline(
       is_domestic: isDomestic,
       shred_depth: shredDepth,
       shred_reason: shredReason,
+      skip_reason: skipReason,
       ideal_applicant_profile: idealProfile,
     })
     .eq("id", grantId);
 
-  // International or hard-disqualified opportunities are stored (flagged) but
-  // never scored — saves matching spend and honors the domestic-only mandate.
-  if (!isDomestic || (extracted.hard_disqualifiers?.length ?? 0) > 0) {
+  // Grant-level-skipped, international, or hard-disqualified opportunities are
+  // stored (flagged) but never scored — saves matching spend and honors the
+  // domestic-only mandate. The Ledger derives the disposition from these fields.
+  if (skipReason || !isDomestic || (extracted.hard_disqualifiers?.length ?? 0) > 0) {
     await db.from("grants").update({ status: "complete" }).eq("id", grantId);
     return;
   }
