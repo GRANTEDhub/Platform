@@ -11,6 +11,7 @@ import {
   constructIdealApplicantProfile,
   jsPreFilter,
   looksInternational,
+  grantLevelSuppressionReason,
 } from "@/lib/grants/engine";
 import type { IdealApplicantProfile } from "@/types/database";
 import { resolveNofoText, mergeDeepShred } from "@/lib/grants/nofo";
@@ -57,10 +58,13 @@ export async function runPipeline(
     // expensive deep shred + Stage A + matching entirely and record the
     // disposition -- this is the genuinely "not shredded" Ledger tier. Only the
     // awards-count cut is pre-shred-decidable; TTA/eligibility need the shred.
-    const apiAwards = parseInt(apiExtracted.num_awards || "", 10);
-    if (apiAwards === 1) {
-      skipReason = "Single national award -- no realistic Arkansas-anchored prime path";
-      shredReason = "skipped deep shred: single national award (grant-level gate)";
+    // Cost optimization: if the cheap API summary already trips a grant-level
+    // suppression (in practice the single-award cut -- TTA/program type are API
+    // defaults pre-shred), skip the expensive deep shred + Stage A + matching.
+    const preSuppression = grantLevelSuppressionReason(apiExtracted);
+    if (preSuppression) {
+      skipReason = preSuppression;
+      shredReason = `skipped deep shred: ${preSuppression}`;
     } else {
       // Step 2: find + parse the real program NOFO and overlay analytical depth
       // (scoring rubric, delivery/convener model) the API summary never carries.
@@ -90,6 +94,17 @@ export async function runPipeline(
   }
 
   const isDomestic = !looksInternational(extracted.funder, extracted.title);
+
+  // Post-shred grant-level suppression. The award count / TTA model often
+  // surfaces only from the deep shred (the API summary omits expected_number_of_
+  // awards for most grants), so the pre-shred gate above can't see it. Re-check
+  // on the MERGED data: if a global suppression now trips, record skip_reason so
+  // it is captured on the grant (not just discovered per-client in jsPreFilter)
+  // and matching is skipped below. Runs before willScore + runMatching, so a
+  // suppressed grant builds no Stage A profile and wastes no per-client attempts.
+  if (!skipReason) {
+    skipReason = grantLevelSuppressionReason(extracted);
+  }
 
   // Stage A (Step 3): construct the grant's ideal applicant profile from the
   // full NOFO. Only for grants that will actually be scored (domestic, not
