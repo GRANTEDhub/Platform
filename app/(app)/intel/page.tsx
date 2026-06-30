@@ -22,7 +22,7 @@ export default async function IntelPage() {
   return (
     <div>
       <PageHeader
-        title="Grant Intel"
+        title="Prospects"
         description="Track 2 — grants cleared for prospecting (no client match, or every client match decided). Open a grant's shred, then Prospect to surface non-client orgs."
       />
       <div className="space-y-4 p-8">

@@ -142,6 +142,11 @@ export interface Grant {
   raw_text: string | null;
   status: string;
   error_detail: string | null;
+  // Grant-level skip reason for the Ledger (migration 0020). Set at the pre-shred
+  // grant-level gate (e.g. single national award). Null = not a grant-level skip;
+  // international / hard-disqualifier reasons derive from is_domestic /
+  // hard_disqualifiers instead. Disposition is derived, never stored.
+  skip_reason: string | null;
   is_domestic: boolean;
   // Step 2: 'full' = parsed from the real program NOFO; 'summary' = API summary
   // only (with shred_reason explaining why the deep shred wasn't available).

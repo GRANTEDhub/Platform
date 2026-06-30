@@ -1,0 +1,20 @@
+-- ╔══════════════════════════════════════════════════════════════════════════╗
+-- ║ Ledger capture — grant-level skip reason                                     ║
+-- ╚══════════════════════════════════════════════════════════════════════════╝
+-- The Ledger (the permanent grant history) needs to distinguish WHY a grant was
+-- not pursued. Two of the three not-pursued reasons are already derivable from
+-- existing fields: international (is_domestic = false) and hard disqualifiers
+-- (hard_disqualifiers array). The third -- a grant-level SUPPRESSION such as a
+-- single national award -- was only recorded per-client in match_attempts, not
+-- on the grant. skip_reason captures it on the grant, written at the pre-shred
+-- grant-level gate (where the reason is already computed).
+--
+-- This is the ONLY new stored state for the Ledger. Disposition itself is
+-- DERIVED at read time (lib/grants/disposition.ts) from status + is_domestic +
+-- hard_disqualifiers + skip_reason + the cards' decisions -- never a stored
+-- terminal flag, so a grant can sit in the Ledger AND (later) in a per-card
+-- relationship/outcome layer with no rework. No disposition or outcome column.
+--
+-- Nullable, no default: null = not skipped at the grant level. Additive,
+-- backfill-safe; the derivation reads null as "not a grant-level skip".
+alter table grants add column if not exists skip_reason text;

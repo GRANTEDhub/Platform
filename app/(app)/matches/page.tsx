@@ -40,7 +40,7 @@ export default async function MatchingPage({
   return (
     <div>
       <PageHeader
-        title="Grant Matches"
+        title="Matches"
         description="New grant matches across the active client roster. Clear the day's queue: open a client, review the match, send or reject."
       />
       <div className="space-y-6 p-8">
