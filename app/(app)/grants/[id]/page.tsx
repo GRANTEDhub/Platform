@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { GrantStatusBadge, ScoreBadge } from "@/components/grants/badges";
+import { getGrantGateStatus, undecidedClientCount } from "@/lib/grants/gate";
 import { AutoRefresh } from "./auto-refresh";
 import { RematchButton } from "./rematch-button";
 import type { Grant, ReviewCard, Client } from "@/types/database";
@@ -34,6 +35,11 @@ export default async function GrantDetailPage({ params }: { params: { id: string
 
   const matches = (cards ?? []) as CardWithClient[];
   const processing = grant.status === "processing";
+
+  // Client-first gate (read-only here). Track 2's prospect engine will consume
+  // the same derivation; nothing enforces it yet.
+  const gate = getGrantGateStatus(grant, matches);
+  const undecided = undecidedClientCount(matches);
 
   return (
     <div>
@@ -173,6 +179,33 @@ export default async function GrantDetailPage({ params }: { params: { id: string
         </div>
 
         <div className="space-y-6">
+          <Card>
+            <CardHeader><CardTitle>Prospecting</CardTitle></CardHeader>
+            <CardContent className="space-y-1 text-sm">
+              {gate === "not_ready" && (
+                <p className="text-muted-foreground">
+                  Not ready — grant has not finished scoring against the roster.
+                </p>
+              )}
+              {gate === "released" && (
+                <div className="flex items-center gap-2">
+                  <Badge variant="success">Released</Badge>
+                  <span className="text-muted-foreground">
+                    Free to prospect — every client match is decided (or there are none).
+                  </span>
+                </div>
+              )}
+              {gate === "locked" && (
+                <div className="flex items-center gap-2">
+                  <Badge variant="warning">Locked</Badge>
+                  <span className="text-muted-foreground">
+                    {undecided} client {undecided === 1 ? "match" : "matches"} undecided — clients get first dibs.
+                  </span>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader><CardTitle>Key facts</CardTitle></CardHeader>
             <CardContent className="space-y-3 text-sm">

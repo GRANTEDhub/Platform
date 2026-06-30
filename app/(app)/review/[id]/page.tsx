@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScoreBadge, DecisionBadge } from "@/components/grants/badges";
+import { holdCategoryLabel } from "@/lib/hold-categories";
 import { DecisionBar } from "./decision-bar";
 import { MatchFeedback } from "./match-feedback";
 import type { ReviewCard, Client, Grant } from "@/types/database";
@@ -122,8 +123,11 @@ export default async function CardDetailPage({ params }: { params: { id: string 
                 draft={card.draft_outreach_email ?? ""}
                 finalEmail={card.final_outreach_email}
               />
-              {card.decision === "hold" && card.hold_reason && (
-                <p className="mt-3 text-xs text-muted-foreground">Hold: {card.hold_reason}</p>
+              {card.decision === "hold" && (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Hold: {holdCategoryLabel(card.hold_category)}
+                  {card.hold_reason ? ` — ${card.hold_reason}` : ""}
+                </p>
               )}
               {card.decision === "passed" && card.decision_reason && (
                 <p className="mt-3 text-xs text-muted-foreground">Rejected: {card.decision_reason}</p>

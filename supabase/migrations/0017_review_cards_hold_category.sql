@@ -1,0 +1,20 @@
+-- ╔══════════════════════════════════════════════════════════════════════════╗
+-- ║ Structured hold reasons — category alongside the existing free-text note     ║
+-- ╚══════════════════════════════════════════════════════════════════════════╝
+-- Hold previously stored a single free-text hold_reason. This adds a structured
+-- category so holds are filterable ("show everything held for pending partner")
+-- without string-parsing. The free-text hold_reason stays: an optional note on
+-- any category, REQUIRED only when category = 'other' (enforced in app code).
+--
+-- Plain text, no CHECK / enum -- the allowed values live in
+-- lib/hold-categories.ts and are validated in the PATCH route, so the option
+-- list can change without a migration (same pattern as `decision`).
+--
+-- Nullable, no default: existing held cards get hold_category = null and keep
+-- their hold_reason intact. The UI renders a null category as "Uncategorized" --
+-- no backfill required.
+--
+-- Sam dependency: apply to prod BEFORE the write-side code deploys. The PATCH
+-- route writes hold_category, so a missing column fails the update. The read
+-- side (rendering the label, null-tolerant) is safe to deploy any time.
+alter table review_cards add column if not exists hold_category text;
