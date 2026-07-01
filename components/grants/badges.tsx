@@ -16,7 +16,6 @@ export function DecisionBadge({ decision }: { decision: CardDecision }) {
     pending: { variant: "secondary", label: "Pending" },
     approved: { variant: "success", label: "Approved" },
     passed: { variant: "destructive", label: "Passed" },
-    hold: { variant: "warning", label: "Hold" },
   };
   const d = map[decision] ?? map.pending;
   return <Badge variant={d.variant}>{d.label}</Badge>;

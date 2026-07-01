@@ -2,16 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { canSendEmail } from "@/lib/email/guard";
 import { sendAlertEmail } from "@/lib/email/send";
-import {
-  HOLD_CATEGORY_VALUES,
-  HOLD_CATEGORY_REQUIRING_NOTE,
-  type HoldCategory,
-} from "@/lib/hold-categories";
 import type { CardDecision, ReviewCard, Client } from "@/types/database";
 
 // Update a review-card decision. RLS + the guard_card_approval trigger enforce
 // that only admins can set 'approved' (clear a match for client delivery);
-// contractors may set 'passed' / 'hold' / 'pending'.
+// contractors may set 'passed' / 'pending'.
 export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } },
@@ -26,8 +21,6 @@ export async function PATCH(
 
   let body: {
     decision: CardDecision;
-    hold_reason?: string;
-    hold_category?: string;
     decision_reason?: string;
     final_outreach_email?: string;
   };
@@ -37,30 +30,14 @@ export async function PATCH(
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const valid: CardDecision[] = ["pending", "approved", "passed", "hold"];
+  const valid: CardDecision[] = ["pending", "approved", "passed"];
   if (!valid.includes(body.decision)) {
     return NextResponse.json({ error: "Invalid decision" }, { status: 400 });
-  }
-
-  // A hold requires a valid structured category; the free-text note is optional
-  // except for 'other', where it is the only detail and must be present.
-  if (body.decision === "hold") {
-    if (!body.hold_category || !HOLD_CATEGORY_VALUES.includes(body.hold_category as HoldCategory)) {
-      return NextResponse.json({ error: "A hold category is required" }, { status: 400 });
-    }
-    if (body.hold_category === HOLD_CATEGORY_REQUIRING_NOTE && !body.hold_reason?.trim()) {
-      return NextResponse.json(
-        { error: "A note is required when the hold category is 'Other'" },
-        { status: 400 },
-      );
-    }
   }
 
   const isTerminal = body.decision !== "pending";
   const update: Record<string, unknown> = {
     decision: body.decision,
-    hold_category: body.decision === "hold" ? body.hold_category : null,
-    hold_reason: body.decision === "hold" ? body.hold_reason?.trim() || null : null,
     decision_reason:
       body.decision === "passed" ? body.decision_reason || null : null,
     decided_by: isTerminal ? user.id : null,

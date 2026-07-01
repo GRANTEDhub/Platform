@@ -58,9 +58,8 @@ export default async function ClientGrantsPage({
         }
       />
       <div className="space-y-6 p-8">
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-3 gap-4">
           <Stat label="New" value={String(count("pending"))} hint="awaiting review" />
-          <Stat label="On hold" value={String(count("hold"))} hint="needs confirmation" />
           <Stat label="Approved" value={String(count("approved"))} hint="cleared to send" />
           <Stat label="Rejected" value={String(count("passed"))} hint="passed" />
         </div>

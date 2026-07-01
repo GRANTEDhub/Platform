@@ -161,7 +161,7 @@ export interface Grant {
   ingested_at: string;
 }
 
-export type CardDecision = "pending" | "approved" | "passed" | "hold";
+export type CardDecision = "pending" | "approved" | "passed";
 
 export interface ReviewCard {
   id: string;
@@ -194,9 +194,10 @@ export interface ReviewCard {
   card_type: string;
   prospect_id: string | null;
   decision: CardDecision;
+  // RETIRED: the Hold decision was removed (workflow is approve / pass / leave
+  // pending). These columns (0002 hold_reason, 0017 hold_category) are no longer
+  // written or read -- kept unused, not dropped, to preserve any historical note.
   hold_reason: string | null;
-  // Structured hold reason (migration 0017). One of HOLD_CATEGORY_VALUES, or
-  // null for legacy/uncategorized holds. hold_reason is the optional note.
   hold_category: string | null;
   // Reason captured when a match is rejected (Pass).
   decision_reason: string | null;
