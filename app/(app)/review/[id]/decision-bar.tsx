@@ -3,18 +3,15 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { HOLD_CATEGORIES, type HoldCategory } from "@/lib/hold-categories";
 import type { CardDecision } from "@/types/database";
 
 type DecidePayload = {
-  hold_reason?: string;
-  hold_category?: HoldCategory;
   decision_reason?: string;
   final_outreach_email?: string;
 };
 
 // The three-way match decision. Admins get Approve & Send / Edit & Send /
-// Reject; Hold and Reset stay as secondary controls. On approval the API
+// Reject; Reset stays as a secondary control. On approval the API
 // attempts a send behind the preview/prod guard and returns send_status, which
 // is surfaced below so a "recorded but not sent" outcome is never silent.
 export function DecisionBar({
@@ -34,11 +31,9 @@ export function DecisionBar({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
-  const [panel, setPanel] = useState<null | "edit" | "reject" | "hold">(null);
+  const [panel, setPanel] = useState<null | "edit" | "reject">(null);
   const [editBody, setEditBody] = useState(finalEmail ?? draft);
   const [rejectReason, setRejectReason] = useState("");
-  const [holdReason, setHoldReason] = useState("");
-  const [holdCategory, setHoldCategory] = useState<HoldCategory | null>(null);
 
   async function decide(next: CardDecision, payload?: DecidePayload) {
     setBusy(true);
@@ -90,19 +85,11 @@ export function DecisionBar({
         </div>
       ) : (
         <span className="block rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
-          Final approval is admin-only. You can reject or hold for review.
+          Final approval is admin-only. You can reject a match for review.
         </span>
       )}
 
       <div className="flex flex-wrap gap-2">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setPanel((p) => (p === "hold" ? null : "hold"))}
-          disabled={busy}
-        >
-          Hold
-        </Button>
         {!isAdmin && (
           <Button
             variant="ghost"
@@ -157,52 +144,6 @@ export function DecisionBar({
             disabled={busy}
           >
             Reject match
-          </Button>
-        </div>
-      )}
-
-      {panel === "hold" && (
-        <div className="space-y-2 rounded-md border bg-card p-3">
-          <div className="space-y-1">
-            {HOLD_CATEGORIES.map((c) => (
-              <label key={c.value} className="flex items-center gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="hold_category"
-                  checked={holdCategory === c.value}
-                  onChange={() => setHoldCategory(c.value)}
-                />
-                {c.label}
-              </label>
-            ))}
-          </div>
-          <textarea
-            value={holdReason}
-            onChange={(e) => setHoldReason(e.target.value)}
-            rows={2}
-            placeholder={
-              holdCategory === "other"
-                ? "Required: describe the hold."
-                : "Optional note (e.g. confirm SAM.gov, awaiting quorum court)"
-            }
-            className="flex w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
-          />
-          <Button
-            size="sm"
-            onClick={() => {
-              if (!holdCategory) {
-                setError("Pick a hold reason.");
-                return;
-              }
-              if (holdCategory === "other" && !holdReason.trim()) {
-                setError("A note is required for 'Other'.");
-                return;
-              }
-              decide("hold", { hold_category: holdCategory, hold_reason: holdReason });
-            }}
-            disabled={busy}
-          >
-            Save hold
           </Button>
         </div>
       )}

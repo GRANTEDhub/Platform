@@ -11,7 +11,6 @@ const FILTERS = [
   { value: "all", label: "All" },
   { value: "pending", label: "Pending" },
   { value: "approved", label: "Approved" },
-  { value: "hold", label: "Hold" },
   { value: "passed", label: "Passed" },
 ];
 
