@@ -1,0 +1,18 @@
+-- ╔══════════════════════════════════════════════════════════════════════════╗
+-- ║ Forecasted → active transition marker                                        ║
+-- ╚══════════════════════════════════════════════════════════════════════════╝
+-- When a grant we ingested as Forecasted is later reported posted by Simpler,
+-- the cron detects the flip (matched on opportunity_number / fon), re-shreds
+-- against the now-available full NOFO, and re-matches. grant_status is updated
+-- to Active on the flip, so this column preserves the history: "was forecasted,
+-- now active" -- surfaced in the Ledger + grant detail (and later the alert).
+--
+-- Set once, at flip time. Null = never activated from a forecast (the vast
+-- majority). Additive, backfill-safe.
+--
+-- v1 scope: decision preservation on the flip re-match reuses runMatching's
+-- existing behavior (decided cards are never touched), so a client who passed as
+-- forecasted stays passed and clients acquired after the forecast match fresh.
+-- The v2 "resurface previously-passed, flagged" upgrade (review_cards.prior_*)
+-- is intentionally deferred and bolts on additively.
+alter table grants add column if not exists activated_from_forecast_at timestamptz;
