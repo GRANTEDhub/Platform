@@ -33,6 +33,13 @@ const config: Config = {
           DEFAULT: "hsl(var(--destructive))",
           foreground: "hsl(var(--destructive-foreground))",
         },
+        // GRANTED brand primitives. Inert / opt-in: nothing references these
+        // except the client dashboard, so defining them restyles nothing else.
+        brand: {
+          navy: "#0B1E3A",
+          orange: "#b3541e",
+          cream: "#faf7f2",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -41,6 +48,9 @@ const config: Config = {
       },
       fontFamily: {
         sans: ["var(--font-sans)", "system-ui", "sans-serif"],
+        // Scoped to the dashboard via the font-var classes on its wrapper.
+        serif: ["var(--font-source-serif)", "Source Serif 4", "serif"],
+        tight: ["var(--font-inter-tight)", "system-ui", "sans-serif"],
       },
     },
   },
