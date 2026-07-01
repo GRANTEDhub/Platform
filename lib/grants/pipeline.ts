@@ -35,7 +35,11 @@ export async function runPipeline(
   grantId: string,
   url: string | undefined,
   rawText: string | undefined,
-  db: DB
+  db: DB,
+  // Optional hint from the caller (the cron passes the Simpler opportunity_status
+  // from the search). Used to mark forecasted grants authoritatively rather than
+  // relying on the extraction to infer status. Absent for manual ingest.
+  opts?: { opportunityStatus?: string },
 ) {
   let extracted;
   let rawTextForStorage = rawText || "";
@@ -144,7 +148,11 @@ export async function runPipeline(
       scoring_rubric: extracted.scoring_rubric,
       program_type: extracted.program_type,
       delivery_model: extracted.delivery_model,
-      grant_status: extracted.grant_status,
+      // A forecasted opportunity (from the cron search) is marked Forecasted
+      // authoritatively; its full scoring happens when it flips to active and
+      // re-shreds (the forecasted->active lifecycle, a separate change).
+      grant_status:
+        opts?.opportunityStatus === "forecasted" ? "Forecasted" : extracted.grant_status,
       scoring_criteria_high_value: extracted.scoring_criteria_high_value,
       technical_burden_flags: extracted.technical_burden_flags,
       incumbent_risk: extracted.incumbent_risk,
