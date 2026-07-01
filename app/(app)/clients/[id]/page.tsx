@@ -1,27 +1,59 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { format, parseISO } from "date-fns";
+import { FileCheck2, DollarSign, Clock, CalendarClock } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { PageHeader } from "@/components/layout/page-header";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/utils";
-import type { Client, TimeEntry, Invoice } from "@/types/database";
+import { interTight, sourceSerif } from "@/lib/fonts";
+import { ClientHero } from "@/components/clients/client-snapshot-header";
+import { StatCard } from "@/components/clients/stat-card";
+import { ClientMatchChart } from "@/components/clients/client-match-chart";
+import { ClientGrantTracking, type TrackedGrant } from "@/components/clients/client-grant-tracking";
+import { ClientActionItems } from "@/components/clients/client-action-items";
+import type { Client, Invoice, Grant, ClientOverview, CardDecision } from "@/types/database";
 
 export const dynamic = "force-dynamic";
+
+// The per-client dashboard: the "what's happening with this client" surface,
+// downstream of the Matches decision. Modern-SaaS layout -- hero, floating stat
+// tiles, a simple chart, distinct main/rail zones -- on the GRANTED brand (scoped
+// here via the font-var wrapper). All data is real; the pursuit lifecycle (stages)
+// is still a deferred v2 and the grant-tracking component is shaped for it.
+type ClientCardRow = {
+  id: string;
+  decision: CardDecision;
+  sent_at: string | null;
+  grants:
+    | Pick<Grant, "id" | "title" | "funder" | "submission_deadline">
+    | { id: string; title: string | null; funder: string | null; submission_deadline: string | null }[]
+    | null;
+};
+
+// Floating-card looks: main cards sit high with a soft navy-tinted shadow; rail
+// cards are visually quieter (lighter elevation + a hairline ring) so the two
+// zones read as distinct.
+const CARD_MAIN =
+  "rounded-2xl border-0 bg-white shadow-[0_2px_8px_rgba(11,30,58,0.06),0_16px_38px_-18px_rgba(11,30,58,0.20)]";
+const CARD_RAIL =
+  "rounded-2xl border-0 bg-white shadow-[0_1px_3px_rgba(11,30,58,0.05)] ring-1 ring-brand-navy/[0.06]";
 
 function fmtDate(d: string | null) {
   return d ? format(parseISO(d), "MMM d, yyyy") : "—";
 }
 
-export default async function ClientDetailPage({
-  params,
-}: {
-  params: { id: string };
-}) {
-  await requireAdmin();
+function grantOf(r: ClientCardRow) {
+  const g = r.grants;
+  if (!g) return null;
+  return Array.isArray(g) ? g[0] ?? null : g;
+}
+
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+export default async function ClientDashboardPage({ params }: { params: { id: string } }) {
+  await requireAdmin(); // internal-only for now; client-facing view is a later pass
   const supabase = createClient();
 
   const { data: client } = await supabase
@@ -32,13 +64,13 @@ export default async function ClientDetailPage({
 
   if (!client) notFound();
 
-  const [{ data: time }, { data: invoices }] = await Promise.all([
+  const [{ data: overviewData }, { data: cardRows }, { data: invoices }] = await Promise.all([
+    supabase.from("client_overview").select("*").eq("id", params.id).single(),
     supabase
-      .from("time_entries")
-      .select("*")
+      .from("review_cards")
+      .select("id, decision, sent_at, grants(id, title, funder, submission_deadline)")
       .eq("client_id", params.id)
-      .order("work_date", { ascending: false })
-      .limit(10),
+      .neq("card_type", "prospect"),
     supabase
       .from("invoices")
       .select("*")
@@ -47,103 +79,99 @@ export default async function ClientDetailPage({
       .limit(10),
   ]);
 
-  const entries = (time ?? []) as TimeEntry[];
+  const overview = overviewData as ClientOverview | null;
   const bills = (invoices ?? []) as Invoice[];
-  const hoursLogged = entries
-    .filter((e) => e.billable)
-    .reduce((s, e) => s + Number(e.hours), 0);
-  const owed = bills
-    .filter((i) => i.status === "sent")
-    .reduce((s, i) => s + i.amount_cents, 0);
+  const cards = (cardRows ?? []) as ClientCardRow[];
+
+  // Alerted grants = approved client cards; the grant-tracking list + chart both
+  // read from the same fetch.
+  const tracked: TrackedGrant[] = cards
+    .filter((c) => c.decision === "approved")
+    .map((r) => {
+      const g = grantOf(r);
+      return {
+        cardId: r.id,
+        grantId: g?.id ?? null,
+        title: g?.title ?? null,
+        funder: g?.funder ?? null,
+        deadline: g?.submission_deadline ?? null,
+        sentAt: r.sent_at,
+      };
+    });
+
+  const counts = {
+    pending: cards.filter((c) => c.decision === "pending").length,
+    approved: cards.filter((c) => c.decision === "approved").length,
+    passed: cards.filter((c) => c.decision === "passed").length,
+  };
+
+  const owedCents = overview?.owed_cents ?? 0;
+  const hoursRemaining = overview?.hours_remaining ?? null;
+
+  const humanLine =
+    [client.status ? `${cap(client.status)} client` : null, client.engagement_tier ? `${client.engagement_tier} tier` : null]
+      .filter(Boolean)
+      .join(" · ") || null;
+  const subLine =
+    [client.org_type?.replace(/_/g, " "), client.location_city, client.location_state]
+      .filter(Boolean)
+      .join(" · ") || null;
 
   return (
-    <div>
-      <PageHeader
-        title={client.name}
-        description={[client.org_type?.replace(/_/g, " "), client.location_city, client.location_state]
-          .filter(Boolean)
-          .join(" · ")}
-        action={
-          <div className="flex gap-2">
-            <Link href={`/clients/${client.id}/grants`}>
-              <Button variant="outline">Grant activity</Button>
-            </Link>
-            <Link href={`/clients/${client.id}/edit`}>
-              <Button variant="outline">Edit</Button>
-            </Link>
-          </div>
-        }
+    <div className={`${interTight.variable} ${sourceSerif.variable} min-h-full bg-brand-cream pb-10 font-tight`}>
+      <ClientHero
+        name={client.name}
+        humanLine={humanLine}
+        subLine={subLine}
+        editHref={`/clients/${client.id}/edit`}
       />
+
+      {/* Stat tiles float over the hero's lower edge -- the visual anchor. */}
+      <div className="relative z-10 -mt-12 grid grid-cols-2 gap-4 px-8 lg:grid-cols-4">
+        <StatCard icon={FileCheck2} value={String(tracked.length)} label={tracked.length === 1 ? "alerted grant" : "alerted grants"} />
+        <StatCard icon={DollarSign} value={formatCurrency(owedCents / 100)} label="outstanding" />
+        <StatCard icon={Clock} value={hoursRemaining !== null ? `${Number(hoursRemaining).toFixed(1)}h` : "—"} label="hours remaining" />
+        <StatCard icon={CalendarClock} value={overview?.next_deadline ? format(parseISO(overview.next_deadline), "MMM d") : "—"} label="next deadline" />
+      </div>
 
       <div className="grid gap-6 p-8 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Engagement</CardTitle>
-            </CardHeader>
-            <CardContent className="grid grid-cols-2 gap-4 text-sm">
-              <Detail label="Status" value={<Badge variant="secondary">{client.status}</Badge>} />
-              <Detail label="Tier" value={client.engagement_tier || "—"} />
-              <Detail label="Contract start" value={fmtDate(client.contract_start)} />
-              <Detail label="Contract end" value={fmtDate(client.contract_end)} />
-              <Detail label="Retainer hours" value={String(client.retainer_hours ?? 0)} />
-              <Detail
-                label="Hours remaining"
-                value={(Number(client.retainer_hours ?? 0) - hoursLogged).toFixed(1)}
+          <Card className={CARD_MAIN}>
+            <CardHeader><CardTitle>Grant activity</CardTitle></CardHeader>
+            <CardContent>
+              <ClientMatchChart
+                data={[
+                  { label: "In review", count: counts.pending, color: "#334867" },
+                  { label: "Alerted", count: counts.approved, color: "#b3541e" },
+                  { label: "Passed", count: counts.passed, color: "#c9c2b8" },
+                ]}
               />
             </CardContent>
           </Card>
 
-          {client.next_step && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Next step</CardTitle>
-              </CardHeader>
-              <CardContent className="text-sm">{client.next_step}</CardContent>
-            </Card>
-          )}
-
-          {client.notes && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Notes</CardTitle>
-              </CardHeader>
-              <CardContent className="whitespace-pre-wrap text-sm text-muted-foreground">
-                {client.notes}
-              </CardContent>
-            </Card>
-          )}
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Recent time</CardTitle>
+          <Card className={CARD_MAIN}>
+            <CardHeader className="flex-row items-center justify-between space-y-0">
+              <CardTitle>Grant tracking</CardTitle>
+              <Link href={`/clients/${client.id}/grants`} className="text-sm text-brand-orange hover:underline">
+                View all activity →
+              </Link>
             </CardHeader>
             <CardContent>
-              {entries.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No time logged yet. (Time tracking ships in a later phase.)
-                </p>
-              ) : (
-                <ul className="divide-y text-sm">
-                  {entries.map((e) => (
-                    <li key={e.id} className="flex justify-between py-2">
-                      <span>{e.description || "—"}</span>
-                      <span className="tabular-nums text-muted-foreground">
-                        {Number(e.hours).toFixed(1)}h · {fmtDate(e.work_date)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <ClientGrantTracking grants={tracked} />
+            </CardContent>
+          </Card>
+
+          <Card className={CARD_MAIN}>
+            <CardHeader><CardTitle>Action items</CardTitle></CardHeader>
+            <CardContent>
+              <ClientActionItems forUs={client.next_step} />
             </CardContent>
           </Card>
         </div>
 
         <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Contact</CardTitle>
-            </CardHeader>
+          <Card className={CARD_RAIL}>
+            <CardHeader><CardTitle>Contact</CardTitle></CardHeader>
             <CardContent className="space-y-2 text-sm">
               <Detail label="Name" value={client.primary_contact_name || "—"} />
               <Detail label="Email" value={client.primary_contact_email || "—"} />
@@ -151,16 +179,12 @@ export default async function ClientDetailPage({
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Billing</CardTitle>
-            </CardHeader>
+          <Card className={CARD_RAIL}>
+            <CardHeader><CardTitle>Billing</CardTitle></CardHeader>
             <CardContent className="space-y-2 text-sm">
-              <Detail label="Outstanding" value={formatCurrency(owed / 100)} />
+              <Detail label="Outstanding" value={formatCurrency(owedCents / 100)} />
               {bills.length === 0 ? (
-                <p className="text-muted-foreground">
-                  No invoices yet. (Invoicing ships in a later phase.)
-                </p>
+                <p className="text-muted-foreground">No invoices yet.</p>
               ) : (
                 <ul className="divide-y">
                   {bills.map((i) => (
@@ -173,6 +197,36 @@ export default async function ClientDetailPage({
               )}
             </CardContent>
           </Card>
+
+          <Card className={CARD_RAIL}>
+            <CardHeader><CardTitle>Engagement</CardTitle></CardHeader>
+            <CardContent className="grid grid-cols-2 gap-4 text-sm">
+              <Detail label="Status" value={<Badge variant="secondary">{client.status}</Badge>} />
+              <Detail label="Tier" value={client.engagement_tier || "—"} />
+              <Detail label="Contract start" value={fmtDate(client.contract_start)} />
+              <Detail label="Contract end" value={fmtDate(client.contract_end)} />
+              <Detail label="Retainer hours" value={String(client.retainer_hours ?? 0)} />
+              <Detail
+                label="Hours remaining"
+                value={hoursRemaining !== null ? Number(hoursRemaining).toFixed(1) : "—"}
+              />
+            </CardContent>
+          </Card>
+
+          {/* Internal-only: the future client-facing view simply hides this card. */}
+          {client.notes && (
+            <Card className={CARD_RAIL}>
+              <CardHeader className="flex-row items-center justify-between space-y-0">
+                <CardTitle>Notes</CardTitle>
+                <span className="rounded-full bg-brand-navy/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-navy">
+                  Internal
+                </span>
+              </CardHeader>
+              <CardContent className="whitespace-pre-wrap text-sm text-muted-foreground">
+                {client.notes}
+              </CardContent>
+            </Card>
+          )}
         </div>
       </div>
     </div>
