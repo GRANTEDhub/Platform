@@ -1,39 +1,56 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { format, parseISO } from "date-fns";
+import { FileCheck2, DollarSign, Clock, CalendarClock } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/utils";
 import { interTight, sourceSerif } from "@/lib/fonts";
-import { ClientSnapshotHeader, type SnapshotChip } from "@/components/clients/client-snapshot-header";
+import { ClientHero } from "@/components/clients/client-snapshot-header";
+import { StatCard } from "@/components/clients/stat-card";
+import { ClientMatchChart } from "@/components/clients/client-match-chart";
 import { ClientGrantTracking, type TrackedGrant } from "@/components/clients/client-grant-tracking";
 import { ClientActionItems } from "@/components/clients/client-action-items";
-import type { Client, Invoice, Grant, ClientOverview } from "@/types/database";
+import type { Client, Invoice, Grant, ClientOverview, CardDecision } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
 // The per-client dashboard: the "what's happening with this client" surface,
-// downstream of the Matches decision. Grants we've alerted land here (approved
-// cards); Ledger stays the permanent record. Built on the GRANTED brand (scoped
-// here via the font-var wrapper). The pursuit lifecycle (stages) is a deferred
-// v2 -- the grant-tracking component is already shaped for it.
-type ApprovedCardRow = {
+// downstream of the Matches decision. Modern-SaaS layout -- hero, floating stat
+// tiles, a simple chart, distinct main/rail zones -- on the GRANTED brand (scoped
+// here via the font-var wrapper). All data is real; the pursuit lifecycle (stages)
+// is still a deferred v2 and the grant-tracking component is shaped for it.
+type ClientCardRow = {
   id: string;
+  decision: CardDecision;
   sent_at: string | null;
-  grants: Pick<Grant, "id" | "title" | "funder" | "submission_deadline"> | { id: string; title: string | null; funder: string | null; submission_deadline: string | null }[] | null;
+  grants:
+    | Pick<Grant, "id" | "title" | "funder" | "submission_deadline">
+    | { id: string; title: string | null; funder: string | null; submission_deadline: string | null }[]
+    | null;
 };
+
+// Floating-card looks: main cards sit high with a soft navy-tinted shadow; rail
+// cards are visually quieter (lighter elevation + a hairline ring) so the two
+// zones read as distinct.
+const CARD_MAIN =
+  "rounded-2xl border-0 bg-white shadow-[0_2px_8px_rgba(11,30,58,0.06),0_16px_38px_-18px_rgba(11,30,58,0.20)]";
+const CARD_RAIL =
+  "rounded-2xl border-0 bg-white shadow-[0_1px_3px_rgba(11,30,58,0.05)] ring-1 ring-brand-navy/[0.06]";
 
 function fmtDate(d: string | null) {
   return d ? format(parseISO(d), "MMM d, yyyy") : "—";
 }
 
-function grantOf(r: ApprovedCardRow) {
+function grantOf(r: ClientCardRow) {
   const g = r.grants;
   if (!g) return null;
   return Array.isArray(g) ? g[0] ?? null : g;
 }
+
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export default async function ClientDashboardPage({ params }: { params: { id: string } }) {
   await requireAdmin(); // internal-only for now; client-facing view is a later pass
@@ -47,13 +64,12 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
 
   if (!client) notFound();
 
-  const [{ data: overviewData }, { data: approved }, { data: invoices }] = await Promise.all([
+  const [{ data: overviewData }, { data: cardRows }, { data: invoices }] = await Promise.all([
     supabase.from("client_overview").select("*").eq("id", params.id).single(),
     supabase
       .from("review_cards")
-      .select("id, sent_at, grants(id, title, funder, submission_deadline)")
+      .select("id, decision, sent_at, grants(id, title, funder, submission_deadline)")
       .eq("client_id", params.id)
-      .eq("decision", "approved")
       .neq("card_type", "prospect"),
     supabase
       .from("invoices")
@@ -65,50 +81,75 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
 
   const overview = overviewData as ClientOverview | null;
   const bills = (invoices ?? []) as Invoice[];
+  const cards = (cardRows ?? []) as ClientCardRow[];
 
-  const tracked: TrackedGrant[] = ((approved ?? []) as ApprovedCardRow[]).map((r) => {
-    const g = grantOf(r);
-    return {
-      cardId: r.id,
-      grantId: g?.id ?? null,
-      title: g?.title ?? null,
-      funder: g?.funder ?? null,
-      deadline: g?.submission_deadline ?? null,
-      sentAt: r.sent_at,
-    };
-  });
+  // Alerted grants = approved client cards; the grant-tracking list + chart both
+  // read from the same fetch.
+  const tracked: TrackedGrant[] = cards
+    .filter((c) => c.decision === "approved")
+    .map((r) => {
+      const g = grantOf(r);
+      return {
+        cardId: r.id,
+        grantId: g?.id ?? null,
+        title: g?.title ?? null,
+        funder: g?.funder ?? null,
+        deadline: g?.submission_deadline ?? null,
+        sentAt: r.sent_at,
+      };
+    });
+
+  const counts = {
+    pending: cards.filter((c) => c.decision === "pending").length,
+    approved: cards.filter((c) => c.decision === "approved").length,
+    passed: cards.filter((c) => c.decision === "passed").length,
+  };
 
   const owedCents = overview?.owed_cents ?? 0;
   const hoursRemaining = overview?.hours_remaining ?? null;
 
-  const chips: SnapshotChip[] = [
-    { value: String(tracked.length), label: tracked.length === 1 ? "alerted grant" : "alerted grants" },
-    { value: formatCurrency(owedCents / 100), label: "outstanding" },
-  ];
-  if (hoursRemaining !== null) {
-    chips.push({ value: `${Number(hoursRemaining).toFixed(1)}h`, label: "remaining" });
-  }
-  if (overview?.next_deadline) {
-    chips.push({ value: format(parseISO(overview.next_deadline), "MMM d"), label: "next deadline" });
-  }
-
-  const subtitle =
+  const humanLine =
+    [client.status ? `${cap(client.status)} client` : null, client.engagement_tier ? `${client.engagement_tier} tier` : null]
+      .filter(Boolean)
+      .join(" · ") || null;
+  const subLine =
     [client.org_type?.replace(/_/g, " "), client.location_city, client.location_state]
       .filter(Boolean)
       .join(" · ") || null;
 
   return (
-    <div className={`${interTight.variable} ${sourceSerif.variable} min-h-full bg-brand-cream font-tight`}>
-      <ClientSnapshotHeader
+    <div className={`${interTight.variable} ${sourceSerif.variable} min-h-full bg-brand-cream pb-10 font-tight`}>
+      <ClientHero
         name={client.name}
-        subtitle={subtitle}
-        chips={chips}
+        humanLine={humanLine}
+        subLine={subLine}
         editHref={`/clients/${client.id}/edit`}
       />
 
+      {/* Stat tiles float over the hero's lower edge -- the visual anchor. */}
+      <div className="relative z-10 -mt-12 grid grid-cols-2 gap-4 px-8 lg:grid-cols-4">
+        <StatCard icon={FileCheck2} value={String(tracked.length)} label={tracked.length === 1 ? "alerted grant" : "alerted grants"} />
+        <StatCard icon={DollarSign} value={formatCurrency(owedCents / 100)} label="outstanding" />
+        <StatCard icon={Clock} value={hoursRemaining !== null ? `${Number(hoursRemaining).toFixed(1)}h` : "—"} label="hours remaining" />
+        <StatCard icon={CalendarClock} value={overview?.next_deadline ? format(parseISO(overview.next_deadline), "MMM d") : "—"} label="next deadline" />
+      </div>
+
       <div className="grid gap-6 p-8 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
-          <Card>
+          <Card className={CARD_MAIN}>
+            <CardHeader><CardTitle>Grant activity</CardTitle></CardHeader>
+            <CardContent>
+              <ClientMatchChart
+                data={[
+                  { label: "In review", count: counts.pending, color: "#334867" },
+                  { label: "Alerted", count: counts.approved, color: "#b3541e" },
+                  { label: "Passed", count: counts.passed, color: "#c9c2b8" },
+                ]}
+              />
+            </CardContent>
+          </Card>
+
+          <Card className={CARD_MAIN}>
             <CardHeader className="flex-row items-center justify-between space-y-0">
               <CardTitle>Grant tracking</CardTitle>
               <Link href={`/clients/${client.id}/grants`} className="text-sm text-brand-orange hover:underline">
@@ -120,7 +161,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className={CARD_MAIN}>
             <CardHeader><CardTitle>Action items</CardTitle></CardHeader>
             <CardContent>
               <ClientActionItems forUs={client.next_step} />
@@ -129,7 +170,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         </div>
 
         <div className="space-y-6">
-          <Card>
+          <Card className={CARD_RAIL}>
             <CardHeader><CardTitle>Contact</CardTitle></CardHeader>
             <CardContent className="space-y-2 text-sm">
               <Detail label="Name" value={client.primary_contact_name || "—"} />
@@ -138,7 +179,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className={CARD_RAIL}>
             <CardHeader><CardTitle>Billing</CardTitle></CardHeader>
             <CardContent className="space-y-2 text-sm">
               <Detail label="Outstanding" value={formatCurrency(owedCents / 100)} />
@@ -157,7 +198,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className={CARD_RAIL}>
             <CardHeader><CardTitle>Engagement</CardTitle></CardHeader>
             <CardContent className="grid grid-cols-2 gap-4 text-sm">
               <Detail label="Status" value={<Badge variant="secondary">{client.status}</Badge>} />
@@ -174,7 +215,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
 
           {/* Internal-only: the future client-facing view simply hides this card. */}
           {client.notes && (
-            <Card className="border-brand-navy/20">
+            <Card className={CARD_RAIL}>
               <CardHeader className="flex-row items-center justify-between space-y-0">
                 <CardTitle>Notes</CardTitle>
                 <span className="rounded-full bg-brand-navy/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-navy">
