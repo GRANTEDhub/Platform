@@ -3,7 +3,9 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { DecisionConfirmation } from "./decision-confirmation";
 import type { CardDecision } from "@/types/database";
+import type { GrantSummary } from "@/app/api/review/[id]/route";
 
 type DecidePayload = {
   decision_reason?: string;
@@ -34,6 +36,7 @@ export function DecisionBar({
   const [panel, setPanel] = useState<null | "edit" | "reject">(null);
   const [editBody, setEditBody] = useState(finalEmail ?? draft);
   const [rejectReason, setRejectReason] = useState("");
+  const [confirm, setConfirm] = useState<GrantSummary | null>(null);
 
   async function decide(next: CardDecision, payload?: DecidePayload) {
     setBusy(true);
@@ -47,6 +50,13 @@ export function DecisionBar({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed");
+      // Client-card terminal decisions return grant_summary -> the confirmation
+      // overlay takes over (it owns navigation). Prospect cards and Reset return
+      // no summary and keep the inline status + refresh behavior.
+      if (data.grant_summary) {
+        setConfirm(data.grant_summary as GrantSummary);
+        return;
+      }
       setStatus(data.send_status ?? null);
       setPanel(null);
       router.refresh();
@@ -56,6 +66,8 @@ export function DecisionBar({
       setBusy(false);
     }
   }
+
+  if (confirm) return <DecisionConfirmation summary={confirm} />;
 
   return (
     <div className="space-y-3">

@@ -106,5 +106,88 @@ export async function PATCH(
     }
   }
 
-  return NextResponse.json({ card: data, send_status });
+  // Post-decision summary for the Matches confirmation screen. Computed only for
+  // a terminal decision on a CLIENT card (prospect cards keep the inline flow).
+  // Read AFTER the send block so the just-approved card's sent_at is fresh.
+  //   completed         -> zero remaining pending client cards on this grant
+  //   prospect_eligible -> completed AND the grant would actually reach the
+  //                        prospect feed (mirrors getProspectFeed's predicate:
+  //                        domestic, no skip_reason, no hard_disqualifiers, not
+  //                        Forecasted) -- so the "available for prospecting" line
+  //                        is shown only when it is genuinely true.
+  //   decided_results   -> per decided client: alerted (approved AND email sent,
+  //                        i.e. sent_at set) vs recorded-not-sent vs rejected.
+  let grant_summary: GrantSummary | null = null;
+  if (isTerminal && data.card_type !== "prospect" && data.grant_id) {
+    const { data: siblings } = await supabase
+      .from("review_cards")
+      .select("decision, sent_at, card_type, clients(name)")
+      .eq("grant_id", data.grant_id);
+    const clientCards = (siblings ?? []).filter(
+      (c: SiblingCard) => c.card_type !== "prospect",
+    );
+    const remaining = clientCards.filter((c) => c.decision === "pending");
+    const completed = remaining.length === 0;
+
+    let prospect_eligible = false;
+    if (completed) {
+      const { data: g } = await supabase
+        .from("grants")
+        .select("is_domestic, skip_reason, hard_disqualifiers, grant_status")
+        .eq("id", data.grant_id)
+        .single();
+      prospect_eligible =
+        !!g &&
+        g.is_domestic === true &&
+        !g.skip_reason &&
+        (g.hard_disqualifiers?.length ?? 0) === 0 &&
+        g.grant_status !== "Forecasted";
+    }
+
+    grant_summary = {
+      grant_id: data.grant_id,
+      completed,
+      prospect_eligible,
+      remaining_pending: remaining
+        .map((c) => siblingName(c))
+        .filter((n): n is string => !!n),
+      decided_results: clientCards
+        .filter((c) => c.decision !== "pending")
+        .map((c) => ({
+          name: siblingName(c),
+          decision: c.decision as "approved" | "passed",
+          sent: !!c.sent_at,
+        })),
+    };
+  }
+
+  return NextResponse.json({ card: data, send_status, grant_summary });
 }
+
+// Supabase types a to-one embed as an array; normalize both shapes.
+type SiblingCard = {
+  decision: string;
+  sent_at: string | null;
+  card_type: string | null;
+  clients: { name: string } | { name: string }[] | null;
+};
+
+function siblingName(c: SiblingCard): string | null {
+  const cl = c.clients;
+  if (!cl) return null;
+  return Array.isArray(cl) ? cl[0]?.name ?? null : cl.name;
+}
+
+export type DecidedResult = {
+  name: string | null;
+  decision: "approved" | "passed";
+  sent: boolean;
+};
+
+export type GrantSummary = {
+  grant_id: string;
+  completed: boolean;
+  prospect_eligible: boolean;
+  remaining_pending: string[];
+  decided_results: DecidedResult[];
+};
