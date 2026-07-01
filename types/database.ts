@@ -133,6 +133,10 @@ export interface Grant {
   program_type: string | null;
   delivery_model: string | null;
   grant_status: string | null;
+  // Forecasted -> active lifecycle marker (migration 0021). Set once, at the
+  // moment the cron detects a grant we ingested as Forecasted has flipped to
+  // posted and re-shreds/re-matches it. Null = never activated from a forecast.
+  activated_from_forecast_at: string | null;
   scoring_criteria_high_value: string[] | null;
   technical_burden_flags: string[] | null;
   incumbent_risk: string | null;

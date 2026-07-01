@@ -66,7 +66,7 @@ export default async function LedgerPage({
   let grantQuery = supabase
     .from("grants")
     .select(
-      "id, title, funder, status, error_detail, submission_deadline, deadline, ingested_at, is_domestic, hard_disqualifiers, skip_reason",
+      "id, title, funder, status, error_detail, submission_deadline, deadline, ingested_at, is_domestic, hard_disqualifiers, skip_reason, activated_from_forecast_at",
     )
     .order("ingested_at", { ascending: false })
     .limit(200);
@@ -178,6 +178,14 @@ export default async function LedgerPage({
                         {g.title || "Processing…"}
                       </Link>
                       {g.funder && <p className="text-xs text-muted-foreground">{g.funder}</p>}
+                      {g.activated_from_forecast_at && (
+                        <span
+                          className="mt-1 inline-block rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-700"
+                          title={`Was forecasted, activated ${format(parseISO(g.activated_from_forecast_at), "MMM d, yyyy")}`}
+                        >
+                          Was forecasted
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <Badge variant={TIER_BADGE[d.tier].variant}>{d.label}</Badge>

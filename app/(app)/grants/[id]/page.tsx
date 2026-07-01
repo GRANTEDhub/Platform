@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { format, parseISO } from "date-fns";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
@@ -71,6 +72,11 @@ export default async function GrantDetailPage({ params }: { params: { id: string
         description={[grant.funder, grant.fon].filter(Boolean).join(" · ") || undefined}
         action={
           <div className="flex items-center gap-2">
+            {grant.activated_from_forecast_at && (
+              <Badge variant="secondary">
+                Was forecasted, now active · {format(parseISO(grant.activated_from_forecast_at), "MMM d, yyyy")}
+              </Badge>
+            )}
             {!grant.is_domestic && <Badge variant="warning">International — excluded</Badge>}
             {!processing && (
               <Badge variant={grant.shred_depth === "full" ? "success" : "warning"}>

@@ -64,12 +64,17 @@ export function undecidedClientCount(cards: GateCard[]): number {
 export async function releasedGrantsForProspecting(
   db: ReturnType<typeof createServiceClient>,
 ): Promise<string[]> {
-  const { data: grants } = await db
+  const { data: rawGrants } = await db
     .from("grants")
-    .select("id, status")
+    .select("id, status, grant_status")
     .eq("status", "complete")
     .is("skip_reason", null); // grant-level-gated grants are not prospectable
-  if (!grants || grants.length === 0) return [];
+  if (!rawGrants || rawGrants.length === 0) return [];
+
+  // Forecasted grants are not prospectable -- prospecting waits for the posted
+  // NOFO. Filtered in code (not .neq) so a null grant_status is kept.
+  const grants = rawGrants.filter((g) => g.grant_status !== "Forecasted");
+  if (grants.length === 0) return [];
 
   const ids = grants.map((g) => g.id);
   const { data: cards } = await db
@@ -121,7 +126,7 @@ export async function getProspectFeed(
 ): Promise<ProspectFeedItem[]> {
   const { data: grants } = await db
     .from("grants")
-    .select("id, title, funder, submission_deadline, hard_disqualifiers, status, is_domestic")
+    .select("id, title, funder, submission_deadline, hard_disqualifiers, status, is_domestic, grant_status")
     .eq("status", "complete")
     .eq("is_domestic", true)
     .is("skip_reason", null) // grant-level-gated grants (e.g. single national award) are not prospectable
@@ -129,8 +134,12 @@ export async function getProspectFeed(
   if (!grants || grants.length === 0) return [];
 
   // Hard-disqualified grants are ineligible for everyone -- no prospect can
-  // pursue them either, so they never enter the feed.
-  const eligible = grants.filter((g) => (g.hard_disqualifiers?.length ?? 0) === 0);
+  // pursue them either, so they never enter the feed. Forecasted grants are
+  // excluded too: prospecting waits for the real posted NOFO (the flip re-shreds
+  // + re-matches). Filtered in code, not via .neq, so null grant_status is kept.
+  const eligible = grants.filter(
+    (g) => (g.hard_disqualifiers?.length ?? 0) === 0 && g.grant_status !== "Forecasted",
+  );
   if (eligible.length === 0) return [];
   const ids = eligible.map((g) => g.id);
 
