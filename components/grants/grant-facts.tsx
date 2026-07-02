@@ -10,13 +10,19 @@ import type { Grant } from "@/types/database";
 export function GrantOverview({ grant }: { grant: Grant }) {
   return (
     <>
-      {grant.shred_depth === "summary" && grant.shred_reason && (
+      {grant.grant_status === "Forecasted" ? (
+        <Card>
+          <CardContent className="p-4 text-xs text-muted-foreground">
+            Forecasted — no NOFO published yet.
+          </CardContent>
+        </Card>
+      ) : grant.shred_depth === "summary" && grant.shred_reason ? (
         <Card>
           <CardContent className="p-4 text-xs text-muted-foreground">
             Summary shred only — {grant.shred_reason}
           </CardContent>
         </Card>
-      )}
+      ) : null}
 
       {grant.description && (
         <Card>
