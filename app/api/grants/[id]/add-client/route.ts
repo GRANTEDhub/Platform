@@ -77,20 +77,25 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     );
   }
 
-  // Grant-level guardrails, checked before scoring: a grant carrying a structural
-  // suppression (skip_reason -- single national award, etc.) or hard disqualifiers
-  // (ineligible for everyone) is not pursuable by ANY client. These are the
-  // authoritative stored gates -- more reliable than re-deriving suppression from
-  // the per-client scorer, and blocking here saves the scoring call.
-  const grantBlock = grant.skip_reason
-    ? `structurally suppressed: ${grant.skip_reason}`
-    : (grant.hard_disqualifiers?.length ?? 0) > 0
-      ? `hard-disqualified: ${grant.hard_disqualifiers!.join("; ")}`
-      : null;
-  if (grantBlock) {
+  // Grant-level guardrail, checked before scoring: skip_reason is genuine
+  // ALL-CLIENT structural suppression (single national award / TTA -- nobody can
+  // pursue it), so block before spending a scoring call.
+  //
+  // NOTE: hard_disqualifiers is deliberately NOT a pre-block here. It is defined
+  // as "disqualified for ALL clients" but the extraction mis-populates it with
+  // per-applicant eligibility clauses (e.g. "for-profit entities ineligible") that
+  // an eligible nonprofit would pass -- blocking on its mere presence over-
+  // suppressed eligible clients. Per-client eligibility is decided by the score
+  // instead: matchGrantToClient reads eligible_entity_types / ineligible_entities
+  // / client hard_constraints, so a genuinely-ineligible client is caught by the
+  // post-score match.disqualified / match.suppressed block below, while an
+  // eligible one scores and is added. (The systemic fix -- tightening extraction
+  // + re-shredding -- is a separate follow-up; normal matching still suppresses
+  // these grants until then.)
+  if (grant.skip_reason) {
     return NextResponse.json(
       {
-        error: `Not added — this grant is ${grantBlock}. This is an eligibility constraint, not a fit score.`,
+        error: `Not added — this grant is structurally suppressed: ${grant.skip_reason}. This is an eligibility constraint, not a fit score.`,
         blocked: "constraint",
       },
       { status: 422 },
