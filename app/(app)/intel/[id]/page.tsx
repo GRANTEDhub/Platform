@@ -10,6 +10,7 @@ import { GrantOverview, GrantKeyFacts } from "@/components/grants/grant-facts";
 import { MatchOutcomes, type OutcomeCard } from "@/components/grants/match-outcomes";
 import { getGrantGateStatus, undecidedClientCount } from "@/lib/grants/gate";
 import { ProspectButton } from "../prospect-button";
+import { ScheduleLinkButton } from "../schedule-link-button";
 import type { Grant, ReviewCard, Client, Prospect } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -98,35 +99,42 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
               ) : (
                 <ul className="divide-y text-sm">
                   {prospectCards.map((pc) => (
-                    <li key={pc.id} className="flex items-center justify-between gap-3 py-3">
-                      <div className="min-w-0">
-                        {/* Prospect cards ARE the actionable surface -> the review
-                            page is where a prospect is worked (Matches' decision
-                            surface serves prospect cards too). */}
-                        <Link href={`/review/${pc.id}`} className="font-medium hover:underline">
-                          {pc.prospects?.name || "Prospect org"}
-                        </Link>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {pc.proposed_role}
-                          {pc.prospects?.source_url ? (
-                            <>
-                              {" · "}
-                              <a
-                                href={pc.prospects.source_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-primary hover:underline"
-                              >
-                                source ↗
-                              </a>
-                            </>
-                          ) : null}
-                        </p>
+                    <li key={pc.id} className="space-y-2 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          {/* Prospect cards ARE the actionable surface -> the review
+                              page is where a prospect is worked (Matches' decision
+                              surface serves prospect cards too). */}
+                          <Link href={`/review/${pc.id}`} className="font-medium hover:underline">
+                            {pc.prospects?.name || "Prospect org"}
+                          </Link>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {pc.proposed_role}
+                            {pc.prospects?.source_url ? (
+                              <>
+                                {" · "}
+                                <a
+                                  href={pc.prospects.source_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-primary hover:underline"
+                                >
+                                  source ↗
+                                </a>
+                              </>
+                            ) : null}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <ScoreBadge score={(pc.fit_score ?? 2) as 1 | 2 | 3} />
+                          <DecisionBadge decision={pc.decision} />
+                        </div>
                       </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <ScoreBadge score={(pc.fit_score ?? 2) as 1 | 2 | 3} />
-                        <DecisionBadge decision={pc.decision} />
-                      </div>
+                      {/* Outbound door: mint a tokenized scheduling link to paste
+                          into an outreach email (manual send for now). */}
+                      {pc.prospects?.id && (
+                        <ScheduleLinkButton prospectId={pc.prospects.id} grantId={grant.id} />
+                      )}
                     </li>
                   ))}
                 </ul>
