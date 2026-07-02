@@ -9,6 +9,7 @@
 // function assumes it is allowed to send and only validates the payload.
 
 import { Resend } from "resend";
+import { sanitizeOutreachEmail } from "@/lib/email/sanitize";
 import type { ReviewCard, Client } from "@/types/database";
 
 // Sends from the verified Resend domain (send.grantedco.com). Replies are
@@ -16,7 +17,17 @@ import type { ReviewCard, Client } from "@/types/database";
 // (Phase 1). Both overridable by env; defaults are the verified addresses.
 const FROM = process.env.EMAIL_FROM || "alerts@send.grantedco.com";
 const REPLY_TO = process.env.EMAIL_REPLY_TO || "support@grantedco.com";
-const SUBJECT = "Grant Alert! | GRANTED";
+
+// Subject convention: "GRANTED Alert! | <grant name>". Grants have no acronym
+// field, so we do NOT invent one -- the full title is used, truncated at a word
+// boundary when it runs long, to stay recognizable without being uselessly cut.
+const SUBJECT_MAX_NAME = 50;
+function subjectGrantName(title: string | null | undefined): string {
+  const t = (title ?? "").trim();
+  if (!t) return "Grant Opportunity";
+  if (t.length <= SUBJECT_MAX_NAME) return t;
+  return t.slice(0, SUBJECT_MAX_NAME).replace(/\s+\S*$/, "").trim() + "…";
+}
 
 // Deliberately permissive format check -- catches null/"unknown"/obviously
 // malformed addresses (a real share of the loaded roster has "unknown"), not a
@@ -40,7 +51,11 @@ export interface SentResult {
   id: string | null;
 }
 
-export async function sendAlertEmail(card: ReviewCard, client: Client): Promise<SentResult> {
+export async function sendAlertEmail(
+  card: ReviewCard,
+  client: Client,
+  grantTitle: string | null,
+): Promise<SentResult> {
   const to = (client.primary_contact_email ?? "").trim();
   // Backstop: callers should pre-check isDeliverableEmail and skip; if we're
   // called anyway with an undeliverable address, fail loud rather than send.
@@ -55,18 +70,24 @@ export async function sendAlertEmail(card: ReviewCard, client: Client): Promise<
     throw new Error(`No approved email body to send for ${client.name}`);
   }
 
+  const subject = `GRANTED Alert! | ${subjectGrantName(grantTitle)}`;
+  // Final deterministic cleanup at send time (covers drafts made before the
+  // format rules landed, and any human edits): strip a "Subject:" line, resolve
+  // a [Contact Name] to this recipient, drop a "[Your Name]" signature.
+  const cleanBody = sanitizeOutreachEmail(body, client.primary_contact_name);
+
   // Reached only after canSendEmail() passed and the recipient validated above.
   const resend = new Resend(process.env.RESEND_PLATFORM_API);
   const { data, error } = await resend.emails.send({
     from: FROM,
     to,
     replyTo: REPLY_TO,
-    subject: SUBJECT,
-    text: body,
+    subject,
+    text: cleanBody,
   });
   if (error) {
     throw new Error(`Resend send failed for ${client.name}: ${error.message}`);
   }
 
-  return { to, subject: SUBJECT, id: data?.id ?? null };
+  return { to, subject, id: data?.id ?? null };
 }

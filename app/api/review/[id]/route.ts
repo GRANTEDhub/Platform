@@ -100,7 +100,15 @@ export async function PATCH(
         if (!isDeliverableEmail(client.primary_contact_email)) {
           send_status = "decision recorded — no deliverable email on file, not sent";
         } else {
-          const sent = await sendAlertEmail(data as ReviewCard, client);
+          // Grant title drives the subject line ("GRANTED Alert! | <name>").
+          const { data: grantRow } = data.grant_id
+            ? await supabase.from("grants").select("title").eq("id", data.grant_id).single()
+            : { data: null };
+          const sent = await sendAlertEmail(
+            data as ReviewCard,
+            client,
+            (grantRow as { title: string | null } | null)?.title ?? null,
+          );
           await supabase
             .from("review_cards")
             .update({ sent_at: new Date().toISOString(), sent_to: sent.to })
