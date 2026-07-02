@@ -79,12 +79,21 @@ export async function POST(req: NextRequest) {
   const byId = new Map((rows ?? []).map((g) => [g.id, g.source_url as string | null]));
 
   const kicked: string[] = [];
+  const skipped_no_source: string[] = [];
   for (const id of slice) {
     if (!byId.has(id)) {
       console.error("backfill-reshred: grant not found", id);
       continue;
     }
-    const sourceUrl = byId.get(id) ?? undefined;
+    const sourceUrl = byId.get(id) ?? null;
+    // Re-shred needs a re-fetchable source. A null (or the "manual-paste"
+    // sentinel) source_url would make runPipeline extract from empty text and
+    // DESTROY the grant's real data -- skip and report it, never clobber.
+    // (Mirrors the Rebuild Grant Profile route's null-source guard.)
+    if (!sourceUrl || sourceUrl === "manual-paste") {
+      skipped_no_source.push(id);
+      continue;
+    }
     await db.from("grants").update({ status: "processing" }).eq("id", id);
     waitUntil(
       runPipeline(id, sourceUrl, undefined, db).catch(async (err) => {
@@ -100,6 +109,7 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     kicked,
+    skipped_no_source,
     nextOffset: offset + slice.length,
     remaining: Math.max(0, grantIds.length - (offset + slice.length)),
   });
