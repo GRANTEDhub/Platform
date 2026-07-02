@@ -23,6 +23,17 @@ const SUBJECT = "Grant Alert! | GRANTED";
 // full RFC validator.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Is this address safe to actually send to? Null / blank / "unknown" / malformed
+// are NOT deliverable. Callers use this to SKIP the send gracefully (no throw)
+// rather than attempt it. Doubles as a test-safety net: while the roster is
+// mostly "unknown", only a client with a real email can receive an alert even
+// when sending is globally enabled. Once real emails are filled in, this simply
+// passes for everyone and every approve sends as intended.
+export function isDeliverableEmail(email: string | null | undefined): boolean {
+  const to = (email ?? "").trim();
+  return !!to && to.toLowerCase() !== "unknown" && EMAIL_RE.test(to);
+}
+
 export interface SentResult {
   to: string;
   subject: string;
@@ -31,7 +42,9 @@ export interface SentResult {
 
 export async function sendAlertEmail(card: ReviewCard, client: Client): Promise<SentResult> {
   const to = (client.primary_contact_email ?? "").trim();
-  if (!to || to.toLowerCase() === "unknown" || !EMAIL_RE.test(to)) {
+  // Backstop: callers should pre-check isDeliverableEmail and skip; if we're
+  // called anyway with an undeliverable address, fail loud rather than send.
+  if (!isDeliverableEmail(to)) {
     throw new Error(
       `No deliverable email for ${client.name}: "${client.primary_contact_email ?? "(null)"}"`,
     );

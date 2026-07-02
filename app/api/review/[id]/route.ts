@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { canSendEmail } from "@/lib/email/guard";
-import { sendAlertEmail } from "@/lib/email/send";
+import { sendAlertEmail, isDeliverableEmail } from "@/lib/email/send";
 import type { CardDecision, ReviewCard, Client } from "@/types/database";
 
 // Update a review-card decision. RLS + the guard_card_approval trigger enforce
@@ -92,12 +92,21 @@ export async function PATCH(
           .eq("id", data.client_id)
           .single<Client>();
         if (!client) throw new Error("client not found for card");
-        const sent = await sendAlertEmail(data as ReviewCard, client);
-        await supabase
-          .from("review_cards")
-          .update({ sent_at: new Date().toISOString(), sent_to: sent.to })
-          .eq("id", params.id);
-        send_status = `email sent to ${sent.to}`;
+        // TEMPORARY test-safety guard: while much of the roster has an "unknown"
+        // email, SKIP the send (no attempt, no throw) for any undeliverable
+        // address and record an honest status. This makes a single client with a
+        // real email the only one that can send even when sending is globally on.
+        // Harmless long-term -- once real emails are filled in this never trips.
+        if (!isDeliverableEmail(client.primary_contact_email)) {
+          send_status = "decision recorded — no deliverable email on file, not sent";
+        } else {
+          const sent = await sendAlertEmail(data as ReviewCard, client);
+          await supabase
+            .from("review_cards")
+            .update({ sent_at: new Date().toISOString(), sent_to: sent.to })
+            .eq("id", params.id);
+          send_status = `email sent to ${sent.to}`;
+        }
       } catch (err) {
         send_status = `decision recorded, email NOT sent: ${
           err instanceof Error ? err.message : String(err)
