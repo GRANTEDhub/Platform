@@ -112,6 +112,18 @@ General rules:
 - Never rely on training data for deadlines -- extract only what is in the text
 - Do not use em dashes in any output
 
+ELIGIBILITY vs HARD DISQUALIFIERS (critical -- do NOT conflate these):
+- ineligible_entities = applicant categories the NOFO excludes while OTHERS remain eligible. The grant is still pursuable by a non-excluded applicant, so it MUST stay scorable. Put these HERE, not in hard_disqualifiers:
+  * For-profit / commercial entities are ineligible (nonprofits and governments still qualify).
+  * Prior-year or current recipients are ineligible (e.g. "FY2023 recipients under TI-23-018 may not reapply") -- a NEW applicant still qualifies.
+  * Individuals / sole proprietorships ineligible; a specific 501(c) subtype excluded; local governments excluded -- others still qualify.
+- hard_disqualifiers = ONLY when NO possible applicant on GRANTED's roster (nonprofits, county/local governments, transit authorities, community colleges, regional health systems) could EVER qualify -- the grant is categorically unpursuable. Put these HERE:
+  * Eligibility restricted to a single named entity (e.g. one named university).
+  * Restricted to a class none of our clients are (state agencies ONLY, federal agencies ONLY, Tribes ONLY).
+  * Geography entirely outside our footprint; or applications only through a specific SAA / partnership route our clients cannot use.
+- LITMUS TEST: if ANY non-excluded applicant type could still apply, it is ineligible_entities, NOT hard_disqualifiers.
+- If you are genuinely UNSURE whether an exclusion kills every possible applicant, do NOT put it in hard_disqualifiers -- add a verification_flags entry describing the uncertainty ("KILL FLAG -- REQUIRES VERIFICATION: ...") for human review. Flagging for review is correct; silently disqualifying an eligible grant is not.
+
 Return a JSON object matching this exact schema:
 {
   "funder": string,
@@ -128,7 +140,7 @@ Return a JSON object matching this exact schema:
   "cost_share": string,
   "eligible_entity_types": string[],
   "geographic_eligibility": string,
-  "ineligible_entities": string,
+  "ineligible_entities": string (applicant types/conditions the NOFO excludes while others stay eligible -- for-profits, prior/current recipients, individuals, specific entity classes. Per-applicant exclusions belong HERE, not in hard_disqualifiers),
   "focus_areas": string[],
   "scoring_rubric": object (criterion name -> point value or description),
   "program_type": "Competitive Grant" | "Cooperative Agreement" | "TTA Cooperative Agreement" | "Other",
@@ -138,7 +150,7 @@ Return a JSON object matching this exact schema:
   "technical_burden_flags": string[] (QA/QAPP requirements, SDMP, data mgmt plan, peer-reviewed outputs, etc.),
   "incumbent_risk": string (notes on fixed slots, existing cooperative agreements, prior recipients with selection preference),
   "subaward_prohibited": boolean (true if NOFO explicitly prohibits subawards -- this collapses consortium architecture to a single-applicant model),
-  "hard_disqualifiers": string[] (reasons this program is disqualified for ALL clients),
+  "hard_disqualifiers": string[] (ONLY reasons NO possible roster applicant could EVER qualify -- see the eligibility rule above. Per-applicant exclusions like for-profit or prior-recipient DO NOT go here; if unsure, use verification_flags, not this),
   "verification_flags": string[] (items needing human verification before acting on any match)
 }`;
 
