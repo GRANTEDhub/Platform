@@ -21,7 +21,16 @@ export function DecisionBadge({ decision }: { decision: CardDecision }) {
   return <Badge variant={d.variant}>{d.label}</Badge>;
 }
 
-export function GrantStatusBadge({ status }: { status: string }) {
+export function GrantStatusBadge({
+  status,
+  grantStatus,
+}: {
+  status: string;
+  grantStatus?: string | null;
+}) {
+  // Forecasted (the opportunity lifecycle) takes precedence over the operational
+  // status -- a forecasted grant with no NOFO reads "Forecasted", not "error".
+  if (grantStatus === "Forecasted") return <Badge variant="secondary">Forecasted</Badge>;
   const map: Record<string, "default" | "success" | "warning" | "destructive" | "secondary"> = {
     processing: "default",
     complete: "success",

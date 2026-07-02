@@ -25,6 +25,7 @@ const TIER_BADGE: Record<DispositionTier, { variant: "default" | "secondary" | "
   not_pursued: { variant: "warning" },
   processing: { variant: "secondary" },
   error: { variant: "destructive" },
+  forecasted: { variant: "outline" },
 };
 
 const TIER_FILTERS: { value: DispositionTier | "all"; label: string }[] = [
@@ -35,6 +36,7 @@ const TIER_FILTERS: { value: DispositionTier | "all"; label: string }[] = [
   { value: "no_match", label: "No match" },
   { value: "not_pursued", label: "Not pursued" },
   { value: "processing", label: "Processing" },
+  { value: "forecasted", label: "Forecasted" },
   { value: "error", label: "Failed" },
 ];
 
@@ -66,7 +68,7 @@ export default async function LedgerPage({
   let grantQuery = supabase
     .from("grants")
     .select(
-      "id, title, funder, status, error_detail, submission_deadline, deadline, ingested_at, is_domestic, hard_disqualifiers, skip_reason, activated_from_forecast_at",
+      "id, title, funder, status, grant_status, error_detail, submission_deadline, deadline, ingested_at, is_domestic, hard_disqualifiers, skip_reason, activated_from_forecast_at",
     )
     .order("ingested_at", { ascending: false })
     .limit(200);
@@ -105,6 +107,7 @@ export default async function LedgerPage({
       disposition: getGrantDisposition(
         {
           status: g.status ?? "processing",
+          grant_status: g.grant_status ?? null,
           is_domestic: g.is_domestic ?? true,
           hard_disqualifiers: g.hard_disqualifiers ?? null,
           skip_reason: g.skip_reason ?? null,

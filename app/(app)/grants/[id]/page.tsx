@@ -53,6 +53,9 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
     recommended_prime: c.recommended_prime,
   }));
   const processing = grant.status === "processing";
+  // Forecasted opportunities have no NOFO yet, so summary-shred / failed copy is
+  // misleading -- forecasted takes precedence over both.
+  const forecasted = grant.grant_status === "Forecasted";
 
   // Incomplete-scoring visibility. match_attempts is append-only, so reduce to
   // each client's LATEST attempt and count those whose newest outcome errored.
@@ -100,12 +103,12 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
               </Badge>
             )}
             {!grant.is_domestic && <Badge variant="warning">International — excluded</Badge>}
-            {!processing && (
+            {!processing && !forecasted && (
               <Badge variant={grant.shred_depth === "full" ? "success" : "warning"}>
                 {grant.shred_depth === "full" ? "Full shred" : "Summary shred"}
               </Badge>
             )}
-            <GrantStatusBadge status={grant.status} />
+            <GrantStatusBadge status={grant.status} grantStatus={grant.grant_status} />
           </div>
         }
       />
@@ -121,7 +124,19 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
             </Card>
           )}
 
-          {grant.status === "error" && (
+          {forecasted && !processing && (
+            <Card>
+              <CardContent className="p-6 text-sm text-muted-foreground">
+                <p className="font-medium text-foreground">Forecasted — no NOFO published yet.</p>
+                <p className="mt-1">
+                  This opportunity was found in a forecast search. Full analysis runs once it is
+                  posted and re-shredded.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {grant.status === "error" && !forecasted && (
             <Card>
               <CardContent className="space-y-2 p-6 text-sm">
                 <p className="font-medium text-destructive">Analysis failed</p>

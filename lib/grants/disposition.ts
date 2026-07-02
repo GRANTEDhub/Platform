@@ -14,6 +14,7 @@ import type { Grant, CardDecision } from "@/types/database";
 export type DispositionTier =
   | "processing"
   | "error"
+  | "forecasted"
   | "not_pursued"
   | "no_match"
   | "matched_pending"
@@ -34,12 +35,18 @@ export interface DispositionCard {
 
 type DispGrant = Pick<
   Grant,
-  "status" | "is_domestic" | "hard_disqualifiers" | "skip_reason" | "error_detail"
+  "status" | "is_domestic" | "hard_disqualifiers" | "skip_reason" | "error_detail" | "grant_status"
 >;
 
 const DECIDED = new Set<CardDecision>(["approved", "passed"]);
 
 export function getGrantDisposition(grant: DispGrant, cards: DispositionCard[]): GrantDisposition {
+  // Forecasted opportunities have no NOFO published yet, so a summary shred or a
+  // failed/stuck pipeline is expected noise, not a real failure. Checked FIRST so
+  // it takes precedence over the operational error/processing labels below.
+  if (grant.grant_status === "Forecasted")
+    return { tier: "forecasted", label: "Forecasted", detail: "No NOFO published yet" };
+
   // Operational, still in flight.
   if (grant.status === "processing") return { tier: "processing", label: "Processing", detail: null };
   if (grant.status === "error")
