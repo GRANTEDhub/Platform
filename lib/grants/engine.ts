@@ -120,9 +120,15 @@ ELIGIBILITY vs HARD DISQUALIFIERS (critical -- do NOT conflate these):
 - hard_disqualifiers = ONLY when NO possible applicant on GRANTED's roster (nonprofits, county/local governments, transit authorities, community colleges, regional health systems) could EVER qualify -- the grant is categorically unpursuable. Put these HERE:
   * Eligibility restricted to a single named entity (e.g. one named university).
   * Restricted to a class none of our clients are (state agencies ONLY, federal agencies ONLY, Tribes ONLY).
-  * Geography entirely outside our footprint; or applications only through a specific SAA / partnership route our clients cannot use.
+  * Geography entirely outside GRANTED's footprint (no roster client operates there).
 - LITMUS TEST: if ANY non-excluded applicant type could still apply, it is ineligible_entities, NOT hard_disqualifiers.
 - If you are genuinely UNSURE whether an exclusion kills every possible applicant, do NOT put it in hard_disqualifiers -- add a verification_flags entry describing the uncertainty ("KILL FLAG -- REQUIRES VERIFICATION: ...") for human review. Flagging for review is correct; silently disqualifying an eligible grant is not.
+
+PASS-THROUGH / INTERMEDIARY ROUTING (critical -- an application-routing requirement is NOT a disqualifier):
+Many federal programs (e.g. USDA Rural Development, Nonprofit Security Grant Program / NSGP, various block grants) are applied for THROUGH a state agency, State Administrative Agency (SAA), or other pass-through intermediary. Decide by WHO can be the recipient, not by whether a state is mentioned:
+- APPLIES THROUGH an intermediary (ELIGIBLE -- do NOT disqualify): the CLIENT is the ultimate recipient/beneficiary and merely submits via the state / SAA / pass-through, or as a sub-applicant. Example: nonprofits pursue NSGP through their state's SAA; a county pursues USDA RD through the state USDA office. The routing requirement is NOT a hard_disqualifier and NOT an ineligible_entities entry -- keep the client-eligible entity types in eligible_entity_types so the grant stays scorable, and record the route in verification_flags as "PASS-THROUGH ROUTE: <who applies through what>" so the human knows how to apply.
+- The intermediary IS the recipient (NOT eligible as client -- correctly suppressed): only the state agency (or another class none of our clients are) can BE the grantee/direct recipient and our client cannot be the recipient even as a sub -- e.g. a program statutorily limited to state agencies as the grantee (PIPBHC-States). That is a restricted-class hard_disqualifier, exactly per the rule above.
+- THE RULE: "applicant applies THROUGH an intermediary" = eligible (flag applicable, note the route); "the intermediary IS the recipient and the client cannot be" = not eligible. Do NOT treat every mention of a state / SAA as automatically eligible OR automatically disqualifying.
 
 Return a JSON object matching this exact schema:
 {
@@ -151,7 +157,7 @@ Return a JSON object matching this exact schema:
   "incumbent_risk": string (notes on fixed slots, existing cooperative agreements, prior recipients with selection preference),
   "subaward_prohibited": boolean (true if NOFO explicitly prohibits subawards -- this collapses consortium architecture to a single-applicant model),
   "hard_disqualifiers": string[] (ONLY reasons NO possible roster applicant could EVER qualify -- see the eligibility rule above. Per-applicant exclusions like for-profit or prior-recipient DO NOT go here; if unsure, use verification_flags, not this),
-  "verification_flags": string[] (items needing human verification before acting on any match)
+  "verification_flags": string[] (items needing human verification before acting on any match; also record any pass-through / intermediary application route here as "PASS-THROUGH ROUTE: ...")
 }`;
 
 const MATCHING_SYSTEM_PROMPT = `You are GRANTED's AI matching engine — IntelEngine. GRANTED is a U.S.-only grant consulting firm.
