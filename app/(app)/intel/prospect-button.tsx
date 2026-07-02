@@ -20,6 +20,18 @@ export function ProspectButton({ grantId }: { grantId: string }) {
     setStatus(null);
     try {
       const res = await fetch(`/api/grants/${grantId}/prospect`, { method: "POST" });
+      const ct = res.headers.get("content-type") || "";
+      if (!ct.includes("application/json")) {
+        // No JSON body means the platform killed the function before the handler
+        // returned (e.g. a 504 timeout page) -- parsing it would throw the cryptic
+        // "Unexpected token" error. Read the text and surface a clean message.
+        const text = await res.text().catch(() => "");
+        throw new Error(
+          res.status === 504 || res.status === 408 || /timeout|error occurred/i.test(text)
+            ? "Discovery timed out — some prospects may have saved; try again to resume."
+            : "Discovery failed unexpectedly — try again.",
+        );
+      }
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Discovery failed");
       setStatus(

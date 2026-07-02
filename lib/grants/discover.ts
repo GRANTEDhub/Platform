@@ -164,59 +164,73 @@ export async function discoverProspects(grantId: string, db: DB): Promise<Discov
     .slice(0, 8); // cap discovery cost
 
   // Score each grounded candidate with the existing engine; write a prospect +
-  // prospect card for qualifiers (fit >= 2).
+  // prospect card for qualifiers (fit >= 2). Bounded-concurrent batches of 5
+  // (mirrors runMatching) so a full 8-candidate run finishes well under the
+  // function's maxDuration instead of scoring sequentially and timing out.
+  //
+  // Concurrency safety: all dedup (client names, already-carded prospects,
+  // intra-run same-org collapse) is resolved by the sequential pre-filter that
+  // built `grounded` above. Every grounded entry is a DISTINCT org, so the
+  // parallel section is pure independent per-item work -- each task mints its own
+  // fresh prospect row + one card and shares no mutable state. `carded` is summed
+  // from returned values, never mutated across tasks.
+  const BATCH_SIZE = 5;
   let carded = 0;
-  for (const c of grounded) {
-    let match;
-    try {
-      match = await matchGrantToClient(grant, prospectAsClient(c));
-    } catch (err) {
-      console.error("Prospect scoring failed for", c.name, err);
-      continue;
-    }
-    const qualifies = !match.suppressed && !match.disqualified && match.fit_score >= 2;
-    if (!qualifies) continue;
+  for (let i = 0; i < grounded.length; i += BATCH_SIZE) {
+    const batch = grounded.slice(i, i + BATCH_SIZE);
+    const results = await Promise.all(
+      batch.map(async (c): Promise<number> => {
+        try {
+          const match = await matchGrantToClient(grant, prospectAsClient(c));
+          if (match.suppressed || match.disqualified || match.fit_score < 2) return 0;
 
-    const { data: prospect, error: pErr } = await db
-      .from("prospects")
-      .insert({
-        name: c.name,
-        org_type: c.org_type ?? null,
-        location_state: c.location_state ?? null,
-        location_county: c.location_county ?? null,
-        source_url: c.source_url, // NOT NULL: schema-enforced hallucination guard
-        capability_summary: c.capability_summary ?? null,
-      })
-      .select("id")
-      .single();
-    if (pErr || !prospect) {
-      console.error("Prospect insert failed for", c.name, pErr);
-      continue;
-    }
+          const { data: prospect, error: pErr } = await db
+            .from("prospects")
+            .insert({
+              name: c.name,
+              org_type: c.org_type ?? null,
+              location_state: c.location_state ?? null,
+              location_county: c.location_county ?? null,
+              source_url: c.source_url, // NOT NULL: schema-enforced hallucination guard
+              capability_summary: c.capability_summary ?? null,
+            })
+            .select("id")
+            .single();
+          if (pErr || !prospect) {
+            console.error("Prospect insert failed for", c.name, pErr);
+            return 0;
+          }
 
-    const { error: cErr } = await db.from("review_cards").insert({
-      grant_id: grantId,
-      prospect_id: prospect.id,
-      card_type: "prospect",
-      fit_score: match.fit_score,
-      proposed_role: match.proposed_role,
-      recommended_prime: match.recommended_prime,
-      why_this_org: match.why_this_org,
-      concept_synopsis: match.concept_synopsis,
-      description_short: match.description_short,
-      outreach_track: match.outreach_track,
-      before_you_approve: match.before_you_approve,
-      inferred_fields: match.inferred_fields,
-      reasoning_context: match.reasoning_context,
-      decision: "pending",
-      // draft_outreach_email intentionally omitted (stays null): analysis stays
-      // internal; the hook email is built downstream from the org record.
-    });
-    if (cErr) {
-      console.error("Prospect card insert failed for", c.name, cErr);
-      continue;
-    }
-    carded += 1;
+          const { error: cErr } = await db.from("review_cards").insert({
+            grant_id: grantId,
+            prospect_id: prospect.id,
+            card_type: "prospect",
+            fit_score: match.fit_score,
+            proposed_role: match.proposed_role,
+            recommended_prime: match.recommended_prime,
+            why_this_org: match.why_this_org,
+            concept_synopsis: match.concept_synopsis,
+            description_short: match.description_short,
+            outreach_track: match.outreach_track,
+            before_you_approve: match.before_you_approve,
+            inferred_fields: match.inferred_fields,
+            reasoning_context: match.reasoning_context,
+            decision: "pending",
+            // draft_outreach_email intentionally omitted (stays null): analysis
+            // stays internal; the hook email is built downstream from the record.
+          });
+          if (cErr) {
+            console.error("Prospect card insert failed for", c.name, cErr);
+            return 0;
+          }
+          return 1;
+        } catch (err) {
+          console.error("Prospect scoring failed for", c.name, err);
+          return 0;
+        }
+      }),
+    );
+    carded += results.reduce((sum, n) => sum + n, 0);
   }
 
   return { ok: true, searched: query, candidates: extracted.length, grounded: grounded.length, carded };
