@@ -10,6 +10,7 @@ import { GrantOverview, GrantKeyFacts } from "@/components/grants/grant-facts";
 import { MatchOutcomes, type OutcomeCard } from "@/components/grants/match-outcomes";
 import { AutoRefresh } from "./auto-refresh";
 import { RematchButton } from "./rematch-button";
+import { AddToClientControl } from "./add-to-client";
 import type { Grant, ReviewCard, Client } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -73,6 +74,17 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
   ).length;
 
   const canCalibrate = profile.role === "admin" && grant.is_domestic;
+
+  // Active clients for the manual "Add to Client" control (admin calibration only).
+  let activeClients: { id: string; name: string }[] = [];
+  if (canCalibrate) {
+    const { data: clientRows } = await supabase
+      .from("clients")
+      .select("id, name")
+      .eq("status", "active")
+      .order("name");
+    activeClients = (clientRows ?? []) as { id: string; name: string }[];
+  }
 
   return (
     <div>
@@ -168,12 +180,22 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
           {canCalibrate && !processing && (
             <Card>
               <CardHeader><CardTitle>Calibration</CardTitle></CardHeader>
-              <CardContent className="space-y-2">
-                <p className="text-xs text-muted-foreground">
-                  Re-run this grant after a roster or scoring change. Off the daily queue —
-                  this is the record, not a working view.
-                </p>
-                <RematchButton grantId={grant.id} />
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">
+                    Re-run this grant after a roster or scoring change. Off the daily queue —
+                    this is the record, not a working view.
+                  </p>
+                  <RematchButton grantId={grant.id} />
+                </div>
+                <div className="space-y-1 border-t pt-3">
+                  <p className="text-xs font-medium">Add to a client</p>
+                  <p className="mb-2 text-xs text-muted-foreground">
+                    Manually match a client the engine didn&apos;t surface. Scores on demand and
+                    adds regardless of a low fit; blocks only on eligibility constraints.
+                  </p>
+                  <AddToClientControl grantId={grant.id} clients={activeClients} />
+                </div>
               </CardContent>
             </Card>
           )}
