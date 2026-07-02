@@ -35,12 +35,12 @@ export function RematchButton({ grantId }: { grantId: string }) {
           {busy === "rematch" ? "Re-matching…" : "Re-match clients"}
         </Button>
         <Button variant="outline" onClick={() => run(true)} disabled={busy !== null}>
-          {busy === "reshred" ? "Re-shredding…" : "Re-shred (rebuild profile)"}
+          {busy === "reshred" ? "Rebuilding…" : "Rebuild Grant Profile"}
         </Button>
       </div>
       <p className="text-xs text-muted-foreground">
-        Re-match: re-score clients against the stored shred (fast). Re-shred: re-fetch
-        the NOFO and rebuild the profile, then re-score (slower).
+        Re-match clients: re-score clients against the stored profile (fast). Rebuild
+        Grant Profile: re-fetch the NOFO and rebuild the profile, then re-score (slower).
       </p>
       {error && <p className="text-xs text-destructive">{error}</p>}
     </div>

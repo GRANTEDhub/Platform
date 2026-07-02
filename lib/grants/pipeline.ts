@@ -12,12 +12,32 @@ import {
   jsPreFilter,
   looksInternational,
   grantLevelSuppressionReason,
+  type MatchResult,
 } from "@/lib/grants/engine";
 import type { IdealApplicantProfile } from "@/types/database";
 import { resolveNofoText, mergeDeepShred } from "@/lib/grants/nofo";
 import { checkPastPerformance, formatUSASpendingContext } from "@/lib/grants/usaspending";
 
 type DB = ReturnType<typeof createServiceClient>;
+
+// The review-card fields derived from an engine match. Single source of truth so
+// an engine-surfaced card (runMatching) and a manual "Add to Client" card score
+// to a provably-identical shape -- a manual match is indistinguishable downstream.
+export function cardFieldsFromMatch(match: MatchResult) {
+  return {
+    fit_score: match.fit_score,
+    proposed_role: match.proposed_role,
+    recommended_prime: match.recommended_prime,
+    why_this_org: match.why_this_org,
+    concept_synopsis: match.concept_synopsis,
+    description_short: match.description_short,
+    draft_outreach_email: match.draft_outreach_email,
+    outreach_track: match.outreach_track,
+    before_you_approve: match.before_you_approve,
+    inferred_fields: match.inferred_fields,
+    reasoning_context: match.reasoning_context,
+  };
+}
 
 // Best-effort parse of the extracted deadline text into an ISO date for the
 // dashboard. The verified text is always kept in submission_deadline.
@@ -316,19 +336,7 @@ export async function runMatching(grantId: string, db: DB) {
             .maybeSingle();
 
           if (qualifies) {
-            const cardFields = {
-              fit_score: match.fit_score,
-              proposed_role: match.proposed_role,
-              recommended_prime: match.recommended_prime,
-              why_this_org: match.why_this_org,
-              concept_synopsis: match.concept_synopsis,
-              description_short: match.description_short,
-              draft_outreach_email: match.draft_outreach_email,
-              outreach_track: match.outreach_track,
-              before_you_approve: match.before_you_approve,
-              inferred_fields: match.inferred_fields,
-              reasoning_context: match.reasoning_context,
-            };
+            const cardFields = cardFieldsFromMatch(match);
             if (!existingCard) {
               await db.from("review_cards").insert({
                 grant_id: grantId,
