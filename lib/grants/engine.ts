@@ -3,6 +3,7 @@
 // + AI Calibration Email Logs compiled by Samantha from Shannon's expert overrides.
 
 import { getAnthropicClient, MODEL } from "@/lib/anthropic";
+import { sanitizeOutreachEmail } from "@/lib/email/sanitize";
 import {
   funderExclusionReason,
   applyHardConstraints,
@@ -360,6 +361,12 @@ TONE BY CONTACT TYPE (apply in draft email):
 - Cold institutional (dean, agency staff): Formal, specific capability cited, consortium context shown, proposed role named, hard deadline included.
 - Prospect: Formal, grant opportunity as the warm introduction mechanism.
 
+EMAIL FORMAT RULES (draft_outreach_email -- these are hard requirements):
+- Address the recipient by their ACTUAL name from the CLIENT "Primary Contact" field (e.g. "Dear John,"). If Primary Contact is "unknown", use a neutral greeting ("Hello,"). NEVER emit a bracketed placeholder like [Contact Name] or [Name].
+- Output the email BODY ONLY. Do NOT include a "Subject:" line -- the subject is set separately by the system.
+- Do NOT sign off with a sender name. No "[Your Name]", no trailing name -- the sender adds their own signature. A closing like "Best regards," with no name is fine.
+- Do NOT use em-dashes (the "—" character) anywhere. Use commas, or restructure the sentence.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 HUMAN VALIDATION GATES -- Surface these in before_you_approve. Do not automate past these.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -394,7 +401,7 @@ Return a JSON object with this exact schema:
   "why_this_org": string[] (1-2 specific bullets citing actual signals -- not generic eligibility language),
   "concept_synopsis": string (2-3 sentences: "X org develops [program] that does [Y], in partnership with [Z], to serve [population/geography]."),
   "description_short": string (50 words max: what this grant funds, who is eligible, the core purpose -- plain language),
-  "draft_outreach_email": string (full email ready to send, correct tone for track),
+  "draft_outreach_email": string (email BODY only, correct tone for track -- no "Subject:" line, no sender signature/name; greet the actual Primary Contact by name or "Hello,"; no em-dashes),
   "outreach_track": "Track 1" | "Track 2",
   "before_you_approve": string[] (human validation gates -- distinguish inferred from confirmed; cite specific stops),
   "inferred_fields": string[] (fields reasoned or assumed, not confirmed from NOFO or client record),
@@ -591,6 +598,7 @@ ${seatMenu}`;
 
   const clientContext = `CLIENT:
 Name: ${client.name}
+Primary Contact: ${client.primary_contact_name || "unknown"}
 Org Type: ${client.org_type}
 Engagement Tier: ${client.engagement_tier}
 Location: ${[client.location_city, client.location_county, client.location_state].filter(Boolean).join(", ")}
@@ -735,6 +743,15 @@ ${formatConstraintsForPrompt(client)}`;
   // the role, blocks an ineligible structured prime, and injects guaranteed
   // before_you_approve flags. Supersedes matching_rules for the cases it covers.
   applyHardConstraints(result, client, grant);
+
+  // Deterministic cleanup of the drafted email (belt-and-suspenders with the
+  // EMAIL FORMAT RULES prompt): strip any "Subject:" line, resolve a residual
+  // [Contact Name] to the real contact, drop a "[Your Name]" signature. Idempotent;
+  // the send path sanitizes again so older drafts + human edits are also covered.
+  result.draft_outreach_email = sanitizeOutreachEmail(
+    result.draft_outreach_email,
+    client.primary_contact_name,
+  );
   return result;
 }
 
