@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
 import { ClientForm } from "../../client-form";
+import { SamRegistration } from "../../sam-registration";
 import { updateClientAction } from "../../actions";
 import type { Client } from "@/types/database";
 
@@ -26,8 +27,9 @@ export default async function EditClientPage({
   return (
     <div>
       <PageHeader title={`Edit ${client.name}`} />
-      <div className="p-8">
+      <div className="max-w-3xl space-y-8 p-8">
         <ClientForm client={client} action={action} submitLabel="Save changes" />
+        <SamRegistration client={client} />
       </div>
     </div>
   );

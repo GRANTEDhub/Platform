@@ -269,6 +269,11 @@ function prospectAsClient(c: Record<string, string>): Client {
     usaspending_search_name: null,
     federal_history_verified: false,
     sam_uei_status: null,
+    uei: null,
+    sam_matched_name: null,
+    sam_registration_status: null,
+    sam_expiration_date: null,
+    sam_checked_at: null,
     known_constraints: c.capability_summary
       ? `Capability (inferred from web search): ${c.capability_summary}`
       : null,
