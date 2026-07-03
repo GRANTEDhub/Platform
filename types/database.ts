@@ -98,8 +98,41 @@ export interface Client {
   // engine enforces in code (not advisory prose): supersede matching_rules for
   // the cases they cover. Null/absent = none.
   hard_constraints: HardConstraint[] | null;
+  // Lead pipeline (migration 0025). A lead is a clients row with pipeline_stage
+  // set; null = a real client that never entered the pipeline. Converted =
+  // pipeline_stage='converted' AND status='active' (same row, zero migration).
+  // Stored pipeline_stage holds only human stages + 'converted'; derived stages
+  // are computed in lib/leads/stage.ts. See isUnconvertedLead() before including
+  // clients rows in matcher/roster queries (they bypass RLS via the service role).
+  pipeline_stage: string | null;
+  lead_source: string | null;
+  account_manager_id: string | null;
+  intake_data: Record<string, unknown> | null;
+  needs_review: boolean;
+  archived_reason: string | null;
+  contract_status: string | null;
+  contract_signed_at: string | null;
+  unsubscribed_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// A grant-match hook: the scored fit that grounds warm outreach, snapshotted
+// durably onto a lead (migration 0025). One row per (lead, grant); a lead
+// accrues more as new grants fit. Provenance ids are nullable (prospect rows and
+// their cards are non-durable, so the snapshot columns are authoritative).
+export interface LeadGrantHook {
+  id: string;
+  client_id: string;
+  grant_id: string | null;
+  prospect_id: string | null;
+  review_card_id: string | null;
+  fit_score: number | null;
+  proposed_role: string | null;
+  recommended_prime: string | null;
+  why_snapshot: string[] | null;
+  concept_snapshot: string | null;
+  created_at: string;
 }
 
 // Stage A (Step 3): the grant's ideal applicant/consortium, constructed from the

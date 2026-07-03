@@ -281,6 +281,17 @@ function prospectAsClient(c: Record<string, string>): Client {
       : null,
     matching_rules: null,
     hard_constraints: null,
+    // Lead-pipeline fields (migration 0025): a discovered prospect is not a lead
+    // until it is explicitly promoted, so these are all null/false here.
+    pipeline_stage: null,
+    lead_source: null,
+    account_manager_id: null,
+    intake_data: null,
+    needs_review: false,
+    archived_reason: null,
+    contract_status: null,
+    contract_signed_at: null,
+    unsubscribed_at: null,
     created_at: now,
     updated_at: now,
   };
