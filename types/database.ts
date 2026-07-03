@@ -78,6 +78,13 @@ export interface Client {
   usaspending_search_name: string | null;
   federal_history_verified: boolean;
   sam_uei_status: string | null;
+  // Structured SAM.gov registration (migration 0023). Compliance/readiness only,
+  // NOT read by the matcher. Populated via the human-confirmed resolve flow.
+  uei: string | null;
+  sam_matched_name: string | null;
+  sam_registration_status: string | null;
+  sam_expiration_date: string | null;
+  sam_checked_at: string | null;
   known_constraints: string | null;
   // Client-specific authoritative matching overrides (editable; read by the
   // engine and applied before general logic). See migration 0008.
