@@ -17,6 +17,7 @@ const ADMIN_NAV: NavItem[] = [
   { href: "/grants", label: "Ledger", icon: "grants" },
   { href: "/matches", label: "Matches", icon: "matching" },
   { href: "/intel", label: "Prospects", icon: "intel" },
+  { href: "/leads", label: "Leads", icon: "leads" },
   { href: "/clients", label: "Clients", icon: "clients" },
   { href: "/time", label: "Time", icon: "time" },
   { href: "/invoices", label: "Invoices", icon: "invoices" },
