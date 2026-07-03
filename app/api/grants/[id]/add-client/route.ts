@@ -3,6 +3,7 @@ import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { matchGrantToClient } from "@/lib/grants/engine";
 import { cardFieldsFromMatch } from "@/lib/grants/pipeline";
 import { formatStoredUSASpending } from "@/lib/grants/usaspending";
+import { isUnconvertedLead } from "@/lib/leads/stage";
 import type { Grant, Client } from "@/types/database";
 
 export const maxDuration = 300;
@@ -60,6 +61,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     .single<Client>();
   if (!client) {
     return NextResponse.json({ error: "Client not found" }, { status: 404 });
+  }
+  // Defense-in-depth: the picker only offers status='active' clients, but this
+  // route scores whatever id it is handed -- never score an un-converted lead.
+  if (isUnconvertedLead(client.pipeline_stage)) {
+    return NextResponse.json(
+      { error: "That organization is a lead, not a client. Convert it first." },
+      { status: 400 },
+    );
   }
 
   // Already-matched pre-check (before scoring, so we don't spend an LLM call on a

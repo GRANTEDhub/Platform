@@ -17,6 +17,7 @@ import {
 import type { IdealApplicantProfile } from "@/types/database";
 import { resolveNofoText, mergeDeepShred } from "@/lib/grants/nofo";
 import { formatStoredUSASpending } from "@/lib/grants/usaspending";
+import { NON_LEAD_OR_FILTER } from "@/lib/leads/stage";
 
 type DB = ReturnType<typeof createServiceClient>;
 
@@ -260,7 +261,12 @@ export async function runMatching(grantId: string, db: DB) {
     return;
   }
 
-  const { data: clients } = await db.from("clients").select("*");
+  // EXCLUDE leads. This runs under the service role and BYPASSES RLS, so the
+  // admin-only clients RLS does not protect it -- without this filter the matcher
+  // would score grants against un-converted lead rows and mint cards for them.
+  // Mirrors isUnconvertedLead(): keep only rows never in the pipeline (null) or
+  // graduated ('converted', now real active clients).
+  const { data: clients } = await db.from("clients").select("*").or(NON_LEAD_OR_FILTER);
   if (!clients || clients.length === 0) {
     await db.from("grants").update({ status: "complete" }).eq("id", grantId);
     return;

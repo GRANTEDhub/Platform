@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { NON_LEAD_OR_FILTER } from "@/lib/leads/stage";
 import type { Client } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +12,12 @@ export const dynamic = "force-dynamic";
 export default async function ClientsPage() {
   await requireAdmin();
   const supabase = createClient();
-  const { data } = await supabase.from("clients").select("*").order("name");
+  // The client roster excludes leads (admin lead pipeline is a separate surface).
+  const { data } = await supabase
+    .from("clients")
+    .select("*")
+    .or(NON_LEAD_OR_FILTER)
+    .order("name");
   const clients = (data ?? []) as Client[];
 
   return (
