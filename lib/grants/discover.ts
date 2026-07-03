@@ -268,6 +268,8 @@ function prospectAsClient(c: Record<string, string>): Client {
     federal_grant_history: null,
     usaspending_search_name: null,
     federal_history_verified: false,
+    usaspending_summary: null,
+    usaspending_checked_at: null,
     sam_uei_status: null,
     uei: null,
     sam_matched_name: null,

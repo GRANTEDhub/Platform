@@ -77,6 +77,11 @@ export interface Client {
   // the stored federal_grant_history as authoritative.
   usaspending_search_name: string | null;
   federal_history_verified: boolean;
+  // Cached USASpending result (migration 0024) so matching reads stored data
+  // instead of calling the API live mid-match. Structured USASpendingResult;
+  // formatted at read time. Fetched at intake + a monthly cron sweep.
+  usaspending_summary: Record<string, unknown> | null;
+  usaspending_checked_at: string | null;
   sam_uei_status: string | null;
   // Structured SAM.gov registration (migration 0023). Compliance/readiness only,
   // NOT read by the matcher. Populated via the human-confirmed resolve flow.

@@ -1,0 +1,25 @@
+-- ╔══════════════════════════════════════════════════════════════════════════╗
+-- ║ USASpending past-performance cache (A2: take the live call off the hot path) ║
+-- ╚══════════════════════════════════════════════════════════════════════════╝
+-- Structured, stored USASpending result so matching reads it instead of calling
+-- the API live mid-match (the flakiness/latency/non-determinism source). Fetched
+-- at intake (background) + a monthly cron sweep; matching makes ZERO external
+-- calls and never falls back to live -- a client with no cache yet simply scores
+-- as "unknown" (same as today's failed-lookup path, minus the call).
+--
+-- usaspending_summary  -- the normalized USASpendingResult (award_count,
+--                         total_awarded, agencies, most_recent, has_federal_
+--                         grant_history, verified). Single source of truth; the
+--                         matcher formats it at read time via
+--                         formatUSASpendingContext. Written only on a verified
+--                         result (a failed lookup leaves the prior value intact).
+-- usaspending_checked_at -- when the cache was last refreshed. The sweep re-checks
+--                          entries older than ~25 days; NOT advanced on a failed
+--                          lookup, so a failure retries next sweep.
+--
+-- Both nullable, additive, backfill-safe. Complements the existing 0015 overrides
+-- (usaspending_search_name = query string; federal_history_verified = human
+-- authoritative, skip lookups entirely). Null = never cached -> scores unknown
+-- until the post-deploy seed sweep runs.
+alter table clients add column if not exists usaspending_summary    jsonb;
+alter table clients add column if not exists usaspending_checked_at timestamptz;
