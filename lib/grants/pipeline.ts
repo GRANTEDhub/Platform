@@ -130,13 +130,23 @@ export async function runPipeline(
     skipReason = grantLevelSuppressionReason(extracted);
   }
 
+  // A forecasted opportunity has no NOFO published yet and is not scored on first
+  // pass -- matching waits for the flip-to-active re-shred (the forecasted->active
+  // lifecycle; gate.ts already excludes forecasted from prospecting). Skipping
+  // runMatching here is both correct AND the fix for forecasted grants getting
+  // killed mid-match and left stuck in 'processing': they now land cleanly at
+  // 'complete'. Mirrors the grant_status write below. The flip path passes
+  // opportunityStatus 'posted', so it is unaffected and matches as intended.
+  const isForecasted =
+    opts?.opportunityStatus === "forecasted" || extracted.grant_status === "Forecasted";
+
   // Stage A (Step 3): construct the grant's ideal applicant profile from the
   // full NOFO. Only for grants that will actually be scored (domestic, not
-  // hard-disqualified) and only when we have the real NOFO text (full shred) --
-  // a summary is too thin to anchor a trustworthy profile. Fault-isolated.
+  // hard-disqualified, not forecasted) and only when we have the real NOFO text
+  // (full shred) -- a summary is too thin to anchor a trustworthy profile.
   let idealProfile: IdealApplicantProfile | null = null;
   const willScore =
-    isDomestic && (extracted.hard_disqualifiers?.length ?? 0) === 0 && !skipReason;
+    isDomestic && (extracted.hard_disqualifiers?.length ?? 0) === 0 && !skipReason && !isForecasted;
   if (willScore && shredDepth === "full") {
     try {
       idealProfile = await constructIdealApplicantProfile(rawTextForStorage);
@@ -188,10 +198,12 @@ export async function runPipeline(
     })
     .eq("id", grantId);
 
-  // Grant-level-skipped, international, or hard-disqualified opportunities are
-  // stored (flagged) but never scored — saves matching spend and honors the
-  // domestic-only mandate. The Ledger derives the disposition from these fields.
-  if (skipReason || !isDomestic || (extracted.hard_disqualifiers?.length ?? 0) > 0) {
+  // Grant-level-skipped, international, hard-disqualified, or forecasted
+  // opportunities are stored (flagged) but never scored on first pass — saves
+  // matching spend, honors the domestic-only mandate, and (for forecasted) defers
+  // matching to the flip-to-active re-shred. The Ledger derives the disposition
+  // from these fields.
+  if (skipReason || !isDomestic || (extracted.hard_disqualifiers?.length ?? 0) > 0 || isForecasted) {
     await db.from("grants").update({ status: "complete" }).eq("id", grantId);
     return;
   }
