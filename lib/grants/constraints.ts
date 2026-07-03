@@ -12,7 +12,7 @@
 // inside the draft email) -- those become guaranteed before_you_approve flags,
 // never silent excludes.
 
-import type { Client, Grant, HardConstraint, ConstraintType } from "@/types/database";
+import type { Client, Grant, HardConstraint, ConstraintType, ConstraintAction } from "@/types/database";
 
 const VALID_TYPES: ConstraintType[] = [
   "ineligible_funder",
@@ -20,6 +20,75 @@ const VALID_TYPES: ConstraintType[] = [
   "ineligible_partner",
   "entity_screen",
 ];
+
+// The ONLY valid role_ceiling values. A ceiling set to anything else ranks 99 in
+// roleRank() below, so the clamp never fires -- a silently dead gate. The picker
+// constrains this to a dropdown and validateConstraint rejects anything else.
+export const ROLE_CEILING_VALUES = [
+  "prime",
+  "co-applicant",
+  "sub",
+  "named collaborator",
+  "letter of support",
+  "facilitator",
+  "not recommended",
+] as const;
+
+// `action` is a deterministic function of `type` -- it describes what the code
+// ALREADY does for that type, so it is derived here, never chosen by a human.
+const ACTION_BY_TYPE: Record<ConstraintType, ConstraintAction> = {
+  ineligible_funder: "exclude", // pre-model exclude (funderExclusionReason)
+  role_ceiling: "cap_role", // post-model clamp
+  ineligible_partner: "flag", // nulls recommended_prime + reviewer flag
+  entity_screen: "flag", // reviewer flag only
+};
+
+export function deriveConstraintAction(type: ConstraintType): ConstraintAction {
+  return ACTION_BY_TYPE[type];
+}
+
+export type ConstraintValidation =
+  | { ok: true; constraint: HardConstraint }
+  | { ok: false; error: string };
+
+// Single source of truth for "is this a valid, enforceable constraint?" -- used
+// by the picker (client), the server action (reject-on-save), and the read path
+// (getClientConstraints). Normalizes: trims value/note, derives action from type,
+// drops an empty scope. Fails CLOSED with a specific message so a human learns a
+// gate is invalid at save time instead of discovering later it never fired.
+export function validateConstraint(raw: unknown): ConstraintValidation {
+  if (!raw || typeof raw !== "object") {
+    return { ok: false, error: "constraint must be an object" };
+  }
+  const c = raw as Partial<HardConstraint>;
+  if (!c.type || !VALID_TYPES.includes(c.type)) {
+    return { ok: false, error: `unknown constraint type "${String(c.type)}"` };
+  }
+  const value = typeof c.value === "string" ? c.value.trim() : "";
+  if (!value) return { ok: false, error: `${c.type}: a value is required` };
+  const note = typeof c.note === "string" ? c.note.trim() : "";
+  if (!note) {
+    return { ok: false, error: `${c.type}: a note is required (shown to the reviewer and the model)` };
+  }
+  if (
+    c.type === "role_ceiling" &&
+    !(ROLE_CEILING_VALUES as readonly string[]).includes(norm(value))
+  ) {
+    return {
+      ok: false,
+      error: `role_ceiling value must be one of: ${ROLE_CEILING_VALUES.join(", ")} (got "${value}")`,
+    };
+  }
+  const scope = typeof c.scope === "string" && c.scope.trim() ? c.scope.trim() : undefined;
+  const constraint: HardConstraint = {
+    type: c.type,
+    value,
+    note,
+    action: deriveConstraintAction(c.type),
+    ...(scope ? { scope } : {}),
+  };
+  return { ok: true, constraint };
+}
 
 function norm(s: string | null | undefined): string {
   return (s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
@@ -35,14 +104,15 @@ function includesNorm(haystack: string | null | undefined, needle: string): bool
 export function getClientConstraints(client: Pick<Client, "hard_constraints">): HardConstraint[] {
   const raw = client.hard_constraints;
   if (!Array.isArray(raw)) return [];
-  return raw.filter(
-    (c): c is HardConstraint =>
-      !!c &&
-      typeof c === "object" &&
-      VALID_TYPES.includes((c as HardConstraint).type) &&
-      typeof (c as HardConstraint).value === "string" &&
-      typeof (c as HardConstraint).note === "string",
-  );
+  // Read path stays fail-safe: invalid entries are dropped (never trusted, never
+  // crash scoring). Reject-on-save keeps invalid entries from being stored in the
+  // first place, but this is the last line of defense for legacy/hand-edited rows.
+  const out: HardConstraint[] = [];
+  for (const entry of raw) {
+    const v = validateConstraint(entry);
+    if (v.ok) out.push(v.constraint);
+  }
+  return out;
 }
 
 // PRE-MODEL: a client-specific ineligible funder excludes the grant before any

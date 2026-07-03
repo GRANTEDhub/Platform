@@ -4,12 +4,42 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireAdmin } from "@/lib/auth";
+import { validateConstraint } from "@/lib/grants/constraints";
+import type { HardConstraint } from "@/types/database";
+
+// Parse + validate the hard_constraints hidden field (JSON from the picker).
+// Reject-on-save: a malformed constraint throws with a specific message rather
+// than being silently dropped, so the admin learns the gate is invalid now
+// instead of discovering later that it never fired. `action` is ignored here --
+// validateConstraint derives it from type.
+function parseConstraints(json: string | null): HardConstraint[] | null {
+  if (!json) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    throw new Error("Matching constraints are malformed (invalid JSON).");
+  }
+  if (!Array.isArray(parsed)) throw new Error("Matching constraints must be a list.");
+  const valid: HardConstraint[] = [];
+  parsed.forEach((entry, i) => {
+    const v = validateConstraint(entry);
+    if (!v.ok) throw new Error(`Constraint #${i + 1}: ${v.error}`);
+    valid.push(v.constraint);
+  });
+  return valid.length ? valid : null;
+}
 
 function parse(formData: FormData) {
   const get = (k: string) => {
     const v = formData.get(k);
     return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
   };
+  const csv = (k: string) =>
+    get(k)
+      ?.split(",")
+      .map((s) => s.trim())
+      .filter(Boolean) ?? null;
   return {
     name: get("name"),
     org_type: get("org_type"),
@@ -29,15 +59,16 @@ function parse(formData: FormData) {
     // Grant-matching profile
     rucc_codes: get("rucc_codes"),
     annual_budget: get("annual_budget"),
-    primary_funding_needs: get("primary_funding_needs")
-      ?.split(",")
-      .map((s) => s.trim())
-      .filter(Boolean) ?? null,
+    primary_funding_needs: csv("primary_funding_needs"),
     project_stage: get("project_stage"),
     match_cost_share_capacity: get("match_cost_share_capacity"),
     federal_grant_history: get("federal_grant_history"),
     sam_uei_status: get("sam_uei_status"),
     known_constraints: get("known_constraints"),
+    // Matching configuration (matcher-consumed, previously editable nowhere).
+    service_area: csv("service_area"),
+    matching_rules: get("matching_rules"),
+    hard_constraints: parseConstraints(get("hard_constraints")),
   };
 }
 

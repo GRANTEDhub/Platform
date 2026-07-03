@@ -1,5 +1,6 @@
 import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { MatchingConfig } from "./matching-config";
 import type { Client } from "@/types/database";
 
 const ORG_TYPES = ["nonprofit", "local_government", "small_business", "higher_education"];
@@ -152,6 +153,12 @@ export function ClientForm({
           defaultValue={client?.primary_funding_needs?.join(", ")}
           placeholder="Comma-separated, e.g. broadband, workforce, health access"
         />
+        <Field
+          label="Service area"
+          name="service_area"
+          defaultValue={client?.service_area?.join(", ")}
+          placeholder="Comma-separated counties/regions, e.g. Pulaski, Faulkner, Central AR"
+        />
         <div className="space-y-2">
           <Label htmlFor="known_constraints">Known constraints</Label>
           <textarea
@@ -163,6 +170,11 @@ export function ClientForm({
           />
         </div>
       </section>
+
+      <MatchingConfig
+        defaultConstraints={client?.hard_constraints ?? []}
+        defaultMatchingRules={client?.matching_rules}
+      />
 
       <div className="flex gap-3">
         <Button type="submit">{submitLabel}</Button>
