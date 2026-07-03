@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { matchGrantToClient } from "@/lib/grants/engine";
 import { cardFieldsFromMatch } from "@/lib/grants/pipeline";
-import { checkPastPerformance, formatUSASpendingContext } from "@/lib/grants/usaspending";
+import { formatStoredUSASpending } from "@/lib/grants/usaspending";
 import type { Grant, Client } from "@/types/database";
 
 export const maxDuration = 300;
@@ -102,21 +102,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     );
   }
 
-  // USASpending parity: replicate runMatching's lookup for clients with unknown /
-  // unverified federal history so the manual score matches an engine score.
-  let usaSpendingContext: string | undefined;
-  if (
-    !client.federal_history_verified &&
-    (!client.federal_grant_history || client.federal_grant_history.toLowerCase() === "unknown")
-  ) {
-    try {
-      usaSpendingContext = formatUSASpendingContext(
-        await checkPastPerformance(client.usaspending_search_name ?? client.name),
-      );
-    } catch {
-      // best-effort, exactly like runMatching
-    }
-  }
+  // USASpending parity with runMatching: read the STORED cache, never fetch live.
+  // Verified clients are authoritative (federal_grant_history wins); an uncached
+  // client scores as "unknown".
+  const usaSpendingContext = client.federal_history_verified
+    ? undefined
+    : formatStoredUSASpending(client.usaspending_summary);
 
   let match;
   try {

@@ -97,6 +97,14 @@ function failed(orgName: string, note: string): USASpendingResult {
   };
 }
 
+// Formats a STORED usaspending_summary (jsonb) into the matcher context string.
+// Returns undefined for a null/empty cache so the caller falls through to the
+// client's own federal_grant_history / "unknown" -- never a live fetch.
+export function formatStoredUSASpending(summary: unknown): string | undefined {
+  if (!summary || typeof summary !== "object") return undefined;
+  return formatUSASpendingContext(summary as USASpendingResult);
+}
+
 // Formats the USASpending result into a one-line context string for Claude
 export function formatUSASpendingContext(result: USASpendingResult): string {
   if (!result.verified) {

@@ -16,7 +16,7 @@ import {
 } from "@/lib/grants/engine";
 import type { IdealApplicantProfile } from "@/types/database";
 import { resolveNofoText, mergeDeepShred } from "@/lib/grants/nofo";
-import { checkPastPerformance, formatUSASpendingContext } from "@/lib/grants/usaspending";
+import { formatStoredUSASpending } from "@/lib/grants/usaspending";
 
 type DB = ReturnType<typeof createServiceClient>;
 
@@ -257,28 +257,11 @@ export async function runMatching(grantId: string, db: DB) {
   // Re-score the entire roster every run; the per-card dedup below keeps one.
   const toScore = clients;
 
-  // USASpending past performance lookups for clients with unknown history
-  const usaSpendingMap = new Map<string, string>();
-  const clientsNeedingLookup = toScore.filter(
-    (c) =>
-      // Verified history is authoritative -- skip the live lookup entirely,
-      // regardless of what federal_grant_history holds.
-      !c.federal_history_verified &&
-      (!c.federal_grant_history || c.federal_grant_history.toLowerCase() === "unknown"),
-  );
-  if (clientsNeedingLookup.length > 0) {
-    const lookupResults = await Promise.allSettled(
-      // Query the registered/parent recipient name when one is set; otherwise
-      // the display name.
-      clientsNeedingLookup.map((c) => checkPastPerformance(c.usaspending_search_name ?? c.name)),
-    );
-    lookupResults.forEach((result, i) => {
-      const client = clientsNeedingLookup[i];
-      if (result.status === "fulfilled") {
-        usaSpendingMap.set(client.id, formatUSASpendingContext(result.value));
-      }
-    });
-  }
+  // Past-performance context is read from each client's STORED usaspending_summary
+  // (cached at intake + the monthly sweep) -- no live USASpending call on the
+  // matching hot path. A verified client is authoritative (federal_grant_history
+  // wins), and a client with no cache yet scores as "unknown" rather than
+  // triggering a fetch.
 
   // Score clients in parallel batches of 5
   const BATCH_SIZE = 5;
@@ -298,7 +281,9 @@ export async function runMatching(grantId: string, db: DB) {
           return;
         }
         try {
-          const usaSpendingContext = usaSpendingMap.get(client.id);
+          const usaSpendingContext = client.federal_history_verified
+            ? undefined
+            : formatStoredUSASpending(client.usaspending_summary);
           const match = await matchGrantToClient(grantRow, client, usaSpendingContext);
           const qualifies =
             !match.suppressed && !match.disqualified && match.fit_score >= 2;
