@@ -47,7 +47,7 @@ Return via the submit_candidates tool. Return an empty list if no real candidate
 // corp, co, foundation). Catches "Heartland Forward" vs "Heartland Forward, Inc."
 // across two result snippets, and tightens client/existing-prospect matching
 // against DBA/punctuation variance.
-function normalizeOrgName(name: string | null | undefined): string {
+export function normalizeOrgName(name: string | null | undefined): string {
   let s = (name ?? "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
   s = s.replace(/^the\s+/, "");
   let prev;

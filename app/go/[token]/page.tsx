@@ -28,9 +28,13 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 export default async function ScheduleLandingPage({ params }: { params: { token: string } }) {
   const db = createServiceClient();
-  const token = await resolveToken(db, params.token, "prospect_schedule_call");
+  // Accept both outbound-door scheduling tokens: the original prospect-bound link
+  // and the lead-bound link minted when a prospect is promoted (P2.5).
+  const token = await resolveToken(db, params.token);
+  const isScheduleToken =
+    !!token && ["prospect_schedule_call", "lead_schedule_call"].includes(token.action_type);
 
-  if (!token) {
+  if (!token || !isScheduleToken) {
     return (
       <Shell>
         <h1 className="font-serif text-2xl font-semibold text-brand-navy">This link isn&apos;t valid</h1>
@@ -42,10 +46,15 @@ export default async function ScheduleLandingPage({ params }: { params: { token:
     );
   }
 
-  let prospectName: string | null = null;
+  // The subject is a prospect (prospect-bound token) or a lead/client (lead-bound
+  // token). Resolve whichever the token points at for the recorded snapshot.
+  let subjectName: string | null = null;
   if (token.prospect_id) {
     const { data } = await db.from("prospects").select("name").eq("id", token.prospect_id).maybeSingle();
-    prospectName = (data as { name: string } | null)?.name ?? null;
+    subjectName = (data as { name: string } | null)?.name ?? null;
+  } else if (token.client_id) {
+    const { data } = await db.from("clients").select("name").eq("id", token.client_id).maybeSingle();
+    subjectName = (data as { name: string } | null)?.name ?? null;
   }
   let grantTitle: string | null = null;
   if (token.grant_id) {
@@ -59,7 +68,7 @@ export default async function ScheduleLandingPage({ params }: { params: { token:
   await recordPipelineEvent(db, {
     token,
     eventType: "clicked_schedule_call",
-    subjectSnapshot: { name: prospectName },
+    subjectSnapshot: { name: subjectName },
     metadata: {
       user_agent: h.get("user-agent"),
       ip: h.get("x-forwarded-for"),
