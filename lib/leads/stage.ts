@@ -87,3 +87,11 @@ export function effectiveStage(
 export function isUnconvertedLead(pipelineStage: string | null | undefined): boolean {
   return pipelineStage != null && pipelineStage !== "converted";
 }
+
+// PostgREST `.or()` fragment expressing "NOT an un-converted lead" -- the query
+// mirror of isUnconvertedLead(). Use it on any service-role read of clients /
+// client_overview that must NOT include leads (runMatching, the roster list, the
+// dashboard). Kept beside the helper so the two definitions never drift.
+// Requires pipeline_stage to be selectable on the queried relation (it is on
+// clients since 0025 and on client_overview since 0026).
+export const NON_LEAD_OR_FILTER = "pipeline_stage.is.null,pipeline_stage.eq.converted";
