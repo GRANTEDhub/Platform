@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { canSendEmail } from "@/lib/email/guard";
+import { canSendOutreach } from "@/lib/email/guard";
 import { sendOutreachEmail, isDeliverableEmail } from "@/lib/email/send";
 import type { Client } from "@/types/database";
 
@@ -37,9 +37,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: "The email body is empty." }, { status: 400 });
   }
 
-  // Gate first. On preview / when sending is disabled, do NOT send and do NOT
-  // apply side effects -- report the reason so the UI is honest.
-  const gate = canSendEmail();
+  // Gate first, recipient-aware. On preview / when sending is disabled, or when
+  // the testing-mode allowlist blocks this recipient, do NOT send and do NOT
+  // apply any side effect (no Resend call, no outreach_sent event, no stage
+  // advance) -- report the reason so the UI is honest.
+  const gate = canSendOutreach(to);
   if (!gate.ok) {
     return NextResponse.json({ sent: false, reason: gate.reason });
   }

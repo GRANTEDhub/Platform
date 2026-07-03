@@ -9,6 +9,7 @@
 // function assumes it is allowed to send and only validates the payload.
 
 import { Resend } from "resend";
+import { isRecipientAllowed } from "@/lib/email/guard";
 import { sanitizeOutreachEmail } from "@/lib/email/sanitize";
 import type { ReviewCard, Client } from "@/types/database";
 
@@ -106,6 +107,12 @@ export async function sendOutreachEmail(opts: {
   const to = (opts.to ?? "").trim();
   if (!isDeliverableEmail(to)) {
     throw new Error(`No deliverable recipient: "${opts.to ?? "(null)"}"`);
+  }
+  // Hard backstop for the testing-mode allowlist. Callers should pre-check via
+  // canSendOutreach() and report the block cleanly; if a different send path
+  // reaches here without that check, refuse rather than send to a real prospect.
+  if (!isRecipientAllowed(to)) {
+    throw new Error(`Recipient not on send allowlist (testing mode): ${to}`);
   }
   if (!opts.body || !opts.body.trim()) throw new Error("Empty email body");
   const subject = (opts.subject ?? "").trim() || "A grant opportunity from GRANTED";
