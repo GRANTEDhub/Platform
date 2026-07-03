@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { effectiveStage, type StoredStage } from "@/lib/leads/stage";
 import { signalsFromLeadRow, describeLeadEvent, type TimelineEventRow } from "@/lib/leads/events";
 import { LeadControls } from "../lead-controls";
+import { OutreachPanel } from "../outreach-panel";
 import type { Client } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -167,6 +168,19 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
                 currentStage={lead.pipeline_stage}
                 accountManagerId={lead.account_manager_id}
                 admins={admins}
+              />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Outreach</CardTitle></CardHeader>
+            <CardContent>
+              <OutreachPanel
+                leadId={lead.id}
+                hooks={hooks.map((h) => ({
+                  id: h.id,
+                  grantTitle: grantOf(h)?.title ?? "Grant",
+                }))}
               />
             </CardContent>
           </Card>

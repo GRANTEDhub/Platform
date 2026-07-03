@@ -12,6 +12,7 @@ const LABELS: Record<string, string> = {
   stage_change: "Stage changed",
   note: "Note",
   am_assigned: "Account manager assigned",
+  outreach_sent: "Outreach sent",
 };
 
 export interface TimelineEventRow {
@@ -38,6 +39,11 @@ export function describeLeadEvent(e: TimelineEventRow): { title: string; detail:
       return { title, detail: typeof m.note === "string" ? m.note : null };
     case "am_assigned":
       return { title, detail: typeof m.name === "string" ? m.name : null };
+    case "outreach_sent": {
+      const to = typeof m.to === "string" ? `to ${m.to}` : null;
+      const grant = typeof m.grant_title === "string" ? `re: ${m.grant_title}` : null;
+      return { title, detail: [to, grant].filter(Boolean).join(" · ") || null };
+    }
     case "lead_created":
     case "hook_attached":
     case "routed_to_client": {

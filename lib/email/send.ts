@@ -91,3 +91,34 @@ export async function sendAlertEmail(
 
   return { to, subject, id: data?.id ?? null };
 }
+
+// Warm-outreach send (lead pipeline). Same GRANTED identity and gating contract
+// as the alert path (callers MUST pre-check canSendEmail); differs only in that
+// the subject and body are the human-approved outreach draft, and the recipient
+// is supplied explicitly (a grant-matched lead often has no email on file until
+// the admin confirms one at send time).
+export async function sendOutreachEmail(opts: {
+  to: string;
+  subject: string;
+  body: string;
+  contactName?: string | null;
+}): Promise<SentResult> {
+  const to = (opts.to ?? "").trim();
+  if (!isDeliverableEmail(to)) {
+    throw new Error(`No deliverable recipient: "${opts.to ?? "(null)"}"`);
+  }
+  if (!opts.body || !opts.body.trim()) throw new Error("Empty email body");
+  const subject = (opts.subject ?? "").trim() || "A grant opportunity from GRANTED";
+  const cleanBody = sanitizeOutreachEmail(opts.body, opts.contactName ?? null);
+
+  const resend = new Resend(process.env.RESEND_PLATFORM_API);
+  const { data, error } = await resend.emails.send({
+    from: FROM,
+    to,
+    replyTo: REPLY_TO,
+    subject,
+    text: cleanBody,
+  });
+  if (error) throw new Error(`Resend send failed: ${error.message}`);
+  return { to, subject, id: data?.id ?? null };
+}
