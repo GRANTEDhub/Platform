@@ -8,6 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { GrantStatusBadge } from "@/components/grants/badges";
 import { GrantOverview, GrantKeyFacts } from "@/components/grants/grant-facts";
 import { MatchOutcomes, type OutcomeCard } from "@/components/grants/match-outcomes";
+import { ConsortiumPairings } from "@/components/grants/consortium-pairings";
+import { computeConsortiumPairings, type SeatedClient } from "@/lib/grants/consortium";
 import { AutoRefresh } from "./auto-refresh";
 import { RematchButton } from "./rematch-button";
 import { AddToClientControl } from "./add-to-client";
@@ -59,22 +61,51 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
 
   // Incomplete-scoring visibility. match_attempts is append-only, so reduce to
   // each client's LATEST attempt and count those whose newest outcome errored.
+  // result carries the engine's seat_ref (not stored on the card) -- used for the
+  // consortium pairing detection below.
   const { data: attempts } = await supabase
     .from("match_attempts")
-    .select("client_id, outcome, created_at")
+    .select("client_id, outcome, created_at, result")
     .eq("grant_id", params.id);
 
-  const latestByClient = new Map<string, { outcome: string; created_at: string }>();
+  const latestByClient = new Map<
+    string,
+    { outcome: string; created_at: string; result: unknown }
+  >();
   for (const a of attempts ?? []) {
     if (!a.client_id) continue;
     const prev = latestByClient.get(a.client_id);
     if (!prev || a.created_at > prev.created_at) {
-      latestByClient.set(a.client_id, { outcome: a.outcome, created_at: a.created_at });
+      latestByClient.set(a.client_id, {
+        outcome: a.outcome,
+        created_at: a.created_at,
+        result: a.result,
+      });
     }
   }
   const erroredClientCount = [...latestByClient.values()].filter(
     (a) => a.outcome === "error",
   ).length;
+
+  // Consortium pairings (Feature A): join each still-live client card (not
+  // passed) to its latest attempt's seat_ref, then detect complementary
+  // prime+supporting occupancy under the same archetype. Pure read-time surfacing
+  // over existing matcher output -- no scoring.
+  const seatedClients: SeatedClient[] = clientCards
+    .filter((c) => c.decision !== "passed" && c.client_id)
+    .map((c) => ({
+      clientId: c.client_id!,
+      clientName: c.clients?.name ?? null,
+      fitScore: c.fit_score,
+      proposedRole: c.proposed_role,
+      seatRef:
+        (latestByClient.get(c.client_id!)?.result as { seat_ref?: string } | undefined)?.seat_ref ??
+        "",
+    }));
+  const consortiumPairings = computeConsortiumPairings(
+    seatedClients,
+    grant.ideal_applicant_profile,
+  );
 
   const canCalibrate = profile.role === "admin" && grant.is_domestic;
 
@@ -189,6 +220,8 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
               />
             </CardContent>
           </Card>
+
+          <ConsortiumPairings pairings={consortiumPairings} />
         </div>
 
         <div className="space-y-6">
