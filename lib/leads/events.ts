@@ -1,4 +1,15 @@
+import { format, parseISO } from "date-fns";
 import type { LeadSignals } from "./stage";
+
+// Best-effort human date for a stored meeting datetime. The value may be a naive
+// datetime-local string ("2026-07-10T14:00"); if it won't parse we show it raw.
+function fmtScheduled(v: string): string {
+  try {
+    return format(parseISO(v), "MMM d, h:mma");
+  } catch {
+    return v;
+  }
+}
 
 // Human labels for the pipeline_events types that show on a lead timeline.
 // Unknown types fall back to a humanized form of the raw string, so a new event
@@ -39,6 +50,10 @@ export function describeLeadEvent(e: TimelineEventRow): { title: string; detail:
       return { title, detail: typeof m.note === "string" ? m.note : null };
     case "am_assigned":
       return { title, detail: typeof m.name === "string" ? m.name : null };
+    case "booked_call": {
+      const when = typeof m.scheduled_at === "string" && m.scheduled_at ? m.scheduled_at : null;
+      return { title, detail: when ? `call on ${fmtScheduled(when)}` : null };
+    }
     case "outreach_sent": {
       const to = typeof m.to === "string" ? `to ${m.to}` : null;
       const grant = typeof m.grant_title === "string" ? `re: ${m.grant_title}` : null;
