@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { format, parseISO } from "date-fns";
-import { FileCheck2, DollarSign, Clock, CalendarClock } from "lucide-react";
+import { FileCheck2, DollarSign, Clock, CalendarClock, AlertTriangle } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,6 +13,7 @@ import { StatCard } from "@/components/clients/stat-card";
 import { ClientMatchChart } from "@/components/clients/client-match-chart";
 import { ClientGrantTracking, type TrackedGrant } from "@/components/clients/client-grant-tracking";
 import { ClientActionItems } from "@/components/clients/client-action-items";
+import { samExpiryFlag } from "@/lib/sam/expiry";
 import type { Client, Invoice, Grant, ClientOverview, CardDecision } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -108,6 +109,9 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   const owedCents = overview?.owed_cents ?? 0;
   const hoursRemaining = overview?.hours_remaining ?? null;
 
+  // Read-time SAM registration expiry flag (null date or >30 days out -> null).
+  const samFlag = samExpiryFlag(client.sam_expiration_date);
+
   const humanLine =
     [client.status ? `${cap(client.status)} client` : null, client.engagement_tier ? `${client.engagement_tier} tier` : null]
       .filter(Boolean)
@@ -133,6 +137,21 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         <StatCard icon={Clock} value={hoursRemaining !== null ? `${Number(hoursRemaining).toFixed(1)}h` : "—"} label="hours remaining" />
         <StatCard icon={CalendarClock} value={overview?.next_deadline ? format(parseISO(overview.next_deadline), "MMM d") : "—"} label="next deadline" />
       </div>
+
+      {samFlag && (
+        <div className="px-8 pt-6">
+          <div
+            className={`flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-medium ${
+              samFlag.level === "expired"
+                ? "bg-red-50 text-red-800 ring-1 ring-red-200"
+                : "bg-amber-50 text-amber-900 ring-1 ring-amber-200"
+            }`}
+          >
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            {samFlag.label}
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-6 p-8 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
