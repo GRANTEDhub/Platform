@@ -28,3 +28,34 @@ export function canSendEmail(): SendGate {
   }
   return { ok: true, reason: "production, sending enabled, key present" };
 }
+
+// Testing-mode recipient allowlist, independent of canSendEmail. When
+// OUTREACH_SEND_ALLOWLIST is set and non-empty, ONLY listed recipients may
+// actually receive outreach even though sending is globally enabled -- every
+// other address is blocked. Empty/unset => no restriction (normal behavior), so
+// clearing the env var later returns to full sending. Comma-separated,
+// case-insensitive.
+export function outreachAllowlist(): string[] {
+  return (process.env.OUTREACH_SEND_ALLOWLIST ?? "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+export function isRecipientAllowed(email: string | null | undefined): boolean {
+  const list = outreachAllowlist();
+  if (list.length === 0) return true; // no allowlist configured => unrestricted
+  return list.includes((email ?? "").trim().toLowerCase());
+}
+
+// Combined gate for an outreach send to a specific recipient: the global send
+// gate AND the testing-mode allowlist must both pass. Callers use the returned
+// reason verbatim so a blocked send is honest about WHY (disabled vs. allowlist).
+export function canSendOutreach(recipient: string | null | undefined): SendGate {
+  const base = canSendEmail();
+  if (!base.ok) return base;
+  if (!isRecipientAllowed(recipient)) {
+    return { ok: false, reason: "blocked — not on send allowlist (testing mode)" };
+  }
+  return base;
+}
