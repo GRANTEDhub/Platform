@@ -1,11 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { DollarSign, Award, CalendarClock, Scale, ChevronDown } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DecisionBadge } from "@/components/grants/badges";
-import { StatCard } from "@/components/clients/stat-card";
 import { interTight, sourceSerif } from "@/lib/fonts";
 import { DecisionBar } from "./decision-bar";
 import { MatchFeedback } from "./match-feedback";
@@ -20,6 +19,42 @@ type FullCard = ReviewCard & {
 };
 
 const BAND: Record<number, string> = { 3: "Strong fit", 2: "Conditional", 1: "Weak" };
+
+// Compact a currency-ish string to $150K / $1.1M so a range fits one line. Falls
+// back to the raw string when it is not numeric (e.g. "Varies").
+function abbrevAmount(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const s = raw.trim();
+  if (!s) return null;
+  const m = s.replace(/,/g, "").match(/\$?\s*([0-9]+(?:\.[0-9]+)?)\s*([kmb])?/i);
+  if (!m) return s;
+  let n = parseFloat(m[1]);
+  const unit = (m[2] || "").toLowerCase();
+  if (unit === "k") n *= 1e3;
+  else if (unit === "m") n *= 1e6;
+  else if (unit === "b") n *= 1e9;
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(1).replace(/\.0$/, "")}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(1).replace(/\.0$/, "")}M`;
+  if (n >= 1e3) return `$${Math.round(n / 1e3)}K`;
+  return `$${Math.round(n)}`;
+}
+
+function formatAwardRange(min: string | null | undefined, max: string | null | undefined): string {
+  const lo = abbrevAmount(min);
+  const hi = abbrevAmount(max);
+  if (!lo && !hi) return "—";
+  if (lo && hi) return `${lo} – ${hi}`;
+  return (lo || hi)!;
+}
+
+// Cost share as a compact token: "None" when effectively none, else the raw
+// value (truncated to one line by the Stat cell). Empty -> em dash.
+function compactCostShare(raw: string | null | undefined): string {
+  const s = (raw ?? "").trim();
+  if (!s) return "—";
+  if (/^(none|no\b|not required|n\/?a|\$?0\b|0%)/i.test(s)) return "None";
+  return s;
+}
 
 export default async function CardDetailPage({ params }: { params: { id: string } }) {
   const profile = await requireUser();
@@ -41,10 +76,8 @@ export default async function CardDetailPage({ params }: { params: { id: string 
   const orgName = card.clients?.name || card.prospects?.name || "Match";
   const g = card.grants;
 
-  const awardRange =
-    g?.award_range_min || g?.award_range_max
-      ? `${g?.award_range_min || "?"} – ${g?.award_range_max || "?"}${g?.award_range_is_estimate ? " (est.)" : ""}`
-      : "—";
+  const awardRange = formatAwardRange(g?.award_range_min, g?.award_range_max);
+  const costShare = compactCostShare(g?.cost_share);
   const draftEmail = card.final_outreach_email || card.draft_outreach_email;
   const hasFullReasoning =
     !!(rc.eligibility_analysis || rc.role_assignment_logic || rc.consortium_rationale || rc.why_not_others);
@@ -52,7 +85,7 @@ export default async function CardDetailPage({ params }: { params: { id: string 
   return (
     <div className={`${interTight.variable} ${sourceSerif.variable}`}>
       <div className="grid gap-6 p-8 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
+        <div className="lg:col-span-2">
           {/* Header: grant is the subject; org is a pill below. */}
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
@@ -66,72 +99,68 @@ export default async function CardDetailPage({ params }: { params: { id: string 
             <DecisionBadge decision={card.decision} />
           </div>
 
-          {/* Pill row: status · fit · org */}
-          <div className="flex flex-wrap gap-2">
+          {/* Pill row: quiet context, not the headline */}
+          <div className="mt-4 flex flex-wrap gap-2">
             {g?.grant_status && <Pill>{g.grant_status}</Pill>}
-            <Pill tone="orange">
-              Fit {card.fit_score} · {BAND[card.fit_score] ?? "—"}
-            </Pill>
+            <Pill tone="orange">Fit {card.fit_score} · {BAND[card.fit_score] ?? "—"}</Pill>
             <Pill>{isProspect ? `Prospect: ${orgName}` : orgName}</Pill>
           </div>
 
-          {/* Funding stat cards */}
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <StatCard icon={DollarSign} value={awardRange} label="award range" />
-            <StatCard icon={Award} value={g?.num_awards || "—"} label="est. awards" />
-            <StatCard icon={CalendarClock} value={g?.submission_deadline || "—"} label="deadline" />
-            <StatCard icon={Scale} value={g?.cost_share || "—"} label="cost share" />
+          {/* Funding stats — value leads, no icons */}
+          <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Stat label={`Award range${g?.award_range_is_estimate ? " · est." : ""}`} value={awardRange} />
+            <Stat label="Est. awards" value={g?.num_awards || "—"} />
+            <Stat label="Deadline" value={g?.submission_deadline || "—"} />
+            <Stat label="Cost share" value={costShare} />
           </div>
 
-          {/* What it funds */}
-          {g?.description && (
-            <Card>
-              <CardHeader><CardTitle>What it funds</CardTitle></CardHeader>
-              <CardContent className="text-sm leading-relaxed">
-                <p className="line-clamp-4">{g.description}</p>
-              </CardContent>
-            </Card>
-          )}
+          {/* Content — one light container, hairline-separated rows, labels recede */}
+          <div className="mt-8 divide-y divide-brand-navy/[0.08] overflow-hidden rounded-xl border border-brand-navy/10 bg-white">
+            {g?.description && (
+              <div className="p-4">
+                <FieldLabel>What it funds</FieldLabel>
+                <p className="mt-1.5 line-clamp-4 text-sm leading-relaxed text-foreground">{g.description}</p>
+              </div>
+            )}
 
-          {/* Role + recommended prime */}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Card>
-              <CardHeader><CardTitle>Role</CardTitle></CardHeader>
-              <CardContent className="text-sm">{card.proposed_role || "—"}</CardContent>
-            </Card>
-            <Card>
-              <CardHeader><CardTitle>Recommended prime</CardTitle></CardHeader>
-              <CardContent className="text-sm">{card.recommended_prime || "—"}</CardContent>
-            </Card>
+            {/* Role + recommended prime read as one tight pair */}
+            <div className="grid grid-cols-2 gap-4 p-4">
+              <div>
+                <FieldLabel>Role</FieldLabel>
+                <p className="mt-1.5 text-sm text-foreground">{card.proposed_role || "—"}</p>
+              </div>
+              <div>
+                <FieldLabel>Recommended prime</FieldLabel>
+                <p className="mt-1.5 text-sm text-foreground">{card.recommended_prime || "—"}</p>
+              </div>
+            </div>
+
+            {(card.description_short || (card.why_this_org?.length || 0) > 0) && (
+              <div className="p-4">
+                <FieldLabel>Alignment</FieldLabel>
+                <div className="mt-1.5 space-y-2 text-sm text-foreground">
+                  {card.description_short && <p className="leading-relaxed">{card.description_short}</p>}
+                  {(card.why_this_org?.length || 0) > 0 && (
+                    <ul className="list-disc space-y-1 pl-4">
+                      {card.why_this_org!.map((w, i) => <li key={i}>{w}</li>)}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {card.concept_synopsis && (
+              <div className="p-4">
+                <FieldLabel>Concept</FieldLabel>
+                <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                  {card.concept_synopsis}
+                </p>
+              </div>
+            )}
           </div>
-
-          {/* Alignment (concise, client-specific) */}
-          {(card.description_short || (card.why_this_org?.length || 0) > 0) && (
-            <Card>
-              <CardHeader><CardTitle>Alignment</CardTitle></CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                {card.description_short && <p className="leading-relaxed">{card.description_short}</p>}
-                {(card.why_this_org?.length || 0) > 0 && (
-                  <ul className="list-disc space-y-1 pl-4">
-                    {card.why_this_org!.map((w, i) => <li key={i}>{w}</li>)}
-                  </ul>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Concept */}
-          {card.concept_synopsis && (
-            <Card>
-              <CardHeader><CardTitle>Concept</CardTitle></CardHeader>
-              <CardContent className="whitespace-pre-wrap text-sm leading-relaxed">
-                {card.concept_synopsis}
-              </CardContent>
-            </Card>
-          )}
 
           {/* Depth — collapsed detail, content verbatim */}
-          <div>
+          <div className="mt-8">
             <h2 className="mb-2 font-serif text-lg font-semibold text-brand-navy">Depth</h2>
             <div className="divide-y overflow-hidden rounded-lg border border-input">
               {(card.before_you_approve?.length || 0) > 0 && (
@@ -259,15 +288,39 @@ function Detail({ label, value }: { label: string; value: string | null | undefi
   );
 }
 
+// Quiet context chips -- smaller and less saturated than the grant-title headline.
 function Pill({ children, tone = "navy" }: { children: React.ReactNode; tone?: "navy" | "orange" }) {
   const cls =
     tone === "orange"
-      ? "bg-brand-orange/10 text-brand-orange ring-brand-orange/20"
-      : "bg-brand-navy/5 text-brand-navy ring-brand-navy/10";
+      ? "bg-brand-orange/[0.08] text-brand-orange"
+      : "bg-brand-navy/[0.05] text-brand-navy/80";
   return (
-    <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ring-1 ${cls}`}>
+    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium ${cls}`}>
       {children}
     </span>
+  );
+}
+
+// Small uppercase label; the content below is the primary text, the label recedes.
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-[11px] font-medium uppercase tracking-[0.05em] text-muted-foreground">{children}</p>
+  );
+}
+
+// Iconless funding stat: muted label on top, serif value below on a single line.
+// Consistent height across the row.
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-brand-navy/10 bg-white px-4 py-3">
+      <FieldLabel>{label}</FieldLabel>
+      <p
+        className="mt-1 truncate font-serif text-xl font-medium leading-6 text-brand-navy"
+        title={value}
+      >
+        {value}
+      </p>
+    </div>
   );
 }
 
