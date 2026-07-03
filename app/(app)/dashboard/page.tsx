@@ -7,6 +7,7 @@ import { Stat } from "@/components/ui/stat";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatCurrency } from "@/lib/utils";
+import { NON_LEAD_OR_FILTER } from "@/lib/leads/stage";
 import type { ClientOverview } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -51,9 +52,12 @@ export default async function DashboardPage() {
   await requireAdmin();
   const supabase = createClient();
 
+  // Exclude leads — the dashboard is the real-client roster. Same predicate as
+  // the matcher and the client list (pipeline_stage exposed on the view in 0026).
   const { data, error } = await supabase
     .from("client_overview")
     .select("*")
+    .or(NON_LEAD_OR_FILTER)
     .order("name");
 
   const clients = (data ?? []) as ClientOverview[];
