@@ -9,6 +9,7 @@ import { effectiveStage, type StoredStage } from "@/lib/leads/stage";
 import { signalsFromLeadRow, describeLeadEvent, type TimelineEventRow } from "@/lib/leads/events";
 import { LeadControls } from "../lead-controls";
 import { OutreachPanel } from "../outreach-panel";
+import { SchedulingPanel } from "../scheduling-panel";
 import type { Client } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -59,8 +60,18 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
     (a) => ({ id: a.id, name: a.full_name || a.email || "Unknown" }),
   );
 
-  const booked = events.some((e) => e.event_type === "booked_call");
+  const bookedEvent = events.find((e) => e.event_type === "booked_call"); // events are newest-first
+  const booked = !!bookedEvent;
   const eff = effectiveStage(lead.pipeline_stage as StoredStage, { ...signalsFromLeadRow(lead), booked });
+
+  // Scheduling-panel signals: the most recent scheduling-link click (cue) and the
+  // current booked_call, if any (its stored meeting datetime).
+  const lastClickedAt = events.find((e) => e.event_type === "clicked_schedule_call")?.occurred_at ?? null;
+  const scheduledAt =
+    bookedEvent && typeof bookedEvent.metadata?.scheduled_at === "string"
+      ? (bookedEvent.metadata.scheduled_at as string)
+      : null;
+  const bookingUrl = process.env.NEXT_PUBLIC_BOOKING_URL ?? null;
 
   const intake = (lead.intake_data ?? {}) as Record<string, unknown>;
   const intakeEntries = Object.entries(intake).filter(([, v]) => v != null && v !== "");
@@ -168,6 +179,18 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
                 currentStage={lead.pipeline_stage}
                 accountManagerId={lead.account_manager_id}
                 admins={admins}
+              />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Scheduling</CardTitle></CardHeader>
+            <CardContent>
+              <SchedulingPanel
+                leadId={lead.id}
+                bookingUrl={bookingUrl}
+                lastClickedAt={lastClickedAt}
+                scheduled={booked ? { at: scheduledAt } : null}
               />
             </CardContent>
           </Card>

@@ -64,6 +64,29 @@ export async function addLeadNote(leadId: string, body: string) {
   revalidatePath(`/leads/${leadId}`);
 }
 
+// Mark a discovery call as scheduled. This is the missing PRODUCER for the
+// booked_call signal: effectiveStage() promotes a lead to discovery_scheduled
+// whenever a booked_call event exists, so we DO NOT hand-set pipeline_stage --
+// writing the event drives the stage (two-layer model). The optional meeting
+// datetime is stored on the event metadata for the timeline; nothing downstream
+// reads it yet (display-only), but later phases (reminders, no-show, convert)
+// have a structured field to read instead of a backfill.
+export async function markDiscoveryScheduled(leadId: string, scheduledAt?: string | null) {
+  await requireAdmin();
+  const db = createServiceClient();
+  const when = (scheduledAt ?? "").trim() || null;
+
+  const { error } = await db.from("pipeline_events").insert({
+    event_type: "booked_call",
+    client_id: leadId,
+    metadata: { scheduled_at: when },
+  });
+  if (error) throw new Error(error.message);
+
+  revalidatePath(`/leads/${leadId}`);
+  revalidatePath("/leads");
+}
+
 // Assign / change / clear the account manager. Logs am_assigned with the name.
 export async function assignAccountManager(leadId: string, profileId: string | null) {
   await requireAdmin();
