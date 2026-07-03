@@ -11,6 +11,7 @@ import { MatchOutcomes, type OutcomeCard } from "@/components/grants/match-outco
 import { getGrantGateStatus, undecidedClientCount } from "@/lib/grants/gate";
 import { ProspectButton } from "../prospect-button";
 import { ScheduleLinkButton } from "../schedule-link-button";
+import { StartOutreachButton } from "../start-outreach-button";
 import type { Grant, ReviewCard, Client, Prospect } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -130,10 +131,15 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                           <DecisionBadge decision={pc.decision} />
                         </div>
                       </div>
-                      {/* Outbound door: mint a tokenized scheduling link to paste
-                          into an outreach email (manual send for now). */}
+                      {/* Outbound door. "Start outreach" promotes the prospect to
+                          a tracked lead (carrying its grant-match context) and
+                          mints a lead-bound scheduling link; the raw scheduling
+                          link remains for a quick prospect-only touch. */}
                       {pc.prospects?.id && (
-                        <ScheduleLinkButton prospectId={pc.prospects.id} grantId={grant.id} />
+                        <div className="flex flex-wrap items-center gap-3">
+                          <StartOutreachButton prospectId={pc.prospects.id} grantId={grant.id} />
+                          <ScheduleLinkButton prospectId={pc.prospects.id} grantId={grant.id} />
+                        </div>
                       )}
                     </li>
                   ))}
