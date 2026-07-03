@@ -303,6 +303,7 @@ export interface ClientOverview {
   hours_remaining: number;
   owed_cents: number;
   next_deadline: string | null;
+  pipeline_stage: string | null; // migration 0026 — lets the dashboard exclude leads
 }
 
 export interface TimeEntry {
