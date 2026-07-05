@@ -230,6 +230,7 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
               <LeadControls
                 leadId={lead.id}
                 currentStage={lead.pipeline_stage}
+                currentEmail={lead.primary_contact_email}
                 accountManagerId={lead.account_manager_id}
                 admins={admins}
               />

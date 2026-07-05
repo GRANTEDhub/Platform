@@ -56,6 +56,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: "No amount to invoice." }, { status: 400 });
   }
 
+  // A Stripe 'send_invoice' invoice requires the customer to have an email, and
+  // grant-matched leads (promoted from prospects) often have none. Fail with a
+  // clean, actionable message BEFORE touching Stripe -- otherwise Stripe throws a
+  // raw "Missing email" error that crashes the JSON response.
+  const email = (lead.primary_contact_email ?? "").trim();
+  if (!email) {
+    return NextResponse.json(
+      { error: "This lead has no email on file — add one before issuing an invoice." },
+      { status: 400 },
+    );
+  }
+
   // Reuse an existing open (sent, unpaid) invoice rather than double-billing.
   const { data: existing } = await db
     .from("invoices")
@@ -71,34 +83,43 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const stripe = getStripe();
 
-  // Reuse or create the Stripe customer.
-  let customerId = lead.stripe_customer_id;
-  if (!customerId) {
-    const customer = await stripe.customers.create({
-      name: lead.name,
-      email: lead.primary_contact_email ?? undefined,
-    });
-    customerId = customer.id;
-    await db.from("clients").update({ stripe_customer_id: customerId }).eq("id", params.id);
-  }
+  // All Stripe calls wrapped: a raw Stripe exception must become a clean JSON
+  // error, never an unhandled throw (which surfaces to the client as
+  // "Unexpected end of JSON input").
+  let finalized;
+  try {
+    // Reuse or create the Stripe customer (email guaranteed present above).
+    let customerId = lead.stripe_customer_id;
+    if (!customerId) {
+      const customer = await stripe.customers.create({ name: lead.name, email });
+      customerId = customer.id;
+      await db.from("clients").update({ stripe_customer_id: customerId }).eq("id", params.id);
+    }
 
-  // One line item + a NON-auto-advancing invoice, then finalize (generates the
-  // hosted URL + PDF WITHOUT emailing the client -- Stripe only emails on sendInvoice).
-  await stripe.invoiceItems.create({
-    customer: customerId,
-    amount: amountCents,
-    currency: "usd",
-    description: `GRANTED ${signed.template_key.replace(/_/g, " ")} engagement`,
-  });
-  const draft = await stripe.invoices.create({
-    customer: customerId,
-    collection_method: "send_invoice",
-    days_until_due: 14,
-    auto_advance: false,
-    pending_invoice_items_behavior: "include",
-    metadata: { client_id: params.id, contract_id: signed.id },
-  });
-  const finalized = await stripe.invoices.finalizeInvoice(draft.id, { auto_advance: false });
+    // One line item + a NON-auto-advancing invoice, then finalize (generates the
+    // hosted URL + PDF WITHOUT emailing the client -- Stripe only emails on sendInvoice).
+    await stripe.invoiceItems.create({
+      customer: customerId,
+      amount: amountCents,
+      currency: "usd",
+      description: `GRANTED ${signed.template_key.replace(/_/g, " ")} engagement`,
+    });
+    const draft = await stripe.invoices.create({
+      customer: customerId,
+      collection_method: "send_invoice",
+      days_until_due: 14,
+      auto_advance: false,
+      pending_invoice_items_behavior: "include",
+      metadata: { client_id: params.id, contract_id: signed.id },
+    });
+    finalized = await stripe.invoices.finalizeInvoice(draft.id, { auto_advance: false });
+  } catch (err) {
+    console.error("Stripe invoice creation failed", err instanceof Error ? err.message : err);
+    return NextResponse.json(
+      { error: `Could not create the invoice in Stripe: ${err instanceof Error ? err.message : "unknown error"}` },
+      { status: 502 },
+    );
+  }
 
   const { error: insErr } = await db.from("invoices").insert({
     client_id: params.id,

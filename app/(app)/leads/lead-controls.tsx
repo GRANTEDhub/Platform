@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { SETTABLE_STAGES } from "@/lib/leads/events";
-import { setLeadStage, addLeadNote, assignAccountManager } from "./actions";
+import { setLeadStage, addLeadNote, assignAccountManager, setLeadContactEmail } from "./actions";
 
 const SELECT_CLASS =
   "flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm";
@@ -15,17 +15,20 @@ const SELECT_CLASS =
 export function LeadControls({
   leadId,
   currentStage,
+  currentEmail,
   accountManagerId,
   admins,
 }: {
   leadId: string;
   currentStage: string | null;
+  currentEmail: string | null;
   accountManagerId: string | null;
   admins: { id: string; name: string }[];
 }) {
   const [pending, start] = useTransition();
   const [stage, setStage] = useState(currentStage ?? "discovery_pending");
   const [reason, setReason] = useState("");
+  const [email, setEmail] = useState(currentEmail ?? "");
   const [am, setAm] = useState(accountManagerId ?? "");
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -74,6 +77,26 @@ export function LeadControls({
           onClick={() => run(() => setLeadStage(leadId, stage, reason || null))}
         >
           Update stage
+        </Button>
+      </div>
+
+      {/* Contact email — needed for leads that didn't arrive via intake */}
+      <div className="space-y-2">
+        <Label>Contact email</Label>
+        <Input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="name@org.org"
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={pending || email.trim() === (currentEmail ?? "")}
+          onClick={() => run(() => setLeadContactEmail(leadId, email))}
+        >
+          Save email
         </Button>
       </div>
 
