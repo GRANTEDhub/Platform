@@ -81,7 +81,15 @@ export default async function MatchingPage({
                 </span>
               )}
             </div>
-            <table className="w-full text-sm">
+            {/* Fixed layout + shared colgroup so Fit / Status / Deadline align
+                column-to-column across every group's separate table. */}
+            <table className="w-full table-fixed text-sm">
+              <colgroup>
+                <col />
+                <col className="w-32" />
+                <col className="w-32" />
+                <col className="w-32" />
+              </colgroup>
               <tbody>
                 {g.cards.map((c) => <MatchRow key={c.id} card={c} />)}
               </tbody>

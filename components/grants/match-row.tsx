@@ -10,17 +10,17 @@ export function MatchRow({ card }: { card: MatchCard }) {
   return (
     <tr className="border-b last:border-0 hover:bg-muted/30">
       <td className="px-4 py-3">
-        <Link href={`/review/${card.id}`} className="font-medium hover:underline">
+        <Link href={`/review/${card.id}`} className="block truncate font-medium hover:underline">
           {card.grants?.title || "Untitled opportunity"}
         </Link>
-        <p className="text-xs text-muted-foreground">
+        <p className="truncate text-xs text-muted-foreground">
           {card.grants?.funder}
           {card.proposed_role ? ` · ${card.proposed_role}` : ""}
         </p>
       </td>
-      <td className="px-4 py-3"><ScoreBadge score={card.fit_score} /></td>
-      <td className="px-4 py-3"><DecisionBadge decision={card.decision} /></td>
-      <td className="px-4 py-3 text-right text-xs text-muted-foreground">
+      <td className="whitespace-nowrap px-4 py-3"><ScoreBadge score={card.fit_score} /></td>
+      <td className="whitespace-nowrap px-4 py-3"><DecisionBadge decision={card.decision} /></td>
+      <td className="whitespace-nowrap px-4 py-3 text-right text-xs text-muted-foreground">
         {card.grants?.submission_deadline || "—"}
       </td>
     </tr>

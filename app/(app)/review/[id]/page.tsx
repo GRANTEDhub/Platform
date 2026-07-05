@@ -13,7 +13,7 @@ import type { ReviewCard, Client, Grant, Prospect } from "@/types/database";
 export const dynamic = "force-dynamic";
 
 type FullCard = ReviewCard & {
-  clients: Pick<Client, "id" | "name" | "org_type" | "engagement_tier"> | null;
+  clients: Pick<Client, "id" | "name" | "org_type" | "engagement_tier" | "primary_contact_email" | "primary_contact_name"> | null;
   prospects: Pick<Prospect, "id" | "name" | "org_type" | "source_url"> | null;
   grants: Pick<Grant, "id" | "title" | "funder" | "fon" | "source_url" | "submission_deadline" | "cost_share" | "award_range_min" | "award_range_max" | "award_range_is_estimate" | "num_awards" | "grant_status" | "description"> | null;
 };
@@ -62,7 +62,7 @@ export default async function CardDetailPage({ params }: { params: { id: string 
 
   const { data } = await supabase
     .from("review_cards")
-    .select("*, clients(id, name, org_type, engagement_tier), prospects(id, name, org_type, source_url), grants(id, title, funder, fon, source_url, submission_deadline, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, grant_status, description)")
+    .select("*, clients(id, name, org_type, engagement_tier, primary_contact_email, primary_contact_name), prospects(id, name, org_type, source_url), grants(id, title, funder, fon, source_url, submission_deadline, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, grant_status, description)")
     .eq("id", params.id)
     .single();
 
@@ -78,7 +78,9 @@ export default async function CardDetailPage({ params }: { params: { id: string 
 
   const awardRange = formatAwardRange(g?.award_range_min, g?.award_range_max);
   const costShare = compactCostShare(g?.cost_share);
-  const draftEmail = card.final_outreach_email || card.draft_outreach_email;
+  // Default subject mirrors the alert convention ("GRANTED Alert! | <name>"),
+  // shown in the Send modal and editable there.
+  const defaultSubject = `GRANTED Alert! | ${g?.title || "Grant Opportunity"}`;
   const hasFullReasoning =
     !!(rc.eligibility_analysis || rc.role_assignment_logic || rc.consortium_rationale || rc.why_not_others);
 
@@ -182,18 +184,6 @@ export default async function CardDetailPage({ params }: { params: { id: string 
                 </DepthRow>
               )}
 
-              {draftEmail && (
-                <DepthRow
-                  title={
-                    card.final_outreach_email
-                      ? "Approved email (to send)"
-                      : `Draft outreach email${card.outreach_track ? ` · ${card.outreach_track}` : ""}`
-                  }
-                >
-                  <pre className="whitespace-pre-wrap font-sans text-sm">{draftEmail}</pre>
-                </DepthRow>
-              )}
-
               {hasFullReasoning && (
                 <DepthRow title="Full reasoning">
                   <div className="space-y-3">
@@ -218,6 +208,8 @@ export default async function CardDetailPage({ params }: { params: { id: string 
                 isAdmin={profile.role === "admin"}
                 draft={card.draft_outreach_email ?? ""}
                 finalEmail={card.final_outreach_email}
+                recipientEmail={card.clients?.primary_contact_email ?? null}
+                defaultSubject={defaultSubject}
               />
               {card.decision === "passed" && card.decision_reason && (
                 <p className="mt-3 text-xs text-muted-foreground">Rejected: {card.decision_reason}</p>
