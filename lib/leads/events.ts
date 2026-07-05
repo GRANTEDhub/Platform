@@ -91,6 +91,13 @@ export function contractSignals(statuses: (string | null | undefined)[]): LeadSi
   return { contractSigned: signed, contractPending: pending };
 }
 
+// Payment-derived signal, computed from the invoices table (source of truth), the
+// parallel of contractSignals. A paid invoice lights the invoice_paid stage. Dark
+// until P5 issues invoices, but wired now so the stage card is real.
+export function invoiceSignals(statuses: (string | null | undefined)[]): LeadSignals {
+  return { invoicePaid: statuses.some((s) => s === "paid") };
+}
+
 // Intake badge (a FLAG, never a stage): 'received' if intake answers are on file,
 // else 'sent' if an intake form was sent, else 'not_sent'. Derived from
 // intake_data + intake_sent_at.
