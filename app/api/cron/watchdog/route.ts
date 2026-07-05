@@ -17,19 +17,15 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
+import { cronDeny } from "@/lib/cron/auth";
 
 export const dynamic = "force-dynamic";
 
 const STUCK_THRESHOLD_MINUTES = 15;
 
 export async function GET(req: NextRequest) {
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const authHeader = req.headers.get("authorization");
-    if (authHeader !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
+  const deny = cronDeny(req);
+  if (deny) return deny;
 
   const db = createServiceClient();
   const cutoff = new Date(Date.now() - STUCK_THRESHOLD_MINUTES * 60 * 1000).toISOString();
