@@ -6,11 +6,12 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { effectiveStage, type StoredStage } from "@/lib/leads/stage";
-import { contractSignals, describeLeadEvent, type TimelineEventRow } from "@/lib/leads/events";
+import { contractSignals, invoiceSignals, describeLeadEvent, type TimelineEventRow } from "@/lib/leads/events";
 import { LeadControls } from "../lead-controls";
 import { OutreachPanel } from "../outreach-panel";
 import { SchedulingPanel } from "../scheduling-panel";
 import { ContractPanel } from "../contract-panel";
+import { InvoicePanel } from "../invoice-panel";
 import { signedUrl, CONTRACTS_BUCKET } from "@/lib/storage";
 import type { Client } from "@/types/database";
 
@@ -42,7 +43,7 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
     .single<Client>();
   if (!lead || !lead.pipeline_stage) notFound(); // only leads live here
 
-  const [{ data: hookData }, { data: eventData }, { data: adminData }, { data: contractData }] = await Promise.all([
+  const [{ data: hookData }, { data: eventData }, { data: adminData }, { data: contractData }, { data: invoiceData }] = await Promise.all([
     supabase
       .from("lead_grant_hooks")
       .select("id, grant_id, fit_score, proposed_role, recommended_prime, concept_snapshot, grants(title, source_url)")
@@ -61,6 +62,11 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
       .neq("status", "void")
       .order("created_at", { ascending: false })
       .limit(1),
+    supabase
+      .from("invoices")
+      .select("status, amount_cents, hosted_invoice_url")
+      .eq("client_id", params.id)
+      .order("created_at", { ascending: false }),
   ]);
 
   const hooks = (hookData ?? []) as HookRow[];
@@ -95,12 +101,21 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
   );
 
   const bookedEvent = events.find((e) => e.event_type === "booked_call"); // events are newest-first
-  // Contract stage derives from the contracts table (the active contract loaded
-  // above), not the clients mirror. Discovery-booking is a flag/badge, not a stage.
-  const eff = effectiveStage(
-    lead.pipeline_stage as StoredStage,
-    contractSignals([contractRow?.status]),
-  );
+
+  // Invoices for this lead (newest first). Contract stage derives from the
+  // contracts table, invoice_paid from the invoices table -- both source-of-truth,
+  // never the clients mirror. Discovery-booking is a flag/badge, not a stage.
+  const invoiceRows = (invoiceData ?? []) as { status: string; amount_cents: number; hosted_invoice_url: string | null }[];
+  const eff = effectiveStage(lead.pipeline_stage as StoredStage, {
+    ...contractSignals([contractRow?.status]),
+    ...invoiceSignals(invoiceRows.map((i) => i.status)),
+  });
+  // The active invoice for the panel: prefer a paid one, else the most recent.
+  const activeInvoice =
+    invoiceRows.find((i) => i.status === "paid") ?? invoiceRows.find((i) => i.status !== "void") ?? null;
+  const invoiceForPanel = activeInvoice
+    ? { status: activeInvoice.status, amountCents: activeInvoice.amount_cents, hostedInvoiceUrl: activeInvoice.hosted_invoice_url }
+    : null;
 
   // Scheduling-panel signals: the most recent scheduling-link click (cue) and the
   // current booked_call, if any (its stored meeting datetime).
@@ -237,6 +252,17 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
             <CardHeader><CardTitle>Contract</CardTitle></CardHeader>
             <CardContent>
               <ContractPanel leadId={lead.id} contract={contract} />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Invoice</CardTitle></CardHeader>
+            <CardContent>
+              <InvoicePanel
+                leadId={lead.id}
+                signedContractAmountCents={contract?.status === "signed" ? contract.amountCents : null}
+                invoice={invoiceForPanel}
+              />
             </CardContent>
           </Card>
 
