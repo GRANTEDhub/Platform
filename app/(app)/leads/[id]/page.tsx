@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { effectiveStage, type StoredStage } from "@/lib/leads/stage";
-import { signalsFromLeadRow, describeLeadEvent, type TimelineEventRow } from "@/lib/leads/events";
+import { contractSignals, describeLeadEvent, type TimelineEventRow } from "@/lib/leads/events";
 import { LeadControls } from "../lead-controls";
 import { OutreachPanel } from "../outreach-panel";
 import { SchedulingPanel } from "../scheduling-panel";
@@ -95,8 +95,12 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
   );
 
   const bookedEvent = events.find((e) => e.event_type === "booked_call"); // events are newest-first
-  const booked = !!bookedEvent;
-  const eff = effectiveStage(lead.pipeline_stage as StoredStage, { ...signalsFromLeadRow(lead), booked });
+  // Contract stage derives from the contracts table (the active contract loaded
+  // above), not the clients mirror. Discovery-booking is a flag/badge, not a stage.
+  const eff = effectiveStage(
+    lead.pipeline_stage as StoredStage,
+    contractSignals([contractRow?.status]),
+  );
 
   // Scheduling-panel signals: the most recent scheduling-link click (cue) and the
   // current booked_call, if any (its stored meeting datetime).
@@ -224,7 +228,7 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
                 leadId={lead.id}
                 bookingUrl={bookingUrl}
                 lastClickedAt={lastClickedAt}
-                scheduled={booked ? { at: scheduledAt } : null}
+                scheduled={bookedEvent ? { at: scheduledAt } : null}
               />
             </CardContent>
           </Card>

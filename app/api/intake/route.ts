@@ -112,7 +112,7 @@ export async function POST(req: NextRequest) {
       location_city: city,
       location_state: state,
       status: "lead", // non-active -> matcher never scores it (mirrors isUnconvertedLead)
-      pipeline_stage: "new",
+      pipeline_stage: "discovery_pending", // entry stage; intake is a flag, not a gate
       lead_source: "inbound",
       needs_review: true,
       intake_data: intakeData,

@@ -83,6 +83,11 @@ export async function markDiscoveryScheduled(leadId: string, scheduledAt?: strin
   });
   if (error) throw new Error(error.message);
 
+  // Discovery-booking is a FLAG (badge), not a stage. Stamp discovery_booked_at on
+  // the row so the leads LIST can show "call booked" cheaply without loading
+  // pipeline_events per row. Does not change pipeline_stage.
+  await db.from("clients").update({ discovery_booked_at: when ?? new Date().toISOString() }).eq("id", leadId);
+
   revalidatePath(`/leads/${leadId}`);
   revalidatePath("/leads");
 }

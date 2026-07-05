@@ -113,6 +113,9 @@ export interface Client {
   contract_status: string | null;
   contract_signed_at: string | null;
   unsubscribed_at: string | null;
+  // Flags (migration 0031), not stages: rendered as badges, never gate the stage.
+  discovery_booked_at: string | null; // a discovery call is booked
+  intake_sent_at: string | null; // an intake form was sent (badge input)
   created_at: string;
   updated_at: string;
 }

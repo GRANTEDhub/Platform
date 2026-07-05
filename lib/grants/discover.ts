@@ -292,6 +292,8 @@ function prospectAsClient(c: Record<string, string>): Client {
     contract_status: null,
     contract_signed_at: null,
     unsubscribed_at: null,
+    discovery_booked_at: null,
+    intake_sent_at: null,
     created_at: now,
     updated_at: now,
   };

@@ -152,7 +152,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       name: prospect.name,
       org_type: prospect.org_type,
       status: "lead", // non-active so the matcher never scores it (mirrors isUnconvertedLead)
-      pipeline_stage: "outbound_new",
+      pipeline_stage: "discovery_pending", // entry stage (was outbound_new); intake is a flag, not a gate
       lead_source: "grant_match",
       location_state: prospect.location_state,
       location_county: prospect.location_county,

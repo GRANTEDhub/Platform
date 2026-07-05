@@ -66,8 +66,9 @@ export async function POST(req: NextRequest, { params }: { params: { token: stri
     return NextResponse.json({ error: "Could not record your signature. Please try again." }, { status: 500 });
   }
 
-  // Mirror onto the lead: contract_signed_at + contract_status drive the derived
-  // stage -> contracting (lib/leads/stage.ts contractSigned signal).
+  // Mirror contract_signed_at + contract_status onto the lead for the convert
+  // step's "signed + paid" check. The STAGE (contract_signed) derives from the
+  // contracts table, not this mirror (lib/leads/stage.ts contractSignals).
   await db
     .from("clients")
     .update({ contract_status: "signed", contract_signed_at: signedAt })

@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { effectiveStage, type StoredStage } from "@/lib/leads/stage";
-import { signalsFromLeadRow, SETTABLE_STAGES } from "@/lib/leads/events";
+import { contractSignals, SETTABLE_STAGES } from "@/lib/leads/events";
 
 export const dynamic = "force-dynamic";
 
@@ -16,8 +16,7 @@ type LeadRow = {
   lead_source: string | null;
   account_manager_id: string | null;
   needs_review: boolean;
-  contract_status: string | null;
-  contract_signed_at: string | null;
+  discovery_booked_at: string | null;
 };
 
 type HookRow = {
@@ -49,7 +48,7 @@ export default async function LeadsPage({
   let q = supabase
     .from("clients")
     .select(
-      "id, name, org_type, pipeline_stage, lead_source, account_manager_id, needs_review, contract_status, contract_signed_at",
+      "id, name, org_type, pipeline_stage, lead_source, account_manager_id, needs_review, discovery_booked_at",
     )
     .not("pipeline_stage", "is", null)
     .neq("pipeline_stage", "converted")
@@ -61,11 +60,21 @@ export default async function LeadsPage({
   const ids = leads.map((l) => l.id);
   const hooksByLead = new Map<string, string[]>();
   const amById = new Map<string, string>();
+  // Contract stages derive from the contracts table (source of truth). Batch the
+  // non-void contract statuses per lead so the list shows contract_pending /
+  // contract_signed without a mirror column.
+  const contractStatusByLead = new Map<string, string[]>();
   if (ids.length > 0) {
-    const [{ data: hooks }, { data: profiles }] = await Promise.all([
+    const [{ data: hooks }, { data: profiles }, { data: contractRows }] = await Promise.all([
       supabase.from("lead_grant_hooks").select("client_id, grants(title)").in("client_id", ids),
       supabase.from("profiles").select("id, full_name, email"),
+      supabase.from("contracts").select("client_id, status").in("client_id", ids).neq("status", "void"),
     ]);
+    for (const c of (contractRows ?? []) as { client_id: string; status: string }[]) {
+      const arr = contractStatusByLead.get(c.client_id) ?? [];
+      arr.push(c.status);
+      contractStatusByLead.set(c.client_id, arr);
+    }
     for (const h of (hooks ?? []) as HookRow[]) {
       const t = grantTitle(h);
       if (!t) continue;
@@ -118,7 +127,10 @@ export default async function LeadsPage({
               </thead>
               <tbody className="divide-y">
                 {leads.map((l) => {
-                  const eff = effectiveStage(l.pipeline_stage as StoredStage | null, signalsFromLeadRow(l));
+                  const eff = effectiveStage(
+                    l.pipeline_stage as StoredStage | null,
+                    contractSignals(contractStatusByLead.get(l.id) ?? []),
+                  );
                   const hooks = hooksByLead.get(l.id) ?? [];
                   return (
                     <tr key={l.id} className="hover:bg-muted/30">
