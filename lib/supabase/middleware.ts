@@ -47,8 +47,16 @@ export async function updateSession(request: NextRequest) {
 
     const { pathname } = request.nextUrl;
     const isAuthRoute = pathname.startsWith("/login");
+    // Public (unauthenticated) surfaces: the auth callback, the tokenized
+    // outbound-door landing (/go/[token]) and the public intake form (/intake).
+    // Without /go here, tokenized scheduling links sent to logged-out prospects
+    // would be redirected to /login. These pages do their own service-role work
+    // and expose no admin data.
     const isPublicAsset =
-      pathname.startsWith("/auth") || pathname === "/favicon.ico";
+      pathname.startsWith("/auth") ||
+      pathname.startsWith("/go") ||
+      pathname.startsWith("/intake") ||
+      pathname === "/favicon.ico";
 
     if (!user && !isAuthRoute && !isPublicAsset) {
       const url = request.nextUrl.clone();
