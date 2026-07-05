@@ -94,6 +94,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       const customer = await stripe.customers.create({ name: lead.name, email });
       customerId = customer.id;
       await db.from("clients").update({ stripe_customer_id: customerId }).eq("id", params.id);
+    } else {
+      // A customer created on an earlier attempt may have NO email (it was made
+      // before the admin added one), or the email may have changed since. Sync the
+      // current name+email onto the existing customer, otherwise a send_invoice
+      // finalize fails with "customer has no email" even though the lead now has one.
+      await stripe.customers.update(customerId, { name: lead.name, email });
     }
 
     // One line item + a NON-auto-advancing invoice, then finalize (generates the
