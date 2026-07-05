@@ -129,3 +129,45 @@ export async function sendOutreachEmail(opts: {
   if (error) throw new Error(`Resend send failed: ${error.message}`);
   return { to, subject, id: data?.id ?? null };
 }
+
+// Sends the signed-contract PDF to the client as an attachment (their permanent
+// copy). Same GRANTED identity/gating contract as the other sends: callers MUST
+// pre-check canSendEmail(); the testing-mode allowlist is hard-backstopped here
+// so a test signing never emails a real client. Attaching (not linking) keeps the
+// legal PDF out of a shareable URL and gives the client a durable copy.
+export async function sendContractCopyEmail(opts: {
+  to: string;
+  orgName: string;
+  contactName?: string | null;
+  pdf: Buffer;
+  filename?: string;
+}): Promise<SentResult> {
+  const to = (opts.to ?? "").trim();
+  if (!isDeliverableEmail(to)) throw new Error(`No deliverable recipient: "${opts.to ?? "(null)"}"`);
+  if (!isRecipientAllowed(to)) {
+    throw new Error(`Recipient not on send allowlist (testing mode): ${to}`);
+  }
+  const subject = `Your signed GRANTED agreement`;
+  const greeting = opts.contactName ? `Hi ${opts.contactName},` : "Hello,";
+  const text = [
+    greeting,
+    "",
+    `Thank you for signing your engagement agreement with GRANTED. Your signed copy is attached for your records.`,
+    "",
+    "We'll be in touch with next steps shortly.",
+    "",
+    "— GRANTED",
+  ].join("\n");
+
+  const resend = new Resend(process.env.RESEND_PLATFORM_API);
+  const { data, error } = await resend.emails.send({
+    from: FROM,
+    to,
+    replyTo: REPLY_TO,
+    subject,
+    text,
+    attachments: [{ filename: opts.filename || "GRANTED-Agreement.pdf", content: opts.pdf }],
+  });
+  if (error) throw new Error(`Resend send failed: ${error.message}`);
+  return { to, subject, id: data?.id ?? null };
+}

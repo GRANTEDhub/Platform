@@ -11,6 +11,7 @@ import { LeadControls } from "../lead-controls";
 import { OutreachPanel } from "../outreach-panel";
 import { SchedulingPanel } from "../scheduling-panel";
 import { ContractPanel } from "../contract-panel";
+import { signedUrl, CONTRACTS_BUCKET } from "@/lib/storage";
 import type { Client } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -55,7 +56,7 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
     supabase.from("profiles").select("id, full_name, email").eq("role", "admin").order("full_name"),
     supabase
       .from("contracts")
-      .select("id, template_key, amount_cents, status, signer_name, signed_at")
+      .select("id, template_key, amount_cents, status, signer_name, signed_at, pdf_url")
       .eq("client_id", params.id)
       .neq("status", "void")
       .order("created_at", { ascending: false })
@@ -71,7 +72,13 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
     status: string;
     signer_name: string | null;
     signed_at: string | null;
+    pdf_url: string | null;
   }[])[0];
+  // The signed PDF lives in a PRIVATE bucket; mint a short-lived signed URL for
+  // the admin download link (never a public URL).
+  const contractPdfUrl = contractRow?.pdf_url
+    ? await signedUrl(CONTRACTS_BUCKET, contractRow.pdf_url)
+    : null;
   const contract = contractRow
     ? {
         id: contractRow.id,
@@ -80,6 +87,7 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
         status: contractRow.status,
         signerName: contractRow.signer_name,
         signedAt: contractRow.signed_at,
+        pdfUrl: contractPdfUrl,
       }
     : null;
   const admins = ((adminData ?? []) as { id: string; full_name: string | null; email: string | null }[]).map(

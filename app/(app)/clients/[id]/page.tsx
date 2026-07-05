@@ -14,6 +14,8 @@ import { ClientMatchChart } from "@/components/clients/client-match-chart";
 import { ClientGrantTracking, type TrackedGrant } from "@/components/clients/client-grant-tracking";
 import { ClientActionItems } from "@/components/clients/client-action-items";
 import { samExpiryFlag } from "@/lib/sam/expiry";
+import { ClientRepository } from "@/components/clients/client-repository";
+import { signedUrl } from "@/lib/storage";
 import type { Client, Invoice, Grant, ClientOverview, CardDecision } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -65,7 +67,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
 
   if (!client) notFound();
 
-  const [{ data: overviewData }, { data: cardRows }, { data: invoices }] = await Promise.all([
+  const [{ data: overviewData }, { data: cardRows }, { data: invoices }, { data: docRows }] = await Promise.all([
     supabase.from("client_overview").select("*").eq("id", params.id).single(),
     supabase
       .from("review_cards")
@@ -78,7 +80,27 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
       .eq("client_id", params.id)
       .order("created_at", { ascending: false })
       .limit(10),
+    supabase
+      .from("client_documents")
+      .select("id, kind, title, created_at, storage_bucket, storage_path")
+      .eq("client_id", params.id)
+      .order("created_at", { ascending: false }),
   ]);
+
+  // Repository: mint short-lived signed URLs for each stored document (private
+  // buckets). Reusable for any doc kind, not just contracts.
+  const docRowList = (docRows ?? []) as {
+    id: string; kind: string; title: string; created_at: string; storage_bucket: string; storage_path: string;
+  }[];
+  const documents = await Promise.all(
+    docRowList.map(async (d) => ({
+      id: d.id,
+      title: d.title,
+      kind: d.kind,
+      createdAt: d.created_at,
+      url: await signedUrl(d.storage_bucket, d.storage_path),
+    })),
+  );
 
   const overview = overviewData as ClientOverview | null;
   const bills = (invoices ?? []) as Invoice[];
@@ -229,6 +251,18 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
                 label="Hours remaining"
                 value={hoursRemaining !== null ? Number(hoursRemaining).toFixed(1) : "—"}
               />
+            </CardContent>
+          </Card>
+
+          <Card className={CARD_RAIL}>
+            <CardHeader className="flex-row items-center justify-between space-y-0">
+              <CardTitle>Repository</CardTitle>
+              <span className="rounded-full bg-brand-navy/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-navy">
+                Internal
+              </span>
+            </CardHeader>
+            <CardContent>
+              <ClientRepository documents={documents} />
             </CardContent>
           </Card>
 

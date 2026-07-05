@@ -18,6 +18,7 @@ type ExistingContract = {
   status: string; // sent | signed | draft | void (void filtered out upstream)
   signerName: string | null;
   signedAt: string | null;
+  pdfUrl: string | null; // short-lived signed URL to the private PDF (signed state)
 } | null;
 
 // Admin contract controls on the lead detail page. If no active contract: pick a
@@ -89,6 +90,18 @@ export function ContractPanel({ leadId, contract }: { leadId: string; contract: 
           label="Signed at"
           value={contract.signedAt ? safeFmt(contract.signedAt) : null}
         />
+        {contract.pdfUrl ? (
+          <a
+            href={contract.pdfUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block text-xs font-medium text-primary hover:underline"
+          >
+            Download signed PDF ↗
+          </a>
+        ) : (
+          <p className="text-xs text-muted-foreground">Signed PDF is being generated…</p>
+        )}
       </div>
     );
   }

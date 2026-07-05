@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { createServiceClient } from "@/lib/supabase/server";
 import { resolveToken } from "@/lib/tokens";
+import { generateAndDeliverContract } from "@/lib/contracts/deliver";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -78,6 +80,12 @@ export async function POST(req: NextRequest, { params }: { params: { token: stri
     subject_snapshot: { name: signerName },
     metadata: { contract_id: contract.id, signed_at: signedAt },
   });
+
+  // Background: render the branded PDF, store it privately, file it in the client
+  // document repository, and email the client their copy (gated). The signature is
+  // already recorded, so a failure here never invalidates it -- pdf_url just stays
+  // null and is retryable.
+  waitUntil(generateAndDeliverContract(contract.id));
 
   return NextResponse.json({ signed: true });
 }
