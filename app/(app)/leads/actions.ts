@@ -47,6 +47,25 @@ export async function setLeadStage(leadId: string, stage: string, reason?: strin
   revalidatePath("/leads");
 }
 
+// Set / update a lead's primary contact email. Needed for leads that didn't
+// arrive via intake (e.g. grant-matched leads promoted from prospects have no
+// email), so an admin can add one before issuing outreach or an invoice. Basic
+// shape validation; empty clears it.
+export async function setLeadContactEmail(leadId: string, email: string) {
+  await requireAdmin();
+  const trimmed = (email ?? "").trim();
+  if (trimmed && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+    throw new Error("That doesn't look like a valid email.");
+  }
+  const db = createServiceClient();
+  const { error } = await db
+    .from("clients")
+    .update({ primary_contact_email: trimmed || null })
+    .eq("id", leadId);
+  if (error) throw new Error(error.message);
+  revalidatePath(`/leads/${leadId}`);
+}
+
 // Append a free-text note to the lead timeline.
 export async function addLeadNote(leadId: string, body: string) {
   await requireAdmin();
