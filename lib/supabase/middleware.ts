@@ -56,6 +56,7 @@ export async function updateSession(request: NextRequest) {
       pathname.startsWith("/auth") ||
       pathname.startsWith("/go") ||
       pathname.startsWith("/intake") ||
+      pathname.startsWith("/sign") ||
       pathname === "/favicon.ico";
 
     if (!user && !isAuthRoute && !isPublicAsset) {

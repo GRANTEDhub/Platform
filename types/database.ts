@@ -135,6 +135,26 @@ export interface LeadGrantHook {
   created_at: string;
 }
 
+// Native e-sign contract (P4). Legal/financial record: admin-only RLS; the public
+// /sign write path uses the service role gated by a 'lead_sign_contract' token.
+export interface Contract {
+  id: string;
+  client_id: string;
+  token_id: string | null;
+  template_key: string;
+  amount_cents: number | null;
+  body_snapshot: string;
+  status: "draft" | "sent" | "signed" | "void";
+  signer_name: string | null;
+  signer_ip: string | null;
+  signer_user_agent: string | null;
+  signed_at: string | null;
+  pdf_url: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // Stage A (Step 3): the grant's ideal applicant/consortium, constructed from the
 // full NOFO independent of our roster. Multi-archetype: a grant can legitimately
 // support 1-3 distinct prime shapes (county vs nonprofit vs IHE leading from
