@@ -29,6 +29,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
+import { cronDeny } from "@/lib/cron/auth";
 import { runPipeline } from "@/lib/grants/pipeline";
 
 export const maxDuration = 300;
@@ -93,13 +94,8 @@ const urlFor = (id: string) => `https://simpler.grants.gov/opportunity/${id}`;
 const fonKey = (fon: string | null | undefined) => (fon ?? "").trim().toUpperCase();
 
 export async function GET(req: NextRequest) {
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const authHeader = req.headers.get("authorization");
-    if (authHeader !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
+  const deny = cronDeny(req);
+  if (deny) return deny;
 
   const apiKey = process.env.SIMPLER_GOV_API_KEY;
   if (!apiKey) {

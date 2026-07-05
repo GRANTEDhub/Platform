@@ -16,6 +16,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
+import { cronDeny } from "@/lib/cron/auth";
 import { refreshClientUSASpending, type RefreshableClient } from "@/lib/grants/usaspending-refresh";
 
 export const dynamic = "force-dynamic";
@@ -26,13 +27,8 @@ const STALE_DAYS = 25;
 const BATCH_SIZE = 5;
 
 export async function GET(req: NextRequest) {
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const authHeader = req.headers.get("authorization");
-    if (authHeader !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
+  const deny = cronDeny(req);
+  if (deny) return deny;
 
   const db = createServiceClient();
   const cutoff = new Date(Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000).toISOString();
