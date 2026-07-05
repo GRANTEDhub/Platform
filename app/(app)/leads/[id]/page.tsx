@@ -10,6 +10,7 @@ import { signalsFromLeadRow, describeLeadEvent, type TimelineEventRow } from "@/
 import { LeadControls } from "../lead-controls";
 import { OutreachPanel } from "../outreach-panel";
 import { SchedulingPanel } from "../scheduling-panel";
+import { ContractPanel } from "../contract-panel";
 import type { Client } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -40,7 +41,7 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
     .single<Client>();
   if (!lead || !lead.pipeline_stage) notFound(); // only leads live here
 
-  const [{ data: hookData }, { data: eventData }, { data: adminData }] = await Promise.all([
+  const [{ data: hookData }, { data: eventData }, { data: adminData }, { data: contractData }] = await Promise.all([
     supabase
       .from("lead_grant_hooks")
       .select("id, grant_id, fit_score, proposed_role, recommended_prime, concept_snapshot, grants(title, source_url)")
@@ -52,10 +53,35 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
       .eq("client_id", params.id)
       .order("occurred_at", { ascending: false }),
     supabase.from("profiles").select("id, full_name, email").eq("role", "admin").order("full_name"),
+    supabase
+      .from("contracts")
+      .select("id, template_key, amount_cents, status, signer_name, signed_at")
+      .eq("client_id", params.id)
+      .neq("status", "void")
+      .order("created_at", { ascending: false })
+      .limit(1),
   ]);
 
   const hooks = (hookData ?? []) as HookRow[];
   const events = (eventData ?? []) as TimelineEventRow[];
+  const contractRow = ((contractData ?? []) as {
+    id: string;
+    template_key: string;
+    amount_cents: number | null;
+    status: string;
+    signer_name: string | null;
+    signed_at: string | null;
+  }[])[0];
+  const contract = contractRow
+    ? {
+        id: contractRow.id,
+        templateKey: contractRow.template_key,
+        amountCents: contractRow.amount_cents,
+        status: contractRow.status,
+        signerName: contractRow.signer_name,
+        signedAt: contractRow.signed_at,
+      }
+    : null;
   const admins = ((adminData ?? []) as { id: string; full_name: string | null; email: string | null }[]).map(
     (a) => ({ id: a.id, name: a.full_name || a.email || "Unknown" }),
   );
@@ -192,6 +218,13 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
                 lastClickedAt={lastClickedAt}
                 scheduled={booked ? { at: scheduledAt } : null}
               />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Contract</CardTitle></CardHeader>
+            <CardContent>
+              <ContractPanel leadId={lead.id} contract={contract} />
             </CardContent>
           </Card>
 
