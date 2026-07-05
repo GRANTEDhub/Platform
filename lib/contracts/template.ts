@@ -6,7 +6,7 @@
 // Terms are faithful to the GOH engagement letter (AR governing law, Benton
 // County venue, disclaimer of warranty, confidentiality, ownership, etc.).
 
-export type TemplateKey = "navigate" | "navigate_plus" | "flex" | "custom";
+export type TemplateKey = "launch" | "build" | "partner" | "custom";
 
 export interface TemplateMeta {
   key: TemplateKey;
@@ -17,38 +17,41 @@ export interface TemplateMeta {
 }
 
 export const CONTRACT_TEMPLATES: Record<TemplateKey, TemplateMeta> = {
-  navigate: {
-    key: "navigate",
-    name: "NAVIGATE",
-    defaultAmountCents: 500_000,
-    term: "Upon delivery of product and review",
+  launch: {
+    key: "launch",
+    name: "Launch",
+    defaultAmountCents: 250_000, // $2,500 one-time
+    term: "One-time engagement",
     scope: [
-      "Intake and Profile Creation: intake survey and/or a 30-minute kickoff call to build a detailed client profile and document repository.",
-      "GRANTED Roadmap: a focused list of high-impact Active or Forecasted grants, delivered within thirty (30) days of payment received and confirmed.",
-      "Roadmap Review: a one (1) hour meeting to review priority grants and strategize pursuit, within thirty (30) days of Roadmap delivery.",
-      "No ongoing, subscription, or recurring services unless expressly stated in writing.",
+      "Discovery call: a working session to understand the organization's mission, priorities, and projects.",
+      "Scored Grant Report: a prioritized, eligibility-scored list of high-impact grant opportunities built around the client's profile.",
+      "Strategy session: a one (1) hour debrief to walk through the report and map next steps.",
+      "One-time engagement: no ongoing grant monitoring and no proposal-development support.",
     ],
   },
-  navigate_plus: {
-    key: "navigate_plus",
-    name: "NAVIGATE+",
-    defaultAmountCents: 1_000_000,
+  build: {
+    key: "build",
+    name: "Build",
+    defaultAmountCents: 999_900, // $9,999 paid in full
     term: "12 months",
     scope: [
-      "Everything in NAVIGATE (intake & profile, GRANTED Roadmap, Roadmap Review).",
-      "Ongoing Active Monitoring: up to 2 hours per calendar month of proactive research/analysis, with grant alerts on priority-mapped and newly-surfaced in-scope grants.",
-      "Beyond the monthly allocation, ad hoc work continues at $150/hour subject to Client approval; grant writing and management projects quoted case-by-case.",
+      "Everything in Launch (discovery call, scored Grant Report, strategy session).",
+      "Daily grant monitoring for twelve (12) months across the client's priority areas.",
+      "Live alerts on newly-surfaced and priority-mapped in-scope grants, sent to the client's contact.",
+      "Does not include proposal-development support.",
     ],
   },
-  flex: {
-    key: "flex",
-    name: "FLEX",
-    defaultAmountCents: 100_000,
-    term: "12 months",
+  partner: {
+    key: "partner",
+    name: "Partner",
+    defaultAmountCents: 2_500_000, // $25,000 annual
+    term: "12 months (annual)",
     scope: [
-      "Flexible Credits applied toward supportive services at $150/hour in 0.25-hour increments until exhausted.",
-      "Eligible work: grant writing, fractional advisory, grant management, and research/opportunity identification.",
-      "On exhaustion of credits, Provider notifies Client; further work continues ad hoc at $150/hour subject to Client approval.",
+      "Everything in Build (Launch deliverables + 12 months daily monitoring + live alerts).",
+      "Embedded fractional grants team acting as an extension of the client's staff.",
+      "Approximately one hundred (100) hours of proposal-development support over the term.",
+      "Consortium and partner strategy: identifying and structuring prime/partner roles on collaborative applications.",
+      "Priority access to the GRANTED team for time-sensitive opportunities.",
     ],
   },
   custom: {
