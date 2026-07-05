@@ -12,6 +12,7 @@ import { OutreachPanel } from "../outreach-panel";
 import { SchedulingPanel } from "../scheduling-panel";
 import { ContractPanel } from "../contract-panel";
 import { InvoicePanel } from "../invoice-panel";
+import { ConvertButton } from "../convert-button";
 import { signedUrl, CONTRACTS_BUCKET } from "@/lib/storage";
 import type { Client } from "@/types/database";
 
@@ -224,6 +225,17 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
         </div>
 
         <div className="space-y-6">
+          <Card>
+            <CardHeader><CardTitle>Convert</CardTitle></CardHeader>
+            <CardContent>
+              <ConvertButton
+                leadId={lead.id}
+                canConvert={eff === "invoice_paid"}
+                alreadyConverted={lead.pipeline_stage === "converted"}
+              />
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader><CardTitle>Manage</CardTitle></CardHeader>
             <CardContent>

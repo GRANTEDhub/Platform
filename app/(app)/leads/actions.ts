@@ -111,6 +111,70 @@ export async function markDiscoveryScheduled(leadId: string, scheduledAt?: strin
   revalidatePath("/leads");
 }
 
+// Convert a lead to an active client (P6). Flips the security boundary, so the
+// gate is re-checked server-side here (never trust the UI): allow only if the
+// client has BOTH a signed contract AND a paid invoice, read live from the
+// source-of-truth tables. On convert, on the SAME row, set pipeline_stage=
+// 'converted' AND status='active' -- BOTH, because they guard different surfaces
+// (pipeline_stage -> matcher/roster/RLS via NON_LEAD_OR_FILTER; status -> the
+// grant->client picker + active-count). Stamp converted_at and log a 'converted'
+// event with the contract/invoice ids (the permanent reconciliation record).
+// Idempotent: a double-click or an already-converted row is a no-op.
+export async function convertLead(leadId: string): Promise<void> {
+  await requireAdmin();
+  const db = createServiceClient();
+
+  const { data: lead } = await db
+    .from("clients")
+    .select("pipeline_stage")
+    .eq("id", leadId)
+    .single<{ pipeline_stage: string | null }>();
+  if (!lead) throw new Error("Lead not found.");
+  if (lead.pipeline_stage === "converted") return; // already converted -> no-op
+
+  // Gate: re-read signed + paid from source of truth. Never gate on a stamp.
+  const { data: signedContract } = await db
+    .from("contracts")
+    .select("id")
+    .eq("client_id", leadId)
+    .eq("status", "signed")
+    .order("signed_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+  if (!signedContract) throw new Error("Can't convert yet — no signed contract on file.");
+
+  const { data: paidInvoice } = await db
+    .from("invoices")
+    .select("id")
+    .eq("client_id", leadId)
+    .eq("status", "paid")
+    .order("paid_date", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+  if (!paidInvoice) throw new Error("Can't convert yet — no paid invoice on file.");
+
+  // Flip both boundary columns on the same row, guarded on not-already-converted
+  // so a concurrent double-click flips (and logs) exactly once.
+  const { data: updated } = await db
+    .from("clients")
+    .update({ pipeline_stage: "converted", status: "active", converted_at: new Date().toISOString() })
+    .eq("id", leadId)
+    .neq("pipeline_stage", "converted")
+    .select("id");
+  if (!updated || updated.length === 0) return; // another delivery already converted
+
+  await db.from("pipeline_events").insert({
+    event_type: "converted",
+    client_id: leadId,
+    metadata: { contract_id: signedContract.id, invoice_id: paidInvoice.id },
+  });
+
+  revalidatePath("/leads");
+  revalidatePath(`/leads/${leadId}`);
+  revalidatePath("/clients");
+  revalidatePath("/dashboard");
+}
+
 // Assign / change / clear the account manager. Logs am_assigned with the name.
 export async function assignAccountManager(leadId: string, profileId: string | null) {
   await requireAdmin();

@@ -295,6 +295,7 @@ function prospectAsClient(c: Record<string, string>): Client {
     discovery_booked_at: null,
     intake_sent_at: null,
     stripe_customer_id: null,
+    converted_at: null,
     created_at: now,
     updated_at: now,
   };

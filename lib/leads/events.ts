@@ -28,6 +28,7 @@ const LABELS: Record<string, string> = {
   contract_signed: "Contract signed",
   invoice_sent: "Invoice issued",
   invoice_paid: "Invoice paid",
+  converted: "Converted to client",
 };
 
 export interface TimelineEventRow {
