@@ -117,6 +117,7 @@ export interface Client {
   discovery_booked_at: string | null; // a discovery call is booked
   intake_sent_at: string | null; // an intake form was sent (badge input)
   stripe_customer_id: string | null; // Stripe customer (migration 0033), reused across invoices
+  converted_at: string | null; // when the lead converted to an active client (migration 0034)
   created_at: string;
   updated_at: string;
 }

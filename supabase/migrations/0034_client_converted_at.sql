@@ -1,0 +1,23 @@
+-- ╔══════════════════════════════════════════════════════════════════════════╗
+-- ║ P6 convert — durable conversion stamp                                        ║
+-- ╚══════════════════════════════════════════════════════════════════════════╝
+-- Convert flips a lead to an active client on the SAME row: pipeline_stage ->
+-- 'converted' AND status -> 'active' (both are set together by the convert
+-- action). This adds the one missing durable field: when the conversion happened.
+--
+-- Why only converted_at (and NOT a clients.paid_at): the durable "when paid"
+-- record already exists as invoices.paid_date (set by the Stripe webhook), so a
+-- client-level paid mirror would just duplicate it and risk drift. The convert
+-- GATE reads paid/signed live from invoices.status='paid' + contracts.status=
+-- 'signed' -- never from a stamp.
+--
+-- Boundary note (correcting migration 0025's comment): 0025 called status='active'
+-- "the matcher/roster selector", but the code actually gates the matcher
+-- (lib/grants/pipeline.ts), the client roster (app/(app)/clients/page.tsx), the
+-- dashboard, and the clients RLS policy on PIPELINE_STAGE via
+-- NON_LEAD_OR_FILTER / isUnconvertedLead (pipeline_stage is null OR ='converted').
+-- status='active' is load-bearing separately for the grant->client picker
+-- (grants/[id] .eq status 'active') and the dashboard active-count. They are
+-- redundant guards on different surfaces, so convert must set BOTH.
+
+alter table clients add column if not exists converted_at timestamptz; -- set once, when the lead converts to an active client
