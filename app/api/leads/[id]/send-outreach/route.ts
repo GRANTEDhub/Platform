@@ -88,18 +88,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     metadata: { to, subject: body.subject ?? null, grant_title: grantTitle },
   });
 
-  // Advance outbound_new -> contacted (same stored-stage transition P2-core uses);
-  // never regress a further-along lead.
-  let stageAdvanced = false;
-  if (lead.pipeline_stage === "outbound_new") {
-    await db.from("clients").update({ pipeline_stage: "contacted" }).eq("id", params.id);
-    await db.from("pipeline_events").insert({
-      event_type: "stage_change",
-      client_id: params.id,
-      metadata: { from: "outbound_new", to: "contacted", reason: "outreach sent" },
-    });
-    stageAdvanced = true;
-  }
-
-  return NextResponse.json({ sent: true, to, stageAdvanced });
+  // No stage transition on outreach: the reshaped model has no 'contacted' stage.
+  // A lead sits at discovery_pending until a contract/payment derives it forward;
+  // discovery-booking is a flag, not a stage. Sending outreach only logs the
+  // outreach_sent event (above).
+  return NextResponse.json({ sent: true, to });
 }

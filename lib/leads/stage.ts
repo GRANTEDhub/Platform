@@ -1,80 +1,73 @@
-// Lead pipeline stage — the two-layer model. pipeline_stage (stored) holds only
-// human-judgment positions + terminal 'converted'; the further-along DERIVED
-// positions (discovery_scheduled, contracting, payment_pending, paid) are
-// computed here at read time from events / contracts / invoices, so every
-// surface reads ONE effective stage. Same derived-state discipline as the
-// client-first gate and the grant disposition -- no stored status flag to drift.
+// Lead pipeline stage — the two-layer sales-pipeline model. The four ordered
+// stages are: discovery_pending -> contract_pending -> contract_signed ->
+// invoice_paid, then CONVERT (status='active' + pipeline_stage='converted').
+// Only discovery_pending (the entry stage) + the side/terminal states are STORED;
+// the contract_* and invoice_paid positions are DERIVED at read time from the
+// contracts table + payment, so every surface reads ONE effective stage. Same
+// derived-state discipline as the client-first gate -- no stored flag to drift.
+//
+// Intake and discovery-booking are FLAGS, not stages (rendered as badges); they
+// never gate the stage. Side states rejected/archived are off-ladder (rank -1).
 
-// Values that may be STORED in clients.pipeline_stage (enforced by the DB CHECK
-// in migration 0025). Human-judgment stages + the terminal 'converted'.
+// Values that may be STORED in clients.pipeline_stage (DB CHECK, migration 0032).
+// The entry stage, the two off-ladder side states, and the terminal 'converted'.
 export type StoredStage =
-  | "outbound_new"
-  | "new"
-  | "contacted"
-  | "quoted"
-  | "pending"
+  | "discovery_pending"
+  | "rejected"
   | "archived"
   | "converted";
 
 // The full set a lead can effectively occupy, including derived positions that
-// are NEVER stored.
+// are NEVER stored (contract_pending, contract_signed, invoice_paid).
 export type EffectiveStage =
-  | "outbound_new"
-  | "new"
-  | "contacted"
-  | "discovery_scheduled"
-  | "quoted"
-  | "pending"
-  | "contracting"
-  | "payment_pending"
-  | "paid"
+  | "discovery_pending"
+  | "contract_pending"
+  | "contract_signed"
+  | "invoice_paid"
   | "converted"
+  | "rejected"
   | "archived";
 
-// Durable signals a caller derives from pipeline_events / clients.contract_* /
-// invoices. All optional so partially-built phases pass only what exists yet.
+// Durable signals a caller derives from the contracts table / payment. All
+// optional so partially-built phases pass only what exists yet. Contract signals
+// come from the contracts table (source of truth), not the clients mirror.
 export interface LeadSignals {
-  booked?: boolean; // a discovery-call booking event exists
-  contractStarted?: boolean; // contract drafted/sent (contract_status set)
-  contractSigned?: boolean; // clients.contract_signed_at is set
-  invoiceIssued?: boolean; // an invoice exists but is not paid
-  invoicePaid?: boolean; // an invoice is paid
+  contractPending?: boolean; // a contract exists in draft/sent (not yet signed)
+  contractSigned?: boolean; // a contract is signed
+  invoicePaid?: boolean; // payment received (dark until P5)
   converted?: boolean; // pipeline_stage='converted' AND status='active'
 }
 
-// Funnel order; higher = further along. 'archived' is a terminal EXIT, off-ladder.
+// Funnel order; higher = further along. rejected/archived are terminal EXITs,
+// off-ladder.
 const RANK: Record<EffectiveStage, number> = {
-  outbound_new: 0,
-  new: 1,
-  contacted: 2,
-  discovery_scheduled: 3,
-  quoted: 4,
-  pending: 5,
-  contracting: 6,
-  payment_pending: 7,
-  paid: 8,
-  converted: 9,
+  discovery_pending: 0,
+  contract_pending: 1,
+  contract_signed: 2,
+  invoice_paid: 3,
+  converted: 4,
+  rejected: -1,
   archived: -1,
 };
 
 // THE single source of truth for "where is this lead?". Effective stage = the
-// FURTHEST-along position implied by the stored human stage OR any durable
-// signal -- signals only auto-ADVANCE, they never regress a human's stored
-// position. Terminal exit (archived) and terminal completion (converted) win
-// outright. Returns null for a non-lead row (pipeline_stage is null).
+// FURTHEST-along position implied by the stored entry stage OR any durable signal
+// -- signals only auto-ADVANCE, never regress. Terminal exits (rejected/archived)
+// and terminal completion (converted) win outright. Returns null for a non-lead
+// row (pipeline_stage is null).
 export function effectiveStage(
   stored: StoredStage | null,
   signals: LeadSignals = {},
 ): EffectiveStage | null {
   if (stored === null) return null; // not a lead
   if (stored === "archived") return "archived"; // explicit exit; no signal un-archives
+  if (stored === "rejected") return "rejected"; // explicit exit
   if (signals.converted || stored === "converted") return "converted";
 
   const candidates: EffectiveStage[] = [stored];
-  if (signals.booked) candidates.push("discovery_scheduled");
-  if (signals.contractStarted || signals.contractSigned) candidates.push("contracting");
-  if (signals.invoiceIssued) candidates.push("payment_pending");
-  if (signals.invoicePaid) candidates.push("paid");
+  if (signals.contractPending) candidates.push("contract_pending");
+  if (signals.contractSigned) candidates.push("contract_signed");
+  if (signals.invoicePaid) candidates.push("invoice_paid");
 
   return candidates.reduce((best, s) => (RANK[s] > RANK[best] ? s : best), candidates[0]);
 }

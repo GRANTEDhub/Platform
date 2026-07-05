@@ -24,7 +24,7 @@ export function LeadControls({
   admins: { id: string; name: string }[];
 }) {
   const [pending, start] = useTransition();
-  const [stage, setStage] = useState(currentStage ?? "outbound_new");
+  const [stage, setStage] = useState(currentStage ?? "discovery_pending");
   const [reason, setReason] = useState("");
   const [am, setAm] = useState(accountManagerId ?? "");
   const [note, setNote] = useState("");

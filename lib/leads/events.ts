@@ -80,28 +80,36 @@ export function describeLeadEvent(e: TimelineEventRow): { title: string; detail:
   }
 }
 
-// Signals derivable from the lead's own clients row (cheap enough for the list).
-// The event-derived signal (booked_call) is added on the detail page where we
-// already load the timeline. Everything absent until P3-P5 simply stays false,
-// so effectiveStage() returns the stored human stage today.
-export function signalsFromLeadRow(row: {
-  contract_status: string | null;
-  contract_signed_at: string | null;
-}): LeadSignals {
-  return {
-    contractStarted: !!row.contract_status,
-    contractSigned: !!row.contract_signed_at,
-  };
+// Contract-derived signals, computed from the contracts table (source of truth),
+// NOT the clients mirror. Pass the lead's non-void contract statuses; a signed
+// contract wins (contract_signed), else any draft/sent contract is pending
+// (contract_pending). Callers batch-load contracts for the list, or read the
+// lead's active contract on the detail page.
+export function contractSignals(statuses: (string | null | undefined)[]): LeadSignals {
+  const signed = statuses.some((s) => s === "signed");
+  const pending = !signed && statuses.some((s) => s === "draft" || s === "sent");
+  return { contractSigned: signed, contractPending: pending };
 }
 
-// The stored human stages an admin may hand-set (excludes derived stages and the
-// terminal 'converted', which only the convert action reaches).
+// Intake badge (a FLAG, never a stage): 'received' if intake answers are on file,
+// else 'sent' if an intake form was sent, else 'not_sent'. Derived from
+// intake_data + intake_sent_at.
+export type IntakeStatus = "not_sent" | "sent" | "received";
+export function intakeStatus(row: {
+  intake_data: Record<string, unknown> | null;
+  intake_sent_at: string | null;
+}): IntakeStatus {
+  if (row.intake_data && Object.keys(row.intake_data).length > 0) return "received";
+  if (row.intake_sent_at) return "sent";
+  return "not_sent";
+}
+
+// The stored stages an admin may hand-set: the entry stage + the two off-ladder
+// side states. Derived stages (contract_*, invoice_paid) and the terminal
+// 'converted' (reached only by the convert action) are excluded.
 export const SETTABLE_STAGES = [
-  "outbound_new",
-  "new",
-  "contacted",
-  "quoted",
-  "pending",
+  "discovery_pending",
+  "rejected",
   "archived",
 ] as const;
 export type SettableStage = (typeof SETTABLE_STAGES)[number];
