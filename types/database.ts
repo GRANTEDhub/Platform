@@ -116,6 +116,7 @@ export interface Client {
   // Flags (migration 0031), not stages: rendered as badges, never gate the stage.
   discovery_booked_at: string | null; // a discovery call is booked
   intake_sent_at: string | null; // an intake form was sent (badge input)
+  stripe_customer_id: string | null; // Stripe customer (migration 0033), reused across invoices
   created_at: string;
   updated_at: string;
 }
@@ -343,13 +344,17 @@ export interface TimeEntry {
 export interface Invoice {
   id: string;
   client_id: string;
+  contract_id: string | null;
   amount_cents: number;
+  currency: string;
   status: string;
   issued_date: string | null;
   due_date: string | null;
   paid_date: string | null;
   stripe_invoice_id: string | null;
+  hosted_invoice_url: string | null;
   notes: string | null;
+  created_by: string | null;
   created_at: string;
   updated_at: string;
 }

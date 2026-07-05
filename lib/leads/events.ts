@@ -26,6 +26,8 @@ const LABELS: Record<string, string> = {
   outreach_sent: "Outreach sent",
   contract_sent: "Contract sent for signature",
   contract_signed: "Contract signed",
+  invoice_sent: "Invoice issued",
+  invoice_paid: "Invoice paid",
 };
 
 export interface TimelineEventRow {
@@ -63,6 +65,11 @@ export function describeLeadEvent(e: TimelineEventRow): { title: string; detail:
     }
     case "contract_signed":
       return { title, detail: typeof m.signed_at === "string" ? fmtScheduled(m.signed_at) : null };
+    case "invoice_sent":
+    case "invoice_paid": {
+      const amt = typeof m.amount_cents === "number" ? `$${(m.amount_cents / 100).toLocaleString("en-US")}` : null;
+      return { title, detail: amt };
+    }
     case "outreach_sent": {
       const to = typeof m.to === "string" ? `to ${m.to}` : null;
       const grant = typeof m.grant_title === "string" ? `re: ${m.grant_title}` : null;
