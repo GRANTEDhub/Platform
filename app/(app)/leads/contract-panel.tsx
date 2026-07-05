@@ -27,9 +27,9 @@ type ExistingContract = {
 // signature (name + timestamp). Native e-sign; PDF is a later chunk.
 export function ContractPanel({ leadId, contract }: { leadId: string; contract: ExistingContract }) {
   const router = useRouter();
-  const [templateKey, setTemplateKey] = useState<TemplateKey>("navigate");
+  const [templateKey, setTemplateKey] = useState<TemplateKey>("launch");
   const [amountDollars, setAmountDollars] = useState<string>(
-    String((CONTRACT_TEMPLATES.navigate.defaultAmountCents ?? 0) / 100),
+    String((CONTRACT_TEMPLATES.launch.defaultAmountCents ?? 0) / 100),
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
