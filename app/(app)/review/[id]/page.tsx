@@ -1,13 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChevronDown } from "lucide-react";
+import { format } from "date-fns";
+import { ChevronDown, Check } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DecisionBadge } from "@/components/grants/badges";
 import { interTight, sourceSerif } from "@/lib/fonts";
-import { DecisionBar } from "./decision-bar";
-import { MatchFeedback } from "./match-feedback";
+import { DecisionPanel } from "./decision-panel";
 import type { ReviewCard, Client, Grant, Prospect } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -20,11 +19,10 @@ type FullCard = ReviewCard & {
     | "id" | "title" | "funder" | "fon" | "source_url"
     | "submission_deadline" | "period_of_performance"
     | "cost_share" | "award_range_min" | "award_range_max" | "award_range_is_estimate"
-    | "num_awards" | "total_funding" | "grant_status" | "description"
-    | "focus_areas" | "program_type" | "delivery_model"
+    | "num_awards" | "description"
     | "eligible_entity_types" | "geographic_eligibility" | "ineligible_entities" | "subaward_prohibited"
     | "incumbent_risk" | "technical_burden_flags" | "hard_disqualifiers" | "verification_flags"
-    | "scoring_criteria_high_value"
+    | "scoring_rubric"
   > | null;
 };
 
@@ -32,8 +30,6 @@ type TabKey = "grant" | "match";
 
 const BAND: Record<number, string> = { 3: "Strong fit", 2: "Conditional", 1: "Weak" };
 
-// Compact a currency-ish string to $150K / $1.1M so a range fits one line. Falls
-// back to the raw string when it is not numeric (e.g. "Varies").
 function abbrevAmount(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const s = raw.trim();
@@ -59,13 +55,68 @@ function formatAwardRange(min: string | null | undefined, max: string | null | u
   return (lo || hi)!;
 }
 
-// Cost share as a compact token: "None" when effectively none, else the raw
-// value (truncated to one line by the Stat cell). Empty -> em dash.
 function compactCostShare(raw: string | null | undefined): string {
   const s = (raw ?? "").trim();
   if (!s) return "—";
   if (/^(none|no\b|not required|n\/?a|\$?0\b|0%)/i.test(s)) return "None";
   return s;
+}
+
+// "March 15, 2026" when it parses as a real date; verbatim otherwise ("Rolling").
+function formatDeadline(raw: string | null | undefined): string {
+  const s = (raw ?? "").trim();
+  if (!s) return "—";
+  const d = new Date(s);
+  if (!isNaN(d.getTime()) && /\d{4}/.test(s)) return format(d, "MMMM d, yyyy");
+  return s;
+}
+
+// Substantive risks only: hard disqualifiers + technical-burden flags always;
+// from verification_flags drop imperative boilerplate. Capped to stay scannable.
+function isBoilerplate(s: string): boolean {
+  return /^(verify|re-?verify|confirm|check|double|ensure|review|validate)\b/i.test(s.trim());
+}
+type Risk = { tone: "hard" | "warn"; text: string };
+function collectRisks(g: FullCard["grants"]): Risk[] {
+  return [
+    ...(g?.hard_disqualifiers ?? []).map((t): Risk => ({ tone: "hard", text: t })),
+    ...(g?.technical_burden_flags ?? []).map((t): Risk => ({ tone: "warn", text: t })),
+    ...(g?.verification_flags ?? []).filter((t) => !isBoilerplate(t)).map((t): Risk => ({ tone: "warn", text: t })),
+  ]
+    .filter((r) => r.text?.trim())
+    .slice(0, 6);
+}
+
+// Scoring rubric as TOP-LEVEL line items + points only. Values are point totals
+// (number) or short "40 pts"/"40 points"/"25%" tokens; long descriptive values
+// collapse to the criterion name (no nested per-criterion dump).
+function rubricRows(rubric: Record<string, number | string> | null | undefined): { name: string; points: string }[] {
+  return Object.entries(rubric ?? {})
+    .filter(([k]) => k?.trim())
+    .map(([name, v]) => {
+      let points = "";
+      if (typeof v === "number") points = `${v} pts`;
+      else {
+        const s = String(v).trim();
+        const exact = s.match(/^(\d+(?:\.\d+)?)\s*(pts?|points?|%)?$/i);
+        if (exact) points = /%/.test(s) ? s : `${exact[1]} pts`;
+        else {
+          const embedded = s.match(/(\d+)\s*(?:points?|pts?)/i);
+          if (embedded) points = `${embedded[1]} pts`;
+        }
+      }
+      return { name, points };
+    });
+}
+
+// Match watch-outs: strip "STOP:" prefixes and drop automatable registry lookups
+// (SAM.gov / USASpending / RUCC / UEI-CAGE-DUNS) that a later API pass will handle
+// -- keep only substantive human-judgment items.
+const AUTOMATABLE = /\b(sam\.?gov|usaspending|rucc|uei|cage code|duns)\b/i;
+function cleanWatchouts(items: string[] | null | undefined): string[] {
+  return (items ?? [])
+    .map((s) => s.replace(/^\s*stop\s*[:\-–—]\s*/i, "").trim())
+    .filter((s) => s && !AUTOMATABLE.test(s));
 }
 
 export default async function CardDetailPage({
@@ -80,421 +131,302 @@ export default async function CardDetailPage({
 
   const { data } = await supabase
     .from("review_cards")
-    .select("*, clients(id, name, org_type, engagement_tier, primary_contact_email, primary_contact_name), prospects(id, name, org_type, source_url), grants(id, title, funder, fon, source_url, submission_deadline, period_of_performance, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, total_funding, grant_status, description, focus_areas, program_type, delivery_model, eligible_entity_types, geographic_eligibility, ineligible_entities, subaward_prohibited, incumbent_risk, technical_burden_flags, hard_disqualifiers, verification_flags, scoring_criteria_high_value)")
+    .select("*, clients(id, name, org_type, engagement_tier, primary_contact_email, primary_contact_name), prospects(id, name, org_type, source_url), grants(id, title, funder, fon, source_url, submission_deadline, period_of_performance, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, description, eligible_entity_types, geographic_eligibility, ineligible_entities, subaward_prohibited, incumbent_risk, technical_burden_flags, hard_disqualifiers, verification_flags, scoring_rubric)")
     .eq("id", params.id)
     .single();
 
   const card = data as FullCard | null;
   if (!card) notFound();
 
-  const rc = card.reasoning_context || {};
-  // Prospect cards (Track 2) carry a prospect org instead of a client. The org
-  // name + source live here; the scored analysis below stays internal.
+  const g = card.grants;
   const isProspect = card.card_type === "prospect";
   const orgName = card.clients?.name || card.prospects?.name || "Match";
-  const g = card.grants;
-
-  const awardRange = formatAwardRange(g?.award_range_min, g?.award_range_max);
-  const costShare = compactCostShare(g?.cost_share);
-  // Default subject mirrors the alert convention ("GRANTED Alert! | <name>"),
-  // shown in the Send modal and editable there.
+  const isAdmin = profile.role === "admin";
+  const tab: TabKey = searchParams.tab === "match" ? "match" : "grant";
   const defaultSubject = `GRANTED Alert! | ${g?.title || "Grant Opportunity"}`;
 
-  // Two-tab split: understand the grant (Tab 1), then evaluate the match against
-  // this client (Tab 2). Server-rendered via ?tab, no client state — the decision
-  // sidebar sits outside the tabs and stays visible on both.
-  const tab: TabKey = searchParams.tab === "match" ? "match" : "grant";
-
-  const eligibleTypes = (g?.eligible_entity_types ?? []).map((t) => t.replace(/_/g, " "));
-  const riskFactors = [
-    ...(g?.hard_disqualifiers ?? []).map((v) => ({ tone: "hard" as const, text: v })),
-    ...(g?.technical_burden_flags ?? []).map((v) => ({ tone: "warn" as const, text: v })),
-    ...(g?.verification_flags ?? []).map((v) => ({ tone: "warn" as const, text: v })),
-  ];
-  const hasMatchDepth =
-    !!(rc.fit_score_derivation || rc.role_assignment_logic || rc.consortium_rationale || rc.why_not_others);
-
   return (
-    <div className={`${interTight.variable} ${sourceSerif.variable}`}>
-      <div className="grid gap-6 p-8 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          {/* Shared header: the grant is the subject regardless of active tab. */}
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <h1 className="font-serif text-3xl font-semibold leading-tight text-brand-navy">
-                {g?.title || "Opportunity"}
-              </h1>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {[g?.funder, g?.fon].filter(Boolean).join(" · ") || "—"}
-              </p>
-            </div>
-            <DecisionBadge decision={card.decision} />
+    <div className={`${interTight.variable} ${sourceSerif.variable} min-h-full bg-brand-cream`}>
+      {/* Full-width banner: grant identity left, tab toggle far-right. */}
+      <div className="flex items-center justify-between gap-7 border-b border-brand-navy/10 bg-white px-6 py-5 sm:px-8">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-orange">Grant Match Review</p>
+          <h1 className="mt-1 font-serif text-[26px] font-semibold leading-[1.12] tracking-tight text-brand-navy">
+            {g?.title || "Opportunity"}
+          </h1>
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            {[g?.funder, g?.fon].filter(Boolean).join(" · ") || "—"}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2.5">
+          {card.decision !== "pending" && <DecisionBadge decision={card.decision} />}
+          <div className="flex gap-2">
+            <StepLink id={card.id} tab="grant" n={1} title="The Grant" active={tab === "grant"} />
+            <StepLink id={card.id} tab="match" n={2} title="The Match" active={tab === "match"} />
           </div>
+        </div>
+      </div>
 
-          <div className="mt-4 flex flex-wrap gap-2">
-            {g?.grant_status && <Pill>{g.grant_status}</Pill>}
-            <Pill tone="orange">Fit {card.fit_score} · {BAND[card.fit_score] ?? "—"}</Pill>
-            <Pill>{isProspect ? `Prospect: ${orgName}` : orgName}</Pill>
-          </div>
+      {/* Two-column body: wide main + right sidebar. */}
+      <div className="grid grid-cols-1 gap-6 px-6 py-7 sm:px-8 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-stretch">
+        <main className="rounded-2xl border border-brand-navy/10 bg-white p-6 sm:p-8">
+          {tab === "grant" ? <GrantTab g={g} /> : <MatchTab card={card} orgName={orgName} isProspect={isProspect} />}
+        </main>
 
-          {/* Tabs — server-rendered links; ?tab persists the active view. */}
-          <div className="mt-6 flex gap-2 border-b border-brand-navy/[0.08]">
-            <TabLink id={card.id} tab="grant" active={tab === "grant"}>The Grant</TabLink>
-            <TabLink id={card.id} tab="match" active={tab === "match"}>The Match</TabLink>
-          </div>
+        <aside className="flex flex-col gap-4">
+          <DecisionPanel
+            cardId={card.id}
+            decision={card.decision}
+            isAdmin={isAdmin}
+            draft={card.draft_outreach_email ?? ""}
+            finalEmail={card.final_outreach_email}
+            recipientEmail={card.clients?.primary_contact_email ?? null}
+            defaultSubject={defaultSubject}
+          />
+          {tab === "grant" ? <GrantSidebar g={g} /> : <MatchSidebar card={card} />}
+        </aside>
+      </div>
+    </div>
+  );
+}
 
-          {tab === "grant" ? (
-            /* ── Tab 1: The Grant — grant-alert layout ───────────────────── */
-            <div className="mt-6">
-              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                <Stat label={`Award range${g?.award_range_is_estimate ? " · est." : ""}`} value={awardRange} />
-                <Stat label="Est. awards" value={g?.num_awards || "—"} />
-                <Stat label="Match required" value={costShare} />
-                <Stat label="Deadline" value={g?.submission_deadline || "—"} />
-              </div>
+/* ── Tab 1: The Grant (main) ──────────────────────────────────────────────── */
+function GrantTab({ g }: { g: FullCard["grants"] }) {
+  const eligibleTypes = (g?.eligible_entity_types ?? []).map((t) => t.replace(/_/g, " "));
+  const risks = collectRisks(g);
+  return (
+    <div>
+      <StatBand
+        items={[
+          { label: `Award range${g?.award_range_is_estimate ? " · est." : ""}`, value: formatAwardRange(g?.award_range_min, g?.award_range_max) },
+          { label: "Est. awards", value: g?.num_awards || "—" },
+          { label: "Match required", value: compactCostShare(g?.cost_share) },
+          { label: "Deadline", value: formatDeadline(g?.submission_deadline), urgent: true },
+        ]}
+      />
 
-              <div className="mt-6 divide-y divide-brand-navy/[0.08] overflow-hidden rounded-xl border border-brand-navy/10 bg-white">
-                {g?.description && (
-                  <div className="p-4">
-                    <FieldLabel>What it funds</FieldLabel>
-                    <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{g.description}</p>
-                    {(g.focus_areas?.length || g.program_type || g.delivery_model) && (
-                      <div className="mt-3 flex flex-wrap gap-1.5">
-                        {g.program_type && <Chip>{g.program_type}</Chip>}
-                        {g.delivery_model && <Chip>{g.delivery_model}</Chip>}
-                        {(g.focus_areas ?? []).map((f, i) => <Chip key={i}>{f}</Chip>)}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <div className="p-4">
-                  <FieldLabel>Who can apply / eligibility</FieldLabel>
-                  <div className="mt-1.5 space-y-2 text-sm text-foreground">
-                    {eligibleTypes.length > 0 ? (
-                      <div className="flex flex-wrap gap-1.5">
-                        {eligibleTypes.map((t, i) => <Chip key={i}>{t}</Chip>)}
-                      </div>
-                    ) : (
-                      <p className="text-muted-foreground">Eligible entity types not specified.</p>
-                    )}
-                    {g?.geographic_eligibility && (
-                      <p><span className="text-muted-foreground">Geography: </span>{g.geographic_eligibility}</p>
-                    )}
-                    {g?.ineligible_entities && (
-                      <p><span className="text-muted-foreground">Ineligible: </span>{g.ineligible_entities}</p>
-                    )}
-                    {g?.subaward_prohibited && (
-                      <p className="text-brand-orange">Subawards prohibited.</p>
-                    )}
-                    {g?.period_of_performance && (
-                      <p><span className="text-muted-foreground">Period of performance: </span>{g.period_of_performance}</p>
-                    )}
-                  </div>
-                </div>
-
-                {(riskFactors.length > 0 || g?.incumbent_risk || (g?.scoring_criteria_high_value?.length || 0) > 0) && (
-                  <div className="p-4">
-                    <FieldLabel>Risk &amp; key factors</FieldLabel>
-                    <div className="mt-2 space-y-2">
-                      {g?.incumbent_risk && (
-                        <Callout tone="warn">Incumbent risk: {g.incumbent_risk}</Callout>
-                      )}
-                      {riskFactors.map((r, i) => (
-                        <Callout key={i} tone={r.tone}>{r.text}</Callout>
-                      ))}
-                      {(g?.scoring_criteria_high_value?.length || 0) > 0 && (
-                        <div className="pt-1">
-                          <p className="text-xs text-muted-foreground">Scores highest on:</p>
-                          <ul className="mt-1 list-disc space-y-1 pl-4 text-sm text-foreground">
-                            {g!.scoring_criteria_high_value!.map((s, i) => <li key={i}>{s}</li>)}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Depth — grant shred detail, verbatim, collapsed. */}
-              {(rc.eligibility_analysis || g?.total_funding) && (
-                <div className="mt-6">
-                  <div className="divide-y overflow-hidden rounded-lg border border-input">
-                    <DepthRow title="Full grant detail">
-                      <div className="space-y-3">
-                        {g?.total_funding && <Detail label="Total program funding" value={g.total_funding} />}
-                        {g?.period_of_performance && <Detail label="Period of performance" value={g.period_of_performance} />}
-                        {rc.eligibility_analysis && <Detail label="Eligibility analysis" value={rc.eligibility_analysis} />}
-                        {g?.source_url && (
-                          <a href={g.source_url} target="_blank" rel="noopener noreferrer" className="block text-primary hover:underline">
-                            Source NOFO ↗
-                          </a>
-                        )}
-                      </div>
-                    </DepthRow>
-                  </div>
-                </div>
-              )}
+      <div className="mt-8 grid gap-8 md:grid-cols-2">
+        <section>
+          <SectionLabel>What it funds</SectionLabel>
+          <p className="mt-2.5 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{g?.description || "—"}</p>
+        </section>
+        <section>
+          <SectionLabel>Who can apply</SectionLabel>
+          {eligibleTypes.length > 0 ? (
+            <div className="mt-2.5 flex flex-wrap gap-1.5">
+              {eligibleTypes.map((t, i) => <Chip key={i}>{t}</Chip>)}
             </div>
           ) : (
-            /* ── Tab 2: The Match — how this grant maps to THIS client ────── */
-            <div className="mt-6">
-              <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-                <Stat label="Fit" value={`${card.fit_score} · ${BAND[card.fit_score] ?? "—"}`} />
-                <Stat label="Proposed role" value={card.proposed_role || "—"} />
-                <Stat label="Recommended prime" value={card.recommended_prime || "—"} />
+            <p className="mt-2.5 text-sm text-muted-foreground">Eligible entity types not specified.</p>
+          )}
+          <div className="mt-3 space-y-1.5 text-sm text-foreground">
+            {g?.geographic_eligibility && <p><span className="text-muted-foreground">Geography: </span>{g.geographic_eligibility}</p>}
+            {g?.ineligible_entities && <p><span className="text-muted-foreground">Ineligible: </span>{g.ineligible_entities}</p>}
+            {g?.subaward_prohibited && <p className="font-medium text-brand-orange">Subawards prohibited</p>}
+          </div>
+        </section>
+      </div>
+
+      {g?.incumbent_risk && <KeyCallout label="Make-or-break">{g.incumbent_risk}</KeyCallout>}
+
+      {risks.length > 0 && (
+        <Collapsible label="Risk & key factors">
+          <div className="space-y-2.5 pt-1">
+            {risks.map((r, i) => (
+              <div key={i} className="flex gap-2.5 text-sm leading-relaxed text-foreground">
+                <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${r.tone === "hard" ? "bg-destructive" : "bg-brand-orange"}`} />
+                <span>{r.text}</span>
               </div>
+            ))}
+          </div>
+        </Collapsible>
+      )}
+    </div>
+  );
+}
 
-              <div className="mt-6 divide-y divide-brand-navy/[0.08] overflow-hidden rounded-xl border border-brand-navy/10 bg-white">
-                {(card.description_short || (card.why_this_org?.length || 0) > 0) && (
-                  <div className="p-4">
-                    <FieldLabel>Why this fits {orgName}</FieldLabel>
-                    <div className="mt-1.5 space-y-2 text-sm text-foreground">
-                      {card.description_short && <p className="leading-relaxed">{card.description_short}</p>}
-                      {(card.why_this_org?.length || 0) > 0 && (
-                        <ul className="list-disc space-y-1 pl-4">
-                          {card.why_this_org!.map((w, i) => <li key={i}>{w}</li>)}
-                        </ul>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {card.concept_synopsis && (
-                  <div className="p-4">
-                    <FieldLabel>Concept</FieldLabel>
-                    <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-foreground">
-                      {card.concept_synopsis}
-                    </p>
-                  </div>
-                )}
-
-                {(card.before_you_approve?.length || 0) > 0 && (
-                  <div className="p-4">
-                    <FieldLabel>Before you approve</FieldLabel>
-                    <ul className="mt-1.5 list-disc space-y-1 pl-4 text-sm text-foreground">
-                      {card.before_you_approve!.map((b, i) => <li key={i}>{b}</li>)}
-                    </ul>
-                    {(card.inferred_fields?.length || 0) > 0 && (
-                      <p className="mt-3 text-xs text-muted-foreground">
-                        Inferred (not confirmed): {card.inferred_fields!.join(", ")}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Depth — match reasoning, verbatim, collapsed. */}
-              {hasMatchDepth && (
-                <div className="mt-6">
-                  <div className="divide-y overflow-hidden rounded-lg border border-input">
-                    {rc.fit_score_derivation && (
-                      <DepthRow title="How this score was reached">
-                        <p className="leading-relaxed">{rc.fit_score_derivation}</p>
-                      </DepthRow>
-                    )}
-                    {(rc.role_assignment_logic || rc.consortium_rationale || rc.why_not_others) && (
-                      <DepthRow title="Full match reasoning">
-                        <div className="space-y-3">
-                          {rc.role_assignment_logic && <Detail label="Role logic" value={rc.role_assignment_logic} />}
-                          {rc.consortium_rationale && <Detail label="Consortium" value={rc.consortium_rationale} />}
-                          {rc.why_not_others && <Detail label="Why not others" value={rc.why_not_others} />}
-                        </div>
-                      </DepthRow>
-                    )}
-                  </div>
+/* ── Tab 1: The Grant (sidebar) — Additional information ──────────────────── */
+function GrantSidebar({ g }: { g: FullCard["grants"] }) {
+  const rubric = rubricRows(g?.scoring_rubric as Record<string, number | string> | null);
+  const postingLabel = g?.source_url && /simpler\.grants\.gov/i.test(g.source_url) ? "View on Simpler.gov ↗" : "View posting ↗";
+  if (!(g?.period_of_performance || rubric.length > 0 || g?.source_url || g?.id)) return null;
+  return (
+    <div className="rounded-2xl border border-brand-navy/10 bg-white p-4">
+      <SectionLabel>Additional information</SectionLabel>
+      <div className="mt-3">
+        {g?.period_of_performance && (
+          <div className="flex justify-between gap-3 border-b border-brand-navy/[0.08] pb-2.5 text-sm">
+            <span className="text-muted-foreground">Period of performance</span>
+            <span className="text-right text-brand-navy">{g.period_of_performance}</span>
+          </div>
+        )}
+        {rubric.length > 0 && (
+          <div className="border-b border-brand-navy/[0.08] py-2.5">
+            <p className="text-sm text-muted-foreground">Scoring rubric</p>
+            <div className="mt-2 space-y-1">
+              {rubric.map((r, i) => (
+                <div key={i} className="flex justify-between gap-3 text-sm">
+                  <span className="text-brand-navy/85">{r.name}</span>
+                  {r.points && <span className="shrink-0 text-brand-navy">{r.points}</span>}
                 </div>
-              )}
+              ))}
             </div>
+          </div>
+        )}
+        <div className="flex flex-col gap-2 pt-3 text-sm font-medium">
+          {g?.source_url && (
+            <a href={g.source_url} target="_blank" rel="noopener noreferrer" className="text-brand-orange hover:underline">{postingLabel}</a>
           )}
-        </div>
-
-        <div className="space-y-6">
-          <Card>
-            <CardHeader><CardTitle>Decision</CardTitle></CardHeader>
-            <CardContent>
-              <DecisionBar
-                cardId={card.id}
-                decision={card.decision}
-                isAdmin={profile.role === "admin"}
-                draft={card.draft_outreach_email ?? ""}
-                finalEmail={card.final_outreach_email}
-                recipientEmail={card.clients?.primary_contact_email ?? null}
-                defaultSubject={defaultSubject}
-              />
-              {card.decision === "passed" && card.decision_reason && (
-                <p className="mt-3 text-xs text-muted-foreground">Rejected: {card.decision_reason}</p>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader><CardTitle>Score feedback</CardTitle></CardHeader>
-            <CardContent>
-              <MatchFeedback cardId={card.id} />
-            </CardContent>
-          </Card>
-
-          {isProspect && card.prospects && (
-            <Card>
-              <CardHeader><CardTitle>Prospect org</CardTitle></CardHeader>
-              <CardContent className="space-y-3 text-sm">
-                <Detail label="Organization" value={card.prospects.name} />
-                <Detail label="Type" value={card.prospects.org_type} />
-                {card.prospects.source_url && (
-                  <a
-                    href={card.prospects.source_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block text-primary hover:underline"
-                  >
-                    Source ↗
-                  </a>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          <Card>
-            <CardHeader><CardTitle>Opportunity</CardTitle></CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              <Detail label="Funder" value={card.grants?.funder} />
-              <Detail label="Deadline" value={card.grants?.submission_deadline} />
-              <Detail
-                label="Award range"
-                value={
-                  card.grants?.award_range_min || card.grants?.award_range_max
-                    ? `${card.grants?.award_range_min || "?"} – ${card.grants?.award_range_max || "?"}${card.grants?.award_range_is_estimate ? " (estimate)" : ""}`
-                    : undefined
-                }
-              />
-              {card.grants?.id && (
-                <Link href={`/grants/${card.grants.id}`} className="block text-primary hover:underline">
-                  Open shred →
-                </Link>
-              )}
-            </CardContent>
-          </Card>
+          {g?.id && <Link href={`/grants/${g.id}`} className="text-brand-orange hover:underline">Open Shred →</Link>}
         </div>
       </div>
     </div>
   );
 }
 
-// Tab as a server-rendered link (?tab=…). Active tab is accented; the border
-// sits on the shared container so the two read as one control.
-function TabLink({
-  id,
-  tab,
-  active,
-  children,
-}: {
-  id: string;
-  tab: TabKey;
-  active: boolean;
-  children: React.ReactNode;
-}) {
-  const cls = active
-    ? "border-brand-orange text-brand-navy"
-    : "border-transparent text-muted-foreground hover:text-brand-navy";
+/* ── Tab 2: The Match (main) ──────────────────────────────────────────────── */
+function MatchTab({ card, orgName, isProspect }: { card: FullCard; orgName: string; isProspect: boolean }) {
+  return (
+    <div>
+      <StatBand
+        items={[
+          { label: "Fit", value: `${card.fit_score} · ${BAND[card.fit_score] ?? "—"}`, urgent: true },
+          { label: "Proposed role", value: card.proposed_role || "—" },
+          { label: "Recommended prime", value: card.recommended_prime || "—" },
+        ]}
+      />
+
+      {(card.description_short || (card.why_this_org?.length || 0) > 0) && (
+        <section className="mt-8">
+          <SectionLabel>Match Rationale</SectionLabel>
+          {card.description_short && <KeyCallout tight>{card.description_short}</KeyCallout>}
+          {(card.why_this_org?.length || 0) > 0 && (
+            <ul className="mt-3.5 space-y-2.5">
+              {card.why_this_org!.map((w, i) => (
+                <li key={i} className="flex gap-2.5 text-sm leading-relaxed text-foreground">
+                  <Check className="mt-0.5 h-4 w-4 shrink-0 text-brand-navy" strokeWidth={3} />
+                  <span>{w}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {card.concept_synopsis && (
+        <section className="mt-8">
+          <SectionLabel>Concept Proposal</SectionLabel>
+          <p className="mt-2.5 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{card.concept_synopsis}</p>
+        </section>
+      )}
+
+      {isProspect && card.prospects?.source_url && (
+        <p className="mt-8 text-sm">
+          <a href={card.prospects.source_url} target="_blank" rel="noopener noreferrer" className="font-medium text-brand-orange hover:underline">Prospect source ↗</a>
+        </p>
+      )}
+    </div>
+  );
+}
+
+/* ── Tab 2: The Match (sidebar) — how scored + watch-outs ─────────────────── */
+function MatchSidebar({ card }: { card: FullCard }) {
+  const rc = card.reasoning_context || {};
+  const watchouts = cleanWatchouts(card.before_you_approve);
+  const derivation = rc.fit_score_derivation;
+  return (
+    <>
+      {derivation && (
+        <div className="rounded-2xl border border-brand-navy/10 bg-white p-4">
+          <SectionLabel>How this score was reached</SectionLabel>
+          <p className="mt-2 text-sm leading-relaxed text-foreground">{derivation}</p>
+        </div>
+      )}
+      {watchouts.length > 0 && (
+        <div className="rounded-2xl border border-brand-navy/10 bg-white p-4">
+          <details className="group">
+            <summary className="flex cursor-pointer items-center justify-between [&::-webkit-details-marker]:hidden">
+              <SectionLabel>Watch-outs</SectionLabel>
+              <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="mt-3 space-y-2.5">
+              {watchouts.map((w, i) => (
+                <div key={i} className="flex gap-2.5 text-sm leading-relaxed text-foreground">
+                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-orange" />
+                  <span>{w}</span>
+                </div>
+              ))}
+            </div>
+          </details>
+        </div>
+      )}
+    </>
+  );
+}
+
+/* ── Shared primitives ────────────────────────────────────────────────────── */
+
+// Ordinal tab in the banner. Active = filled navy with an orange number badge.
+function StepLink({ id, tab, n, title, active }: { id: string; tab: TabKey; n: number; title: string; active: boolean }) {
   return (
     <Link
       href={`/review/${id}?tab=${tab}`}
-      className={`-mb-px border-b-2 px-1 pb-2.5 text-sm font-medium ${cls}`}
+      className={`flex items-center gap-2.5 rounded-xl border px-3.5 py-2.5 transition ${
+        active ? "border-brand-navy bg-brand-navy" : "border-brand-navy/10 bg-white hover:border-brand-navy/25"
+      }`}
     >
-      {children}
+      <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-[12.5px] font-semibold ${
+        active ? "bg-brand-orange text-white" : "bg-brand-navy/[0.06] text-brand-navy"
+      }`}>{n}</span>
+      <span className="leading-tight">
+        <span className={`block text-[10px] uppercase tracking-[0.1em] ${active ? "text-white/60" : "text-muted-foreground"}`}>Step {n}</span>
+        <span className={`block font-serif text-[15px] font-semibold ${active ? "text-white" : "text-brand-navy"}`}>{title}</span>
+      </span>
     </Link>
   );
 }
 
-// Quiet inline tag for eligibility types / focus areas.
+// Signature navy stat-band; most-urgent cell in burnt orange.
+function StatBand({ items }: { items: { label: string; value: string; urgent?: boolean }[] }) {
+  return (
+    <div className="flex overflow-hidden rounded-xl">
+      {items.map((it, i) => (
+        <div key={i} className={`min-w-0 flex-1 px-4 py-3.5 ${it.urgent ? "bg-brand-orange" : "bg-brand-navy"} ${i > 0 ? "border-l border-white/10" : ""}`}>
+          <p className={`text-[10px] uppercase tracking-[0.08em] ${it.urgent ? "text-white/75" : "text-white/55"}`}>{it.label}</p>
+          <p className="mt-1 break-words font-serif text-lg font-semibold leading-tight text-white">{it.value}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-brand-orange">{children}</p>;
+}
+
 function Chip({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center rounded-md bg-brand-navy/[0.05] px-2 py-0.5 text-xs text-brand-navy/80">
-      {children}
-    </span>
-  );
+  return <span className="inline-flex items-center rounded-md bg-brand-navy/[0.06] px-2.5 py-0.5 text-xs text-brand-navy/85">{children}</span>;
 }
 
-// Accented callout for risk / key factors. "hard" reads as a hard stop, "warn"
-// as a factor to weigh.
-function Callout({ tone, children }: { tone: "hard" | "warn"; children: React.ReactNode }) {
-  const cls =
-    tone === "hard"
-      ? "border-destructive/30 bg-destructive/[0.06] text-destructive"
-      : "border-brand-orange/30 bg-brand-orange/[0.06] text-brand-navy";
+// Cream / orange-left-border callout. `tight` drops the top margin when it leads
+// a section that already has a label above it.
+function KeyCallout({ label, tight, children }: { label?: string; tight?: boolean; children: React.ReactNode }) {
   return (
-    <div className={`rounded-md border px-3 py-2 text-sm leading-relaxed ${cls}`}>{children}</div>
-  );
-}
-
-function Detail({ label, value }: { label: string; value: string | null | undefined }) {
-  if (!value) return null;
-  return (
-    <div>
-      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="mt-0.5 whitespace-pre-wrap leading-relaxed">{value}</p>
+    <div className={`${tight ? "mt-3" : "mt-6"} rounded-r-lg border-l-[3px] border-brand-orange bg-brand-cream px-4 py-3.5`}>
+      {label && <p className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-brand-orange">{label}</p>}
+      <p className={`${label ? "mt-1.5 " : ""}font-serif text-[17px] leading-snug text-brand-navy`}>{children}</p>
     </div>
   );
 }
 
-// Quiet context chips -- smaller and less saturated than the grant-title headline.
-function Pill({ children, tone = "navy" }: { children: React.ReactNode; tone?: "navy" | "orange" }) {
-  const cls =
-    tone === "orange"
-      ? "bg-brand-orange/[0.08] text-brand-orange"
-      : "bg-brand-navy/[0.05] text-brand-navy/80";
+function Collapsible({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium ${cls}`}>
-      {children}
-    </span>
-  );
-}
-
-// Small uppercase label; the content below is the primary text, the label recedes.
-function FieldLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="text-[11px] font-medium uppercase tracking-[0.05em] text-muted-foreground">{children}</p>
-  );
-}
-
-// Iconless funding stat: muted label on top, serif value below on a single line.
-// Consistent height across the row.
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-brand-navy/10 bg-white px-4 py-3">
-      <FieldLabel>{label}</FieldLabel>
-      <p
-        className="mt-1 truncate font-serif text-xl font-medium leading-6 text-brand-navy"
-        title={value}
-      >
-        {value}
-      </p>
-    </div>
-  );
-}
-
-// Inline accordion row (native <details>: no JS, server-component-safe). Collapsed
-// by default; click the summary to expand in place. Holds dense content verbatim.
-function DepthRow({
-  title,
-  count,
-  children,
-}: {
-  title: string;
-  count?: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <details className="group">
-      <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-sm font-medium text-brand-navy [&::-webkit-details-marker]:hidden">
-        <span>
-          {title}
-          {typeof count === "number" ? ` (${count})` : ""}
-        </span>
+    <details className="group mt-8 overflow-hidden rounded-xl border border-brand-navy/10">
+      <summary className="flex cursor-pointer items-center justify-between bg-brand-navy/[0.02] px-4 py-3 [&::-webkit-details-marker]:hidden">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-brand-orange">{label}</span>
         <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
       </summary>
-      <div className="px-4 pb-4 text-sm">{children}</div>
+      <div className="px-4 pb-4">{children}</div>
     </details>
   );
 }
