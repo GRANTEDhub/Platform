@@ -36,14 +36,25 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
+  // On a Flag (disagree) we require a WHY -- the reason is the calibration signal.
+  // A corrected score is optional (the dock captures the reason, not a re-score);
+  // when provided it must be in range. Older callers that send a corrected_score
+  // still work; the reason is now the required field.
   if (!body.agree) {
+    if (!body.reason || !body.reason.trim()) {
+      return NextResponse.json(
+        { error: "A reason is required when you flag the score" },
+        { status: 400 },
+      );
+    }
     if (
-      typeof body.corrected_score !== "number" ||
-      body.corrected_score < 0 ||
-      body.corrected_score > 3
+      body.corrected_score !== undefined &&
+      (typeof body.corrected_score !== "number" ||
+        body.corrected_score < 0 ||
+        body.corrected_score > 3)
     ) {
       return NextResponse.json(
-        { error: "corrected_score (0-3) is required when you disagree" },
+        { error: "corrected_score, if given, must be 0-3" },
         { status: 400 },
       );
     }
