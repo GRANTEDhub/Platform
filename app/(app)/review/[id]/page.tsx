@@ -15,8 +15,20 @@ export const dynamic = "force-dynamic";
 type FullCard = ReviewCard & {
   clients: Pick<Client, "id" | "name" | "org_type" | "engagement_tier" | "primary_contact_email" | "primary_contact_name"> | null;
   prospects: Pick<Prospect, "id" | "name" | "org_type" | "source_url"> | null;
-  grants: Pick<Grant, "id" | "title" | "funder" | "fon" | "source_url" | "submission_deadline" | "cost_share" | "award_range_min" | "award_range_max" | "award_range_is_estimate" | "num_awards" | "grant_status" | "description"> | null;
+  grants: Pick<
+    Grant,
+    | "id" | "title" | "funder" | "fon" | "source_url"
+    | "submission_deadline" | "period_of_performance"
+    | "cost_share" | "award_range_min" | "award_range_max" | "award_range_is_estimate"
+    | "num_awards" | "total_funding" | "grant_status" | "description"
+    | "focus_areas" | "program_type" | "delivery_model"
+    | "eligible_entity_types" | "geographic_eligibility" | "ineligible_entities" | "subaward_prohibited"
+    | "incumbent_risk" | "technical_burden_flags" | "hard_disqualifiers" | "verification_flags"
+    | "scoring_criteria_high_value"
+  > | null;
 };
+
+type TabKey = "grant" | "match";
 
 const BAND: Record<number, string> = { 3: "Strong fit", 2: "Conditional", 1: "Weak" };
 
@@ -56,13 +68,19 @@ function compactCostShare(raw: string | null | undefined): string {
   return s;
 }
 
-export default async function CardDetailPage({ params }: { params: { id: string } }) {
+export default async function CardDetailPage({
+  params,
+  searchParams,
+}: {
+  params: { id: string };
+  searchParams: { tab?: string };
+}) {
   const profile = await requireUser();
   const supabase = createClient();
 
   const { data } = await supabase
     .from("review_cards")
-    .select("*, clients(id, name, org_type, engagement_tier, primary_contact_email, primary_contact_name), prospects(id, name, org_type, source_url), grants(id, title, funder, fon, source_url, submission_deadline, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, grant_status, description)")
+    .select("*, clients(id, name, org_type, engagement_tier, primary_contact_email, primary_contact_name), prospects(id, name, org_type, source_url), grants(id, title, funder, fon, source_url, submission_deadline, period_of_performance, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, total_funding, grant_status, description, focus_areas, program_type, delivery_model, eligible_entity_types, geographic_eligibility, ineligible_entities, subaward_prohibited, incumbent_risk, technical_burden_flags, hard_disqualifiers, verification_flags, scoring_criteria_high_value)")
     .eq("id", params.id)
     .single();
 
@@ -81,14 +99,26 @@ export default async function CardDetailPage({ params }: { params: { id: string 
   // Default subject mirrors the alert convention ("GRANTED Alert! | <name>"),
   // shown in the Send modal and editable there.
   const defaultSubject = `GRANTED Alert! | ${g?.title || "Grant Opportunity"}`;
-  const hasFullReasoning =
-    !!(rc.eligibility_analysis || rc.role_assignment_logic || rc.consortium_rationale || rc.why_not_others);
+
+  // Two-tab split: understand the grant (Tab 1), then evaluate the match against
+  // this client (Tab 2). Server-rendered via ?tab, no client state — the decision
+  // sidebar sits outside the tabs and stays visible on both.
+  const tab: TabKey = searchParams.tab === "match" ? "match" : "grant";
+
+  const eligibleTypes = (g?.eligible_entity_types ?? []).map((t) => t.replace(/_/g, " "));
+  const riskFactors = [
+    ...(g?.hard_disqualifiers ?? []).map((v) => ({ tone: "hard" as const, text: v })),
+    ...(g?.technical_burden_flags ?? []).map((v) => ({ tone: "warn" as const, text: v })),
+    ...(g?.verification_flags ?? []).map((v) => ({ tone: "warn" as const, text: v })),
+  ];
+  const hasMatchDepth =
+    !!(rc.fit_score_derivation || rc.role_assignment_logic || rc.consortium_rationale || rc.why_not_others);
 
   return (
     <div className={`${interTight.variable} ${sourceSerif.variable}`}>
       <div className="grid gap-6 p-8 lg:grid-cols-3">
         <div className="lg:col-span-2">
-          {/* Header: grant is the subject; org is a pill below. */}
+          {/* Shared header: the grant is the subject regardless of active tab. */}
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <h1 className="font-serif text-3xl font-semibold leading-tight text-brand-navy">
@@ -101,101 +131,182 @@ export default async function CardDetailPage({ params }: { params: { id: string 
             <DecisionBadge decision={card.decision} />
           </div>
 
-          {/* Pill row: quiet context, not the headline */}
           <div className="mt-4 flex flex-wrap gap-2">
             {g?.grant_status && <Pill>{g.grant_status}</Pill>}
             <Pill tone="orange">Fit {card.fit_score} · {BAND[card.fit_score] ?? "—"}</Pill>
             <Pill>{isProspect ? `Prospect: ${orgName}` : orgName}</Pill>
           </div>
 
-          {/* Funding stats — value leads, no icons */}
-          <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label={`Award range${g?.award_range_is_estimate ? " · est." : ""}`} value={awardRange} />
-            <Stat label="Est. awards" value={g?.num_awards || "—"} />
-            <Stat label="Deadline" value={g?.submission_deadline || "—"} />
-            <Stat label="Cost share" value={costShare} />
+          {/* Tabs — server-rendered links; ?tab persists the active view. */}
+          <div className="mt-6 flex gap-2 border-b border-brand-navy/[0.08]">
+            <TabLink id={card.id} tab="grant" active={tab === "grant"}>The Grant</TabLink>
+            <TabLink id={card.id} tab="match" active={tab === "match"}>The Match</TabLink>
           </div>
 
-          {/* Content — one light container, hairline-separated rows, labels recede */}
-          <div className="mt-8 divide-y divide-brand-navy/[0.08] overflow-hidden rounded-xl border border-brand-navy/10 bg-white">
-            {g?.description && (
-              <div className="p-4">
-                <FieldLabel>What it funds</FieldLabel>
-                <p className="mt-1.5 line-clamp-4 text-sm leading-relaxed text-foreground">{g.description}</p>
+          {tab === "grant" ? (
+            /* ── Tab 1: The Grant — grant-alert layout ───────────────────── */
+            <div className="mt-6">
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <Stat label={`Award range${g?.award_range_is_estimate ? " · est." : ""}`} value={awardRange} />
+                <Stat label="Est. awards" value={g?.num_awards || "—"} />
+                <Stat label="Match required" value={costShare} />
+                <Stat label="Deadline" value={g?.submission_deadline || "—"} />
               </div>
-            )}
 
-            {/* Role + recommended prime read as one tight pair */}
-            <div className="grid grid-cols-2 gap-4 p-4">
-              <div>
-                <FieldLabel>Role</FieldLabel>
-                <p className="mt-1.5 text-sm text-foreground">{card.proposed_role || "—"}</p>
-              </div>
-              <div>
-                <FieldLabel>Recommended prime</FieldLabel>
-                <p className="mt-1.5 text-sm text-foreground">{card.recommended_prime || "—"}</p>
-              </div>
-            </div>
-
-            {(card.description_short || (card.why_this_org?.length || 0) > 0) && (
-              <div className="p-4">
-                <FieldLabel>Alignment</FieldLabel>
-                <div className="mt-1.5 space-y-2 text-sm text-foreground">
-                  {card.description_short && <p className="leading-relaxed">{card.description_short}</p>}
-                  {(card.why_this_org?.length || 0) > 0 && (
-                    <ul className="list-disc space-y-1 pl-4">
-                      {card.why_this_org!.map((w, i) => <li key={i}>{w}</li>)}
-                    </ul>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {card.concept_synopsis && (
-              <div className="p-4">
-                <FieldLabel>Concept</FieldLabel>
-                <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-foreground">
-                  {card.concept_synopsis}
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* Depth — collapsed detail, content verbatim */}
-          <div className="mt-8">
-            <h2 className="mb-2 font-serif text-lg font-semibold text-brand-navy">Depth</h2>
-            <div className="divide-y overflow-hidden rounded-lg border border-input">
-              {(card.before_you_approve?.length || 0) > 0 && (
-                <DepthRow title="Before you approve" count={card.before_you_approve!.length}>
-                  <ul className="list-disc space-y-1 pl-4">
-                    {card.before_you_approve!.map((b, i) => <li key={i}>{b}</li>)}
-                  </ul>
-                  {(card.inferred_fields?.length || 0) > 0 && (
-                    <p className="mt-3 text-xs text-muted-foreground">
-                      Inferred (not confirmed): {card.inferred_fields!.join(", ")}
-                    </p>
-                  )}
-                </DepthRow>
-              )}
-
-              {rc.fit_score_derivation && (
-                <DepthRow title="How this score was reached">
-                  <p className="leading-relaxed">{rc.fit_score_derivation}</p>
-                </DepthRow>
-              )}
-
-              {hasFullReasoning && (
-                <DepthRow title="Full reasoning">
-                  <div className="space-y-3">
-                    {rc.eligibility_analysis && <Detail label="Eligibility" value={rc.eligibility_analysis} />}
-                    {rc.role_assignment_logic && <Detail label="Role logic" value={rc.role_assignment_logic} />}
-                    {rc.consortium_rationale && <Detail label="Consortium" value={rc.consortium_rationale} />}
-                    {rc.why_not_others && <Detail label="Why not others" value={rc.why_not_others} />}
+              <div className="mt-6 divide-y divide-brand-navy/[0.08] overflow-hidden rounded-xl border border-brand-navy/10 bg-white">
+                {g?.description && (
+                  <div className="p-4">
+                    <FieldLabel>What it funds</FieldLabel>
+                    <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{g.description}</p>
+                    {(g.focus_areas?.length || g.program_type || g.delivery_model) && (
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {g.program_type && <Chip>{g.program_type}</Chip>}
+                        {g.delivery_model && <Chip>{g.delivery_model}</Chip>}
+                        {(g.focus_areas ?? []).map((f, i) => <Chip key={i}>{f}</Chip>)}
+                      </div>
+                    )}
                   </div>
-                </DepthRow>
+                )}
+
+                <div className="p-4">
+                  <FieldLabel>Who can apply / eligibility</FieldLabel>
+                  <div className="mt-1.5 space-y-2 text-sm text-foreground">
+                    {eligibleTypes.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {eligibleTypes.map((t, i) => <Chip key={i}>{t}</Chip>)}
+                      </div>
+                    ) : (
+                      <p className="text-muted-foreground">Eligible entity types not specified.</p>
+                    )}
+                    {g?.geographic_eligibility && (
+                      <p><span className="text-muted-foreground">Geography: </span>{g.geographic_eligibility}</p>
+                    )}
+                    {g?.ineligible_entities && (
+                      <p><span className="text-muted-foreground">Ineligible: </span>{g.ineligible_entities}</p>
+                    )}
+                    {g?.subaward_prohibited && (
+                      <p className="text-brand-orange">Subawards prohibited.</p>
+                    )}
+                    {g?.period_of_performance && (
+                      <p><span className="text-muted-foreground">Period of performance: </span>{g.period_of_performance}</p>
+                    )}
+                  </div>
+                </div>
+
+                {(riskFactors.length > 0 || g?.incumbent_risk || (g?.scoring_criteria_high_value?.length || 0) > 0) && (
+                  <div className="p-4">
+                    <FieldLabel>Risk &amp; key factors</FieldLabel>
+                    <div className="mt-2 space-y-2">
+                      {g?.incumbent_risk && (
+                        <Callout tone="warn">Incumbent risk: {g.incumbent_risk}</Callout>
+                      )}
+                      {riskFactors.map((r, i) => (
+                        <Callout key={i} tone={r.tone}>{r.text}</Callout>
+                      ))}
+                      {(g?.scoring_criteria_high_value?.length || 0) > 0 && (
+                        <div className="pt-1">
+                          <p className="text-xs text-muted-foreground">Scores highest on:</p>
+                          <ul className="mt-1 list-disc space-y-1 pl-4 text-sm text-foreground">
+                            {g!.scoring_criteria_high_value!.map((s, i) => <li key={i}>{s}</li>)}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Depth — grant shred detail, verbatim, collapsed. */}
+              {(rc.eligibility_analysis || g?.total_funding) && (
+                <div className="mt-6">
+                  <div className="divide-y overflow-hidden rounded-lg border border-input">
+                    <DepthRow title="Full grant detail">
+                      <div className="space-y-3">
+                        {g?.total_funding && <Detail label="Total program funding" value={g.total_funding} />}
+                        {g?.period_of_performance && <Detail label="Period of performance" value={g.period_of_performance} />}
+                        {rc.eligibility_analysis && <Detail label="Eligibility analysis" value={rc.eligibility_analysis} />}
+                        {g?.source_url && (
+                          <a href={g.source_url} target="_blank" rel="noopener noreferrer" className="block text-primary hover:underline">
+                            Source NOFO ↗
+                          </a>
+                        )}
+                      </div>
+                    </DepthRow>
+                  </div>
+                </div>
               )}
             </div>
-          </div>
+          ) : (
+            /* ── Tab 2: The Match — how this grant maps to THIS client ────── */
+            <div className="mt-6">
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+                <Stat label="Fit" value={`${card.fit_score} · ${BAND[card.fit_score] ?? "—"}`} />
+                <Stat label="Proposed role" value={card.proposed_role || "—"} />
+                <Stat label="Recommended prime" value={card.recommended_prime || "—"} />
+              </div>
+
+              <div className="mt-6 divide-y divide-brand-navy/[0.08] overflow-hidden rounded-xl border border-brand-navy/10 bg-white">
+                {(card.description_short || (card.why_this_org?.length || 0) > 0) && (
+                  <div className="p-4">
+                    <FieldLabel>Why this fits {orgName}</FieldLabel>
+                    <div className="mt-1.5 space-y-2 text-sm text-foreground">
+                      {card.description_short && <p className="leading-relaxed">{card.description_short}</p>}
+                      {(card.why_this_org?.length || 0) > 0 && (
+                        <ul className="list-disc space-y-1 pl-4">
+                          {card.why_this_org!.map((w, i) => <li key={i}>{w}</li>)}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {card.concept_synopsis && (
+                  <div className="p-4">
+                    <FieldLabel>Concept</FieldLabel>
+                    <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                      {card.concept_synopsis}
+                    </p>
+                  </div>
+                )}
+
+                {(card.before_you_approve?.length || 0) > 0 && (
+                  <div className="p-4">
+                    <FieldLabel>Before you approve</FieldLabel>
+                    <ul className="mt-1.5 list-disc space-y-1 pl-4 text-sm text-foreground">
+                      {card.before_you_approve!.map((b, i) => <li key={i}>{b}</li>)}
+                    </ul>
+                    {(card.inferred_fields?.length || 0) > 0 && (
+                      <p className="mt-3 text-xs text-muted-foreground">
+                        Inferred (not confirmed): {card.inferred_fields!.join(", ")}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Depth — match reasoning, verbatim, collapsed. */}
+              {hasMatchDepth && (
+                <div className="mt-6">
+                  <div className="divide-y overflow-hidden rounded-lg border border-input">
+                    {rc.fit_score_derivation && (
+                      <DepthRow title="How this score was reached">
+                        <p className="leading-relaxed">{rc.fit_score_derivation}</p>
+                      </DepthRow>
+                    )}
+                    {(rc.role_assignment_logic || rc.consortium_rationale || rc.why_not_others) && (
+                      <DepthRow title="Full match reasoning">
+                        <div className="space-y-3">
+                          {rc.role_assignment_logic && <Detail label="Role logic" value={rc.role_assignment_logic} />}
+                          {rc.consortium_rationale && <Detail label="Consortium" value={rc.consortium_rationale} />}
+                          {rc.why_not_others && <Detail label="Why not others" value={rc.why_not_others} />}
+                        </div>
+                      </DepthRow>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="space-y-6">
@@ -267,6 +378,53 @@ export default async function CardDetailPage({ params }: { params: { id: string 
         </div>
       </div>
     </div>
+  );
+}
+
+// Tab as a server-rendered link (?tab=…). Active tab is accented; the border
+// sits on the shared container so the two read as one control.
+function TabLink({
+  id,
+  tab,
+  active,
+  children,
+}: {
+  id: string;
+  tab: TabKey;
+  active: boolean;
+  children: React.ReactNode;
+}) {
+  const cls = active
+    ? "border-brand-orange text-brand-navy"
+    : "border-transparent text-muted-foreground hover:text-brand-navy";
+  return (
+    <Link
+      href={`/review/${id}?tab=${tab}`}
+      className={`-mb-px border-b-2 px-1 pb-2.5 text-sm font-medium ${cls}`}
+    >
+      {children}
+    </Link>
+  );
+}
+
+// Quiet inline tag for eligibility types / focus areas.
+function Chip({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center rounded-md bg-brand-navy/[0.05] px-2 py-0.5 text-xs text-brand-navy/80">
+      {children}
+    </span>
+  );
+}
+
+// Accented callout for risk / key factors. "hard" reads as a hard stop, "warn"
+// as a factor to weigh.
+function Callout({ tone, children }: { tone: "hard" | "warn"; children: React.ReactNode }) {
+  const cls =
+    tone === "hard"
+      ? "border-destructive/30 bg-destructive/[0.06] text-destructive"
+      : "border-brand-orange/30 bg-brand-orange/[0.06] text-brand-navy";
+  return (
+    <div className={`rounded-md border px-3 py-2 text-sm leading-relaxed ${cls}`}>{children}</div>
   );
 }
 
