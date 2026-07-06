@@ -16,7 +16,7 @@ export function ClientHero({
   editHref: string;
 }) {
   return (
-    <div className="bg-gradient-to-br from-brand-navy via-brand-navy to-[#081627] px-8 pb-20 pt-12 text-brand-cream">
+    <div className="bg-gradient-to-br from-brand-navy via-brand-navy to-brand-navyDeep px-8 pb-20 pt-12 text-brand-cream">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <h1 className="font-serif text-4xl font-semibold leading-tight tracking-tight">{name}</h1>

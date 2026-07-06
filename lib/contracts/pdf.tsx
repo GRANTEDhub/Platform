@@ -9,6 +9,7 @@ import {
   renderToBuffer,
 } from "@react-pdf/renderer";
 import { CONTRACT_TEMPLATES, formatAmount, type TemplateKey } from "@/lib/contracts/template";
+import { BRAND } from "@/lib/brand";
 
 // Branded signed-contract PDF, GRANTED design system. react-pdf (pure JS) is used
 // because generation runs in a Vercel serverless function where headless Chromium
@@ -17,11 +18,12 @@ import { CONTRACT_TEMPLATES, formatAmount, type TemplateKey } from "@/lib/contra
 // vendored static TTFs (Source Serif 4 + Inter Tight) so brand hierarchy holds --
 // see next.config outputFileTracingIncludes for serverless bundling of the .ttf.
 
-const NAVY = "#0B1E3A";
-const ORANGE = "#b3541e";
-const CREAM = "#faf7f2";
-const INK = "#1a1a1a";
-const MUTED = "#5b6472";
+// Palette sourced from lib/brand.ts so the PDF rebrands with everything else.
+const NAVY = BRAND.navy;
+const ORANGE = BRAND.orange;
+const CREAM = BRAND.cream;
+const INK = BRAND.ink;
+const MUTED = BRAND.muted;
 
 const FONT_DIR = path.join(process.cwd(), "lib/contracts/fonts");
 let fontsRegistered = false;

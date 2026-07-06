@@ -16,6 +16,7 @@ import { ClientActionItems } from "@/components/clients/client-action-items";
 import { samExpiryFlag } from "@/lib/sam/expiry";
 import { ClientRepository } from "@/components/clients/client-repository";
 import { signedUrl } from "@/lib/storage";
+import { BRAND } from "@/lib/brand";
 import type { Client, Invoice, Grant, ClientOverview, CardDecision } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -182,9 +183,9 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
             <CardContent>
               <ClientMatchChart
                 data={[
-                  { label: "In review", count: counts.pending, color: "#334867" },
-                  { label: "Alerted", count: counts.approved, color: "#b3541e" },
-                  { label: "Passed", count: counts.passed, color: "#c9c2b8" },
+                  { label: "In review", count: counts.pending, color: BRAND.slate },
+                  { label: "Alerted", count: counts.approved, color: BRAND.orange },
+                  { label: "Passed", count: counts.passed, color: BRAND.taupe },
                 ]}
               />
             </CardContent>

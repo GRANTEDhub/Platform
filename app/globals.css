@@ -3,28 +3,33 @@
 @tailwind utilities;
 
 @layer base {
+  /* GRANTED palette. These HSL tokens MIRROR lib/brand.ts (CSS can't import TS):
+     navy #0B1E3A = 216 68% 14% · orange #b3541e = 22 71% 41% · cream #faf7f2 =
+     39 44% 96%. Keep this block in sync with lib/brand.ts. The old forest-green
+     primary is gone -- primary is now navy, so all chrome (sidebar, login, "G"
+     marks, buttons, badges) matches the brand surfaces. */
   :root {
-    --background: 40 30% 98%;
-    --foreground: 160 14% 12%;
+    --background: 39 44% 96%;      /* cream */
+    --foreground: 214 42% 15%;     /* navy-ink body text */
 
     --card: 0 0% 100%;
-    --card-foreground: 160 14% 12%;
+    --card-foreground: 214 42% 15%;
 
-    --muted: 150 12% 95%;
-    --muted-foreground: 160 8% 42%;
+    --muted: 40 22% 94%;           /* warm light grey surface */
+    --muted-foreground: 215 14% 38%; /* grey — secondary text */
 
-    --primary: 158 64% 22%;        /* deep forest green */
+    --primary: 216 68% 14%;        /* navy */
     --primary-foreground: 0 0% 100%;
 
-    --accent: 150 30% 92%;
-    --accent-foreground: 158 64% 18%;
+    --accent: 214 30% 93%;         /* light navy-grey — hover surface */
+    --accent-foreground: 216 68% 16%;
 
-    --destructive: 0 72% 45%;
+    --destructive: 0 72% 45%;      /* status red — unchanged */
     --destructive-foreground: 0 0% 100%;
 
-    --border: 150 12% 88%;
-    --input: 150 12% 88%;
-    --ring: 158 64% 30%;
+    --border: 214 20% 88%;
+    --input: 214 20% 88%;
+    --ring: 216 68% 30%;           /* navy focus ring */
 
     --radius: 0.625rem;
   }

@@ -1,4 +1,5 @@
 import type { Config } from "tailwindcss";
+import { BRAND } from "./lib/brand";
 
 const config: Config = {
   content: [
@@ -33,12 +34,14 @@ const config: Config = {
           DEFAULT: "hsl(var(--destructive))",
           foreground: "hsl(var(--destructive-foreground))",
         },
-        // GRANTED brand primitives. Inert / opt-in: nothing references these
-        // except the client dashboard, so defining them restyles nothing else.
+        // GRANTED brand primitives, sourced from lib/brand.ts (single source of
+        // truth). The semantic tokens above (--primary etc.) now resolve to this
+        // same navy/orange/cream palette, so brand utilities and app chrome agree.
         brand: {
-          navy: "#0B1E3A",
-          orange: "#b3541e",
-          cream: "#faf7f2",
+          navy: BRAND.navy,
+          navyDeep: BRAND.navyDeep,
+          orange: BRAND.orange,
+          cream: BRAND.cream,
         },
       },
       borderRadius: {

@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { BRAND } from "@/lib/brand";
 import type { GrantSummary } from "@/app/api/review/[id]/route";
 
 // Post-decision confirmation, shown as a full-screen overlay on /review/[id]
@@ -74,14 +75,14 @@ export function DecisionConfirmation({ summary }: { summary: GrantSummary }) {
           height: 72px;
         }
         .cc-circle {
-          stroke: #16a34a;
+          stroke: ${BRAND.navy};
           stroke-width: 2;
           stroke-dasharray: 151;
           stroke-dashoffset: 151;
           animation: cc-circle 0.5s ease-out forwards;
         }
         .cc-check {
-          stroke: #16a34a;
+          stroke: ${BRAND.navy};
           stroke-width: 3;
           stroke-linecap: round;
           stroke-linejoin: round;
