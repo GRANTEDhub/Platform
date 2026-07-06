@@ -10,6 +10,9 @@ const nextConfig = {
     serverComponentsExternalPackages: ["pdf-parse", "mammoth", "@react-pdf/renderer"],
     outputFileTracingIncludes: {
       "/api/sign/[token]": ["./lib/contracts/fonts/**"],
+      // The discovery-invite route reads the engagement flyer at runtime; trace
+      // the fixed asset into its serverless function (same as the fonts above).
+      "/api/leads/[id]/send-discovery-invite": ["./lib/email/assets/**"],
     },
   },
 };
