@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { DecisionBadge } from "@/components/grants/badges";
 import { interTight, sourceSerif } from "@/lib/fonts";
 import { DecisionPanel } from "./decision-panel";
-import type { ReviewCard, Client, Grant, Prospect } from "@/types/database";
+import type { ReviewCard, Client, Grant, Prospect, IdealApplicantProfile } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -22,13 +22,14 @@ type FullCard = ReviewCard & {
     | "num_awards" | "description"
     | "eligible_entity_types" | "geographic_eligibility" | "ineligible_entities" | "subaward_prohibited"
     | "incumbent_risk" | "technical_burden_flags" | "hard_disqualifiers" | "verification_flags"
-    | "scoring_rubric"
+    | "scoring_rubric" | "ideal_applicant_profile"
   > | null;
 };
 
 type TabKey = "grant" | "match";
 
 const BAND: Record<number, string> = { 3: "Strong fit", 2: "Conditional", 1: "Weak" };
+const RUBRIC_CAP = 8;
 
 function abbrevAmount(raw: string | null | undefined): string | null {
   if (!raw) return null;
@@ -87,12 +88,13 @@ function collectRisks(g: FullCard["grants"]): Risk[] {
     .slice(0, 6);
 }
 
-// Scoring rubric as TOP-LEVEL line items + points only. Values are point totals
-// (number) or short "40 pts"/"40 points"/"25%" tokens; long descriptive values
-// collapse to the criterion name (no nested per-criterion dump).
-function rubricRows(rubric: Record<string, number | string> | null | undefined): { name: string; points: string }[] {
+// Scoring rubric = TOP-LEVEL categories + points only. Drop nested/object values
+// (sub-criteria breakdowns) entirely so it reads the same whether a grant has 4
+// categories or 20; the caller caps the count. Point value from a number or a
+// short "40 pts"/"40 points"/"25%" token; else the category shows with no points.
+function rubricRows(rubric: Record<string, unknown> | null | undefined): { name: string; points: string }[] {
   return Object.entries(rubric ?? {})
-    .filter(([k]) => k?.trim())
+    .filter(([k, v]) => k?.trim() && v !== null && typeof v !== "object")
     .map(([name, v]) => {
       let points = "";
       if (typeof v === "number") points = `${v} pts`;
@@ -119,6 +121,15 @@ function cleanWatchouts(items: string[] | null | undefined): string[] {
     .filter((s) => s && !AUTOMATABLE.test(s));
 }
 
+// Budget one-liner for the Ideal Applicant Profile: award range, plus a match
+// note when a real cost share is on file.
+function idealBudget(g: FullCard["grants"]): string | null {
+  const award = formatAwardRange(g?.award_range_min, g?.award_range_max);
+  const cs = compactCostShare(g?.cost_share);
+  if (award === "—") return cs === "—" ? null : cs;
+  return cs !== "—" && cs !== "None" ? `${award} · ${cs} match` : award;
+}
+
 export default async function CardDetailPage({
   params,
   searchParams,
@@ -131,7 +142,7 @@ export default async function CardDetailPage({
 
   const { data } = await supabase
     .from("review_cards")
-    .select("*, clients(id, name, org_type, engagement_tier, primary_contact_email, primary_contact_name), prospects(id, name, org_type, source_url), grants(id, title, funder, fon, source_url, submission_deadline, period_of_performance, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, description, eligible_entity_types, geographic_eligibility, ineligible_entities, subaward_prohibited, incumbent_risk, technical_burden_flags, hard_disqualifiers, verification_flags, scoring_rubric)")
+    .select("*, clients(id, name, org_type, engagement_tier, primary_contact_email, primary_contact_name), prospects(id, name, org_type, source_url), grants(id, title, funder, fon, source_url, submission_deadline, period_of_performance, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, description, eligible_entity_types, geographic_eligibility, ineligible_entities, subaward_prohibited, incumbent_risk, technical_burden_flags, hard_disqualifiers, verification_flags, scoring_rubric, ideal_applicant_profile)")
     .eq("id", params.id)
     .single();
 
@@ -147,8 +158,8 @@ export default async function CardDetailPage({
 
   return (
     <div className={`${interTight.variable} ${sourceSerif.variable} min-h-full bg-brand-cream`}>
-      {/* Full-width banner: grant identity left, tab toggle far-right. */}
-      <div className="flex items-center justify-between gap-7 border-b border-brand-navy/10 bg-white px-6 py-5 sm:px-8">
+      {/* Full-width banner: grant identity (the toggle now lives in the sidebar). */}
+      <div className="flex items-start justify-between gap-6 border-b border-brand-navy/10 bg-white px-6 py-5 sm:px-8">
         <div className="min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-orange">Grant Match Review</p>
           <h1 className="mt-1 font-serif text-[26px] font-semibold leading-[1.12] tracking-tight text-brand-navy">
@@ -158,42 +169,53 @@ export default async function CardDetailPage({
             {[g?.funder, g?.fon].filter(Boolean).join(" · ") || "—"}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2.5">
-          {card.decision !== "pending" && <DecisionBadge decision={card.decision} />}
-          <div className="flex gap-2">
-            <StepLink id={card.id} tab="grant" n={1} title="The Grant" active={tab === "grant"} />
-            <StepLink id={card.id} tab="match" n={2} title="The Match" active={tab === "match"} />
+        {card.decision !== "pending" && (
+          <div className="shrink-0">
+            <DecisionBadge decision={card.decision} />
           </div>
-        </div>
+        )}
       </div>
 
-      {/* Two-column body: wide main + right sidebar. */}
+      {/* Two-column body: wide main + right sidebar (toggle + decision panel). */}
       <div className="grid grid-cols-1 gap-6 px-6 py-7 sm:px-8 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-stretch">
         <main className="rounded-2xl border border-brand-navy/10 bg-white p-6 sm:p-8">
           {tab === "grant" ? <GrantTab g={g} /> : <MatchTab card={card} orgName={orgName} isProspect={isProspect} />}
         </main>
 
-        <aside className="flex flex-col gap-4">
-          <DecisionPanel
-            cardId={card.id}
-            decision={card.decision}
-            isAdmin={isAdmin}
-            draft={card.draft_outreach_email ?? ""}
-            finalEmail={card.final_outreach_email}
-            recipientEmail={card.clients?.primary_contact_email ?? null}
-            defaultSubject={defaultSubject}
-          />
-          {tab === "grant" ? <GrantSidebar g={g} /> : <MatchSidebar card={card} />}
+        <aside>
+          <div className="sticky top-6 space-y-4">
+            <div className="grid grid-cols-2 gap-2">
+              <StepLink id={card.id} tab="grant" n={1} title="The Grant" active={tab === "grant"} full />
+              <StepLink id={card.id} tab="match" n={2} title="The Match" active={tab === "match"} full />
+            </div>
+            <DecisionPanel
+              cardId={card.id}
+              decision={card.decision}
+              isAdmin={isAdmin}
+              draft={card.draft_outreach_email ?? ""}
+              finalEmail={card.final_outreach_email}
+              recipientEmail={card.clients?.primary_contact_email ?? null}
+              defaultSubject={defaultSubject}
+            />
+          </div>
         </aside>
       </div>
     </div>
   );
 }
 
-/* ── Tab 1: The Grant (main) ──────────────────────────────────────────────── */
+/* ── Tab 1: The Grant ─────────────────────────────────────────────────────── */
 function GrantTab({ g }: { g: FullCard["grants"] }) {
   const eligibleTypes = (g?.eligible_entity_types ?? []).map((t) => t.replace(/_/g, " "));
   const risks = collectRisks(g);
+  const iap = g?.ideal_applicant_profile as IdealApplicantProfile | null | undefined;
+  const allRubric = rubricRows(g?.scoring_rubric as Record<string, unknown> | null);
+  const rubric = allRubric.slice(0, RUBRIC_CAP);
+  const rubricMore = allRubric.length - rubric.length;
+  const postingLabel = g?.source_url && /simpler\.grants\.gov/i.test(g.source_url) ? "View on Simpler.gov ↗" : "View posting ↗";
+  const hasAddInfo = !!(g?.period_of_performance || rubric.length > 0 || g?.source_url || g?.id);
+  const budget = idealBudget(g);
+
   return (
     <div>
       <StatBand
@@ -229,6 +251,69 @@ function GrantTab({ g }: { g: FullCard["grants"] }) {
 
       {g?.incumbent_risk && <KeyCallout label="Make-or-break">{g.incumbent_risk}</KeyCallout>}
 
+      {/* Ideal Applicant Profile — clean pull from the shred; consortium block
+          renders only when archetypes exist, so a null profile omits gracefully. */}
+      {iap && (iap.summary || iap.core_funded_role || (iap.archetypes?.length ?? 0) > 0) && (
+        <Collapsible label="Ideal Applicant Profile">
+          {iap.summary && <p className="text-sm leading-relaxed text-foreground">{iap.summary}</p>}
+          {(g?.period_of_performance || budget || iap.core_funded_role) && (
+            <div className="mt-3 space-y-1 border-t border-brand-navy/[0.08] pt-3">
+              {g?.period_of_performance && <InfoRow k="Term" v={g.period_of_performance} />}
+              {budget && <InfoRow k="Budget" v={budget} />}
+              {iap.core_funded_role && <InfoRow k="Core funded role" v={iap.core_funded_role} />}
+            </div>
+          )}
+          {(iap.archetypes?.length ?? 0) > 0 && (
+            <div className="mt-3 space-y-3 border-t border-brand-navy/[0.08] pt-3">
+              {iap.archetypes.map((a, i) => (
+                <div key={i}>
+                  <p className="text-sm font-semibold text-brand-navy">{a.label}</p>
+                  {a.ideal_prime_shape && <p className="mt-0.5 text-sm text-muted-foreground">{a.ideal_prime_shape}</p>}
+                  {(a.partner_seats?.length ?? 0) > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {a.partner_seats.map((s, j) => <Chip key={j}>+ {s}</Chip>)}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {iap.eligibility_note && <p className="mt-3 text-xs text-muted-foreground">{iap.eligibility_note}</p>}
+        </Collapsible>
+      )}
+
+      {/* Additional information — collapsible in the main column, above Risk. */}
+      {hasAddInfo && (
+        <Collapsible label="Additional information">
+          {g?.period_of_performance && (
+            <div className="flex justify-between gap-3 border-b border-brand-navy/[0.08] pb-2.5 text-sm">
+              <span className="text-muted-foreground">Period of performance</span>
+              <span className="text-right text-brand-navy">{g.period_of_performance}</span>
+            </div>
+          )}
+          {rubric.length > 0 && (
+            <div className="border-b border-brand-navy/[0.08] py-2.5">
+              <p className="text-sm text-muted-foreground">Scoring rubric</p>
+              <div className="mt-2 grid grid-cols-1 gap-x-8 gap-y-1 sm:grid-cols-2">
+                {rubric.map((r, i) => (
+                  <div key={i} className="flex justify-between gap-3 text-sm">
+                    <span className="text-brand-navy/85">{r.name}</span>
+                    {r.points && <span className="shrink-0 text-brand-navy">{r.points}</span>}
+                  </div>
+                ))}
+              </div>
+              {rubricMore > 0 && <p className="mt-2 text-xs text-muted-foreground">+{rubricMore} more categories</p>}
+            </div>
+          )}
+          <div className="flex flex-wrap gap-x-6 gap-y-2 pt-3 text-sm font-medium">
+            {g?.source_url && (
+              <a href={g.source_url} target="_blank" rel="noopener noreferrer" className="text-brand-orange hover:underline">{postingLabel}</a>
+            )}
+            {g?.id && <Link href={`/grants/${g.id}`} className="text-brand-orange hover:underline">Open Shred →</Link>}
+          </div>
+        </Collapsible>
+      )}
+
       {risks.length > 0 && (
         <Collapsible label="Risk & key factors">
           <div className="space-y-2.5 pt-1">
@@ -245,47 +330,10 @@ function GrantTab({ g }: { g: FullCard["grants"] }) {
   );
 }
 
-/* ── Tab 1: The Grant (sidebar) — Additional information ──────────────────── */
-function GrantSidebar({ g }: { g: FullCard["grants"] }) {
-  const rubric = rubricRows(g?.scoring_rubric as Record<string, number | string> | null);
-  const postingLabel = g?.source_url && /simpler\.grants\.gov/i.test(g.source_url) ? "View on Simpler.gov ↗" : "View posting ↗";
-  if (!(g?.period_of_performance || rubric.length > 0 || g?.source_url || g?.id)) return null;
-  return (
-    <div className="rounded-2xl border border-brand-navy/10 bg-white p-4">
-      <SectionLabel>Additional information</SectionLabel>
-      <div className="mt-3">
-        {g?.period_of_performance && (
-          <div className="flex justify-between gap-3 border-b border-brand-navy/[0.08] pb-2.5 text-sm">
-            <span className="text-muted-foreground">Period of performance</span>
-            <span className="text-right text-brand-navy">{g.period_of_performance}</span>
-          </div>
-        )}
-        {rubric.length > 0 && (
-          <div className="border-b border-brand-navy/[0.08] py-2.5">
-            <p className="text-sm text-muted-foreground">Scoring rubric</p>
-            <div className="mt-2 space-y-1">
-              {rubric.map((r, i) => (
-                <div key={i} className="flex justify-between gap-3 text-sm">
-                  <span className="text-brand-navy/85">{r.name}</span>
-                  {r.points && <span className="shrink-0 text-brand-navy">{r.points}</span>}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-        <div className="flex flex-col gap-2 pt-3 text-sm font-medium">
-          {g?.source_url && (
-            <a href={g.source_url} target="_blank" rel="noopener noreferrer" className="text-brand-orange hover:underline">{postingLabel}</a>
-          )}
-          {g?.id && <Link href={`/grants/${g.id}`} className="text-brand-orange hover:underline">Open Shred →</Link>}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ── Tab 2: The Match (main) ──────────────────────────────────────────────── */
+/* ── Tab 2: The Match ─────────────────────────────────────────────────────── */
 function MatchTab({ card, orgName, isProspect }: { card: FullCard; orgName: string; isProspect: boolean }) {
+  const rc = card.reasoning_context || {};
+  const watchouts = cleanWatchouts(card.before_you_approve);
   return (
     <div>
       <StatBand
@@ -320,6 +368,26 @@ function MatchTab({ card, orgName, isProspect }: { card: FullCard; orgName: stri
         </section>
       )}
 
+      {/* Watch-outs — collapsible in the main column, below Concept Proposal. */}
+      {watchouts.length > 0 && (
+        <Collapsible label="Watch-outs">
+          <div className="space-y-2.5 pt-1">
+            {watchouts.map((w, i) => (
+              <div key={i} className="flex gap-2.5 text-sm leading-relaxed text-foreground">
+                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-orange" />
+                <span>{w}</span>
+              </div>
+            ))}
+          </div>
+        </Collapsible>
+      )}
+
+      {rc.fit_score_derivation && (
+        <Collapsible label="How this score was reached">
+          <p className="pt-1 text-sm leading-relaxed text-foreground">{rc.fit_score_derivation}</p>
+        </Collapsible>
+      )}
+
       {isProspect && card.prospects?.source_url && (
         <p className="mt-8 text-sm">
           <a href={card.prospects.source_url} target="_blank" rel="noopener noreferrer" className="font-medium text-brand-orange hover:underline">Prospect source ↗</a>
@@ -329,71 +397,38 @@ function MatchTab({ card, orgName, isProspect }: { card: FullCard; orgName: stri
   );
 }
 
-/* ── Tab 2: The Match (sidebar) — how scored + watch-outs ─────────────────── */
-function MatchSidebar({ card }: { card: FullCard }) {
-  const rc = card.reasoning_context || {};
-  const watchouts = cleanWatchouts(card.before_you_approve);
-  const derivation = rc.fit_score_derivation;
-  return (
-    <>
-      {derivation && (
-        <div className="rounded-2xl border border-brand-navy/10 bg-white p-4">
-          <SectionLabel>How this score was reached</SectionLabel>
-          <p className="mt-2 text-sm leading-relaxed text-foreground">{derivation}</p>
-        </div>
-      )}
-      {watchouts.length > 0 && (
-        <div className="rounded-2xl border border-brand-navy/10 bg-white p-4">
-          <details className="group">
-            <summary className="flex cursor-pointer items-center justify-between [&::-webkit-details-marker]:hidden">
-              <SectionLabel>Watch-outs</SectionLabel>
-              <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
-            </summary>
-            <div className="mt-3 space-y-2.5">
-              {watchouts.map((w, i) => (
-                <div key={i} className="flex gap-2.5 text-sm leading-relaxed text-foreground">
-                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-orange" />
-                  <span>{w}</span>
-                </div>
-              ))}
-            </div>
-          </details>
-        </div>
-      )}
-    </>
-  );
-}
-
 /* ── Shared primitives ────────────────────────────────────────────────────── */
 
-// Ordinal tab in the banner. Active = filled navy with an orange number badge.
-function StepLink({ id, tab, n, title, active }: { id: string; tab: TabKey; n: number; title: string; active: boolean }) {
+// Ordinal tab. Active = filled navy with an orange number badge. `full` makes it
+// fill its grid cell (used in the sidebar toggle).
+function StepLink({ id, tab, n, title, active, full }: { id: string; tab: TabKey; n: number; title: string; active: boolean; full?: boolean }) {
   return (
     <Link
       href={`/review/${id}?tab=${tab}`}
-      className={`flex items-center gap-2.5 rounded-xl border px-3.5 py-2.5 transition ${
+      className={`flex items-center gap-2.5 rounded-xl border px-3.5 py-2.5 transition ${full ? "w-full" : ""} ${
         active ? "border-brand-navy bg-brand-navy" : "border-brand-navy/10 bg-white hover:border-brand-navy/25"
       }`}
     >
       <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-[12.5px] font-semibold ${
         active ? "bg-brand-orange text-white" : "bg-brand-navy/[0.06] text-brand-navy"
       }`}>{n}</span>
-      <span className="leading-tight">
+      <span className="min-w-0 leading-tight">
         <span className={`block text-[10px] uppercase tracking-[0.1em] ${active ? "text-white/60" : "text-muted-foreground"}`}>Step {n}</span>
-        <span className={`block font-serif text-[15px] font-semibold ${active ? "text-white" : "text-brand-navy"}`}>{title}</span>
+        <span className={`block truncate font-serif text-[15px] font-semibold ${active ? "text-white" : "text-brand-navy"}`}>{title}</span>
       </span>
     </Link>
   );
 }
 
-// Signature navy stat-band; most-urgent cell in burnt orange.
+// Signature navy stat-band; most-urgent cell in burnt orange. Values NEVER wrap
+// or resize the cell -- they truncate to one line (full text on hover).
 function StatBand({ items }: { items: { label: string; value: string; urgent?: boolean }[] }) {
   return (
     <div className="flex overflow-hidden rounded-xl">
       {items.map((it, i) => (
         <div key={i} className={`min-w-0 flex-1 px-4 py-3.5 ${it.urgent ? "bg-brand-orange" : "bg-brand-navy"} ${i > 0 ? "border-l border-white/10" : ""}`}>
-          <p className={`text-[10px] uppercase tracking-[0.08em] ${it.urgent ? "text-white/75" : "text-white/55"}`}>{it.label}</p>
-          <p className="mt-1 break-words font-serif text-lg font-semibold leading-tight text-white">{it.value}</p>
+          <p className={`truncate text-[10px] uppercase tracking-[0.08em] ${it.urgent ? "text-white/75" : "text-white/55"}`}>{it.label}</p>
+          <p className="mt-1 truncate font-serif text-lg font-semibold leading-tight text-white" title={it.value}>{it.value}</p>
         </div>
       ))}
     </div>
@@ -408,6 +443,15 @@ function Chip({ children }: { children: React.ReactNode }) {
   return <span className="inline-flex items-center rounded-md bg-brand-navy/[0.06] px-2.5 py-0.5 text-xs text-brand-navy/85">{children}</span>;
 }
 
+function InfoRow({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex justify-between gap-3 text-sm">
+      <span className="text-muted-foreground">{k}</span>
+      <span className="text-right text-brand-navy">{v}</span>
+    </div>
+  );
+}
+
 // Cream / orange-left-border callout. `tight` drops the top margin when it leads
 // a section that already has a label above it.
 function KeyCallout({ label, tight, children }: { label?: string; tight?: boolean; children: React.ReactNode }) {
@@ -419,14 +463,15 @@ function KeyCallout({ label, tight, children }: { label?: string; tight?: boolea
   );
 }
 
+// Native <details> collapsible (collapsed by default, no client JS).
 function Collapsible({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <details className="group mt-8 overflow-hidden rounded-xl border border-brand-navy/10">
+    <details className="group mt-6 overflow-hidden rounded-xl border border-brand-navy/10">
       <summary className="flex cursor-pointer items-center justify-between bg-brand-navy/[0.02] px-4 py-3 [&::-webkit-details-marker]:hidden">
         <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-brand-orange">{label}</span>
         <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
       </summary>
-      <div className="px-4 pb-4">{children}</div>
+      <div className="px-4 pb-4 pt-1">{children}</div>
     </details>
   );
 }

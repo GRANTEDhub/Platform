@@ -110,7 +110,7 @@ export function DecisionPanel({
   if (confirm) return <DecisionConfirmation summary={confirm} />;
 
   return (
-    <div className="sticky top-6 rounded-2xl border border-brand-navy/10 bg-white p-4">
+    <div className="rounded-2xl border border-brand-navy/10 bg-white p-4">
       {/* Score feedback */}
       <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
         Agree with the score?
