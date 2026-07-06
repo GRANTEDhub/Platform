@@ -101,6 +101,61 @@ async function launch(): Promise<Browser> {
   });
 }
 
+// Diagnostic: prove (on the actual deploy) that the brand TTFs ship in the
+// function AND that the @font-face data URIs are applied by Chromium at render.
+// The sandbox always has the fonts locally, so it can't surface a serverless
+// file-tracing gap -- this runs the same read + render path and reports what the
+// live function actually sees. Hit /api/alerts/[cardId]/pdf?debug=fonts (admin).
+export async function debugAlertFonts(data: AlertData): Promise<Record<string, unknown>> {
+  const dir = path.join(ROOT, "lib/contracts/fonts");
+  const files = [
+    "SourceSerif4-Regular.ttf",
+    "SourceSerif4-SemiBold.ttf",
+    "InterTight-Regular.ttf",
+    "InterTight-SemiBold.ttf",
+  ];
+  const fileChecks = await Promise.all(
+    files.map(async (f) => {
+      try {
+        const st = await fs.stat(path.join(dir, f));
+        return { file: f, exists: true, bytes: st.size };
+      } catch (e) {
+        return { file: f, exists: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    }),
+  );
+
+  const html = await renderAlertHtml(data);
+  const htmlHasEmbeddedFont = html.includes("data:font/ttf;base64,");
+  const browser = await launch();
+  try {
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: "load", timeout: 30_000 });
+    try {
+      await page.evaluate(() => (document as unknown as { fonts?: { ready?: Promise<unknown> } }).fonts?.ready);
+    } catch {
+      /* ignore */
+    }
+    const pageFonts = await page.evaluate(() => {
+      const h1 = document.querySelector("h1");
+      const d = document as unknown as {
+        fonts: { check: (f: string) => boolean; forEach: (cb: (f: { family: string; weight: string; status: string }) => void) => void };
+      };
+      const loaded: string[] = [];
+      d.fonts.forEach((f) => loaded.push(`${f.family} ${f.weight}: ${f.status}`));
+      return {
+        headlineComputedFont: h1 ? getComputedStyle(h1).fontFamily : null,
+        checkSourceSerif: d.fonts.check("16px 'Source Serif 4'"),
+        checkInterTight: d.fonts.check("16px 'Inter Tight'"),
+        registeredFaces: loaded,
+      };
+    });
+    return { runtimeCwd: ROOT, fontDir: dir, fileChecks, htmlHasEmbeddedFont, pageFonts };
+  } finally {
+    await browser.close();
+  }
+}
+
 export async function renderAlertPdf(data: AlertData): Promise<Buffer> {
   const html = await renderAlertHtml(data);
   const browser = await launch();
