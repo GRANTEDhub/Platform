@@ -7,13 +7,17 @@ export type AlertStat = { value: string; label: string; highlight?: boolean };
 export type AlertRiskCallout = { label: string; points?: string; headline: string; body: string };
 export type AlertEligibilityNote = { label: string; body: string };
 
-// The ONLY tokens the model may write. It never emits numbers/dates/eligibility.
+// The tokens the model may write. It never emits raw numbers/dates; the eligibility
+// fields are shaped from (and must stay faithful to) the read-only facts it's given.
 export interface AlertEnrichment {
   headline: string;
   alertLabel: string;
+  programName: string;        // clean human program name (not the raw funder org)
   programShort: string;
   whatItFundsIntro: string;
   whatItFunds: string[];
+  eligibilitySummary: string; // concise "who can apply", grounded on the facts
+  eligibilityNote: AlertEligibilityNote | null; // short nuance note, or null
   ctaSendItems: string;
   riskCallout: AlertRiskCallout | null;
 }

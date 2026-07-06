@@ -15,12 +15,15 @@ Rules:
 - Domestic U.S. framing. Plain, direct language. No hype, no over-promising, no em-dashes.
 - headline: punchy, ~30-45 characters, reads on one or two lines (e.g. "FEMA Grant for Faith-based Orgs").
 - alertLabel: short program tag for a pill, e.g. "FEMA NSGP Alert".
+- programName: the clean, human-readable PROGRAM name in Title Case (e.g. "Nonprofit Security Grant Program"). Do NOT return the raw funding agency/org name and do NOT use ALL CAPS. If no distinct program name exists, write a short descriptive one.
 - programShort: the program acronym/short name if one clearly exists (e.g. "NSGP"); else "".
 - whatItFundsIntro: one short lead-in line ending with a colon.
 - whatItFunds: 4-10 very short chip labels (1-3 words each) of fundable items/uses.
+- eligibilitySummary: 1-2 tight sentences summarizing WHO CAN APPLY. Ground it strictly in the provided eligible_entity_types, geographic_eligibility, and ineligible_entities: stay factually faithful (do not add or drop eligibility categories), but readable, not a raw dump. Note key ineligibility briefly only if it matters.
+- eligibilityNote: a SHORT labeled nuance note ONLY if one clearly applies (e.g. reimbursement, pre-registration). Object {label: 2-4 words, body: 1-2 short sentences}. Otherwise null.
 - ctaSendItems: what the org should send us to start, e.g. "your top security priorities and any incident history".
-- riskCallout: the single make-or-break factor, or null if none is clear. Object: {label:"The make-or-break factor", points: optional short scoring note or omit, headline: one sentence, body: 2-4 sentences}.
-Return a single JSON object with exactly these keys: headline, alertLabel, programShort, whatItFundsIntro, whatItFunds, ctaSendItems, riskCallout.`;
+- riskCallout: the single make-or-break factor, or null if none is clear. Object {label:"The make-or-break factor", points: a VERY short badge only (max ~6 words, e.g. "Risk = 15 of 40 pts") or omit, never a sentence, headline: ONE punchy sentence, separate from points, body: 2-4 sentences}.
+Return a single JSON object with exactly these keys: headline, alertLabel, programName, programShort, whatItFundsIntro, whatItFunds, eligibilitySummary, eligibilityNote, ctaSendItems, riskCallout.`;
 
 function factsContext(g: Grant, card: ReviewCard): string {
   return JSON.stringify(
@@ -32,6 +35,8 @@ function factsContext(g: Grant, card: ReviewCard): string {
       focus_areas: g.focus_areas,
       program_type: g.program_type,
       eligible_entity_types: g.eligible_entity_types,
+      geographic_eligibility: g.geographic_eligibility,
+      ineligible_entities: g.ineligible_entities,
       incumbent_risk: g.incumbent_risk,
       technical_burden_flags: g.technical_burden_flags,
       scoring_rubric: g.scoring_rubric,
@@ -59,20 +64,40 @@ function validate(raw: unknown): AlertEnrichment | null {
     const r = o.riskCallout as Record<string, unknown>;
     const body = typeof r.body === "string" ? r.body.trim() : "";
     if (body) {
+      // Keep the badge short so it can't run into the headline (a sentence-long
+      // "points" was the garble we're fixing).
+      const rawPoints = typeof r.points === "string" ? r.points.trim() : "";
+      const points = rawPoints && rawPoints.split(/\s+/).length <= 8 && rawPoints.length <= 48 ? rawPoints : undefined;
       riskCallout = {
-        label: typeof r.label === "string" && r.label.trim() ? r.label.trim() : "The make-or-break factor",
-        points: typeof r.points === "string" && r.points.trim() ? r.points.trim() : undefined,
-        headline: typeof r.headline === "string" ? r.headline.trim() : "",
-        body,
+        label: typeof r.label === "string" && r.label.trim() ? r.label.trim().slice(0, 40) : "The make-or-break factor",
+        points,
+        headline: typeof r.headline === "string" ? r.headline.trim().slice(0, 120) : "",
+        body: body.slice(0, 600),
       };
     }
   }
+
+  let eligibilityNote: AlertEnrichment["eligibilityNote"] = null;
+  if (o.eligibilityNote && typeof o.eligibilityNote === "object") {
+    const n = o.eligibilityNote as Record<string, unknown>;
+    const nbody = typeof n.body === "string" ? n.body.trim() : "";
+    if (nbody) {
+      eligibilityNote = {
+        label: typeof n.label === "string" && n.label.trim() ? n.label.trim().slice(0, 30) : "Note",
+        body: nbody.slice(0, 220),
+      };
+    }
+  }
+
   return {
     headline: headline.slice(0, 60),
     alertLabel: typeof o.alertLabel === "string" ? o.alertLabel.trim().slice(0, 40) : "",
+    programName: typeof o.programName === "string" ? o.programName.trim().slice(0, 70) : "",
     programShort: typeof o.programShort === "string" ? o.programShort.trim().slice(0, 24) : "",
     whatItFundsIntro: typeof o.whatItFundsIntro === "string" ? o.whatItFundsIntro.trim() : "",
     whatItFunds: asStringArray(o.whatItFunds).slice(0, 10),
+    eligibilitySummary: typeof o.eligibilitySummary === "string" ? o.eligibilitySummary.trim().slice(0, 260) : "",
+    eligibilityNote,
     ctaSendItems: typeof o.ctaSendItems === "string" ? o.ctaSendItems.trim() : "",
     riskCallout,
   };

@@ -40,7 +40,7 @@
   <div style="padding:24px 46px 20px 46px;">
     <!-- DYNAMIC: eyebrow line. fon is CONDITIONAL. -->
     <div style="font-size:11px; font-weight:600; letter-spacing:0.15em; text-transform:uppercase; color:#b3541e; margin-bottom:12px;">
-      {{programName}} &middot; {{programShort}} &middot; {{fiscalYear}}{{#if fon}} &middot; FON {{fon}}{{/if}}
+      {{programName}}{{#if programShort}} &middot; {{programShort}}{{/if}}{{#if fiscalYear}} &middot; {{fiscalYear}}{{/if}}{{#if fon}} &middot; FON {{fon}}{{/if}}
     </div>
     <!-- DYNAMIC: headline -->
     <h1 style="font-family:'Source Serif 4', serif; font-weight:700; font-size:42px; line-height:1.03; letter-spacing:-0.02em; margin:0 0 16px 0; color:#0B1E3A;">
@@ -108,7 +108,7 @@
       <span style="font-size:10px; font-weight:600; letter-spacing:0.05em; text-transform:uppercase; color:#0B1E3A; background:#fff; border-radius:2px; padding:3px 7px;">{{riskCallout.points}}</span>
       {{/if}}
     </div>
-    <h2 style="font-family:'Source Serif 4', serif; font-weight:700; font-size:18px; line-height:1.12; margin:0 0 6px 0; color:#0B1E3A; text-wrap:balance;">{{riskCallout.headline}}</h2>
+    {{#if riskCallout.headline}}<h2 style="font-family:'Source Serif 4', serif; font-weight:700; font-size:18px; line-height:1.12; margin:0 0 6px 0; color:#0B1E3A; text-wrap:balance;">{{riskCallout.headline}}</h2>{{/if}}
     <p style="font-size:12.5px; line-height:1.5; margin:0; color:#2a3a52;">{{riskCallout.body}}</p>
   </div>
   {{/if}}

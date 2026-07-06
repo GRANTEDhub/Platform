@@ -43,16 +43,28 @@ function buildIntroHtml(g: Grant, card: ReviewCard): string {
   return text;
 }
 
+function stripTrailingPunct(s: string): string {
+  return s.replace(/\s*[.;,]+\s*$/, "");
+}
+function truncateWords(s: string, n: number): string {
+  const t = s.trim();
+  return t.length <= n ? t : t.slice(0, n).replace(/\s+\S*$/, "") + "…";
+}
+
+// Deterministic fallback for "who can apply" (used only if the LLM summary is
+// absent). Kept tight: dedupe trailing punctuation (avoids "in that state..") and
+// truncate a long ineligible dump so it stays readable.
 function buildEligibilityHtml(g: Grant): string {
   const parts: string[] = [];
   const types = (g.eligible_entity_types ?? []).map((t) => t.replace(/_/g, " "));
   if (types.length > 0) {
-    parts.push(esc(types.join(", ")) + (g.geographic_eligibility ? ` in ${esc(g.geographic_eligibility)}` : "") + ".");
+    const geo = g.geographic_eligibility ? ` in ${stripTrailingPunct(g.geographic_eligibility)}` : "";
+    parts.push(`${stripTrailingPunct(types.join(", "))}${geo}.`);
   } else if (g.geographic_eligibility) {
-    parts.push(`Eligible in ${esc(g.geographic_eligibility)}.`);
+    parts.push(`Eligible in ${stripTrailingPunct(g.geographic_eligibility)}.`);
   }
-  if (g.ineligible_entities) parts.push(`Not eligible: ${esc(g.ineligible_entities)}.`);
-  return parts.join(" ") || "See the NOFO for full eligibility.";
+  if (g.ineligible_entities) parts.push(`Not eligible: ${stripTrailingPunct(truncateWords(g.ineligible_entities, 140))}.`);
+  return esc(parts.join(" ") || "See the NOFO for full eligibility.");
 }
 
 // Deterministic stats, deadline last + highlighted; cap at 4.
@@ -84,17 +96,25 @@ export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichme
     ctaSendItems: enrich?.ctaSendItems?.trim() || "your organization's priorities and any relevant history",
     riskCallout: enrich?.riskCallout ?? incumbentFallback,
 
+    // Clean program name from the model; raw funder is the fallback.
+    programName: enrich?.programName?.trim() || funder || "Federal grant program",
+
     // ── facts (deterministic) ──
-    programName: funder || "Federal grant program",
     fiscalYear: fiscalYear(g),
     fon: g.fon || null,
     introHtml: buildIntroHtml(g, card),
     stats: buildStats(g),
     statsFootnote: null,
-    eligibilityHtml: buildEligibilityHtml(g),
-    eligibilityNote: g.ideal_applicant_profile?.eligibility_note
-      ? { label: "Eligibility note", body: g.ideal_applicant_profile.eligibility_note }
-      : null,
+    // Concise, grounded eligibility from the model; deterministic tight fallback.
+    eligibilityHtml: enrich?.eligibilitySummary?.trim()
+      ? esc(enrich.eligibilitySummary.trim())
+      : buildEligibilityHtml(g),
+    // Short note from the model; else truncate the raw note to fit the compact box.
+    eligibilityNote:
+      enrich?.eligibilityNote ??
+      (g.ideal_applicant_profile?.eligibility_note
+        ? { label: "Eligibility note", body: truncateWords(g.ideal_applicant_profile.eligibility_note, 180) }
+        : null),
     // No structured state-passthrough data in the schema -> federal-direct default.
     statePassThrough: false,
     deadlineLong: formatDeadline(g.submission_deadline),
