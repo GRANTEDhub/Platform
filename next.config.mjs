@@ -15,9 +15,20 @@ const nextConfig = {
       // The discovery-invite route reads the engagement flyer at runtime; trace
       // the fixed asset into its serverless function (same as the fonts above).
       "/api/leads/[id]/send-discovery-invite": ["./lib/email/assets/**"],
-      // The grant-alert routes read the vendored template + logo assets at render.
-      "/api/alerts/[cardId]/pdf": ["./lib/alerts/template/**", "./lib/alerts/assets/**"],
-      "/api/alerts/[cardId]/send": ["./lib/alerts/template/**", "./lib/alerts/assets/**"],
+      // The grant-alert routes read the vendored template + logo assets at render,
+      // and need the @sparticuz/chromium binary (its bin/ dir) traced into the
+      // function -- externalizing keeps it out of webpack, but the binary must
+      // still ship in the bundle or executablePath() can't find/decompress it.
+      "/api/alerts/[cardId]/pdf": [
+        "./lib/alerts/template/**",
+        "./lib/alerts/assets/**",
+        "./node_modules/@sparticuz/chromium/**",
+      ],
+      "/api/alerts/[cardId]/send": [
+        "./lib/alerts/template/**",
+        "./lib/alerts/assets/**",
+        "./node_modules/@sparticuz/chromium/**",
+      ],
     },
   },
 };
