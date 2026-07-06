@@ -3,12 +3,12 @@ import { notFound } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { GrantStatusBadge, ScoreBadge, DecisionBadge } from "@/components/grants/badges";
-import { GrantOverview, GrantKeyFacts } from "@/components/grants/grant-facts";
+import { GrantBody, SectionLabel } from "@/components/grants/grant-detail";
 import { MatchOutcomes, type OutcomeCard } from "@/components/grants/match-outcomes";
 import { getGrantGateStatus, undecidedClientCount } from "@/lib/grants/gate";
+import { interTight, sourceSerif } from "@/lib/fonts";
 import { ProspectButton } from "../prospect-button";
 import { ScheduleLinkButton } from "../schedule-link-button";
 import { StartOutreachButton } from "../start-outreach-button";
@@ -16,11 +16,12 @@ import type { Grant, ReviewCard, Client, Prospect } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
-// The Prospects detail (Track 2): a prospect-appropriate view of one grant --
-// grant facts, the carry-over note (who among our clients matched + result), the
-// prospect surface (discovered non-client orgs) and the Prospect action. The
-// client-first gate lives here (it governs prospecting). NO re-match / re-shred:
-// those are calibration tools and live on the Ledger detail, off this path.
+// The Prospects detail (Track 2): a prospect-appropriate view of one grant. The
+// grant body reuses the shared styled grant-detail blocks (same look as the
+// Matches review Grant tab); the prospecting-specific surface -- the discovered
+// non-client orgs, the client-first gate, the carry-over of who among our clients
+// matched -- is unique to this page and lives around it. NO client-match decision
+// panel and NO Grant/Match tabs (there is no single client context here).
 type CardRow = ReviewCard & {
   clients: Pick<Client, "id" | "name"> | null;
   prospects: Pick<Prospect, "id" | "name" | "org_type" | "source_url"> | null;
@@ -61,7 +62,7 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
   }));
 
   return (
-    <div>
+    <div className={`${interTight.variable} ${sourceSerif.variable}`}>
       <PageHeader
         title={grant.title || "Untitled opportunity"}
         description={[grant.funder, grant.fon].filter(Boolean).join(" · ") || undefined}
@@ -76,37 +77,43 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
         }
       />
 
-      <div className="grid gap-6 p-8 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
-          <GrantOverview grant={grant} />
+      <div className="min-h-full bg-brand-cream">
+        <div className="grid grid-cols-1 gap-6 px-6 py-7 sm:px-8 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-start">
+          {/* MAIN: styled grant body + the unique prospects list. */}
+          <div className="space-y-6">
+            <main className="rounded-2xl border border-brand-navy/10 bg-white p-6 sm:p-8">
+              {grant.grant_status === "Forecasted" ? (
+                <p className="text-sm text-muted-foreground">Forecasted — no NOFO published yet.</p>
+              ) : grant.shred_depth === "summary" && grant.shred_reason ? (
+                <p className="mb-4 text-xs text-muted-foreground">Summary shred only — {grant.shred_reason}</p>
+              ) : null}
+              <GrantBody grant={grant} />
+            </main>
 
-          <Card>
-            <CardHeader className="flex-row items-center justify-between space-y-0">
-              <CardTitle>Prospects ({prospectCards.length})</CardTitle>
-              {/* Client-first: only prospect once every client match is decided. */}
-              {gate === "released" && grant.is_domestic && <ProspectButton grantId={grant.id} />}
-            </CardHeader>
-            <CardContent>
+            {/* Prospects — the discovered non-client orgs (unique to this page). */}
+            <div className="rounded-2xl border border-brand-navy/10 bg-white p-6 sm:p-8">
+              <div className="flex items-center justify-between gap-3">
+                <SectionLabel>Prospects ({prospectCards.length})</SectionLabel>
+                {gate === "released" && grant.is_domestic && <ProspectButton grantId={grant.id} />}
+              </div>
+
               {gate !== "released" ? (
-                <p className="text-sm text-muted-foreground">
+                <p className="mt-3 text-sm text-muted-foreground">
                   {gate === "not_ready"
                     ? "Not ready — this grant has not finished scoring against the roster."
                     : `Locked — ${undecided} client ${undecided === 1 ? "match is" : "matches are"} undecided. Clients get first dibs before prospecting.`}
                 </p>
               ) : prospectCards.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
+                <p className="mt-3 text-sm text-muted-foreground">
                   No prospects surfaced yet. Run Prospect to search for fitting non-client orgs.
                 </p>
               ) : (
-                <ul className="divide-y text-sm">
+                <ul className="mt-2 divide-y divide-brand-navy/[0.08] text-sm">
                   {prospectCards.map((pc) => (
-                    <li key={pc.id} className="space-y-2 py-3">
-                      <div className="flex items-center justify-between gap-3">
+                    <li key={pc.id} className="space-y-2.5 py-3.5">
+                      <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          {/* Prospect cards ARE the actionable surface -> the review
-                              page is where a prospect is worked (Matches' decision
-                              surface serves prospect cards too). */}
-                          <Link href={`/review/${pc.id}`} className="font-medium hover:underline">
+                          <Link href={`/review/${pc.id}`} className="font-medium text-brand-navy hover:underline">
                             {pc.prospects?.name || "Prospect org"}
                           </Link>
                           <p className="truncate text-xs text-muted-foreground">
@@ -114,12 +121,7 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                             {pc.prospects?.source_url ? (
                               <>
                                 {" · "}
-                                <a
-                                  href={pc.prospects.source_url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-primary hover:underline"
-                                >
+                                <a href={pc.prospects.source_url} target="_blank" rel="noopener noreferrer" className="text-brand-orange hover:underline">
                                   source ↗
                                 </a>
                               </>
@@ -131,10 +133,6 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                           <DecisionBadge decision={pc.decision} />
                         </div>
                       </div>
-                      {/* Outbound door. "Start outreach" promotes the prospect to
-                          a tracked lead (carrying its grant-match context) and
-                          mints a lead-bound scheduling link; the raw scheduling
-                          link remains for a quick prospect-only touch. */}
                       {pc.prospects?.id && (
                         <div className="flex flex-wrap items-center gap-3">
                           <StartOutreachButton prospectId={pc.prospects.id} grantId={grant.id} />
@@ -145,46 +143,37 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                   ))}
                 </ul>
               )}
-            </CardContent>
-          </Card>
-        </div>
+            </div>
+          </div>
 
-        <div className="space-y-6">
-          <Card>
-            <CardHeader><CardTitle>Prospecting</CardTitle></CardHeader>
-            <CardContent className="space-y-1 text-sm">
-              {gate === "not_ready" && (
-                <p className="text-muted-foreground">
-                  Not ready — grant has not finished scoring against the roster.
-                </p>
-              )}
-              {gate === "released" && (
-                <div className="flex items-center gap-2">
-                  <Badge variant="success">Released</Badge>
-                  <span className="text-muted-foreground">
-                    Free to prospect — every client match is decided (or there are none).
-                  </span>
-                </div>
-              )}
-              {gate === "locked" && (
-                <div className="flex items-center gap-2">
-                  <Badge variant="warning">Locked</Badge>
-                  <span className="text-muted-foreground">
-                    {undecided} client {undecided === 1 ? "match" : "matches"} undecided — clients get first dibs.
-                  </span>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          {/* SIDEBAR: prospecting-only (grant facts folded into the body above). */}
+          <aside className="space-y-4">
+            <div className="rounded-2xl border border-brand-navy/10 bg-white p-4">
+              <SectionLabel>Prospecting</SectionLabel>
+              <div className="mt-3 flex items-start gap-2.5 text-sm text-muted-foreground">
+                {gate === "not_ready" && <p>Not ready — grant has not finished scoring against the roster.</p>}
+                {gate === "released" && (
+                  <>
+                    <Badge variant="success">Released</Badge>
+                    <span>Free to prospect — every client match is decided (or there are none).</span>
+                  </>
+                )}
+                {gate === "locked" && (
+                  <>
+                    <Badge variant="warning">Locked</Badge>
+                    <span>{undecided} client {undecided === 1 ? "match" : "matches"} undecided — clients get first dibs.</span>
+                  </>
+                )}
+              </div>
+            </div>
 
-          <Card>
-            <CardHeader><CardTitle>Also matched (clients)</CardTitle></CardHeader>
-            <CardContent>
-              <MatchOutcomes cards={carryOver} emptyText="No client matches on this grant." />
-            </CardContent>
-          </Card>
-
-          <GrantKeyFacts grant={grant} />
+            <div className="rounded-2xl border border-brand-navy/10 bg-white p-4">
+              <SectionLabel>Also matched · clients</SectionLabel>
+              <div className="mt-3">
+                <MatchOutcomes cards={carryOver} emptyText="No client matches on this grant." />
+              </div>
+            </div>
+          </aside>
         </div>
       </div>
     </div>
