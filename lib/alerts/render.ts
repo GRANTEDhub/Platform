@@ -16,6 +16,36 @@ import type { AlertData } from "./types";
 const ROOT = process.cwd();
 let cachedTemplate: HandlebarsTemplateDelegate<AlertData> | null = null;
 let cachedAssets: { navy: string; white: string } | null = null;
+let cachedFontCss: string | null = null;
+
+// Embed the brand fonts as local @font-face data URIs. Fetching Google Fonts at
+// render time is unreliable in serverless (cold DNS / blocked egress), and when
+// the CDN is slow Chromium prints before the faces load -> the garbled
+// letter-spacing we saw. Local TTFs (the same files the contract PDF uses)
+// guarantee correct glyphs and kerning every render. Only Regular (400) and
+// SemiBold (600) weights are vendored, so each face covers a weight RANGE: the
+// template's 400/500 map to Regular and 600/700 to SemiBold.
+async function loadFontCss(): Promise<string> {
+  if (!cachedFontCss) {
+    const dir = path.join(ROOT, "lib/contracts/fonts");
+    const [serifReg, serifSemi, interReg, interSemi] = await Promise.all([
+      fs.readFile(path.join(dir, "SourceSerif4-Regular.ttf")),
+      fs.readFile(path.join(dir, "SourceSerif4-SemiBold.ttf")),
+      fs.readFile(path.join(dir, "InterTight-Regular.ttf")),
+      fs.readFile(path.join(dir, "InterTight-SemiBold.ttf")),
+    ]);
+    const face = (family: string, buf: Buffer, weight: string) =>
+      `@font-face{font-family:'${family}';font-style:normal;font-weight:${weight};font-display:swap;` +
+      `src:url(data:font/ttf;base64,${buf.toString("base64")}) format('truetype');}`;
+    cachedFontCss = [
+      face("Source Serif 4", serifReg, "400 500"),
+      face("Source Serif 4", serifSemi, "600 700"),
+      face("Inter Tight", interReg, "400 500"),
+      face("Inter Tight", interSemi, "600 700"),
+    ].join("");
+  }
+  return cachedFontCss;
+}
 
 async function loadTemplate() {
   if (!cachedTemplate) {
@@ -43,10 +73,13 @@ async function loadAssets() {
 }
 
 export async function renderAlertHtml(data: AlertData): Promise<string> {
-  const [tpl, assets] = await Promise.all([loadTemplate(), loadAssets()]);
+  const [tpl, assets, fontCss] = await Promise.all([loadTemplate(), loadAssets(), loadFontCss()]);
   return tpl(data)
     .replace("assets/granted-mark-navy.png", assets.navy)
-    .replace("assets/granted-mark-white.png", assets.white);
+    .replace("assets/granted-mark-white.png", assets.white)
+    // Inject the embedded @font-face rules right before </head> so they win over
+    // the CDN <link> (which stays as a harmless progressive-enhancement fallback).
+    .replace("</head>", `<style>${fontCss}</style></head>`);
 }
 
 async function launch(): Promise<Browser> {
@@ -81,7 +114,15 @@ export async function renderAlertPdf(data: AlertData): Promise<Buffer> {
     } catch {
       /* fonts.ready unsupported -> proceed with whatever loaded */
     }
-    const pdf = await page.pdf({ format: "letter", printBackground: true, preferCSSPageSize: true });
+    // pageRanges:"1" is a hard backstop -- the template is sized to exactly one
+    // letter page (fixed 1056px height, overflow hidden), but this guarantees we
+    // never emit a stray second page even if content is unexpectedly tall.
+    const pdf = await page.pdf({
+      format: "letter",
+      printBackground: true,
+      preferCSSPageSize: true,
+      pageRanges: "1",
+    });
     return Buffer.from(pdf);
   } finally {
     await browser.close();

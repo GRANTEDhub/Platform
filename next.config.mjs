@@ -22,11 +22,13 @@ const nextConfig = {
       "/api/alerts/[cardId]/pdf": [
         "./lib/alerts/template/**",
         "./lib/alerts/assets/**",
+        "./lib/contracts/fonts/**",
         "./node_modules/@sparticuz/chromium/**",
       ],
       "/api/alerts/[cardId]/send": [
         "./lib/alerts/template/**",
         "./lib/alerts/assets/**",
+        "./lib/contracts/fonts/**",
         "./node_modules/@sparticuz/chromium/**",
       ],
     },

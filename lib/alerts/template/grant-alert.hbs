@@ -19,7 +19,7 @@
 </style>
 </head>
 <body>
-<div class="brief-page" style="width:816px; min-height:1056px; margin:24px auto; padding:22px 0; background:#fff; color:#0B1E3A; font-family:'Inter Tight', sans-serif; box-shadow:0 18px 50px rgba(11,30,58,0.18); display:flex; flex-direction:column;">
+<div class="brief-page" style="width:816px; height:1056px; overflow:hidden; margin:24px auto; padding:18px 0; background:#fff; color:#0B1E3A; font-family:'Inter Tight', sans-serif; box-shadow:0 18px 50px rgba(11,30,58,0.18); display:flex; flex-direction:column;">
 
   <!-- ===================== TOP BAR ===================== -->
   <div style="display:flex; align-items:center; justify-content:space-between; padding:0 46px;">
@@ -37,13 +37,13 @@
   <div style="height:1px; background:#0B1E3A; opacity:0.12; margin:14px 46px 0 46px;"></div>
 
   <!-- ===================== HERO ===================== -->
-  <div style="padding:24px 46px 20px 46px;">
+  <div style="padding:20px 46px 16px 46px;">
     <!-- DYNAMIC: eyebrow line. fon is CONDITIONAL. -->
-    <div style="font-size:11px; font-weight:600; letter-spacing:0.15em; text-transform:uppercase; color:#b3541e; margin-bottom:12px;">
+    <div style="font-size:11px; font-weight:600; letter-spacing:0.15em; text-transform:uppercase; color:#b3541e; margin-bottom:10px;">
       {{programName}}{{#if programShort}} &middot; {{programShort}}{{/if}}{{#if fiscalYear}} &middot; {{fiscalYear}}{{/if}}{{#if fon}} &middot; FON {{fon}}{{/if}}
     </div>
     <!-- DYNAMIC: headline -->
-    <h1 style="font-family:'Source Serif 4', serif; font-weight:700; font-size:42px; line-height:1.03; letter-spacing:-0.02em; margin:0 0 16px 0; color:#0B1E3A;">
+    <h1 style="font-family:'Source Serif 4', serif; font-weight:700; font-size:38px; line-height:1.04; letter-spacing:-0.02em; margin:0 0 13px 0; color:#0B1E3A;">
       {{headline}}
     </h1>
     <!-- DYNAMIC: intro (rich html, may include the funder link) -->
@@ -57,7 +57,7 @@
        leaving it out of the array. -->
   <div style="display:grid; grid-template-columns:repeat({{stats.length}}, 1fr); background:rgba(11,30,58,0.85); margin:0 46px;">
     {{#each stats}}
-    <div style="padding:13px 14px; {{#unless @last}}border-right:1px solid rgba(250,247,242,0.18); {{/unless}}display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:4px;{{#if this.highlight}} background:rgba(179,84,30,0.85);{{/if}}">
+    <div style="padding:11px 14px; {{#unless @last}}border-right:1px solid rgba(250,247,242,0.18); {{/unless}}display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:4px;{{#if this.highlight}} background:rgba(179,84,30,0.85);{{/if}}">
       <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:20px; line-height:1; color:#fff;">{{this.value}}</span>
       <span style="font-size:9.5px; font-weight:600; letter-spacing:0.09em; text-transform:uppercase; color:{{#if this.highlight}}#fff{{else}}#f4d8c6{{/if}};">{{this.label}}</span>
     </div>
@@ -69,7 +69,7 @@
   {{/if}}
 
   <!-- ===================== WHAT IT FUNDS + WHO CAN APPLY ===================== -->
-  <div style="display:grid; grid-template-columns:1.35fr 1fr; gap:34px; padding:18px 46px 4px 46px;">
+  <div style="display:grid; grid-template-columns:1.35fr 1fr; gap:34px; padding:14px 46px 2px 46px;">
     <div>
       <div style="font-size:10.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:#b3541e; margin-bottom:11px;">What it funds</div>
       <!-- DYNAMIC: lead-in line -->
@@ -100,7 +100,7 @@
   <!-- ===================== MAKE-OR-BREAK RISK CALLOUT ===================== -->
   <!-- CONDITIONAL: entire block renders only when riskCallout is provided -->
   {{#if riskCallout}}
-  <div style="margin:18px 46px 0 46px; background:#faf7f2; border:1px solid rgba(11,30,58,0.12); border-left:3px solid #b3541e; padding:14px 18px;">
+  <div style="margin:14px 46px 0 46px; background:#faf7f2; border:1px solid rgba(11,30,58,0.12); border-left:3px solid #b3541e; padding:12px 18px;">
     <div style="display:flex; align-items:center; gap:12px; margin-bottom:6px; flex-wrap:wrap;">
       <span style="font-size:10.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:#b3541e;">{{riskCallout.label}}</span>
       <!-- CONDITIONAL: scoring-points badge -->
@@ -114,13 +114,13 @@
   {{/if}}
 
   <!-- ===================== HOW GRANTED CAN HELP ===================== -->
-  <div style="padding:16px 46px 4px 46px;">
+  <div style="padding:14px 46px 4px 46px;">
     <div style="display:grid; grid-template-columns:1.05fr 1fr; gap:26px; align-items:start;">
 
       <!-- FIXED: How to get started (3 steps). See caveat in field-mapping.md. -->
-      <div style="padding-top:15px;">
-        <div style="font-size:10.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:#b3541e; margin-bottom:11px;">How to get started</div>
-        <div style="display:flex; flex-direction:column; gap:11px;">
+      <div style="padding-top:12px;">
+        <div style="font-size:10.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:#b3541e; margin-bottom:10px;">How to get started</div>
+        <div style="display:flex; flex-direction:column; gap:9px;">
           <div style="display:flex; gap:11px; align-items:flex-start;">
             <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:18px; color:#b3541e; line-height:1.1;">1</span>
             <div style="font-size:12px; line-height:1.42; color:#2a3a52;">Confirm your <b style="color:#0B1E3A;">SAM.gov registration (UEI)</b> is active. New or lapsed registrations can take 7&ndash;10 business days to clear.</div>
