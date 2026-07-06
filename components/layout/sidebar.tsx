@@ -50,9 +50,8 @@ export function Sidebar({
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r bg-card">
       <div className="flex h-16 items-center gap-2 border-b px-5">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground">
-          G
-        </div>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/g-mark.png" alt="GRANTED" width={32} height={32} className="h-8 w-8" />
         <span className="font-semibold tracking-tight">GRANTED</span>
       </div>
 

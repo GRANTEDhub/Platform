@@ -67,9 +67,8 @@ function LoginForm() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-lg font-bold text-primary-foreground">
-            G
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/g-mark.png" alt="GRANTED" width={48} height={48} className="mx-auto mb-3 h-12 w-12" />
           <h1 className="text-xl font-semibold tracking-tight">GRANTED Platform</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Sign in to continue
