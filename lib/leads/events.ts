@@ -18,6 +18,7 @@ const LABELS: Record<string, string> = {
   lead_created: "Lead created",
   hook_attached: "Grant hook added",
   routed_to_client: "Routed to client",
+  discovery_invite_sent: "Discovery invite sent",
   clicked_schedule_call: "Clicked scheduling link",
   booked_call: "Booked a call",
   stage_change: "Stage changed",
@@ -76,6 +77,8 @@ export function describeLeadEvent(e: TimelineEventRow): { title: string; detail:
       const grant = typeof m.grant_title === "string" ? `re: ${m.grant_title}` : null;
       return { title, detail: [to, grant].filter(Boolean).join(" · ") || null };
     }
+    case "discovery_invite_sent":
+      return { title, detail: typeof m.to === "string" ? `to ${m.to}` : null };
     case "lead_created":
     case "hook_attached":
     case "routed_to_client": {

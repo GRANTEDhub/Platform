@@ -99,6 +99,7 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
     ? { status: activeInvoice.status, amountCents: activeInvoice.amount_cents, hostedInvoiceUrl: activeInvoice.hosted_invoice_url }
     : null;
 
+  const inviteSentAt = events.find((e) => e.event_type === "discovery_invite_sent")?.occurred_at ?? null;
   const lastClickedAt = events.find((e) => e.event_type === "clicked_schedule_call")?.occurred_at ?? null;
   const scheduledAt = bookedEvent && typeof bookedEvent.metadata?.scheduled_at === "string" ? (bookedEvent.metadata.scheduled_at as string) : null;
   const bookingUrl = process.env.NEXT_PUBLIC_BOOKING_URL ?? null;
@@ -131,7 +132,7 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
   // The three workflow panels; the current one is promoted to the Next-step card,
   // the rest go into the "Other pipeline steps" accordion (each renders once).
   const schedulingNode = (
-    <SchedulingPanel leadId={lead.id} bookingUrl={bookingUrl} lastClickedAt={lastClickedAt} scheduled={bookedEvent ? { at: scheduledAt } : null} />
+    <SchedulingPanel leadId={lead.id} bookingUrl={bookingUrl} inviteSentAt={inviteSentAt} lastClickedAt={lastClickedAt} scheduled={bookedEvent ? { at: scheduledAt } : null} />
   );
   const contractNode = <ContractPanel leadId={lead.id} contract={contract} />;
   const invoiceNode = (

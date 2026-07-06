@@ -130,6 +130,54 @@ export async function sendOutreachEmail(opts: {
   return { to, subject, id: data?.id ?? null };
 }
 
+// Sends the discovery-call invite to a lead's contact: the engagement flyer
+// attached + the scheduling link in the body, so the prospect books themselves.
+// Same GRANTED identity/gating contract as the other sends -- callers MUST
+// pre-check canSendOutreach(); the testing-mode allowlist is hard-backstopped
+// here so a test invite never emails a real prospect. The flyer Buffer is read
+// by the caller (route) from the traced asset and passed in, keeping this pure.
+export async function sendDiscoveryInviteEmail(opts: {
+  to: string;
+  contactName?: string | null;
+  schedulingUrl: string;
+  flyer: Buffer;
+  flyerFilename?: string;
+}): Promise<SentResult> {
+  const to = (opts.to ?? "").trim();
+  if (!isDeliverableEmail(to)) throw new Error(`No deliverable recipient: "${opts.to ?? "(null)"}"`);
+  if (!isRecipientAllowed(to)) {
+    throw new Error(`Recipient not on send allowlist (testing mode): ${to}`);
+  }
+  if (!opts.schedulingUrl?.trim()) throw new Error("No scheduling link configured");
+
+  const subject = "Let's find a time — GRANTED discovery call";
+  const greeting = opts.contactName ? `Hi ${opts.contactName},` : "Hello,";
+  const text = [
+    greeting,
+    "",
+    "Thanks for your interest in working with GRANTED. We'd love to learn about your organization and where grant funding could help.",
+    "",
+    "Grab a time that works for you here:",
+    opts.schedulingUrl.trim(),
+    "",
+    "I've attached a short overview of how we work. Looking forward to talking.",
+    "",
+    "— GRANTED",
+  ].join("\n");
+
+  const resend = new Resend(process.env.RESEND_PLATFORM_API);
+  const { data, error } = await resend.emails.send({
+    from: FROM,
+    to,
+    replyTo: REPLY_TO,
+    subject,
+    text,
+    attachments: [{ filename: opts.flyerFilename || "GRANTED-Overview.pdf", content: opts.flyer }],
+  });
+  if (error) throw new Error(`Resend send failed: ${error.message}`);
+  return { to, subject, id: data?.id ?? null };
+}
+
 // Sends the signed-contract PDF to the client as an attachment (their permanent
 // copy). Same GRANTED identity/gating contract as the other sends: callers MUST
 // pre-check canSendEmail(); the testing-mode allowlist is hard-backstopped here
