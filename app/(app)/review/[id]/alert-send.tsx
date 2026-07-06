@@ -114,6 +114,10 @@ export function AlertSend({ cardId }: { cardId: string }) {
             )}
 
             {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+            {/* Not-sent outcomes (allowlist-blocked / sending disabled) return HTTP
+                200 and keep the modal open -- surface the status HERE so the admin
+                sees it, not only in the outer card hidden behind the overlay. */}
+            {status && <p className="mt-3 text-sm text-muted-foreground">{status}</p>}
 
             <div className="mt-4 flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setOpen(false)} disabled={busy}>Cancel</Button>
