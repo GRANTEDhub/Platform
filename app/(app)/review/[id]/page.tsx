@@ -7,6 +7,7 @@ import { DecisionBadge } from "@/components/grants/badges";
 import { interTight, sourceSerif } from "@/lib/fonts";
 import { StatBand, SectionLabel, KeyCallout, Collapsible, GrantBody, type GrantDetailFields } from "@/components/grants/grant-detail";
 import { DecisionPanel } from "./decision-panel";
+import { AlertSend } from "./alert-send";
 import type { ReviewCard, Client, Grant, Prospect } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -98,6 +99,7 @@ export default async function CardDetailPage({
               recipientEmail={card.clients?.primary_contact_email ?? null}
               defaultSubject={defaultSubject}
             />
+            {isAdmin && !isProspect && <AlertSend cardId={card.id} />}
           </div>
         </aside>
       </div>

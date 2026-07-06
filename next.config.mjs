@@ -7,12 +7,17 @@ const nextConfig = {
   // fonts (.ttf) are traced into the sign route's serverless function so the
   // background PDF render can read them at runtime.
   experimental: {
-    serverComponentsExternalPackages: ["pdf-parse", "mammoth", "@react-pdf/renderer"],
+    // @sparticuz/chromium + puppeteer-core are externalized (the Chromium binary
+    // must not go through webpack); they load only in the alert render/send routes.
+    serverComponentsExternalPackages: ["pdf-parse", "mammoth", "@react-pdf/renderer", "@sparticuz/chromium", "puppeteer-core"],
     outputFileTracingIncludes: {
       "/api/sign/[token]": ["./lib/contracts/fonts/**"],
       // The discovery-invite route reads the engagement flyer at runtime; trace
       // the fixed asset into its serverless function (same as the fonts above).
       "/api/leads/[id]/send-discovery-invite": ["./lib/email/assets/**"],
+      // The grant-alert routes read the vendored template + logo assets at render.
+      "/api/alerts/[cardId]/pdf": ["./lib/alerts/template/**", "./lib/alerts/assets/**"],
+      "/api/alerts/[cardId]/send": ["./lib/alerts/template/**", "./lib/alerts/assets/**"],
     },
   },
 };
