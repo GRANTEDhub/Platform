@@ -44,6 +44,10 @@ export interface Prospect {
   location_county: string | null;
   source_url: string;
   capability_summary: string | null;
+  // Contact for emailing the grant-alert one-pager (set by an admin on the review
+  // card; prospects have no contact on discovery). Migration 0036.
+  primary_contact_email: string | null;
+  primary_contact_name: string | null;
   created_at: string;
 }
 

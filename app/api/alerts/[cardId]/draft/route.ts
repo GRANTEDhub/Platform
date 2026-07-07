@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { loadAlertContext } from "@/lib/alerts/generate";
+import { loadAlertContext, alertRecipient } from "@/lib/alerts/generate";
 import { getOrCreateDraftAlert, generateDraftAlert } from "@/lib/alerts/store";
 
 // The alert draft is a PERSISTED artifact (grant_alerts): generate once, reuse
@@ -26,7 +26,7 @@ async function adminCtx(cardId: string) {
 function draftPayload(ctx: NonNullable<Awaited<ReturnType<typeof loadAlertContext>>>, alert: { id: string; subject: string | null; email_body: string | null }) {
   return {
     alertId: alert.id,
-    to: ctx.client?.primary_contact_email ?? "",
+    to: alertRecipient(ctx).email,
     subject: alert.subject ?? `GRANTED Alert: ${ctx.grant.title || "New grant opportunity"}`,
     body: alert.email_body ?? "",
   };
