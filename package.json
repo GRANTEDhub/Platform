@@ -20,7 +20,6 @@
     "clsx": "^2.1.1",
     "date-fns": "^3.6.0",
     "handlebars": "^4.7.9",
-    "isomorphic-dompurify": "^3.18.0",
     "lucide-react": "^0.453.0",
     "mammoth": "^1.12.0",
     "next": "14.2.35",
@@ -29,6 +28,7 @@
     "react": "^18",
     "react-dom": "^18",
     "resend": "^6.16.0",
+    "sanitize-html": "^2.17.5",
     "stripe": "^17.5.0",
     "tailwind-merge": "^2.6.0"
   },
@@ -37,6 +37,7 @@
     "@types/pdf-parse": "^1.1.5",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "@types/sanitize-html": "^2.16.1",
     "autoprefixer": "^10.0.1",
     "eslint": "^8",
     "eslint-config-next": "14.2.35",
