@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { sanitizeRichText } from "@/lib/sanitize/html";
 import type { Grant } from "@/types/database";
 
 // Read-only factual rendering of a shredded grant, shared by the Ledger detail
@@ -27,7 +28,13 @@ export function GrantOverview({ grant }: { grant: Grant }) {
       {grant.description && (
         <Card>
           <CardHeader><CardTitle>What it funds</CardTitle></CardHeader>
-          <CardContent className="text-sm leading-relaxed">{grant.description}</CardContent>
+          <CardContent className="text-sm leading-relaxed">
+            {/* Description may carry HTML -> sanitize (whitelist) then inject. */}
+            <div
+              className="[&_li]:ml-4 [&_li]:list-disc [&_ol]:mt-2 [&_ol]:list-decimal [&_p]:mt-2 [&_ul]:mt-2"
+              dangerouslySetInnerHTML={{ __html: sanitizeRichText(grant.description) }}
+            />
+          </CardContent>
         </Card>
       )}
 
