@@ -74,7 +74,24 @@ function buildEligibilityHtml(g: Grant): string {
   return esc(parts.join(" ") || "See the NOFO for full eligibility.");
 }
 
-// Deterministic stats, deadline last + highlighted; cap at 4.
+// A concise award-count for the stat cell. num_awards is often verbose ("Up to
+// 56 awards (one per state...); 10 in round 1, ...") -- extract a short token so
+// it can't blow out the fixed stat band; the full detail goes to the footnote.
+function shortAwards(raw: string): string {
+  const s = raw.trim();
+  const num = s.match(/\d[\d,]*/);
+  if (!num) return s.length > 12 ? `${s.slice(0, 12).trim()}…` : s;
+  const before = s.slice(0, num.index ?? 0).toLowerCase();
+  if (/\bup to\b/.test(before)) return `Up to ${num[0]}`;
+  if (/(about|around|approx|~|≈)/.test(before)) return `~${num[0]}`;
+  return num[0];
+}
+
+// Deterministic stats, deadline last + highlighted; cap at 4. Per-field bounding
+// (NOT a blanket char cap, which would clip a legitimately wide award range like
+// "$10.5M – $100.5M"): the only free-text field is num_awards -> shortAwards();
+// award range/match/deadline come pre-bounded from their formatters. The
+// template's nowrap/ellipsis is the visual safety net for any residual overflow.
 function buildStats(g: Grant): AlertStat[] {
   const stats: AlertStat[] = [];
   const award = formatAwardRange(g.award_range_min, g.award_range_max);
@@ -82,7 +99,7 @@ function buildStats(g: Grant): AlertStat[] {
   const cs = compactCostShare(g.cost_share);
   if (cs === "None") stats.push({ value: "$0", label: "match required" });
   else if (cs !== "—") stats.push({ value: cs.length > 8 ? cs.slice(0, 8) : cs, label: "match" });
-  if (stats.length < 3 && g.num_awards) stats.push({ value: g.num_awards, label: "awards" });
+  if (stats.length < 3 && g.num_awards) stats.push({ value: shortAwards(g.num_awards), label: "awards" });
   stats.push({ value: shortDeadline(g.submission_deadline), label: "deadline", highlight: true });
   return stats.slice(-4); // keep the deadline (last) if we overflow
 }
@@ -92,6 +109,11 @@ export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichme
   const incumbentFallback = g.incumbent_risk
     ? { label: "The make-or-break factor", headline: "", body: g.incumbent_risk }
     : null;
+
+  // When the award-count is verbose, the stat cell shows a short token and the
+  // full detail moves to the footnote under the stat band (rather than overrun).
+  const awardsFull = (g.num_awards || "").trim();
+  const awardsFootnote = awardsFull && shortAwards(awardsFull) !== awardsFull ? awardsFull : null;
 
   return {
     // ── narrative (model, with fallbacks) ──
@@ -111,7 +133,7 @@ export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichme
     fon: g.fon || null,
     introHtml: buildIntroHtml(g, card),
     stats: buildStats(g),
-    statsFootnote: null,
+    statsFootnote: awardsFootnote,
     // Concise, grounded eligibility from the model; deterministic tight fallback.
     eligibilityHtml: enrich?.eligibilitySummary?.trim()
       ? esc(enrich.eligibilitySummary.trim())
