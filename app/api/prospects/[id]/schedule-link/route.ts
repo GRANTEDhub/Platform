@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { appBaseUrl } from "@/lib/site-url";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { mintAccessToken } from "@/lib/tokens";
 
@@ -36,6 +37,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: "Failed to mint link" }, { status: 500 });
   }
 
-  const origin = new URL(req.url).origin;
+  const origin = appBaseUrl(req);
   return NextResponse.json({ url: `${origin}/go/${minted.rawToken}` });
 }
