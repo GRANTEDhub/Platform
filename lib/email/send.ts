@@ -178,6 +178,37 @@ export async function sendDiscoveryInviteEmail(opts: {
   return { to, subject, id: data?.id ?? null };
 }
 
+// Sends a grant-alert to the client: a SHORT text body + the branded one-page
+// alert PDF attached. Same identity/gating contract as the other sends -- callers
+// MUST pre-check canSendOutreach(); the testing-mode allowlist is hard-backstopped
+// here so a test alert never reaches a real client. Subject/body are passed in
+// (composed deterministically + human-reviewed in the preview modal).
+export async function sendGrantAlertEmail(opts: {
+  to: string;
+  subject: string;
+  body: string;
+  pdf: Buffer;
+  filename?: string;
+}): Promise<SentResult> {
+  const to = (opts.to ?? "").trim();
+  if (!isDeliverableEmail(to)) throw new Error(`No deliverable recipient: "${opts.to ?? "(null)"}"`);
+  if (!isRecipientAllowed(to)) {
+    throw new Error(`Recipient not on send allowlist (testing mode): ${to}`);
+  }
+  const subject = opts.subject?.trim() || "A new grant was published";
+  const resend = new Resend(process.env.RESEND_PLATFORM_API);
+  const { data, error } = await resend.emails.send({
+    from: FROM,
+    to,
+    replyTo: REPLY_TO,
+    subject,
+    text: opts.body,
+    attachments: [{ filename: opts.filename || "GRANTED-Grant-Alert.pdf", content: opts.pdf }],
+  });
+  if (error) throw new Error(`Resend send failed: ${error.message}`);
+  return { to, subject, id: data?.id ?? null };
+}
+
 // Sends the signed-contract PDF to the client as an attachment (their permanent
 // copy). Same GRANTED identity/gating contract as the other sends: callers MUST
 // pre-check canSendEmail(); the testing-mode allowlist is hard-backstopped here
