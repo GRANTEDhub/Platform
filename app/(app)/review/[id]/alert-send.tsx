@@ -24,6 +24,7 @@ export function AlertSend({ cardId }: { cardId: string }) {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [rev, setRev] = useState(0); // cache-buster for the preview PDF after regenerate
+  const [schedulingLink, setSchedulingLink] = useState(false); // prospect: booking link appended on send
   const [summary, setSummary] = useState<GrantSummary | null>(null);
 
   async function openModal() {
@@ -38,6 +39,7 @@ export function AlertSend({ cardId }: { cardId: string }) {
       setTo(d.to || "");
       setSubject(d.subject || "");
       setBody(d.body || "");
+      setSchedulingLink(!!d.schedulingLink);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load draft");
     } finally {
@@ -156,6 +158,11 @@ export function AlertSend({ cardId }: { cardId: string }) {
                 <p className="text-[11px] text-muted-foreground">
                   Preview and send use the same saved PDF. Regenerate to rebuild it with fresh copy.
                 </p>
+                {schedulingLink && (
+                  <p className="text-[11px] text-muted-foreground">
+                    A “book a call” scheduling link is added to the note on send.
+                  </p>
+                )}
               </div>
             )}
 

@@ -10,8 +10,7 @@ import { MatchOutcomes, type OutcomeCard } from "@/components/grants/match-outco
 import { getGrantGateStatus, undecidedClientCount } from "@/lib/grants/gate";
 import { interTight, sourceSerif } from "@/lib/fonts";
 import { ProspectButton } from "../prospect-button";
-import { ScheduleLinkButton } from "../schedule-link-button";
-import { StartOutreachButton } from "../start-outreach-button";
+import { CloseProspectingButton } from "../close-prospecting-button";
 import type { Grant, ReviewCard, Client, Prospect } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -94,8 +93,21 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
             <div className="rounded-2xl border border-brand-navy/10 bg-white p-6 sm:p-8">
               <div className="flex items-center justify-between gap-3">
                 <SectionLabel>Prospects ({prospectCards.length})</SectionLabel>
-                {gate === "released" && grant.is_domestic && <ProspectButton grantId={grant.id} />}
+                {grant.prospecting_closed_at ? (
+                  <Badge variant="warning">Closed for prospecting</Badge>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    {gate === "released" && grant.is_domestic && <ProspectButton grantId={grant.id} />}
+                    <CloseProspectingButton grantId={grant.id} />
+                  </div>
+                )}
               </div>
+
+              {grant.prospecting_closed_at && (
+                <p className="mt-3 text-sm text-muted-foreground">
+                  Closed for prospecting — removed from the prospect feed. History below is read-only; reopen from the Ledger.
+                </p>
+              )}
 
               {gate !== "released" ? (
                 <p className="mt-3 text-sm text-muted-foreground">
@@ -110,35 +122,14 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
               ) : (
                 <ul className="mt-2 divide-y divide-brand-navy/[0.08] text-sm">
                   {prospectCards.map((pc) => (
-                    <li key={pc.id} className="space-y-2.5 py-3.5">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <Link href={`/review/${pc.id}`} className="font-medium text-brand-navy hover:underline">
-                            {pc.prospects?.name || "Prospect org"}
-                          </Link>
-                          <p className="truncate text-xs text-muted-foreground">
-                            {pc.proposed_role}
-                            {pc.prospects?.source_url ? (
-                              <>
-                                {" · "}
-                                <a href={pc.prospects.source_url} target="_blank" rel="noopener noreferrer" className="text-brand-orange hover:underline">
-                                  source ↗
-                                </a>
-                              </>
-                            ) : null}
-                          </p>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-2">
-                          <ScoreBadge score={(pc.fit_score ?? 2) as 1 | 2 | 3} />
-                          <DecisionBadge decision={pc.decision} />
-                        </div>
+                    <li key={pc.id} className="flex items-center justify-between gap-3 py-3.5">
+                      <Link href={`/review/${pc.id}`} className="min-w-0 truncate font-medium text-brand-navy hover:underline">
+                        {pc.prospects?.name || "Prospect org"}
+                      </Link>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <ScoreBadge score={(pc.fit_score ?? 2) as 1 | 2 | 3} />
+                        <DecisionBadge decision={pc.decision} />
                       </div>
-                      {pc.prospects?.id && (
-                        <div className="flex flex-wrap items-center gap-3">
-                          <StartOutreachButton prospectId={pc.prospects.id} grantId={grant.id} />
-                          <ScheduleLinkButton prospectId={pc.prospects.id} grantId={grant.id} />
-                        </div>
-                      )}
                     </li>
                   ))}
                 </ul>
