@@ -12,7 +12,17 @@ import type { GrantSummary } from "@/app/api/review/[id]/route";
 // out. "Regenerate" replaces the saved draft (fresh LLM + render). Sending is also
 // the card's approval -- on success it fires the same DecisionConfirmation the
 // plain-text approve did.
-export function AlertSend({ cardId }: { cardId: string }) {
+export function AlertSend({
+  cardId,
+  sentAt,
+  sentTo,
+  contactName,
+}: {
+  cardId: string;
+  sentAt?: string | null;
+  sentTo?: string | null;
+  contactName?: string | null;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -99,13 +109,40 @@ export function AlertSend({ cardId }: { cardId: string }) {
 
   if (summary) return <DecisionConfirmation summary={summary} />;
 
+  // Alerted state: a grant_alerts row is sent AND has a recorded recipient.
+  // Guards on sentTo -- a sent row with no recipient is a data problem, not a
+  // clean delivery, so it must not paint the sent state.
+  const alerted = !!(sentTo && sentTo.trim());
+  const sentDate = alerted && sentAt ? new Date(sentAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : null;
+
   // Rendered inline inside the DecisionPanel (as its primary action, above
   // Reject) -- no outer card of its own.
   return (
     <>
-      <Button className="w-full" onClick={openModal} disabled={busy}>
-        Send grant alert
-      </Button>
+      {alerted ? (
+        <>
+          <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
+            <span className="font-bold text-emerald-700">✓</span>
+            <p className="text-xs leading-relaxed text-emerald-800">
+              <b>Alert sent{sentDate ? ` ${sentDate}` : ""}</b>
+              <br />
+              to {contactName ? `${contactName} · ` : ""}{sentTo}
+            </p>
+          </div>
+          <div className="mt-2 flex gap-2">
+            <Button className="flex-1" disabled title="Already alerted">
+              ✓ Alerted
+            </Button>
+            <Button variant="outline" onClick={openModal} disabled={busy}>
+              ↻ Regenerate
+            </Button>
+          </div>
+        </>
+      ) : (
+        <Button className="w-full" onClick={openModal} disabled={busy}>
+          Send grant alert
+        </Button>
+      )}
       {status && <p className="mt-2 text-xs text-muted-foreground">{status}</p>}
       {error && !open && <p className="mt-2 text-xs text-destructive">{error}</p>}
 

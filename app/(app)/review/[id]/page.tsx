@@ -9,6 +9,7 @@ import { StatBand, SectionLabel, KeyCallout, Collapsible, GrantBody, type GrantD
 import { DecisionPanel } from "./decision-panel";
 import { AlertSend } from "./alert-send";
 import { ProspectContact } from "./prospect-contact";
+import { getSentAlertForCard } from "@/lib/alerts/sent-status";
 import type { ReviewCard, Client, Grant, Prospect } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -58,6 +59,10 @@ export default async function CardDetailPage({
   const isAdmin = profile.role === "admin";
   const tab: TabKey = searchParams.tab === "match" ? "match" : "grant";
 
+  // Sent-state for the alert send button, derived from grant_alerts (no migration).
+  const sentAlert = isAdmin ? await getSentAlertForCard(card.id) : null;
+  const contactName = card.prospects?.primary_contact_name || card.clients?.primary_contact_name || null;
+
   return (
     <div className={`${interTight.variable} ${sourceSerif.variable} min-h-full bg-brand-cream`}>
       {/* Full-width banner: grant identity (toggle lives in the sidebar). */}
@@ -101,7 +106,16 @@ export default async function CardDetailPage({
               cardId={card.id}
               decision={card.decision}
               isAdmin={isAdmin}
-              alertSend={isAdmin ? <AlertSend cardId={card.id} /> : null}
+              alertSend={
+                isAdmin ? (
+                  <AlertSend
+                    cardId={card.id}
+                    sentAt={sentAlert?.sentAt ?? null}
+                    sentTo={sentAlert?.sentTo ?? null}
+                    contactName={contactName}
+                  />
+                ) : null
+              }
             />
           </div>
         </aside>
