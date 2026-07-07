@@ -232,6 +232,11 @@ export interface Grant {
   shred_reason: string | null;
   // Step 3 / Stage A: the grant's ideal applicant/consortium (multi-archetype).
   ideal_applicant_profile: IdealApplicantProfile | null;
+  // Closed for prospecting by an admin (migration 0037): drops out of the prospect
+  // feed but persists in the Ledger with history. Null = open. Reopen (future
+  // Ledger action) sets it back to null.
+  prospecting_closed_at: string | null;
+  prospecting_closed_by: string | null;
   ingested_at: string;
 }
 

@@ -50,7 +50,8 @@ export async function POST(req: NextRequest, { params }: { params: { cardId: str
   const emailBody = (input.body ?? "").trim() || alert.email_body || "";
 
   if (ctx.card.card_type === "prospect") {
-    return prospectSend({ ctx, alert, recipient, subject, emailBody, userId: user.id });
+    const origin = new URL(req.url).origin;
+    return prospectSend({ ctx, alert, recipient, subject, emailBody, userId: user.id, origin });
   }
   return clientSend({ supabase, ctx, alert, recipient, subject, emailBody, userId: user.id, cardId: params.cardId });
 }
@@ -63,8 +64,9 @@ async function prospectSend(a: {
   subject: string;
   emailBody: string;
   userId: string;
+  origin: string;
 }) {
-  const { ctx, alert, recipient, subject, emailBody, userId } = a;
+  const { ctx, alert, recipient, subject, emailBody, userId, origin } = a;
 
   // Gate FIRST: no conversion, no send, no state change on preview / blocked.
   if (!isDeliverableEmail(recipient)) {
@@ -93,9 +95,12 @@ async function prospectSend(a: {
       prospect,
       grantId: ctx.grant.id,
       userId,
+      origin,
       contactEmail: recipient,
       contactName: prospect.primary_contact_name,
-      mintScheduleToken: false,
+      // Mint the lead-bound /go scheduling link to embed in the email body, so the
+      // booking link and the pipeline lead are the same identity.
+      mintScheduleToken: true,
     });
   } catch (err) {
     return NextResponse.json(
@@ -114,10 +119,17 @@ async function prospectSend(a: {
     });
   }
 
+  // Embed the lead-bound booking link in the body (minted during conversion).
+  // Appended at send -- the preview note shows the intro + PDF reference; the
+  // literal URL isn't known until now (the modal flags "added on send").
+  const finalBody = conv.scheduleUrl
+    ? `${emailBody}\n\nWant to talk through whether this fits? Grab a time here:\n${conv.scheduleUrl}`
+    : emailBody;
+
   try {
     const pdf = await loadAlertPdf(alert);
-    const result = await sendGrantAlertEmail({ to: recipient, subject, body: emailBody, pdf });
-    await markAlertSent(alert.id, { sentTo: result.to, subject, emailBody, clientId: conv.clientId });
+    const result = await sendGrantAlertEmail({ to: recipient, subject, body: finalBody, pdf });
+    await markAlertSent(alert.id, { sentTo: result.to, subject, emailBody: finalBody, clientId: conv.clientId });
     await db.from("pipeline_events").insert({
       event_type: "grant_alert_sent",
       client_id: conv.clientId,

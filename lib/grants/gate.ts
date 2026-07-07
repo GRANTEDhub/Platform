@@ -68,7 +68,8 @@ export async function releasedGrantsForProspecting(
     .from("grants")
     .select("id, status, grant_status")
     .eq("status", "complete")
-    .is("skip_reason", null); // grant-level-gated grants are not prospectable
+    .is("skip_reason", null) // grant-level-gated grants are not prospectable
+    .is("prospecting_closed_at", null); // admin-closed grants leave the prospect feed
   if (!rawGrants || rawGrants.length === 0) return [];
 
   // Forecasted grants are not prospectable -- prospecting waits for the posted
@@ -130,6 +131,7 @@ export async function getProspectFeed(
     .eq("status", "complete")
     .eq("is_domestic", true)
     .is("skip_reason", null) // grant-level-gated grants (e.g. single national award) are not prospectable
+    .is("prospecting_closed_at", null) // admin-closed grants leave the prospect feed (persist in the Ledger)
     .order("ingested_at", { ascending: false });
   if (!grants || grants.length === 0) return [];
 

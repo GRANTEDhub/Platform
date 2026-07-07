@@ -29,6 +29,9 @@ function draftPayload(ctx: NonNullable<Awaited<ReturnType<typeof loadAlertContex
     to: alertRecipient(ctx).email,
     subject: alert.subject ?? `GRANTED Alert: ${ctx.grant.title || "New grant opportunity"}`,
     body: alert.email_body ?? "",
+    // Prospect sends append a lead-bound booking link at send time (not knowable
+    // now) -- the modal shows a hint so the missing URL isn't surprising.
+    schedulingLink: alertRecipient(ctx).kind === "prospect",
   };
 }
 
