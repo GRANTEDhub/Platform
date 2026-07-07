@@ -74,11 +74,15 @@ function buildEligibilityHtml(g: Grant): string {
   return esc(parts.join(" ") || "See the NOFO for full eligibility.");
 }
 
-// A concise award-count for the stat cell. num_awards is often verbose ("Up to
-// 56 awards (one per state...); 10 in round 1, ...") -- extract a short token so
-// it can't blow out the fixed stat band; the full detail goes to the footnote.
+// A concise award-count for the stat cell. num_awards is free text from grant
+// extraction, often verbose ("Up to 56 awards (one per state...); 10 in round 1,
+// ...") -- extract a short token so it can't blow out the fixed stat band; the
+// full detail goes to the footnote. A bounded RANGE ("1-3", "10 to 20") is
+// preserved as "1–3" rather than collapsed to its first number.
 function shortAwards(raw: string): string {
   const s = raw.trim();
+  const range = s.match(/(\d[\d,]*)\s*(?:-|–|—|to)\s*(\d[\d,]*)/i);
+  if (range) return `${range[1]}–${range[2]}`;
   const num = s.match(/\d[\d,]*/);
   if (!num) return s.length > 12 ? `${s.slice(0, 12).trim()}…` : s;
   const before = s.slice(0, num.index ?? 0).toLowerCase();
@@ -111,9 +115,12 @@ export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichme
     : null;
 
   // When the award-count is verbose, the stat cell shows a short token and the
-  // full detail moves to the footnote under the stat band (rather than overrun).
+  // full detail moves to the footnote. Only when there's genuinely MORE detail
+  // than the stat conveys (long free text) -- a short "1-3 awards" needs no
+  // redundant footnote.
   const awardsFull = (g.num_awards || "").trim();
-  const awardsFootnote = awardsFull && shortAwards(awardsFull) !== awardsFull ? awardsFull : null;
+  const awardsFootnote =
+    awardsFull.length > 24 && shortAwards(awardsFull) !== awardsFull ? awardsFull : null;
 
   return {
     // ── narrative (model, with fallbacks) ──
