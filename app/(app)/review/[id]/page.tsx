@@ -94,6 +94,7 @@ export default async function CardDetailPage({
               cardId={card.id}
               decision={card.decision}
               isAdmin={isAdmin}
+              isProspect={isProspect}
               draft={card.draft_outreach_email ?? ""}
               finalEmail={card.final_outreach_email}
               recipientEmail={card.clients?.primary_contact_email ?? null}

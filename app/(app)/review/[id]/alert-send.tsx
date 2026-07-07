@@ -1,21 +1,30 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { DecisionConfirmation } from "./decision-confirmation";
+import type { GrantSummary } from "@/app/api/review/[id]/route";
 
-// Grant-alert send: generate-on-Send -> preview the draft (short editable text
-// body + the attached one-page PDF) -> confirm -> send. The PDF is rendered by
-// the isolated Chromium route and previewed in a new tab; the send routes through
-// the same allowlist gate as every other send.
+// Grant-alert send: the SINGLE send path for a client card. The draft (short
+// editable text body + the one-page PDF) is generated once and SAVED; preview and
+// send reuse that saved artifact, so what's reviewed is byte-for-byte what goes
+// out. "Regenerate" replaces the saved draft (fresh LLM + render). Sending is also
+// the card's approval -- on success it fires the same DecisionConfirmation the
+// plain-text approve did.
 export function AlertSend({ cardId }: { cardId: string }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [regenBusy, setRegenBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [to, setTo] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
+  const [rev, setRev] = useState(0); // cache-buster for the preview PDF after regenerate
+  const [summary, setSummary] = useState<GrantSummary | null>(null);
 
   async function openModal() {
     setError(null);
@@ -36,6 +45,25 @@ export function AlertSend({ cardId }: { cardId: string }) {
     }
   }
 
+  async function regenerate() {
+    setRegenBusy(true);
+    setError(null);
+    setStatus(null);
+    try {
+      const res = await fetch(`/api/alerts/${cardId}/draft`, { method: "POST" });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Failed to regenerate");
+      setTo(d.to || "");
+      setSubject(d.subject || "");
+      setBody(d.body || "");
+      setRev((r) => r + 1); // force the preview link to fetch the new saved PDF
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to regenerate");
+    } finally {
+      setRegenBusy(false);
+    }
+  }
+
   async function send() {
     setBusy(true);
     setError(null);
@@ -48,14 +76,26 @@ export function AlertSend({ cardId }: { cardId: string }) {
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || "Failed to send");
-      setStatus(d.sent ? `Alert sent to ${d.to}.` : `Not sent — ${d.reason ?? "sending is off"}.`);
-      if (d.sent) setOpen(false);
+      // Sending IS the approval: show the same confirmation screen as the
+      // plain-text approve. On a not-sent outcome (blocked/preview) the decision
+      // still recorded, so the summary is shown too -- surfacing "recorded, not sent".
+      if (d.grant_summary) {
+        setSummary(d.grant_summary as GrantSummary);
+        return;
+      }
+      setStatus(d.send_status ?? (d.sent ? `Alert sent to ${d.to}.` : "Not sent."));
+      if (d.sent) {
+        setOpen(false);
+        router.refresh();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to send");
     } finally {
       setBusy(false);
     }
   }
+
+  if (summary) return <DecisionConfirmation summary={summary} />;
 
   return (
     <div className="rounded-2xl border border-brand-navy/10 bg-white p-4">
@@ -72,7 +112,7 @@ export function AlertSend({ cardId }: { cardId: string }) {
       {open && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => !busy && setOpen(false)}
+          onClick={() => !busy && !regenBusy && setOpen(false)}
         >
           <div
             className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl border bg-card p-5 shadow-xl"
@@ -102,14 +142,22 @@ export function AlertSend({ cardId }: { cardId: string }) {
                   <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={7}
                     className="flex w-full rounded-md border border-input bg-card px-3 py-2 font-sans text-sm" />
                 </label>
-                <a
-                  href={`/api/alerts/${cardId}/pdf`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-orange hover:underline"
-                >
-                  📎 grant-alert.pdf — preview attachment ↗
-                </a>
+                <div className="flex items-center justify-between gap-3">
+                  <a
+                    href={`/api/alerts/${cardId}/pdf?rev=${rev}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-orange hover:underline"
+                  >
+                    📎 grant-alert.pdf — preview attachment ↗
+                  </a>
+                  <Button variant="outline" size="sm" onClick={regenerate} disabled={busy || regenBusy}>
+                    {regenBusy ? "Regenerating…" : "↻ Regenerate"}
+                  </Button>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Preview and send use the same saved PDF. Regenerate to rebuild it with fresh copy.
+                </p>
               </div>
             )}
 
@@ -120,8 +168,8 @@ export function AlertSend({ cardId }: { cardId: string }) {
             {status && <p className="mt-3 text-sm text-muted-foreground">{status}</p>}
 
             <div className="mt-4 flex justify-end gap-2">
-              <Button variant="ghost" onClick={() => setOpen(false)} disabled={busy}>Cancel</Button>
-              <Button onClick={send} disabled={busy || loading || !to.trim() || !body.trim()}>
+              <Button variant="ghost" onClick={() => setOpen(false)} disabled={busy || regenBusy}>Cancel</Button>
+              <Button onClick={send} disabled={busy || loading || regenBusy || !to.trim() || !body.trim()}>
                 {busy ? "Sending…" : "Send alert"}
               </Button>
             </div>

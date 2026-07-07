@@ -1,12 +1,10 @@
 import "server-only";
 import { createServiceClient } from "@/lib/supabase/server";
-import { enrichAlert } from "./enrich";
-import { buildAlertData } from "./data";
-import { renderAlertPdf } from "./render";
 import type { Grant, ReviewCard, Client } from "@/types/database";
 
-// Shared server-side loading + rendering for the grant alert, used by the alert
-// routes. Service-role reads (review cards + grants are admin-only).
+// Server-side context loader for the grant alert, shared by the alert routes.
+// Service-role reads (review cards + grants are admin-only). Enrich + render +
+// persist live in lib/alerts/store.ts (generateDraftAlert).
 
 export type AlertContext = {
   card: ReviewCard;
@@ -30,12 +28,4 @@ export async function loadAlertContext(cardId: string): Promise<AlertContext | n
       ).data
     : null;
   return { card, grant, client };
-}
-
-// Full pipeline: enrich (narrative) + deterministic facts -> render PDF. The one
-// place Chromium runs. Enrichment failures degrade to deterministic fallbacks.
-export async function renderAlertPdfForCard(ctx: AlertContext): Promise<Buffer> {
-  const enrichment = await enrichAlert(ctx.grant, ctx.card);
-  const data = buildAlertData(ctx.grant, ctx.card, enrichment);
-  return renderAlertPdf(data);
 }

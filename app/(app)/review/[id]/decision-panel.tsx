@@ -19,12 +19,17 @@ type DecidePayload = {
 //   - Score feedback on Argo's 1-3 fit score, independent of the decision. Agree
 //     logs a silent confirm; Flag captures WHY we disagree -> match_feedback
 //     calibration dataset (POST /api/feedback).
-//   - The decision: Send (reuses the existing modal + PATCH /api/review send flow)
-//     and Reject (reason). Admin-gated to mirror the API.
+//   - The decision: Reject (reason), and a plain-text outreach Send that is now
+//     shown ONLY for PROSPECT cards. Client cards send the branded PDF alert via
+//     the separate AlertSend (the single client send path); the PDF is a paid
+//     research deliverable that firm rules keep out of prospective-client contexts,
+//     so prospects keep the lightweight plain-text outreach. Admin-gated to mirror
+//     the API.
 export function DecisionPanel({
   cardId,
   decision,
   isAdmin,
+  isProspect,
   draft,
   finalEmail,
   recipientEmail,
@@ -33,6 +38,7 @@ export function DecisionPanel({
   cardId: string;
   decision: CardDecision;
   isAdmin: boolean;
+  isProspect: boolean;
   draft: string;
   finalEmail: string | null;
   recipientEmail: string | null;
@@ -155,12 +161,14 @@ export function DecisionPanel({
 
       <div className="my-3.5 h-px bg-brand-navy/10" />
 
-      {/* Decision */}
-      {isAdmin ? (
+      {/* Decision. The plain-text outreach Send is prospect-only; client cards
+          use the branded PDF alert (AlertSend), which is the single client send. */}
+      {isAdmin && isProspect && (
         <Button className="w-full" disabled={busy} onClick={openSend}>
           Send
         </Button>
-      ) : (
+      )}
+      {!isAdmin && (
         <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
           Final approval is admin-only. You can reject a match for review.
         </p>
