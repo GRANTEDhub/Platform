@@ -17,6 +17,23 @@ export async function uploadPdf(bucket: string, objectPath: string, data: Buffer
   if (error) throw new Error(`Storage upload failed: ${error.message}`);
 }
 
+// Download a private object as a Buffer (service-role). Used to re-attach a saved
+// PDF to an email / stream it, without re-rendering.
+export async function downloadPdf(bucket: string, objectPath: string): Promise<Buffer> {
+  const db = createServiceClient();
+  const { data, error } = await db.storage.from(bucket).download(objectPath);
+  if (error || !data) throw new Error(`Storage download failed: ${error?.message ?? "object not found"}`);
+  return Buffer.from(await data.arrayBuffer());
+}
+
+// Remove objects from a bucket (service-role). Best-effort: a failure to delete a
+// stale object shouldn't block replacing an alert draft.
+export async function removeObjects(bucket: string, paths: string[]): Promise<void> {
+  if (paths.length === 0) return;
+  const db = createServiceClient();
+  await db.storage.from(bucket).remove(paths);
+}
+
 // Create a short-lived signed URL for an admin to download a private object.
 // Returns null on failure so a missing file degrades to "no link" rather than
 // throwing in a page render.

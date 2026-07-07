@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { loadAlertContext, renderAlertPdfForCard } from "@/lib/alerts/generate";
+import { loadAlertContext } from "@/lib/alerts/generate";
+import { getOrCreateDraftAlert, loadAlertPdf } from "@/lib/alerts/store";
 
-// The isolated Chromium route: renders the branded alert PDF for preview (opened
-// in a new tab from the send modal). @sparticuz/chromium loads only here (and in
-// the send route). Node runtime + a longer budget for cold start + render.
+// Preview the SAVED draft PDF (opened in a new tab from the send modal). Streams
+// the stored artifact from the private bucket -- no re-render -- so the preview is
+// byte-for-byte the file that will be sent. Falls back to generating the draft if
+// one doesn't exist yet (direct hit before the modal created it).
 export const runtime = "nodejs";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -20,7 +22,8 @@ export async function GET(_req: Request, { params }: { params: { cardId: string 
   if (!ctx) return NextResponse.json({ error: "Card or grant not found" }, { status: 404 });
 
   try {
-    const pdf = await renderAlertPdfForCard(ctx);
+    const alert = await getOrCreateDraftAlert(ctx, user.id);
+    const pdf = await loadAlertPdf(alert);
     return new NextResponse(new Uint8Array(pdf), {
       status: 200,
       headers: {
@@ -31,7 +34,7 @@ export async function GET(_req: Request, { params }: { params: { cardId: string 
     });
   } catch (err) {
     return NextResponse.json(
-      { error: `Render failed: ${err instanceof Error ? err.message : String(err)}` },
+      { error: `Preview failed: ${err instanceof Error ? err.message : String(err)}` },
       { status: 502 },
     );
   }
