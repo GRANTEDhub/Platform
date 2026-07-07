@@ -1,6 +1,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { sanitizeRichText } from "@/lib/sanitize/html";
+import { previewHtml } from "@/lib/grants/description";
+import { ExpandableDescription } from "@/components/grants/expandable-description";
 import type { Grant } from "@/types/database";
 
 // Read-only factual rendering of a shredded grant, shared by the Ledger detail
@@ -9,6 +11,10 @@ import type { Grant } from "@/types/database";
 
 // The wide "what it funds + ideal applicant" block.
 export function GrantOverview({ grant }: { grant: Grant }) {
+  // Sanitized description; long ones truncate (sentence-clean) behind Show more.
+  const descClean = grant.description ? sanitizeRichText(grant.description) : "";
+  const descPreview = previewHtml(descClean);
+  const descClass = "[&_li]:ml-4 [&_li]:list-disc [&_ol]:mt-2 [&_ol]:list-decimal [&_p]:mt-2 [&_ul]:mt-2";
   return (
     <>
       {grant.grant_status === "Forecasted" ? (
@@ -29,11 +35,12 @@ export function GrantOverview({ grant }: { grant: Grant }) {
         <Card>
           <CardHeader><CardTitle>What it funds</CardTitle></CardHeader>
           <CardContent className="text-sm leading-relaxed">
-            {/* Description may carry HTML -> sanitize (whitelist) then inject. */}
-            <div
-              className="[&_li]:ml-4 [&_li]:list-disc [&_ol]:mt-2 [&_ol]:list-decimal [&_p]:mt-2 [&_ul]:mt-2"
-              dangerouslySetInnerHTML={{ __html: sanitizeRichText(grant.description) }}
-            />
+            {/* Long descriptions truncate (sentence-clean) behind Show more. */}
+            {descPreview.truncated ? (
+              <ExpandableDescription preview={descPreview.html} full={descClean} className={descClass} />
+            ) : (
+              <div className={descClass} dangerouslySetInnerHTML={{ __html: descClean }} />
+            )}
           </CardContent>
         </Card>
       )}
