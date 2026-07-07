@@ -2,7 +2,7 @@ import "server-only";
 import { createServiceClient } from "@/lib/supabase/server";
 import { enrichAlert } from "./enrich";
 import { buildAlertData } from "./data";
-import { renderAlertPdf, debugAlertFonts } from "./render";
+import { renderAlertPdf } from "./render";
 import type { Grant, ReviewCard, Client } from "@/types/database";
 
 // Shared server-side loading + rendering for the grant alert, used by the alert
@@ -38,12 +38,4 @@ export async function renderAlertPdfForCard(ctx: AlertContext): Promise<Buffer> 
   const enrichment = await enrichAlert(ctx.grant, ctx.card);
   const data = buildAlertData(ctx.grant, ctx.card, enrichment);
   return renderAlertPdf(data);
-}
-
-// Diagnostic path (admin, ?debug=fonts): reports whether the brand TTFs ship in
-// the function and whether Chromium applies the embedded faces at render.
-export async function debugAlertFontsForCard(ctx: AlertContext): Promise<Record<string, unknown>> {
-  const enrichment = await enrichAlert(ctx.grant, ctx.card);
-  const data = buildAlertData(ctx.grant, ctx.card, enrichment);
-  return debugAlertFonts(data);
 }

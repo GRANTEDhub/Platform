@@ -52,6 +52,14 @@ function asStringArray(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((x) => x.trim()) : [];
 }
 
+// Cap a string without cutting mid-word: trim back to the last whole word and
+// add an ellipsis. Used for the eligibility summary, which sits in a fixed box.
+function truncateWords(s: string, n: number): string {
+  const t = s.trim();
+  if (t.length <= n) return t;
+  return t.slice(0, n).replace(/\s+\S*$/, "").replace(/[.,;]$/, "") + "…";
+}
+
 // Validate + normalize the model output into AlertEnrichment. Returns null if the
 // core narrative isn't usable (caller then falls back to deterministic defaults).
 function validate(raw: unknown): AlertEnrichment | null {
@@ -96,7 +104,7 @@ function validate(raw: unknown): AlertEnrichment | null {
     programShort: typeof o.programShort === "string" ? o.programShort.trim().slice(0, 24) : "",
     whatItFundsIntro: typeof o.whatItFundsIntro === "string" ? o.whatItFundsIntro.trim() : "",
     whatItFunds: asStringArray(o.whatItFunds).slice(0, 10),
-    eligibilitySummary: typeof o.eligibilitySummary === "string" ? o.eligibilitySummary.trim().slice(0, 260) : "",
+    eligibilitySummary: typeof o.eligibilitySummary === "string" ? truncateWords(o.eligibilitySummary, 230) : "",
     eligibilityNote,
     ctaSendItems: typeof o.ctaSendItems === "string" ? o.ctaSendItems.trim() : "",
     riskCallout,
