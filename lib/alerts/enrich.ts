@@ -53,11 +53,24 @@ function asStringArray(v: unknown): string[] {
 }
 
 // Cap a string without cutting mid-word: trim back to the last whole word and
-// add an ellipsis. Used for the eligibility summary, which sits in a fixed box.
+// add an ellipsis.
 function truncateWords(s: string, n: number): string {
   const t = s.trim();
   if (t.length <= n) return t;
   return t.slice(0, n).replace(/\s+\S*$/, "").replace(/[.,;]$/, "") + "…";
+}
+
+// Cap on a SENTENCE boundary so copy never ends mid-sentence (e.g. the eligibility
+// summary, which reads as prose). Trim to the last complete sentence within the
+// limit; only if the first sentence itself overruns do we fall back to a
+// word-boundary ellipsis.
+function truncateToSentence(s: string, n: number): string {
+  const t = s.trim();
+  if (t.length <= n) return t;
+  const slice = t.slice(0, n);
+  const m = slice.match(/^[\s\S]*[.!?](?=\s|$)/);
+  if (m && m[0].trim().length >= 40) return m[0].trim();
+  return truncateWords(t, n);
 }
 
 // Validate + normalize the model output into AlertEnrichment. Returns null if the
@@ -104,7 +117,7 @@ function validate(raw: unknown): AlertEnrichment | null {
     programShort: typeof o.programShort === "string" ? o.programShort.trim().slice(0, 24) : "",
     whatItFundsIntro: typeof o.whatItFundsIntro === "string" ? o.whatItFundsIntro.trim() : "",
     whatItFunds: asStringArray(o.whatItFunds).slice(0, 10),
-    eligibilitySummary: typeof o.eligibilitySummary === "string" ? truncateWords(o.eligibilitySummary, 230) : "",
+    eligibilitySummary: typeof o.eligibilitySummary === "string" ? truncateToSentence(o.eligibilitySummary, 280) : "",
     eligibilityNote,
     ctaSendItems: typeof o.ctaSendItems === "string" ? o.ctaSendItems.trim() : "",
     riskCallout,
