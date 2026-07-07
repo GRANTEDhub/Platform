@@ -56,7 +56,6 @@ export default async function CardDetailPage({
   const orgName = card.clients?.name || card.prospects?.name || "Match";
   const isAdmin = profile.role === "admin";
   const tab: TabKey = searchParams.tab === "match" ? "match" : "grant";
-  const defaultSubject = `GRANTED Alert! | ${g?.title || "Grant Opportunity"}`;
 
   return (
     <div className={`${interTight.variable} ${sourceSerif.variable} min-h-full bg-brand-cream`}>
@@ -94,13 +93,8 @@ export default async function CardDetailPage({
               cardId={card.id}
               decision={card.decision}
               isAdmin={isAdmin}
-              isProspect={isProspect}
-              draft={card.draft_outreach_email ?? ""}
-              finalEmail={card.final_outreach_email}
-              recipientEmail={card.clients?.primary_contact_email ?? null}
-              defaultSubject={defaultSubject}
+              alertSend={isAdmin && !isProspect ? <AlertSend cardId={card.id} /> : null}
             />
-            {isAdmin && !isProspect && <AlertSend cardId={card.id} />}
           </div>
         </aside>
       </div>

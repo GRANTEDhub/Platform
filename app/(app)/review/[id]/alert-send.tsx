@@ -97,13 +97,11 @@ export function AlertSend({ cardId }: { cardId: string }) {
 
   if (summary) return <DecisionConfirmation summary={summary} />;
 
+  // Rendered inline inside the DecisionPanel (as its primary action, above
+  // Reject) -- no outer card of its own.
   return (
-    <div className="rounded-2xl border border-brand-navy/10 bg-white p-4">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-brand-orange">Grant alert</p>
-      <p className="mt-1.5 text-xs text-muted-foreground">
-        Send this client the branded one-page alert (PDF) with a short note.
-      </p>
-      <Button className="mt-2.5 w-full" onClick={openModal} disabled={busy}>
+    <>
+      <Button className="w-full" onClick={openModal} disabled={busy}>
         Send grant alert
       </Button>
       {status && <p className="mt-2 text-xs text-muted-foreground">{status}</p>}
@@ -176,6 +174,6 @@ export function AlertSend({ cardId }: { cardId: string }) {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

@@ -7,53 +7,34 @@ import { DecisionConfirmation } from "./decision-confirmation";
 import type { CardDecision } from "@/types/database";
 import type { GrantSummary } from "@/app/api/review/[id]/route";
 
-type DecidePayload = {
-  decision_reason?: string;
-  final_outreach_email?: string;
-  final_to?: string;
-  final_subject?: string;
-};
+type DecidePayload = { decision_reason?: string };
 
-// The decision panel that lives at the top of the review sidebar, pinned so it
-// stays visible on a long grant (sticky within the sidebar column). Two clusters:
+// The decision panel at the top of the review sidebar (sticky on a long grant).
+// Two clusters:
 //   - Score feedback on Argo's 1-3 fit score, independent of the decision. Agree
 //     logs a silent confirm; Flag captures WHY we disagree -> match_feedback
 //     calibration dataset (POST /api/feedback).
-//   - The decision: Reject (reason), and a plain-text outreach Send that is now
-//     shown ONLY for PROSPECT cards. Client cards send the branded PDF alert via
-//     the separate AlertSend (the single client send path); the PDF is a paid
-//     research deliverable that firm rules keep out of prospective-client contexts,
-//     so prospects keep the lightweight plain-text outreach. Admin-gated to mirror
-//     the API.
+//   - The decision controls. The primary action is `alertSend` (the "Send grant
+//     alert" button, passed in for admin client cards) which sits ABOVE Reject.
+//     Sending the alert is also the card's approval (handled in the alert route),
+//     so there is no separate plain-text Send here anymore. Reject records a
+//     'passed' decision; Reset returns to pending.
 export function DecisionPanel({
   cardId,
   decision,
   isAdmin,
-  isProspect,
-  draft,
-  finalEmail,
-  recipientEmail,
-  defaultSubject,
+  alertSend,
 }: {
   cardId: string;
   decision: CardDecision;
   isAdmin: boolean;
-  isProspect: boolean;
-  draft: string;
-  finalEmail: string | null;
-  recipientEmail: string | null;
-  defaultSubject: string;
+  alertSend?: React.ReactNode;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
-  const [panel, setPanel] = useState<null | "send" | "reject" | "flag">(null);
+  const [panel, setPanel] = useState<null | "reject" | "flag">(null);
   const [confirm, setConfirm] = useState<GrantSummary | null>(null);
-
-  const [to, setTo] = useState(recipientEmail ?? "");
-  const [subject, setSubject] = useState(defaultSubject);
-  const [body, setBody] = useState(finalEmail ?? draft);
   const [rejectReason, setRejectReason] = useState("");
 
   const [fb, setFb] = useState<"idle" | "agreed" | "flagged">("idle");
@@ -62,7 +43,6 @@ export function DecisionPanel({
   async function decide(next: CardDecision, payload?: DecidePayload) {
     setBusy(true);
     setError(null);
-    setStatus(null);
     try {
       const res = await fetch(`/api/review/${cardId}`, {
         method: "PATCH",
@@ -75,7 +55,6 @@ export function DecisionPanel({
         setConfirm(data.grant_summary as GrantSummary);
         return;
       }
-      setStatus(data.send_status ?? null);
       setPanel(null);
       router.refresh();
     } catch (err) {
@@ -103,14 +82,6 @@ export function DecisionPanel({
     } finally {
       setBusy(false);
     }
-  }
-
-  function openSend() {
-    setTo(recipientEmail ?? "");
-    setSubject(defaultSubject);
-    setBody(finalEmail ?? draft);
-    setError(null);
-    setPanel("send");
   }
 
   if (confirm) return <DecisionConfirmation summary={confirm} />;
@@ -161,13 +132,11 @@ export function DecisionPanel({
 
       <div className="my-3.5 h-px bg-brand-navy/10" />
 
-      {/* Decision. The plain-text outreach Send is prospect-only; client cards
-          use the branded PDF alert (AlertSend), which is the single client send. */}
-      {isAdmin && isProspect && (
-        <Button className="w-full" disabled={busy} onClick={openSend}>
-          Send
-        </Button>
-      )}
+      {/* Decision. The primary action is "Send grant alert" (client cards) which
+          also approves the card; it sits above Reject with the other controls.
+          Prospect cards get no send here -- prospect outreach lives in the lead
+          pipeline. */}
+      {alertSend}
       {!isAdmin && (
         <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
           Final approval is admin-only. You can reject a match for review.
@@ -175,7 +144,7 @@ export function DecisionPanel({
       )}
       <Button
         variant="outline"
-        className="mt-2 w-full border-destructive/40 text-destructive hover:bg-destructive/5"
+        className={`w-full border-destructive/40 text-destructive hover:bg-destructive/5 ${alertSend || !isAdmin ? "mt-2" : ""}`}
         disabled={busy}
         onClick={() => setPanel((p) => (p === "reject" ? null : "reject"))}
       >
@@ -210,52 +179,6 @@ export function DecisionPanel({
       )}
 
       {error && !panel && <p className="mt-2.5 text-sm text-destructive">{error}</p>}
-      {status && <p className="mt-2.5 text-xs text-muted-foreground">{status}</p>}
-
-      {/* Send modal (reused verbatim from the prior send flow). */}
-      {panel === "send" && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => !busy && setPanel(null)}
-        >
-          <div
-            className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl border bg-card p-5 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="font-serif text-lg font-semibold text-brand-navy">Send outreach</h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Review the email below. Edit any field, then send — or send as-is.
-            </p>
-            <div className="mt-4 space-y-3">
-              <label className="block space-y-1">
-                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">To</span>
-                <input type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder="name@org.org"
-                  className="flex h-9 w-full rounded-md border border-input bg-card px-3 text-sm" />
-              </label>
-              <label className="block space-y-1">
-                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Subject</span>
-                <input value={subject} onChange={(e) => setSubject(e.target.value)}
-                  className="flex h-9 w-full rounded-md border border-input bg-card px-3 text-sm" />
-              </label>
-              <label className="block space-y-1">
-                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Body</span>
-                <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={14}
-                  className="flex w-full rounded-md border border-input bg-card px-3 py-2 font-sans text-sm" />
-              </label>
-            </div>
-            {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
-            <div className="mt-4 flex justify-end gap-2">
-              <Button variant="ghost" onClick={() => setPanel(null)} disabled={busy}>Cancel</Button>
-              <Button
-                onClick={() => decide("approved", { final_outreach_email: body, final_to: to, final_subject: subject })}
-                disabled={busy || !body.trim() || !to.trim()}
-              >
-                {busy ? "Sending…" : "Send email"}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
