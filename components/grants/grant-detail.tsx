@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ChevronDown } from "lucide-react";
+import { sanitizeRichText } from "@/lib/sanitize/html";
 import type { Grant, IdealApplicantProfile as IAP } from "@/types/database";
 import {
   formatAwardRange,
@@ -110,7 +111,16 @@ export function WhatItFundsAndEligibility({ grant }: { grant: GrantDetailFields 
     <div className="mt-8 grid gap-8 md:grid-cols-2">
       <section>
         <SectionLabel>What it funds</SectionLabel>
-        <p className="mt-2.5 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{grant.description || "—"}</p>
+        {grant.description ? (
+          // Description may carry HTML markup -> sanitize (whitelist) then inject,
+          // rendered in a div so block tags nest validly.
+          <div
+            className="mt-2.5 text-sm leading-relaxed text-foreground [&_li]:ml-4 [&_li]:list-disc [&_ol]:mt-2 [&_ol]:list-decimal [&_p]:mt-2 [&_ul]:mt-2"
+            dangerouslySetInnerHTML={{ __html: sanitizeRichText(grant.description) }}
+          />
+        ) : (
+          <p className="mt-2.5 text-sm leading-relaxed text-foreground">—</p>
+        )}
       </section>
       <section>
         <SectionLabel>Who can apply</SectionLabel>

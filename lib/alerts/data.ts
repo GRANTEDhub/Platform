@@ -1,5 +1,6 @@
 import { format } from "date-fns";
 import { formatAwardRange, compactCostShare, formatDeadline } from "@/lib/grants/format";
+import { sanitizeRichText, sanitizeText } from "@/lib/sanitize/html";
 import type { Grant, ReviewCard } from "@/types/database";
 import type { AlertData, AlertEnrichment, AlertStat } from "./types";
 
@@ -30,17 +31,23 @@ function fiscalYear(g: Grant): string {
   return m ? `FY${m[1]}` : "";
 }
 
-// Escape the description, then linkify the funder name to the source URL if both
-// are present and the name appears in the text (a safe post-escape substitution).
+// Sanitize the description (it may carry HTML markup -- whitelist p/strong/em/ul/
+// ol/li/br, everything else stripped) so the client never sees raw tags in the
+// alert PDF, then linkify the funder name to the source URL if both are present
+// and the name appears in the copy (a safe post-sanitize substitution).
 function buildIntroHtml(g: Grant, card: ReviewCard): string {
-  const text = esc((card.description_short || g.description || "").trim());
-  if (!text) return esc(g.title || "A new grant opportunity was published.");
+  const raw = (card.description_short || g.description || "").trim();
+  if (!raw) return sanitizeText(g.title || "A new grant opportunity was published.");
+  const clean = sanitizeRichText(raw);
   const funder = (g.funder || "").trim();
-  if (funder && g.source_url && text.includes(esc(funder))) {
-    const link = `<a href="${esc(g.source_url)}" style="color:#b3541e;font-weight:600;text-decoration:underline;text-underline-offset:2px;">${esc(funder)}</a>`;
-    return text.replace(esc(funder), link);
+  if (funder && g.source_url) {
+    const fEnc = sanitizeText(funder);
+    if (fEnc && clean.includes(fEnc)) {
+      const link = `<a href="${sanitizeText(g.source_url)}" style="color:#b3541e;font-weight:600;text-decoration:underline;text-underline-offset:2px;">${fEnc}</a>`;
+      return clean.replace(fEnc, link);
+    }
   }
-  return text;
+  return clean;
 }
 
 function stripTrailingPunct(s: string): string {
