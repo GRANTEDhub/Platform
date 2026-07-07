@@ -8,6 +8,7 @@ import { GrantStatusBadge, ScoreBadge, DecisionBadge } from "@/components/grants
 import { GrantBody, SectionLabel } from "@/components/grants/grant-detail";
 import { MatchOutcomes, type OutcomeCard } from "@/components/grants/match-outcomes";
 import { getGrantGateStatus, undecidedClientCount } from "@/lib/grants/gate";
+import { getSentAlertsByCards } from "@/lib/alerts/sent-status";
 import { interTight, sourceSerif } from "@/lib/fonts";
 import { ProspectButton } from "../prospect-button";
 import { CloseProspectingButton } from "../close-prospecting-button";
@@ -47,6 +48,10 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
   const all = (cards ?? []) as CardRow[];
   const clientCards = all.filter((c) => c.card_type !== "prospect");
   const prospectCards = all.filter((c) => c.card_type === "prospect");
+
+  // Derive the "Alerted" state from grant_alerts (one batched query for all
+  // prospect cards -- no N+1, no migration).
+  const sentByCard = await getSentAlertsByCards(prospectCards.map((c) => c.id));
 
   const gate = getGrantGateStatus(grant, all);
   const undecided = undecidedClientCount(all);
@@ -128,7 +133,11 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                       </Link>
                       <div className="flex shrink-0 items-center gap-2">
                         <ScoreBadge score={(pc.fit_score ?? 2) as 1 | 2 | 3} />
-                        <DecisionBadge decision={pc.decision} />
+                        {sentByCard.has(pc.id) ? (
+                          <Badge variant="success">✓ Alerted</Badge>
+                        ) : (
+                          <DecisionBadge decision={pc.decision} />
+                        )}
                       </div>
                     </li>
                   ))}
