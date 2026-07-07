@@ -16,7 +16,12 @@ import type { ReviewCard, Client } from "@/types/database";
 // Sends from the verified Resend domain (send.grantedco.com). Replies are
 // directed to a monitored human inbox so the conversation happens over email
 // (Phase 1). Both overridable by env; defaults are the verified addresses.
-const FROM = process.env.EMAIL_FROM || "alerts@send.grantedco.com";
+// Sending ADDRESS is unchanged (alerts@send.grantedco.com, the verified domain);
+// only the visible display name is set so inboxes show "GRANTED" rather than
+// "alerts". If EMAIL_FROM already carries a display name ("Name <addr>"), respect it.
+const FROM_ADDRESS = process.env.EMAIL_FROM || "alerts@send.grantedco.com";
+const FROM = FROM_ADDRESS.includes("<") ? FROM_ADDRESS : `GRANTED <${FROM_ADDRESS}>`;
+// Replies go to a monitored human inbox (NOT the unmonitored send address).
 const REPLY_TO = process.env.EMAIL_REPLY_TO || "support@grantedco.com";
 
 // Subject convention: "GRANTED Alert! | <grant name>". Grants have no acronym
