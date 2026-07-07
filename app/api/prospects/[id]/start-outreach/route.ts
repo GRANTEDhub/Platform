@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { appBaseUrl } from "@/lib/site-url";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { convertProspectToLead } from "@/lib/prospects/convert";
 import type { Prospect } from "@/types/database";
@@ -52,7 +53,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     .single<Prospect>();
   if (!prospect) return NextResponse.json({ error: "Prospect not found" }, { status: 404 });
 
-  const origin = new URL(req.url).origin;
+  const origin = appBaseUrl(req);
   let result;
   try {
     result = await convertProspectToLead(db, {

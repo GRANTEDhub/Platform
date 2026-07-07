@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { appBaseUrl } from "@/lib/site-url";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { canSendOutreach } from "@/lib/email/guard";
 import { sendGrantAlertEmail, isDeliverableEmail } from "@/lib/email/send";
@@ -50,7 +51,7 @@ export async function POST(req: NextRequest, { params }: { params: { cardId: str
   const emailBody = (input.body ?? "").trim() || alert.email_body || "";
 
   if (ctx.card.card_type === "prospect") {
-    const origin = new URL(req.url).origin;
+    const origin = appBaseUrl(req);
     return prospectSend({ ctx, alert, recipient, subject, emailBody, userId: user.id, origin });
   }
   return clientSend({ supabase, ctx, alert, recipient, subject, emailBody, userId: user.id, cardId: params.cardId });

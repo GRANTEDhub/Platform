@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { appBaseUrl } from "@/lib/site-url";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { mintAccessToken } from "@/lib/tokens";
 import { buildContractBody, isTemplateKey, CONTRACT_TEMPLATES } from "@/lib/contracts/template";
@@ -94,6 +95,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     metadata: { template_key: templateKey, amount_cents: amountCents, contract_id: contract.id },
   });
 
-  const origin = new URL(req.url).origin;
+  const origin = appBaseUrl(req);
   return NextResponse.json({ url: `${origin}/sign/${minted.rawToken}`, contractId: contract.id });
 }
