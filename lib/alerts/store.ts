@@ -21,6 +21,7 @@ export type GrantAlertRow = {
   card_id: string;
   grant_id: string | null;
   client_id: string | null;
+  prospect_id: string | null;
   status: "draft" | "sent";
   alert_data: AlertData;
   enrichment: AlertEnrichment | null;
@@ -73,6 +74,7 @@ export async function generateDraftAlert(ctx: AlertContext, userId: string | nul
     card_id: ctx.card.id,
     grant_id: ctx.grant.id,
     client_id: ctx.client?.id ?? null,
+    prospect_id: ctx.prospect?.id ?? null,
     status: "draft" as const,
     alert_data: alertData,
     enrichment,
@@ -101,18 +103,19 @@ export async function loadAlertPdf(alert: GrantAlertRow): Promise<Buffer> {
 // creates a new draft). Persists the exact subject/body that went out.
 export async function markAlertSent(
   id: string,
-  opts: { sentTo: string; subject: string; emailBody: string },
+  opts: { sentTo: string; subject: string; emailBody: string; clientId?: string | null },
 ): Promise<void> {
   const db = createServiceClient();
-  const { error } = await db
-    .from("grant_alerts")
-    .update({
-      status: "sent",
-      sent_at: new Date().toISOString(),
-      sent_to: opts.sentTo,
-      subject: opts.subject,
-      email_body: opts.emailBody,
-    })
-    .eq("id", id);
+  const update: Record<string, unknown> = {
+    status: "sent",
+    sent_at: new Date().toISOString(),
+    sent_to: opts.sentTo,
+    subject: opts.subject,
+    email_body: opts.emailBody,
+  };
+  // For a prospect alert, client_id is filled here with the lead the prospect was
+  // promoted into on send (it was null on the draft).
+  if (opts.clientId) update.client_id = opts.clientId;
+  const { error } = await db.from("grant_alerts").update(update).eq("id", id);
   if (error) throw new Error(`Failed to mark alert sent: ${error.message}`);
 }

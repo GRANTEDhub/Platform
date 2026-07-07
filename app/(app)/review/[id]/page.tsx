@@ -8,13 +8,14 @@ import { interTight, sourceSerif } from "@/lib/fonts";
 import { StatBand, SectionLabel, KeyCallout, Collapsible, GrantBody, type GrantDetailFields } from "@/components/grants/grant-detail";
 import { DecisionPanel } from "./decision-panel";
 import { AlertSend } from "./alert-send";
+import { ProspectContact } from "./prospect-contact";
 import type { ReviewCard, Client, Grant, Prospect } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
 type FullCard = ReviewCard & {
   clients: Pick<Client, "id" | "name" | "org_type" | "engagement_tier" | "primary_contact_email" | "primary_contact_name"> | null;
-  prospects: Pick<Prospect, "id" | "name" | "org_type" | "source_url"> | null;
+  prospects: Pick<Prospect, "id" | "name" | "org_type" | "source_url" | "primary_contact_email" | "primary_contact_name"> | null;
   grants: (GrantDetailFields & Pick<Grant, "title" | "funder" | "fon">) | null;
 };
 
@@ -44,7 +45,7 @@ export default async function CardDetailPage({
 
   const { data } = await supabase
     .from("review_cards")
-    .select("*, clients(id, name, org_type, engagement_tier, primary_contact_email, primary_contact_name), prospects(id, name, org_type, source_url), grants(id, title, funder, fon, source_url, submission_deadline, period_of_performance, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, description, eligible_entity_types, geographic_eligibility, ineligible_entities, subaward_prohibited, incumbent_risk, technical_burden_flags, hard_disqualifiers, verification_flags, scoring_rubric, ideal_applicant_profile)")
+    .select("*, clients(id, name, org_type, engagement_tier, primary_contact_email, primary_contact_name), prospects(id, name, org_type, source_url, primary_contact_email, primary_contact_name), grants(id, title, funder, fon, source_url, submission_deadline, period_of_performance, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, description, eligible_entity_types, geographic_eligibility, ineligible_entities, subaward_prohibited, incumbent_risk, technical_burden_flags, hard_disqualifiers, verification_flags, scoring_rubric, ideal_applicant_profile)")
     .eq("id", params.id)
     .single();
 
@@ -89,11 +90,18 @@ export default async function CardDetailPage({
               <StepLink id={card.id} tab="grant" n={1} title="The Grant" active={tab === "grant"} />
               <StepLink id={card.id} tab="match" n={2} title="The Match" active={tab === "match"} />
             </div>
+            {isAdmin && isProspect && card.prospects && (
+              <ProspectContact
+                prospectId={card.prospects.id}
+                initialEmail={card.prospects.primary_contact_email}
+                initialName={card.prospects.primary_contact_name}
+              />
+            )}
             <DecisionPanel
               cardId={card.id}
               decision={card.decision}
               isAdmin={isAdmin}
-              alertSend={isAdmin && !isProspect ? <AlertSend cardId={card.id} /> : null}
+              alertSend={isAdmin ? <AlertSend cardId={card.id} /> : null}
             />
           </div>
         </aside>
