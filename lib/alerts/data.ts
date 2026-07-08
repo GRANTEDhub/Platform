@@ -100,9 +100,12 @@ function buildStats(g: Grant): AlertStat[] {
   const stats: AlertStat[] = [];
   const award = formatAwardRange(g.award_range_min, g.award_range_max);
   if (award !== "—") stats.push({ value: award, label: g.award_range_is_estimate ? "award · est." : "award range" });
+  // Share the web pages' rule verbatim: compactCostShare already maps no-cost-
+  // share inputs to "None" (grant-detail.tsx GrantStatBand does the same). Render
+  // whatever it returns -- no PDF-specific "$0" remap -- so PDF == web. "None" is
+  // short, so the ellipsis cap only ever trims a genuinely long raw match string.
   const cs = compactCostShare(g.cost_share);
-  if (cs === "None") stats.push({ value: "$0", label: "match required" });
-  else if (cs !== "—") stats.push({ value: cs.length > 8 ? cs.slice(0, 8) : cs, label: "match" });
+  if (cs !== "—") stats.push({ value: cs.length > 8 ? cs.slice(0, 8) : cs, label: "match required" });
   if (stats.length < 3 && g.num_awards) stats.push({ value: shortAwards(g.num_awards), label: "awards" });
   stats.push({ value: shortDeadline(g.submission_deadline), label: "deadline", highlight: true });
   return stats.slice(-4); // keep the deadline (last) if we overflow
