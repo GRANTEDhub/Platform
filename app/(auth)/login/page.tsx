@@ -73,10 +73,12 @@ function LoginForm() {
           for the muted secondary text; backdrop-blur frosts the busy photo. */}
       <div className="w-full max-w-sm rounded-2xl border border-white/40 bg-white/85 p-8 shadow-2xl backdrop-blur-md">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-lg font-bold text-primary-foreground">
-            G
-          </div>
-          <h1 className="text-xl font-semibold tracking-tight">GRANTED Platform</h1>
+          {/* Full lockup, light variant (navy wordmark) for the light frosted card. */}
+          <img
+            src="/granted-lockup-light.svg"
+            alt="GRANTED"
+            className="mx-auto mb-4 h-12 w-auto"
+          />
           <p className="mt-1 text-sm text-muted-foreground">
             Sign in to continue
           </p>
