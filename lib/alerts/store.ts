@@ -4,7 +4,8 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { uploadPdf, downloadPdf, removeObjects } from "@/lib/storage";
 import { mintAccessToken } from "@/lib/tokens";
 import { enrichAlert } from "./enrich";
-import { buildAlertData, buildAlertEmailBody } from "./data";
+import { buildAlertData, buildAlertEmailBody, buildProspectEmailBody } from "./data";
+import { senderFirstName } from "./sender";
 import { renderAlertPdf } from "./render";
 import type { AlertContext } from "./generate";
 import type { AlertData, AlertEnrichment } from "./types";
@@ -85,6 +86,22 @@ export async function generateDraftAlert(
 
   const pdf = await renderAlertPdf(alertData);
 
+  // CLIENT alerts get the short facts body; PROSPECT (cold-outreach) alerts get
+  // the salutation + sender-named intro + credential block + scheduling CTA. The
+  // sender's first name is resolved from the draft creator's profile at draft time
+  // (draft creator == sender under preview == sent), null-safe to a name-less intro.
+  let emailBody: string;
+  if (ctx.card.card_type === "prospect") {
+    let sender: { full_name: string | null; email: string | null } | null = null;
+    if (userId) {
+      const { data } = await db.from("profiles").select("full_name, email").eq("id", userId).maybeSingle();
+      sender = data ?? null;
+    }
+    emailBody = buildProspectEmailBody(ctx.grant, ctx.card, senderFirstName(sender), !!alertData.schedulingUrl);
+  } else {
+    emailBody = buildAlertEmailBody(ctx.grant, ctx.card);
+  }
+
   const id = randomUUID();
   const storagePath = `${ctx.card.id}/${id}.pdf`;
   await uploadPdf(GRANT_ALERTS_BUCKET, storagePath, pdf);
@@ -101,7 +118,7 @@ export async function generateDraftAlert(
     storage_bucket: GRANT_ALERTS_BUCKET,
     storage_path: storagePath,
     subject: `GRANTED Alert: ${ctx.grant.title || "New grant opportunity"}`,
-    email_body: buildAlertEmailBody(ctx.grant, ctx.card),
+    email_body: emailBody,
     created_by: userId,
   };
   const { data, error } = await db.from("grant_alerts").insert(insert).select().single<GrantAlertRow>();

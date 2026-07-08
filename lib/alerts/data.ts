@@ -160,19 +160,72 @@ export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichme
   };
 }
 
-// Short plain-text email body that accompanies the PDF (facts only).
-export function buildAlertEmailBody(g: Grant, card: ReviewCard): string {
+// The deterministic grant-announcement sentence shared by the client and prospect
+// email bodies: title + a trimmed funds clause + award + deadline. Facts only, so
+// both surfaces announce the grant identically.
+function grantAnnouncement(g: Grant, card: ReviewCard): string {
   const award = formatAwardRange(g.award_range_min, g.award_range_max);
   const deadline = formatDeadline(g.submission_deadline);
   const funds = (card.description_short || g.description || "").trim();
   const fundsLine = funds ? ` It funds ${funds.replace(/\s+/g, " ").slice(0, 160).replace(/[.,;]\s*$/, "")}.` : "";
   const awardLine = award !== "—" ? ` Award ${award}.` : "";
   const deadlineLine = deadline !== "—" ? ` Deadline ${deadline}.` : "";
+  return `${g.title || "A grant"} was published.${fundsLine}${awardLine}${deadlineLine}`;
+}
+
+// Short plain-text email body that accompanies the PDF for a CLIENT alert (facts
+// only). Prospects use buildProspectEmailBody (cold-outreach shape) instead.
+export function buildAlertEmailBody(g: Grant, card: ReviewCard): string {
   return [
-    `${g.title || "A grant"} was published.${fundsLine}${awardLine}${deadlineLine}`,
+    grantAnnouncement(g, card),
     "",
     "The full alert is attached as a one-page PDF.",
     "",
     "— GRANTED",
+  ].join("\n");
+}
+
+// Static credential block for prospect (cold) outreach -- VERBATIM and identical
+// for every sender, never LLM-generated or paraphrased.
+const PROSPECT_CREDENTIAL =
+  "GRANTED is a grant solutions company based in Northwest Arkansas. We work with nonprofit organizations, local governments, and institutions on grant strategy and proposal development.";
+
+// Plain-text body for a PROSPECT (cold-outreach) alert: salutation, a one-line
+// intro naming the sender, the shared grant announcement, the static credential
+// block, then a close pointing to the attached PDF. Constraints: plain text, no
+// em dashes, no signature block (the rich HTML signature is the deferred part of
+// #81). `senderFirstName` is null when we can't resolve a real first name -> a
+// name-less intro (never an email/username as a name), and the sign-off carries no
+// sender name by design (avoids reading like a signature). `hasSchedulingLink`
+// mirrors the PDF: the booking link is baked in only when its token minted, so we
+// only promise "a link to schedule a call" when the attached PDF actually carries
+// one -- otherwise the email would over-promise. Client alerts get none of this
+// -- see buildAlertEmailBody.
+export function buildProspectEmailBody(
+  g: Grant,
+  card: ReviewCard,
+  senderFirstName: string | null,
+  hasSchedulingLink: boolean,
+): string {
+  const name = senderFirstName?.trim();
+  const intro = name
+    ? `I'm ${name} with GRANTED. I came across a grant that looks like a strong fit for your organization and wanted to flag it.`
+    : `I'm reaching out from GRANTED. I came across a grant that looks like a strong fit for your organization and wanted to flag it.`;
+  const pdfLine = hasSchedulingLink
+    ? "The full alert, including a link to schedule a call, is attached as a one-page PDF."
+    : "The full alert is attached as a one-page PDF.";
+  return [
+    "Hello,",
+    "",
+    intro,
+    "",
+    grantAnnouncement(g, card),
+    "",
+    PROSPECT_CREDENTIAL,
+    "",
+    pdfLine,
+    "",
+    "Best,",
+    "GRANTED",
   ].join("\n");
 }

@@ -5,6 +5,8 @@ import { canSendOutreach } from "@/lib/email/guard";
 import { sendGrantAlertEmail, isDeliverableEmail } from "@/lib/email/send";
 import { loadAlertContext, alertRecipient, type AlertContext } from "@/lib/alerts/generate";
 import { getOrCreateDraftAlert, loadAlertPdf, markAlertSent, type GrantAlertRow } from "@/lib/alerts/store";
+import { buildProspectEmailBody } from "@/lib/alerts/data";
+import { senderFirstName } from "@/lib/alerts/sender";
 import { computeGrantSummary } from "@/lib/review/summary";
 import { convertProspectToLead } from "@/lib/prospects/convert";
 import type { Prospect } from "@/types/database";
@@ -28,7 +30,7 @@ export async function POST(req: NextRequest, { params }: { params: { cardId: str
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
+  const { data: profile } = await supabase.from("profiles").select("role, full_name, email").eq("id", user.id).single();
   if (profile?.role !== "admin") return NextResponse.json({ error: "Admins only" }, { status: 403 });
 
   const ctx = await loadAlertContext(params.cardId);
@@ -49,7 +51,26 @@ export async function POST(req: NextRequest, { params }: { params: { cardId: str
 
   const recipient = (input.to ?? alertRecipient(ctx).email).trim();
   const subject = (input.subject ?? "").trim() || alert.subject || `GRANTED Alert: ${ctx.grant.title || "New grant opportunity"}`;
-  const emailBody = (input.body ?? "").trim() || alert.email_body || "";
+  let emailBody = (input.body ?? "").trim() || alert.email_body || "";
+
+  // Re-resolve the prospect intro's sender name when a DIFFERENT admin is sending
+  // than the one who drafted it. The saved body carries the draft creator's name,
+  // and the modal posts that saved body back verbatim on an as-is send -- so only
+  // rebuild when the posted body is UNEDITED (== the saved body), to never clobber
+  // a hand-edited note. Prospect-only; the PDF has no sender name, so it and the
+  // baked scheduling link are untouched.
+  if (
+    ctx.card.card_type === "prospect" &&
+    alert.created_by !== user.id &&
+    emailBody === (alert.email_body ?? "").trim()
+  ) {
+    emailBody = buildProspectEmailBody(
+      ctx.grant,
+      ctx.card,
+      senderFirstName({ full_name: profile.full_name, email: profile.email }),
+      !!alert.alert_data?.schedulingUrl,
+    );
+  }
 
   if (ctx.card.card_type === "prospect") {
     return prospectSend({ ctx, alert, recipient, subject, emailBody, userId: user.id });
