@@ -12,7 +12,7 @@
 export const BRAND = {
   navy: "#0B1E3A",      // primary
   navyDeep: "#081627",  // darker navy for gradient ends
-  orange: "#b3541e",    // accent / action
+  orange: "#E4761F",    // accent / action
   cream: "#faf7f2",     // background / surface
   ink: "#1a1a1a",       // near-black body ink (print)
   muted: "#5b6472",     // grey — secondary text

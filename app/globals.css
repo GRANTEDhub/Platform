@@ -4,7 +4,7 @@
 
 @layer base {
   /* GRANTED palette. These HSL tokens MIRROR lib/brand.ts (CSS can't import TS):
-     navy #0B1E3A = 216 68% 14% · orange #b3541e = 22 71% 41% · cream #faf7f2 =
+     navy #0B1E3A = 216 68% 14% · orange #E4761F = 27 79% 51% · cream #faf7f2 =
      39 44% 96%. Keep this block in sync with lib/brand.ts. The old forest-green
      primary is gone -- primary is now navy, so all chrome (sidebar, login, "G"
      marks, buttons, badges) matches the brand surfaces. */

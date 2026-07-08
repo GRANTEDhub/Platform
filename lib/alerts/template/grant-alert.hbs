@@ -28,8 +28,8 @@
     <div style="display:flex; align-items:center; gap:11px;">
       <img src="assets/granted-mark-navy.png" alt="GRANTED logo" width="31" height="31" style="display:block; flex-shrink:0;">
       <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:23px; letter-spacing:0.04em; color:#0B1E3A;">GRANTED</span>
-      <span style="width:1px; height:15px; background:#b3541e; display:inline-block;"></span>
-      <span style="font-family:'Source Serif 4', serif; font-style:italic; font-weight:700; font-size:14px; color:#b3541e;">More Grants. Less Grind.</span>
+      <span style="width:1px; height:15px; background:#E4761F; display:inline-block;"></span>
+      <span style="font-family:'Source Serif 4', serif; font-style:italic; font-weight:700; font-size:14px; color:#E4761F;">More Grants. Less Grind.</span>
     </div>
     <!-- DYNAMIC: short alert label, e.g. "FEMA NSGP Alert" -->
     <span style="font-size:10.5px; font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:#0B1E3A; opacity:0.55;">{{alertLabel}}</span>
@@ -40,7 +40,7 @@
   <!-- ===================== HERO ===================== -->
   <div style="padding:20px 46px 16px 46px;">
     <!-- DYNAMIC: eyebrow line. fon is CONDITIONAL. -->
-    <div style="font-size:11px; font-weight:600; letter-spacing:0.15em; text-transform:uppercase; color:#b3541e; margin-bottom:10px;">
+    <div style="font-size:11px; font-weight:600; letter-spacing:0.15em; text-transform:uppercase; color:#E4761F; margin-bottom:10px;">
       {{programName}}{{#if programShort}} &middot; {{programShort}}{{/if}}{{#if fiscalYear}} &middot; {{fiscalYear}}{{/if}}{{#if fon}} &middot; FON {{fon}}{{/if}}
     </div>
     <!-- DYNAMIC: headline -->
@@ -72,7 +72,7 @@
   <!-- ===================== WHAT IT FUNDS + WHO CAN APPLY ===================== -->
   <div style="display:grid; grid-template-columns:1.35fr 1fr; gap:34px; padding:14px 46px 2px 46px;">
     <div>
-      <div style="font-size:10.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:#b3541e; margin-bottom:11px;">What it funds</div>
+      <div style="font-size:10.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:#E4761F; margin-bottom:11px;">What it funds</div>
       <!-- DYNAMIC: lead-in line -->
       <p style="font-size:13px; line-height:1.55; margin:0 0 8px 0; color:#2a3a52;">{{whatItFundsIntro}}</p>
       <!-- DYNAMIC: loop of chips -->
@@ -83,14 +83,14 @@
       </div>
     </div>
     <div>
-      <div style="font-size:10.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:#b3541e; margin-bottom:11px;">Who can apply</div>
+      <div style="font-size:10.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:#E4761F; margin-bottom:11px;">Who can apply</div>
       <!-- DYNAMIC: eligibility (rich html) -->
       <p style="font-size:13px; line-height:1.55; margin:0 0 10px 0; color:#2a3a52;">{{{eligibilityHtml}}}</p>
       <!-- CONDITIONAL: small labeled callout (e.g. reimbursement note) -->
       {{#if eligibilityNote}}
-      <div style="display:flex; gap:10px; align-items:flex-start; background:#faf7f2; border-left:3px solid #b3541e; padding:10px 12px;">
+      <div style="display:flex; gap:10px; align-items:flex-start; background:#faf7f2; border-left:3px solid #E4761F; padding:10px 12px;">
         <div>
-          <div style="font-size:10px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:#b3541e; margin-bottom:3px;">{{eligibilityNote.label}}</div>
+          <div style="font-size:10px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:#E4761F; margin-bottom:3px;">{{eligibilityNote.label}}</div>
           <div style="font-size:12px; line-height:1.45; color:#2a3a52;">{{eligibilityNote.body}}</div>
         </div>
       </div>
@@ -104,18 +104,18 @@
 
       <!-- FIXED: How to get started (3 steps). See caveat in field-mapping.md. -->
       <div style="padding-top:12px;">
-        <div style="font-size:10.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:#b3541e; margin-bottom:10px;">How to get started</div>
+        <div style="font-size:10.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:#E4761F; margin-bottom:10px;">How to get started</div>
         <div style="display:flex; flex-direction:column; gap:9px;">
           <div style="display:flex; gap:11px; align-items:flex-start;">
-            <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:18px; color:#b3541e; line-height:1.1;">1</span>
+            <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:18px; color:#E4761F; line-height:1.1;">1</span>
             <div style="font-size:12px; line-height:1.42; color:#2a3a52;">Confirm your <b style="color:#0B1E3A;">SAM.gov registration (UEI)</b> is active. New or lapsed registrations can take 7&ndash;10 business days to clear.</div>
           </div>
           <div style="display:flex; gap:11px; align-items:flex-start;">
-            <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:18px; color:#b3541e; line-height:1.1;">2</span>
+            <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:18px; color:#E4761F; line-height:1.1;">2</span>
             <div style="font-size:12px; line-height:1.42; color:#2a3a52;">Outline your <b style="color:#0B1E3A;">project scope and top priorities</b> for this funding.</div>
           </div>
           <div style="display:flex; gap:11px; align-items:flex-start;">
-            <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:18px; color:#b3541e; line-height:1.1;">3</span>
+            <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:18px; color:#E4761F; line-height:1.1;">3</span>
             <div style="font-size:12px; line-height:1.42; color:#2a3a52;">Identify your <b style="color:#0B1E3A;">match or cost-share source</b>, if the program requires one.</div>
           </div>
         </div>
@@ -128,7 +128,7 @@
         <div style="font-size:11px; color:#faf7f2;"><b>support@grantedco.com</b> &nbsp;&middot;&nbsp; Not ready this cycle? We can position you for the next one.</div>
         <!-- CONDITIONAL: prospect alerts only -- a clickable booking link (baked in at render). -->
         {{#if schedulingUrl}}
-        <a href="{{schedulingUrl}}" style="display:inline-block; align-self:flex-start; margin-top:11px; background:#b3541e; color:#fff; font-size:12px; font-weight:600; text-decoration:none; padding:8px 15px; border-radius:3px;">Schedule your discovery call &rarr;</a>
+        <a href="{{schedulingUrl}}" style="display:inline-block; align-self:flex-start; margin-top:11px; background:#E4761F; color:#fff; font-size:12px; font-weight:600; text-decoration:none; padding:8px 15px; border-radius:3px;">Schedule your discovery call &rarr;</a>
         {{/if}}
       </div>
 
