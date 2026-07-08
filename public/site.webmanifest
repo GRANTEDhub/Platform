@@ -1,0 +1,12 @@
+{
+  "name": "GRANTED Platform",
+  "short_name": "GRANTED",
+  "icons": [
+    { "src": "/favicon-32.png", "sizes": "32x32", "type": "image/png" },
+    { "src": "/apple-touch-icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "theme_color": "#0B1E3A",
+  "background_color": "#faf7f2",
+  "display": "standalone"
+}

@@ -50,9 +50,8 @@ export function Sidebar({
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r bg-card">
       <div className="flex h-16 items-center gap-2 border-b px-5">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground">
-          G
-        </div>
+        {/* Compact mark, light variant (navy) for the white (bg-card) sidebar. */}
+        <img src="/granted-mark-light.svg" alt="GRANTED" className="h-8 w-auto" />
         <span className="font-semibold tracking-tight">GRANTED</span>
       </div>
 
