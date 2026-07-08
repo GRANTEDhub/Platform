@@ -36,6 +36,15 @@ export function compactCostShare(raw: string | null | undefined): string {
   const s = (raw ?? "").trim();
   if (!s) return "—";
   if (/^(none|no\b|not required|n\/?a|\$?0\b|0%)/i.test(s)) return "None";
+  // Strip trailing "match" / "match required" / "cost share" wording so the value
+  // is the clean amount only -- the "Match required" label already conveys it, and
+  // it keeps idealBudget's `${cs} match` from doubling to "... match match".
+  // Guard: only when a real amount/percentage/ratio remains, so a bare "Cost
+  // sharing required" (no figure) is left intact rather than emptied to nothing.
+  const stripped = s
+    .replace(/(?:[\s,;:.()\-]*\b(?:cost[-\s]?shar(?:e|ing)|match(?:ing)?|required|non-?federal)\b)+[\s.)]*$/i, "")
+    .trim();
+  if (stripped && /[\d%]/.test(stripped)) return stripped;
   return s;
 }
 
