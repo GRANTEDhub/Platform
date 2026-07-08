@@ -197,7 +197,7 @@ export function AlertSend({
                 </p>
                 {schedulingLink && (
                   <p className="text-[11px] text-muted-foreground">
-                    A “book a call” scheduling link is added to the note on send.
+                    The attached PDF includes a clickable “Schedule your discovery call” link.
                   </p>
                 )}
               </div>

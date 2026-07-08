@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { appBaseUrl } from "@/lib/site-url";
 import { loadAlertContext } from "@/lib/alerts/generate";
 import { getOrCreateDraftAlert, loadAlertPdf } from "@/lib/alerts/store";
 
@@ -11,7 +12,7 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-export async function GET(_req: Request, { params }: { params: { cardId: string } }) {
+export async function GET(req: Request, { params }: { params: { cardId: string } }) {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
@@ -22,7 +23,7 @@ export async function GET(_req: Request, { params }: { params: { cardId: string 
   if (!ctx) return NextResponse.json({ error: "Card or grant not found" }, { status: 404 });
 
   try {
-    const alert = await getOrCreateDraftAlert(ctx, user.id);
+    const alert = await getOrCreateDraftAlert(ctx, user.id, appBaseUrl(req));
     const pdf = await loadAlertPdf(alert);
     return new NextResponse(new Uint8Array(pdf), {
       status: 200,

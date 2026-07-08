@@ -43,4 +43,8 @@ export interface AlertData {
   riskCallout?: AlertRiskCallout | null;
   ctaSendItems: string;
   deadlineLong: string;
+  // Prospect alerts only: a /go/<token> booking link, baked into the PDF's CTA
+  // block as a clickable link. Minted at draft-render time (see store.ts) so the
+  // saved PDF carries it (preview == sent). Absent on client alerts.
+  schedulingUrl?: string | null;
 }

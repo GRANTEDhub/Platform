@@ -126,6 +126,10 @@
         <div style="font-size:10.5px; font-weight:700; letter-spacing:0.13em; text-transform:uppercase; color:#e6b89a; margin-bottom:7px;">Then bring it to GRANTED</div>
         <p style="font-size:12px; line-height:1.5; margin:0 0 9px 0; color:#cdd6e2;">Send us {{ctaSendItems}} and we take it from there. We validate eligibility, shape the strongest strategy against the program&rsquo;s scoring criteria, and build a competitive application before the {{deadlineLong}} deadline.</p>
         <div style="font-size:11px; color:#faf7f2;"><b>support@grantedco.com</b> &nbsp;&middot;&nbsp; Not ready this cycle? We can position you for the next one.</div>
+        <!-- CONDITIONAL: prospect alerts only -- a clickable booking link (baked in at render). -->
+        {{#if schedulingUrl}}
+        <a href="{{schedulingUrl}}" style="display:inline-block; align-self:flex-start; margin-top:11px; background:#b3541e; color:#fff; font-size:12px; font-weight:600; text-decoration:none; padding:8px 15px; border-radius:3px;">Schedule your discovery call &rarr;</a>
+        {{/if}}
       </div>
 
     </div>

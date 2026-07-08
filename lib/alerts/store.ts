@@ -2,6 +2,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/server";
 import { uploadPdf, downloadPdf, removeObjects } from "@/lib/storage";
+import { mintAccessToken } from "@/lib/tokens";
 import { enrichAlert } from "./enrich";
 import { buildAlertData, buildAlertEmailBody } from "./data";
 import { renderAlertPdf } from "./render";
@@ -52,7 +53,11 @@ export async function getDraftAlert(cardId: string): Promise<GrantAlertRow | nul
 // upload PDF -> insert row. Replaces any existing draft (and deletes its stale
 // PDF) so "Regenerate" is a clean swap. This is the ONLY place enrich + render
 // run for the alert; preview and send both reuse the row this produces.
-export async function generateDraftAlert(ctx: AlertContext, userId: string | null): Promise<GrantAlertRow> {
+export async function generateDraftAlert(
+  ctx: AlertContext,
+  userId: string | null,
+  origin: string,
+): Promise<GrantAlertRow> {
   const db = createServiceClient();
 
   const prior = await getDraftAlert(ctx.card.id);
@@ -63,6 +68,21 @@ export async function generateDraftAlert(ctx: AlertContext, userId: string | nul
 
   const enrichment = await enrichAlert(ctx.grant, ctx.card);
   const alertData = buildAlertData(ctx.grant, ctx.card, enrichment);
+
+  // Prospect alerts carry a clickable booking link in the PDF. Mint the /go
+  // token HERE, at render time, so it's baked into the saved PDF (preview ==
+  // sent). The lead doesn't exist yet at draft time, so it's a prospect-scoped
+  // token; /go resolves it identically for the recipient.
+  if (ctx.card.card_type === "prospect" && ctx.prospect && origin) {
+    const minted = await mintAccessToken(db, {
+      actionType: "prospect_schedule_call",
+      prospectId: ctx.prospect.id,
+      grantId: ctx.grant.id,
+      createdBy: userId,
+    });
+    if (minted) alertData.schedulingUrl = `${origin}/go/${minted.rawToken}`;
+  }
+
   const pdf = await renderAlertPdf(alertData);
 
   const id = randomUUID();
@@ -89,9 +109,10 @@ export async function generateDraftAlert(ctx: AlertContext, userId: string | nul
   return data;
 }
 
-// Reuse the existing draft if present; otherwise generate one.
-export async function getOrCreateDraftAlert(ctx: AlertContext, userId: string | null): Promise<GrantAlertRow> {
-  return (await getDraftAlert(ctx.card.id)) ?? generateDraftAlert(ctx, userId);
+// Reuse the existing draft if present; otherwise generate one. `origin` is the
+// stable base URL for the baked-in booking link (only used when generating).
+export async function getOrCreateDraftAlert(ctx: AlertContext, userId: string | null, origin: string): Promise<GrantAlertRow> {
+  return (await getDraftAlert(ctx.card.id)) ?? generateDraftAlert(ctx, userId, origin);
 }
 
 // The saved PDF bytes for an alert (from the bucket -- no re-render).
