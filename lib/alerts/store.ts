@@ -97,7 +97,7 @@ export async function generateDraftAlert(
       const { data } = await db.from("profiles").select("full_name, email").eq("id", userId).maybeSingle();
       sender = data ?? null;
     }
-    emailBody = buildProspectEmailBody(ctx.grant, ctx.card, senderFirstName(sender));
+    emailBody = buildProspectEmailBody(ctx.grant, ctx.card, senderFirstName(sender), !!alertData.schedulingUrl);
   } else {
     emailBody = buildAlertEmailBody(ctx.grant, ctx.card);
   }
