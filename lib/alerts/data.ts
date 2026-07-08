@@ -167,21 +167,36 @@ function grantAnnouncement(g: Grant, card: ReviewCard): string {
   const award = formatAwardRange(g.award_range_min, g.award_range_max);
   const deadline = formatDeadline(g.submission_deadline);
   const funds = (card.description_short || g.description || "").trim();
-  const fundsLine = funds ? ` It funds ${funds.replace(/\s+/g, " ").slice(0, 160).replace(/[.,;]\s*$/, "")}.` : "";
+  // Bound the funds clause to keep the announcement short, but cut on a WORD
+  // boundary (truncateWords), never mid-word -- a hard slice(0, 160) clipped
+  // "coding" to "codi". When truncated the trailing "…" signals it; otherwise
+  // close the clause with a period (stripping any trailing punctuation first).
+  const fundsText = truncateWords(funds.replace(/\s+/g, " "), 160);
+  const fundsLine = funds
+    ? ` It funds ${fundsText.endsWith("…") ? fundsText : `${stripTrailingPunct(fundsText)}.`}`
+    : "";
   const awardLine = award !== "—" ? ` Award ${award}.` : "";
   const deadlineLine = deadline !== "—" ? ` Deadline ${deadline}.` : "";
   return `${g.title || "A grant"} was published.${fundsLine}${awardLine}${deadlineLine}`;
 }
 
-// Short plain-text email body that accompanies the PDF for a CLIENT alert (facts
-// only). Prospects use buildProspectEmailBody (cold-outreach shape) instead.
+// Short plain-text email body that accompanies the PDF for a CLIENT alert: a
+// salutation, a static lead-in transition (never LLM-generated), the shared grant
+// announcement, then a PDF pointer and a clean close. No em dashes; no intro or
+// credential block -- clients already know us (those are prospect-only, see
+// buildProspectEmailBody). Close matches the prospect sign-off.
 export function buildAlertEmailBody(g: Grant, card: ReviewCard): string {
   return [
+    "Hello,",
+    "",
+    "A new opportunity came through that may be a fit:",
+    "",
     grantAnnouncement(g, card),
     "",
     "The full alert is attached as a one-page PDF.",
     "",
-    "— GRANTED",
+    "Best,",
+    "GRANTED",
   ].join("\n");
 }
 
