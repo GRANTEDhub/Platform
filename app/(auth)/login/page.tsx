@@ -64,8 +64,14 @@ function LoginForm() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="w-full max-w-sm">
+    <div
+      className="flex min-h-screen items-center justify-center bg-cover bg-center bg-no-repeat px-4"
+      style={{ backgroundImage: "url('/login-bg.jpg')" }}
+    >
+      {/* Single frosted-glass card over the road background. bg-white/85 keeps the
+          worst-case (panel over a dark image patch) contrast above WCAG AA 4.5:1
+          for the muted secondary text; backdrop-blur frosts the busy photo. */}
+      <div className="w-full max-w-sm rounded-2xl border border-white/40 bg-white/85 p-8 shadow-2xl backdrop-blur-md">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-lg font-bold text-primary-foreground">
             G
@@ -77,7 +83,7 @@ function LoginForm() {
         </div>
 
         {sent ? (
-          <div className="rounded-lg border bg-card p-6 text-center text-sm">
+          <div className="text-center text-sm">
             <p className="font-medium">Check your email</p>
             <p className="mt-1 text-muted-foreground">
               We sent a sign-in link to <span className="font-medium">{email}</span>.
@@ -86,7 +92,7 @@ function LoginForm() {
         ) : (
           <form
             onSubmit={mode === "password" ? handlePassword : handleMagic}
-            className="space-y-4 rounded-lg border bg-card p-6 shadow-sm"
+            className="space-y-4"
           >
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
