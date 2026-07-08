@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ChevronDown } from "lucide-react";
 import { sanitizeRichText } from "@/lib/sanitize/html";
-import { previewHtml } from "@/lib/grants/description";
+import { previewHtml, collapseDuplicatedBlock } from "@/lib/grants/description";
 import { ExpandableDescription } from "@/components/grants/expandable-description";
 import type { Grant, IdealApplicantProfile as IAP } from "@/types/database";
 import {
@@ -112,7 +112,7 @@ export function WhatItFundsAndEligibility({ grant }: { grant: GrantDetailFields 
   // Description may carry HTML markup -> sanitize (whitelist) then inject. Long
   // descriptions are truncated (sentence-clean) with a Show more expander so they
   // don't strand whitespace next to the shorter eligibility column.
-  const descClean = grant.description ? sanitizeRichText(grant.description) : "";
+  const descClean = grant.description ? sanitizeRichText(collapseDuplicatedBlock(grant.description)) : "";
   const descPreview = previewHtml(descClean);
   const descClass = "mt-2.5 text-sm leading-relaxed text-foreground [&_li]:ml-4 [&_li]:list-disc [&_ol]:mt-2 [&_ol]:list-decimal [&_p]:mt-2 [&_ul]:mt-2";
   return (

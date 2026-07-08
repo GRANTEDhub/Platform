@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { sanitizeRichText } from "@/lib/sanitize/html";
-import { previewHtml } from "@/lib/grants/description";
+import { previewHtml, collapseDuplicatedBlock } from "@/lib/grants/description";
 import { ExpandableDescription } from "@/components/grants/expandable-description";
 import type { Grant } from "@/types/database";
 
@@ -12,7 +12,7 @@ import type { Grant } from "@/types/database";
 // The wide "what it funds + ideal applicant" block.
 export function GrantOverview({ grant }: { grant: Grant }) {
   // Sanitized description; long ones truncate (sentence-clean) behind Show more.
-  const descClean = grant.description ? sanitizeRichText(grant.description) : "";
+  const descClean = grant.description ? sanitizeRichText(collapseDuplicatedBlock(grant.description)) : "";
   const descPreview = previewHtml(descClean);
   const descClass = "[&_li]:ml-4 [&_li]:list-disc [&_ol]:mt-2 [&_ol]:list-decimal [&_p]:mt-2 [&_ul]:mt-2";
   return (

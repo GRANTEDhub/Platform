@@ -1,3 +1,55 @@
+// Display-only guard against upstream descriptions that contain the same block
+// twice -- a rare Grants.gov summary_description quirk (~0.3% of records; issue
+// #73). Collapses a repeated block for RENDERING only; the stored column is never
+// mutated. Conservative by design -- eating real content is worse than showing a
+// rare double, so it compares on a normalized key (tags stripped, whitespace
+// collapsed, lowercased), only acts on a substantial (>= 40 normalized chars)
+// duplicated unit, removes only CONSECUTIVE duplicates (so a legitimately repeated
+// phrase with content between it, "A B A", is left fully intact), and returns the
+// input UNCHANGED whenever it is not confident.
+const MIN_DUP_LEN = 40;
+
+function normalizeKey(s: string): string {
+  return s
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+export function collapseDuplicatedBlock(raw: string): string {
+  if (!raw) return raw;
+
+  // Strategy 1 -- consecutive duplicate blocks. Split on paragraph boundaries
+  // (after each </p> for HTML, else on blank lines) and drop a block whose
+  // normalized key equals the previous KEPT block's key. Consecutive-only, so
+  // "A B A" survives; only "A A" collapses.
+  const isHtml = /<\/p>/i.test(raw);
+  const blocks = isHtml ? raw.split(/(?<=<\/p>)/i) : raw.split(/\n\s*\n/);
+  if (blocks.length > 1) {
+    const kept: string[] = [];
+    let prevKey = "";
+    for (const b of blocks) {
+      const key = normalizeKey(b);
+      if (key && key === prevKey && key.length >= MIN_DUP_LEN) continue; // drop consecutive dup
+      kept.push(b);
+      if (key) prevKey = key;
+    }
+    if (kept.length < blocks.length) return isHtml ? kept.join("") : kept.join("\n\n");
+  }
+
+  // Strategy 2 -- a single block that is exactly its own content twice ("AA", no
+  // separator). Byte-identical halves are unambiguous duplication (natural prose
+  // is never two equal halves), so this needs no normalization and can't false-fire.
+  const t = raw.trim();
+  if (t.length >= MIN_DUP_LEN * 2 && t.length % 2 === 0) {
+    const half = t.length / 2;
+    if (t.slice(0, half) === t.slice(half)) return t.slice(0, half).trim();
+  }
+
+  return raw;
+}
+
 // Word-count preview of a sanitized description HTML for the "What it funds"
 // column, with a "Show more" expander (see components/grants/expandable-description).
 // Pure string logic (no deps): walks the HTML, counts words in text nodes, and
