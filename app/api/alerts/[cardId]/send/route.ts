@@ -35,10 +35,11 @@ export async function POST(req: NextRequest, { params }: { params: { cardId: str
   if (!ctx) return NextResponse.json({ error: "Card or grant not found" }, { status: 404 });
 
   const input = (await req.json().catch(() => ({}))) as { to?: string; subject?: string; body?: string };
+  const origin = appBaseUrl(req);
 
   let alert: GrantAlertRow;
   try {
-    alert = await getOrCreateDraftAlert(ctx, user.id);
+    alert = await getOrCreateDraftAlert(ctx, user.id, origin);
   } catch (err) {
     return NextResponse.json(
       { error: `Draft not ready: ${err instanceof Error ? err.message : String(err)}` },
@@ -51,8 +52,7 @@ export async function POST(req: NextRequest, { params }: { params: { cardId: str
   const emailBody = (input.body ?? "").trim() || alert.email_body || "";
 
   if (ctx.card.card_type === "prospect") {
-    const origin = appBaseUrl(req);
-    return prospectSend({ ctx, alert, recipient, subject, emailBody, userId: user.id, origin });
+    return prospectSend({ ctx, alert, recipient, subject, emailBody, userId: user.id });
   }
   return clientSend({ supabase, ctx, alert, recipient, subject, emailBody, userId: user.id, cardId: params.cardId });
 }
@@ -65,9 +65,8 @@ async function prospectSend(a: {
   subject: string;
   emailBody: string;
   userId: string;
-  origin: string;
 }) {
-  const { ctx, alert, recipient, subject, emailBody, userId, origin } = a;
+  const { ctx, alert, recipient, subject, emailBody, userId } = a;
 
   // Gate FIRST: no conversion, no send, no state change on preview / blocked.
   if (!isDeliverableEmail(recipient)) {
@@ -96,12 +95,11 @@ async function prospectSend(a: {
       prospect,
       grantId: ctx.grant.id,
       userId,
-      origin,
       contactEmail: recipient,
       contactName: prospect.primary_contact_name,
-      // Mint the lead-bound /go scheduling link to embed in the email body, so the
-      // booking link and the pipeline lead are the same identity.
-      mintScheduleToken: true,
+      // No link token here -- the booking link is baked into the PDF at draft time
+      // (prospect-scoped). This call is purely for pipeline tracking now.
+      mintScheduleToken: false,
     });
   } catch (err) {
     return NextResponse.json(
@@ -120,17 +118,12 @@ async function prospectSend(a: {
     });
   }
 
-  // Embed the lead-bound booking link in the body (minted during conversion).
-  // Appended at send -- the preview note shows the intro + PDF reference; the
-  // literal URL isn't known until now (the modal flags "added on send").
-  const finalBody = conv.scheduleUrl
-    ? `${emailBody}\n\nWant to talk through whether this fits? Grab a time here:\n${conv.scheduleUrl}`
-    : emailBody;
-
+  // The booking link lives in the attached PDF (baked at draft time), so the
+  // email body is sent as-is -- no appended URL line.
   try {
     const pdf = await loadAlertPdf(alert);
-    const result = await sendGrantAlertEmail({ to: recipient, subject, body: finalBody, pdf });
-    await markAlertSent(alert.id, { sentTo: result.to, subject, emailBody: finalBody, clientId: conv.clientId });
+    const result = await sendGrantAlertEmail({ to: recipient, subject, body: emailBody, pdf });
+    await markAlertSent(alert.id, { sentTo: result.to, subject, emailBody, clientId: conv.clientId });
     await db.from("pipeline_events").insert({
       event_type: "grant_alert_sent",
       client_id: conv.clientId,

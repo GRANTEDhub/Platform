@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { appBaseUrl } from "@/lib/site-url";
 import { loadAlertContext, alertRecipient } from "@/lib/alerts/generate";
 import { getOrCreateDraftAlert, generateDraftAlert } from "@/lib/alerts/store";
 
@@ -29,17 +30,17 @@ function draftPayload(ctx: NonNullable<Awaited<ReturnType<typeof loadAlertContex
     to: alertRecipient(ctx).email,
     subject: alert.subject ?? `GRANTED Alert: ${ctx.grant.title || "New grant opportunity"}`,
     body: alert.email_body ?? "",
-    // Prospect sends append a lead-bound booking link at send time (not knowable
-    // now) -- the modal shows a hint so the missing URL isn't surprising.
+    // Prospect PDFs carry a clickable booking link (baked in at render) -- the
+    // modal shows a hint pointing the admin to it in the attached PDF.
     schedulingLink: alertRecipient(ctx).kind === "prospect",
   };
 }
 
-export async function GET(_req: Request, { params }: { params: { cardId: string } }) {
+export async function GET(req: Request, { params }: { params: { cardId: string } }) {
   const c = await adminCtx(params.cardId);
   if ("error" in c) return c.error;
   try {
-    const alert = await getOrCreateDraftAlert(c.ctx, c.user.id);
+    const alert = await getOrCreateDraftAlert(c.ctx, c.user.id, appBaseUrl(req));
     return NextResponse.json(draftPayload(c.ctx, alert));
   } catch (err) {
     return NextResponse.json(
@@ -49,11 +50,11 @@ export async function GET(_req: Request, { params }: { params: { cardId: string 
   }
 }
 
-export async function POST(_req: Request, { params }: { params: { cardId: string } }) {
+export async function POST(req: Request, { params }: { params: { cardId: string } }) {
   const c = await adminCtx(params.cardId);
   if ("error" in c) return c.error;
   try {
-    const alert = await generateDraftAlert(c.ctx, c.user.id);
+    const alert = await generateDraftAlert(c.ctx, c.user.id, appBaseUrl(req));
     return NextResponse.json(draftPayload(c.ctx, alert));
   } catch (err) {
     return NextResponse.json(
