@@ -300,8 +300,21 @@ export async function resolveNofoText(
 export function mergeDeepShred(api: ExtractedGrant, deep: ExtractedGrant): ExtractedGrant {
   const emptyStr = (v: string) => !v || v.trim() === "";
   const emptyArr = (v: unknown[]) => !v || v.length === 0;
+  // "Coarse" = the Grants.gov / Simpler `applicant_types` export gave us nothing
+  // usable: empty, or the catch-all ["Other"] (case-insensitive). When the API is
+  // coarse AND the NOFO shred produced granular types, take the shred; otherwise
+  // keep the API value. This never overwrites a good API list, and it never
+  // replaces ["Other"] with an equally-coarse shred -- an honest ["Other"] stays.
+  const coarse = (v: string[]) =>
+    emptyArr(v) || v.every((t) => (t ?? "").trim().toLowerCase() === "other");
   return {
     ...api,
+    // Entity eligibility: the API export is frequently just ["Other"] while the
+    // NOFO spells out real types. Recover the shred's granular value in that case.
+    eligible_entity_types:
+      coarse(api.eligible_entity_types) && !coarse(deep.eligible_entity_types)
+        ? deep.eligible_entity_types
+        : api.eligible_entity_types,
     // Analytical depth — take from the NOFO extraction.
     scoring_rubric:
       deep.scoring_rubric && Object.keys(deep.scoring_rubric).length ? deep.scoring_rubric : api.scoring_rubric,
