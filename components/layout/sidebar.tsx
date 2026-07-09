@@ -50,10 +50,10 @@ export function Sidebar({
   return (
     <aside className="flex w-60 shrink-0 flex-col rounded-3xl bg-brand-navy px-3 py-5 text-white shadow-lift">
       <div className="mb-6 flex items-center gap-2.5 px-2">
-        {/* Orange logo tile with the white mark — brand chip on the navy sidebar. */}
-        <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-brand-orange">
-          <img src="/granted-mark-dark.svg" alt="GRANTED" className="h-5 w-auto" />
-        </span>
+        {/* Real TM'd mark rendered directly on navy — its dark-background variant is
+            white + orange, so both read cleanly here. (No orange tile: it camouflaged
+            the mark's orange elements against an identical-orange chip.) */}
+        <img src="/granted-mark-dark.svg" alt="GRANTED" className="h-8 w-auto" />
         <span className="font-serif text-lg font-semibold tracking-tight text-white">GRANTED</span>
       </div>
 

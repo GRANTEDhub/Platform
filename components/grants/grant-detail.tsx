@@ -135,58 +135,65 @@ export function GrantStatusPill({ status }: { status: string | null | undefined 
   );
 }
 
-export function WhatItFundsAndEligibility({ grant }: { grant: GrantDetailFields }) {
-  const eligibleTypes = (grant.eligible_entity_types ?? []).map((t) => t.replace(/_/g, " "));
+export function WhatItFunds({ grant }: { grant: GrantDetailFields }) {
   // Description may carry HTML markup -> sanitize (whitelist) then inject. Long
   // descriptions are truncated (sentence-clean) with a Show more expander.
   const descClean = grant.description ? sanitizeRichText(collapseDuplicatedBlock(grant.description)) : "";
   const descPreview = previewHtml(descClean);
   const descClass = "mt-3 text-sm leading-relaxed text-foreground [&_li]:ml-4 [&_li]:list-disc [&_ol]:mt-2 [&_ol]:list-decimal [&_p]:mt-2 [&_ul]:mt-2";
   return (
-    <>
-      <Card className="p-6 sm:p-7">
-        <SectionLabel>What it funds</SectionLabel>
-        {!grant.description ? (
-          <p className="mt-3 text-sm leading-relaxed text-foreground">—</p>
-        ) : descPreview.truncated ? (
-          <ExpandableDescription preview={descPreview.html} full={descClean} className={descClass} />
-        ) : (
-          <div className={descClass} dangerouslySetInnerHTML={{ __html: descClean }} />
-        )}
-      </Card>
-      <Card className="p-6 sm:p-7">
-        <SectionLabel>Who can apply</SectionLabel>
-        {eligibleTypes.length > 0 ? (
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            {eligibleTypes.map((t, i) => (
-              <Badge key={i} variant="chip" className="gap-1">
-                <Check className="h-3 w-3 text-emerald-600" strokeWidth={3} />
-                {t}
-              </Badge>
-            ))}
-          </div>
-        ) : (
-          <p className="mt-3 text-sm text-muted-foreground">Eligible entity types not specified.</p>
-        )}
-        {(grant.geographic_eligibility || grant.ineligible_entities) && (
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            {grant.geographic_eligibility && (
-              <div className="rounded-2xl bg-emerald-50 p-4">
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-700">Geography</p>
-                <p className="mt-1.5 text-sm text-foreground">{grant.geographic_eligibility}</p>
-              </div>
-            )}
-            {grant.ineligible_entities && (
-              <div className="rounded-2xl bg-brand-orange/[0.07] p-4">
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-brand-orange">Ineligible</p>
-                <p className="mt-1.5 text-sm text-foreground">{grant.ineligible_entities}</p>
-              </div>
-            )}
-          </div>
-        )}
-        {grant.subaward_prohibited && <p className="mt-3 text-sm font-medium text-brand-orange">Subawards prohibited</p>}
-      </Card>
-    </>
+    <Card className="p-6 sm:p-7">
+      <SectionLabel>What it funds</SectionLabel>
+      {!grant.description ? (
+        <p className="mt-3 text-sm leading-relaxed text-foreground">—</p>
+      ) : descPreview.truncated ? (
+        <ExpandableDescription preview={descPreview.html} full={descClean} className={descClass} />
+      ) : (
+        <div className={descClass} dangerouslySetInnerHTML={{ __html: descClean }} />
+      )}
+    </Card>
+  );
+}
+
+// "Who can apply" -- eligible-entity chips + Geography/Ineligible split cards +
+// subaward note. Split out of the old WhatItFundsAndEligibility so the review page
+// can float it in its narrow right rail (`dense`); the prospects grant body still
+// renders it inline (wide, two-column geo/ineligible) via GrantBody.
+export function WhoCanApply({ grant, dense = false }: { grant: GrantDetailFields; dense?: boolean }) {
+  const eligibleTypes = (grant.eligible_entity_types ?? []).map((t) => t.replace(/_/g, " "));
+  return (
+    <Card className={dense ? "p-5" : "p-6 sm:p-7"}>
+      <SectionLabel>Who can apply</SectionLabel>
+      {eligibleTypes.length > 0 ? (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {eligibleTypes.map((t, i) => (
+            <Badge key={i} variant="chip" className="gap-1">
+              <Check className="h-3 w-3 text-emerald-600" strokeWidth={3} />
+              {t}
+            </Badge>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-3 text-sm text-muted-foreground">Eligible entity types not specified.</p>
+      )}
+      {(grant.geographic_eligibility || grant.ineligible_entities) && (
+        <div className={`mt-4 grid gap-3 ${dense ? "grid-cols-1" : "sm:grid-cols-2"}`}>
+          {grant.geographic_eligibility && (
+            <div className="rounded-2xl bg-emerald-50 p-4">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-700">Geography</p>
+              <p className="mt-1.5 text-sm text-foreground">{grant.geographic_eligibility}</p>
+            </div>
+          )}
+          {grant.ineligible_entities && (
+            <div className="rounded-2xl bg-brand-orange/[0.07] p-4">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-brand-orange">Ineligible</p>
+              <p className="mt-1.5 text-sm text-foreground">{grant.ineligible_entities}</p>
+            </div>
+          )}
+        </div>
+      )}
+      {grant.subaward_prohibited && <p className="mt-3 text-sm font-medium text-brand-orange">Subawards prohibited</p>}
+    </Card>
   );
 }
 
@@ -290,11 +297,20 @@ export function RiskFactors({ grant }: { grant: GrantDetailFields }) {
 // The full styled grant body, in order, as floating cards on cream. `showStats`
 // renders the stat tiles at the top -- the review page sets it false because the
 // tiles live in its NavyHero instead; the prospects page keeps them in the body.
-export function GrantBody({ grant, showStats = true }: { grant: GrantDetailFields; showStats?: boolean }) {
+export function GrantBody({
+  grant,
+  showStats = true,
+  showWhoCanApply = true,
+}: {
+  grant: GrantDetailFields;
+  showStats?: boolean;
+  showWhoCanApply?: boolean;
+}) {
   return (
     <div className="space-y-6">
       {showStats && <GrantStatTiles grant={grant} tone="onLight" />}
-      <WhatItFundsAndEligibility grant={grant} />
+      <WhatItFunds grant={grant} />
+      {showWhoCanApply && <WhoCanApply grant={grant} />}
       <MakeOrBreak grant={grant} />
       <IdealApplicantProfile grant={grant} />
       <AdditionalInformation grant={grant} />

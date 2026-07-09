@@ -21,11 +21,16 @@ export function Stat({
   tone?: "onLight" | "onHero";
 }) {
   if (tone === "onHero") {
+    // White tile floating on the navy hero: orange serif figure on top, navy label
+    // beneath. Uniform across all four facts (deadline included). `accent`/`hint` are
+    // intentionally NOT applied here -- the sub-label was dropped and every tile reads
+    // the same (#106 refinement); both props still drive the onLight tile below.
     return (
-      <div className={cn("rounded-2xl p-5", accent ? "bg-brand-orange" : "bg-white/[0.08]")}>
-        <p className={cn("truncate text-[10px] font-semibold uppercase tracking-widest", accent ? "text-white/80" : "text-white/50")}>{label}</p>
-        <p className="mt-2 truncate font-serif text-2xl font-semibold text-white" title={typeof value === "string" ? value : undefined}>{value}</p>
-        {hint && <p className={cn("mt-1 truncate text-[11px]", accent ? "text-white/75" : "text-white/45")}>{hint}</p>}
+      <div className="rounded-2xl bg-white p-5 shadow-soft">
+        {/* No `truncate`: award-range / deadline values carry spaces and wrap to a
+            second line on a narrow hero rather than clipping the (now-prominent) figure. */}
+        <p className="font-serif text-2xl font-semibold leading-tight text-brand-orange" title={typeof value === "string" ? value : undefined}>{value}</p>
+        <p className="mt-1 truncate text-[10px] font-semibold uppercase tracking-widest text-brand-navy">{label}</p>
       </div>
     );
   }
