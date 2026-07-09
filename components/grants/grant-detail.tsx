@@ -3,6 +3,10 @@ import { ChevronDown } from "lucide-react";
 import { sanitizeRichText } from "@/lib/sanitize/html";
 import { previewHtml, collapseDuplicatedBlock } from "@/lib/grants/description";
 import { ExpandableDescription } from "@/components/grants/expandable-description";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Stat } from "@/components/ui/stat";
+import { SectionLabel } from "@/components/ui/section-label";
 import type { Grant, IdealApplicantProfile as IAP } from "@/types/database";
 import {
   formatAwardRange,
@@ -13,11 +17,15 @@ import {
   rubricRows,
 } from "@/lib/grants/format";
 
-// Shared grant-detail presentation. The styled grant body (navy stat-band, orange
-// section labels, make-or-break callout, Ideal Applicant Profile, Additional
-// information, Risk) is rendered from these so the Matches review Grant tab and
-// the Prospects grant detail stay identical. No client JS -- collapsibles are
-// native <details>.
+// Shared grant-detail presentation (visual refresh, epic #92). The grant body is
+// the floating-card language: stat tiles, orange section labels on white cards, a
+// warm make-or-break callout, and soft collapsibles. Used by both the Matches
+// review Grant tab (/review/[id]) and the Prospects grant detail (/intel/[id]) so
+// the two render identically. No client JS -- collapsibles are native <details>.
+
+// SectionLabel now lives in the shared ui layer; re-exported so existing importers
+// (`@/components/grants/grant-detail`) keep working.
+export { SectionLabel };
 
 const RUBRIC_CAP = 8;
 
@@ -36,29 +44,6 @@ export type GrantDetailFields = Pick<
 
 /* ── Generic primitives ───────────────────────────────────────────────────── */
 
-// Signature navy stat-band; most-urgent cell in burnt orange. Values NEVER wrap
-// or resize the cell -- they truncate to one line (full text on hover).
-export function StatBand({ items }: { items: { label: string; value: string; urgent?: boolean }[] }) {
-  return (
-    <div className="flex overflow-hidden rounded-xl">
-      {items.map((it, i) => (
-        <div key={i} className={`min-w-0 flex-1 px-4 py-3.5 ${it.urgent ? "bg-brand-orange" : "bg-brand-navy"} ${i > 0 ? "border-l border-white/10" : ""}`}>
-          <p className={`truncate text-[10px] uppercase tracking-[0.08em] ${it.urgent ? "text-white/75" : "text-white/55"}`}>{it.label}</p>
-          <p className="mt-1 truncate font-serif text-lg font-semibold leading-tight text-white" title={it.value}>{it.value}</p>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-export function SectionLabel({ children }: { children: React.ReactNode }) {
-  return <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-brand-orange">{children}</p>;
-}
-
-export function Chip({ children }: { children: React.ReactNode }) {
-  return <span className="inline-flex items-center rounded-md bg-brand-navy/[0.06] px-2.5 py-0.5 text-xs text-brand-navy/85">{children}</span>;
-}
-
 export function InfoRow({ k, v }: { k: string; v: string }) {
   return (
     <div className="flex justify-between gap-3 text-sm">
@@ -68,81 +53,89 @@ export function InfoRow({ k, v }: { k: string; v: string }) {
   );
 }
 
-// Cream / orange-left-border callout. `tight` drops the top margin when it leads
-// a section that already has a label above it.
-export function KeyCallout({ label, tight, children }: { label?: string; tight?: boolean; children: React.ReactNode }) {
+// Warm orange-tinted callout with an orange left rule; serif body. Self-contained
+// (parent controls spacing via a stack).
+export function KeyCallout({ label, children }: { label?: string; children: React.ReactNode }) {
   return (
-    <div className={`${tight ? "mt-3" : "mt-6"} rounded-r-lg border-l-[3px] border-brand-orange bg-brand-cream px-4 py-3.5`}>
-      {label && <p className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-brand-orange">{label}</p>}
-      <p className={`${label ? "mt-1.5 " : ""}font-serif text-[17px] leading-snug text-brand-navy`}>{children}</p>
+    <div className="rounded-3xl border-l-[3px] border-brand-orange bg-brand-orange/[0.07] px-6 py-5">
+      {label && <p className="text-[10.5px] font-semibold uppercase tracking-[0.1em] text-brand-orange">{label}</p>}
+      <p className={`${label ? "mt-2 " : ""}font-serif text-[17px] leading-snug text-brand-navy`}>{children}</p>
     </div>
   );
 }
 
-// Native <details> collapsible (collapsed by default, no client JS).
+// Native <details> collapsible, styled as a floating card (collapsed by default,
+// no client JS).
 export function Collapsible({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <details className="group mt-6 overflow-hidden rounded-xl border border-brand-navy/10">
-      <summary className="flex cursor-pointer items-center justify-between bg-brand-navy/[0.02] px-4 py-3 [&::-webkit-details-marker]:hidden">
+    <details className="group overflow-hidden rounded-2xl bg-white shadow-soft">
+      <summary className="flex cursor-pointer items-center justify-between px-6 py-4 [&::-webkit-details-marker]:hidden">
         <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-brand-orange">{label}</span>
         <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
       </summary>
-      <div className="px-4 pb-4 pt-1">{children}</div>
+      <div className="px-6 pb-5 pt-0">{children}</div>
     </details>
   );
 }
 
 /* ── Grant-body blocks (read grant fields) ────────────────────────────────── */
 
-export function GrantStatBand({ grant }: { grant: GrantDetailFields }) {
+// The four defining grant facts, formatted once. Rendered as tiles either inside
+// the NavyHero (tone="onHero") or as floating cards in the body (tone="onLight").
+function grantStatItems(grant: GrantDetailFields): { label: string; value: string; accent?: boolean }[] {
+  return [
+    { label: `Award range${grant.award_range_is_estimate ? " · est." : ""}`, value: formatAwardRange(grant.award_range_min, grant.award_range_max) },
+    { label: "Est. awards", value: grant.num_awards || "—" },
+    { label: "Match required", value: compactCostShare(grant.cost_share) },
+    { label: "Deadline", value: formatDeadline(grant.submission_deadline), accent: true },
+  ];
+}
+
+export function GrantStatTiles({ grant, tone = "onLight" }: { grant: GrantDetailFields; tone?: "onLight" | "onHero" }) {
   return (
-    <StatBand
-      items={[
-        { label: `Award range${grant.award_range_is_estimate ? " · est." : ""}`, value: formatAwardRange(grant.award_range_min, grant.award_range_max) },
-        { label: "Est. awards", value: grant.num_awards || "—" },
-        { label: "Match required", value: compactCostShare(grant.cost_share) },
-        { label: "Deadline", value: formatDeadline(grant.submission_deadline), urgent: true },
-      ]}
-    />
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      {grantStatItems(grant).map((it, i) => (
+        <Stat key={i} tone={tone} accent={it.accent} label={it.label} value={it.value} />
+      ))}
+    </div>
   );
 }
 
 export function WhatItFundsAndEligibility({ grant }: { grant: GrantDetailFields }) {
   const eligibleTypes = (grant.eligible_entity_types ?? []).map((t) => t.replace(/_/g, " "));
   // Description may carry HTML markup -> sanitize (whitelist) then inject. Long
-  // descriptions are truncated (sentence-clean) with a Show more expander so they
-  // don't strand whitespace next to the shorter eligibility column.
+  // descriptions are truncated (sentence-clean) with a Show more expander.
   const descClean = grant.description ? sanitizeRichText(collapseDuplicatedBlock(grant.description)) : "";
   const descPreview = previewHtml(descClean);
-  const descClass = "mt-2.5 text-sm leading-relaxed text-foreground [&_li]:ml-4 [&_li]:list-disc [&_ol]:mt-2 [&_ol]:list-decimal [&_p]:mt-2 [&_ul]:mt-2";
+  const descClass = "mt-3 text-sm leading-relaxed text-foreground [&_li]:ml-4 [&_li]:list-disc [&_ol]:mt-2 [&_ol]:list-decimal [&_p]:mt-2 [&_ul]:mt-2";
   return (
-    <div className="mt-8 grid gap-8 md:grid-cols-2">
-      <section>
+    <>
+      <Card className="p-6 sm:p-7">
         <SectionLabel>What it funds</SectionLabel>
         {!grant.description ? (
-          <p className="mt-2.5 text-sm leading-relaxed text-foreground">—</p>
+          <p className="mt-3 text-sm leading-relaxed text-foreground">—</p>
         ) : descPreview.truncated ? (
           <ExpandableDescription preview={descPreview.html} full={descClean} className={descClass} />
         ) : (
           <div className={descClass} dangerouslySetInnerHTML={{ __html: descClean }} />
         )}
-      </section>
-      <section>
+      </Card>
+      <Card className="p-6 sm:p-7">
         <SectionLabel>Who can apply</SectionLabel>
         {eligibleTypes.length > 0 ? (
-          <div className="mt-2.5 flex flex-wrap gap-1.5">
-            {eligibleTypes.map((t, i) => <Chip key={i}>{t}</Chip>)}
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {eligibleTypes.map((t, i) => <Badge key={i} variant="chip">{t}</Badge>)}
           </div>
         ) : (
-          <p className="mt-2.5 text-sm text-muted-foreground">Eligible entity types not specified.</p>
+          <p className="mt-3 text-sm text-muted-foreground">Eligible entity types not specified.</p>
         )}
-        <div className="mt-3 space-y-1.5 text-sm text-foreground">
+        <div className="mt-4 space-y-1.5 text-sm text-foreground">
           {grant.geographic_eligibility && <p><span className="text-muted-foreground">Geography: </span>{grant.geographic_eligibility}</p>}
           {grant.ineligible_entities && <p><span className="text-muted-foreground">Ineligible: </span>{grant.ineligible_entities}</p>}
           {grant.subaward_prohibited && <p className="font-medium text-brand-orange">Subawards prohibited</p>}
         </div>
-      </section>
-    </div>
+      </Card>
+    </>
   );
 }
 
@@ -175,7 +168,7 @@ export function IdealApplicantProfile({ grant }: { grant: GrantDetailFields }) {
               {a.ideal_prime_shape && <p className="mt-0.5 text-sm text-muted-foreground">{a.ideal_prime_shape}</p>}
               {(a.partner_seats?.length ?? 0) > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
-                  {a.partner_seats.map((s, j) => <Chip key={j}>+ {s}</Chip>)}
+                  {a.partner_seats.map((s, j) => <Badge key={j} variant="chip">+ {s}</Badge>)}
                 </div>
               )}
             </div>
@@ -243,12 +236,13 @@ export function RiskFactors({ grant }: { grant: GrantDetailFields }) {
   );
 }
 
-// The full styled grant body, in order. Both pages drop this into their main
-// column; page-specific chrome (tabs, decision panel, prospects list) wraps it.
-export function GrantBody({ grant }: { grant: GrantDetailFields }) {
+// The full styled grant body, in order, as floating cards on cream. `showStats`
+// renders the stat tiles at the top -- the review page sets it false because the
+// tiles live in its NavyHero instead; the prospects page keeps them in the body.
+export function GrantBody({ grant, showStats = true }: { grant: GrantDetailFields; showStats?: boolean }) {
   return (
-    <div>
-      <GrantStatBand grant={grant} />
+    <div className="space-y-6">
+      {showStats && <GrantStatTiles grant={grant} tone="onLight" />}
       <WhatItFundsAndEligibility grant={grant} />
       <MakeOrBreak grant={grant} />
       <IdealApplicantProfile grant={grant} />

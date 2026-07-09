@@ -4,8 +4,10 @@ import { Check } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { DecisionBadge } from "@/components/grants/badges";
-import { interTight, sourceSerif } from "@/lib/fonts";
-import { StatBand, SectionLabel, KeyCallout, Collapsible, GrantBody, type GrantDetailFields } from "@/components/grants/grant-detail";
+import { NavyHero } from "@/components/ui/navy-hero";
+import { Card } from "@/components/ui/card";
+import { Stat } from "@/components/ui/stat";
+import { SectionLabel, KeyCallout, Collapsible, GrantBody, GrantStatTiles, type GrantDetailFields } from "@/components/grants/grant-detail";
 import { DecisionPanel } from "./decision-panel";
 import { AlertSend } from "./alert-send";
 import { ProspectContact } from "./prospect-contact";
@@ -64,29 +66,21 @@ export default async function CardDetailPage({
   const contactName = card.prospects?.primary_contact_name || card.clients?.primary_contact_name || null;
 
   return (
-    <div className={`${interTight.variable} ${sourceSerif.variable} min-h-full bg-brand-cream`}>
-      {/* Full-width banner: grant identity (toggle lives in the sidebar). */}
-      <div className="flex items-start justify-between gap-6 border-b border-brand-navy/10 bg-white px-6 py-5 sm:px-8">
-        <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-orange">Grant Match Review</p>
-          <h1 className="mt-1 font-serif text-[26px] font-semibold leading-[1.12] tracking-tight text-brand-navy">
-            {g?.title || "Opportunity"}
-          </h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            {[g?.funder, g?.fon].filter(Boolean).join(" · ") || "—"}
-          </p>
-        </div>
-        {card.decision !== "pending" && (
-          <div className="shrink-0">
-            <DecisionBadge decision={card.decision} />
-          </div>
-        )}
-      </div>
+    <div className="min-h-full bg-brand-cream px-6 py-7 sm:px-8">
+      {/* Navy hero: grant identity + the four defining facts as tiles. */}
+      <NavyHero
+        eyebrow="Grant Match Review"
+        title={g?.title || "Opportunity"}
+        subtitle={[g?.funder, g?.fon].filter(Boolean).join(" · ") || "—"}
+        actions={card.decision !== "pending" ? <DecisionBadge decision={card.decision} /> : undefined}
+      >
+        {g && <GrantStatTiles grant={g} tone="onHero" />}
+      </NavyHero>
 
-      {/* Two-column body: wide main + right sidebar (toggle + decision panel). */}
-      <div className="grid grid-cols-1 gap-6 px-6 py-7 sm:px-8 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-stretch">
-        <main className="rounded-2xl border border-brand-navy/10 bg-white p-6 sm:p-8">
-          {tab === "grant" ? (g ? <GrantBody grant={g} /> : null) : <MatchTab card={card} orgName={orgName} isProspect={isProspect} />}
+      {/* Two-column body: floating cards on cream + right sidebar (tabs + decision). */}
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-start">
+        <main>
+          {tab === "grant" ? (g ? <GrantBody grant={g} showStats={false} /> : null) : <MatchTab card={card} orgName={orgName} isProspect={isProspect} />}
         </main>
 
         <aside>
@@ -126,24 +120,27 @@ export default async function CardDetailPage({
 
 /* ── Tab 2: The Match (client-match analysis) ─────────────────────────────── */
 function MatchTab({ card, orgName, isProspect }: { card: FullCard; orgName: string; isProspect: boolean }) {
+  void orgName;
   const rc = card.reasoning_context || {};
   const watchouts = cleanWatchouts(card.before_you_approve);
   return (
-    <div>
-      <StatBand
-        items={[
-          { label: "Fit", value: `${card.fit_score} · ${BAND[card.fit_score] ?? "—"}`, urgent: true },
-          { label: "Proposed role", value: card.proposed_role || "—" },
-          { label: "Recommended prime", value: card.recommended_prime || "—" },
-        ]}
-      />
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Stat tone="onLight" accent label="Fit" value={`${card.fit_score} · ${BAND[card.fit_score] ?? "—"}`} />
+        <Stat tone="onLight" label="Proposed role" value={card.proposed_role || "—"} />
+        <Stat tone="onLight" label="Recommended prime" value={card.recommended_prime || "—"} />
+      </div>
 
       {(card.description_short || (card.why_this_org?.length || 0) > 0) && (
-        <section className="mt-8">
+        <Card className="p-6 sm:p-7">
           <SectionLabel>Match Rationale</SectionLabel>
-          {card.description_short && <KeyCallout tight>{card.description_short}</KeyCallout>}
+          {card.description_short && (
+            <div className="mt-3">
+              <KeyCallout>{card.description_short}</KeyCallout>
+            </div>
+          )}
           {(card.why_this_org?.length || 0) > 0 && (
-            <ul className="mt-3.5 space-y-2.5">
+            <ul className="mt-4 space-y-2.5">
               {card.why_this_org!.map((w, i) => (
                 <li key={i} className="flex gap-2.5 text-sm leading-relaxed text-foreground">
                   <Check className="mt-0.5 h-4 w-4 shrink-0 text-brand-navy" strokeWidth={3} />
@@ -152,14 +149,14 @@ function MatchTab({ card, orgName, isProspect }: { card: FullCard; orgName: stri
               ))}
             </ul>
           )}
-        </section>
+        </Card>
       )}
 
       {card.concept_synopsis && (
-        <section className="mt-8">
+        <Card className="p-6 sm:p-7">
           <SectionLabel>Concept Proposal</SectionLabel>
-          <p className="mt-2.5 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{card.concept_synopsis}</p>
-        </section>
+          <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{card.concept_synopsis}</p>
+        </Card>
       )}
 
       {watchouts.length > 0 && (
@@ -182,7 +179,7 @@ function MatchTab({ card, orgName, isProspect }: { card: FullCard; orgName: stri
       )}
 
       {isProspect && card.prospects?.source_url && (
-        <p className="mt-8 text-sm">
+        <p className="text-sm">
           <a href={card.prospects.source_url} target="_blank" rel="noopener noreferrer" className="font-medium text-brand-orange hover:underline">Prospect source ↗</a>
         </p>
       )}
@@ -195,8 +192,8 @@ function StepLink({ id, tab, n, title, active }: { id: string; tab: TabKey; n: n
   return (
     <Link
       href={`/review/${id}?tab=${tab}`}
-      className={`flex w-full items-center gap-2.5 rounded-xl border px-3.5 py-2.5 transition ${
-        active ? "border-brand-navy bg-brand-navy" : "border-brand-navy/10 bg-white hover:border-brand-navy/25"
+      className={`flex w-full items-center gap-2.5 rounded-2xl px-3.5 py-2.5 transition ${
+        active ? "bg-brand-navy shadow-soft" : "bg-white shadow-softer hover:shadow-soft"
       }`}
     >
       <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-[12.5px] font-semibold ${

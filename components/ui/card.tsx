@@ -1,16 +1,21 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
-export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return (
-    <div
-      className={cn(
-        "rounded-lg border bg-card text-card-foreground shadow-sm",
-        className,
-      )}
-      {...props}
-    />
-  );
+// Floating card surface (visual refresh, epic #92). Default `soft` is the warm
+// floating card on cream; `flat` is a bordered nested surface (no shadow); `lift`
+// is the strongest elevation. Existing consumers get `soft` by default.
+const ELEVATION = {
+  soft: "rounded-2xl bg-white shadow-soft",
+  flat: "rounded-2xl border border-brand-navy/10 bg-white",
+  lift: "rounded-2xl bg-white shadow-lift",
+} as const;
+
+export function Card({
+  className,
+  elevation = "soft",
+  ...props
+}: React.HTMLAttributes<HTMLDivElement> & { elevation?: keyof typeof ELEVATION }) {
+  return <div className={cn(ELEVATION[elevation], "text-card-foreground", className)} {...props} />;
 }
 
 export function CardHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
