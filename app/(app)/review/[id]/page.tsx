@@ -68,6 +68,9 @@ export default async function CardDetailPage({
 
   // Additive read for the Match Score card: how many client cards this grant
   // produced (real, grant-level context -- NOT an invented sub-score).
+  // RETAINED for part 2: the Match Score card moves to the Match tab; this count
+  // and the MatchScoreCard component below are intentionally kept (momentarily
+  // unused after removing the Grant-tab invocation).
   let clientMatchCount: number | null = null;
   if (card.grant_id) {
     const { count } = await supabase
@@ -94,19 +97,10 @@ export default async function CardDetailPage({
       {/* Two-column body below the hero: floating main cards + sticky decision rail. */}
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-start">
         <main className="min-w-0 space-y-6">
+          {/* The Grant tab describes the grant, not the match -- What It Funds leads
+              here. Match Score lives on the Match tab (wired in a later part). */}
           {tab === "grant" ? (
-            g ? (
-              <>
-                {/* Match Score leads the main column on the Grant tab. */}
-                <MatchScoreCard
-                  fitScore={card.fit_score}
-                  derivation={card.reasoning_context?.fit_score_derivation}
-                  deadline={g?.submission_deadline}
-                  clientMatchCount={clientMatchCount}
-                />
-                <GrantBody grant={g} showStats={false} showWhoCanApply={false} />
-              </>
-            ) : null
+            g ? <GrantBody grant={g} showStats={false} showWhoCanApply={false} /> : null
           ) : (
             <MatchTab card={card} orgName={orgName} isProspect={isProspect} />
           )}
@@ -239,6 +233,8 @@ function daysToDeadline(raw: string | null | undefined): string | null {
 // Match Score card — REAL data only (issue #94 option b; full sub-scores tracked
 // in #105). The fit band + "n of 3" carry meaning; the meter color is redundant,
 // never load-bearing. Supporting text is the engine's real fit_score_derivation.
+// RETAINED for part 2: removed from the Grant tab (it describes the match, not the
+// grant); to be placed on the Match tab. Kept here, do not delete.
 function MatchScoreCard({
   fitScore,
   derivation,

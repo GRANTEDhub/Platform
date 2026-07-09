@@ -165,7 +165,9 @@ export function WhoCanApply({ grant, dense = false }: { grant: GrantDetailFields
     <Card className={dense ? "p-5" : "p-6 sm:p-7"}>
       <SectionLabel>Who can apply</SectionLabel>
       {eligibleTypes.length > 0 ? (
-        <div className="mt-3 flex flex-wrap gap-1.5">
+        // dense (rail): stack one chip per row so nothing sits two-across; the wide
+        // prospects-body variant keeps wrapping.
+        <div className={`mt-3 flex gap-1.5 ${dense ? "flex-col items-start" : "flex-wrap"}`}>
           {eligibleTypes.map((t, i) => (
             <Badge key={i} variant="chip" className="gap-1">
               <Check className="h-3 w-3 text-emerald-600" strokeWidth={3} />
