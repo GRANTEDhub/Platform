@@ -45,11 +45,14 @@ export function compactCostShare(raw: string | null | undefined): string {
     .replace(/(?:[\s,;:.()\-]*\b(?:cost[-\s]?shar(?:e|ing)|match(?:ing)?|required|non-?federal)\b)+[\s.)]*$/i, "")
     .trim();
   if (stripped && /[\d%]/.test(stripped)) return stripped;
-  // Required but with no figure in the source (the API's is_cost_sharing=true path
-  // writes "Cost sharing required"): collapse to a short "Yes" so the value never
-  // restates the "Match required" label or forces the stat figure tiny. Genuinely
-  // other free-text (e.g. "Varies") is kept verbatim.
-  if (/\b(cost[-\s]?shar|match|required|mandatory|yes)\b/i.test(s)) return "Yes";
+  // Required but with no figure in the source (the Grants.gov/Simpler API exposes
+  // only a boolean is_cost_sharing, which engine.ts writes as "Cost sharing
+  // required"): show "Required · TBD" -- a match IS required but the specific amount
+  // isn't in our data (verify in the NOFO). Deliberately NOT "None" (that would
+  // falsely tell a client no match is needed), and short enough to fit the hero tile
+  // and the PDF stat cell without wrapping/clipping. Genuinely other free-text
+  // (e.g. "Varies") is kept verbatim.
+  if (/\b(cost[-\s]?shar|match|required|mandatory|yes)\b/i.test(s)) return "Required · TBD";
   return s;
 }
 
