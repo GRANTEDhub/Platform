@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { SectionLabel } from "@/components/ui/section-label";
 import { DecisionConfirmation } from "./decision-confirmation";
 import type { CardDecision } from "@/types/database";
 import type { GrantSummary } from "@/app/api/review/[id]/route";
@@ -26,6 +27,7 @@ export function DecisionPanel({
   alertSend,
   variant = "full",
   bare = false,
+  className,
 }: {
   cardId: string;
   decision: CardDecision;
@@ -35,9 +37,10 @@ export function DecisionPanel({
   // "feedback" = Agree/Flag score feedback only. Splitting lets the two clusters
   // live in different columns without duplicating state.
   variant?: "full" | "decision" | "feedback";
-  // Drop the white card wrapper so the cluster can sit INSIDE another card (the
-  // merged Match-summary box hosts the feedback cluster this way).
+  // Drop the white card wrapper so the cluster can sit INSIDE another card.
   bare?: boolean;
+  // Extra classes on the root (e.g. `flex-1` to fill the top-strip column height).
+  className?: string;
 }) {
   const showDecision = variant !== "feedback";
   const showFeedback = variant !== "decision";
@@ -98,53 +101,58 @@ export function DecisionPanel({
   if (confirm) return <DecisionConfirmation summary={confirm} />;
 
   return (
-    <div className={bare ? "" : "rounded-2xl bg-white p-5 shadow-soft"}>
+    <div className={`${bare ? "" : "rounded-2xl bg-white p-5 shadow-soft"}${variant === "decision" ? " flex flex-col" : ""}${className ? ` ${className}` : ""}`}>
       {showDecision && (
         <>
-          {/* Decision controls. The primary action is "Send grant alert" (client
-              cards) which also approves the card; it sits above Reject. Prospect
-              cards get no send here -- prospect outreach lives in the lead pipeline. */}
-          {alertSend}
-          {!isAdmin && (
-            <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
-              Final approval is admin-only. You can reject a match for review.
-            </p>
-          )}
-          <Button
-            variant="outline"
-            className={`w-full border-destructive/40 text-destructive hover:bg-destructive/5 ${alertSend || !isAdmin ? "mt-2" : ""}`}
-            disabled={busy}
-            onClick={() => setPanel((p) => (p === "reject" ? null : "reject"))}
-          >
-            Reject
-          </Button>
-          {decision !== "pending" && (
-            <Button variant="ghost" size="sm" className="mt-2 w-full" disabled={busy} onClick={() => decide("pending")}>
-              Reset decision
+          {/* Top-strip "Your call" box: label at top, the Send/Reject group centered
+              in the remaining height so a banner-matched box reads composed -- not
+              buttons pinned to the top with dead space below. */}
+          {variant === "decision" && <SectionLabel>Your call</SectionLabel>}
+          <div className={variant === "decision" ? "flex flex-1 flex-col justify-center gap-2" : ""}>
+            {/* Primary action is "Send grant alert" (client cards) which also approves
+                the card; it sits above Reject. Prospect cards get no send here. */}
+            {alertSend}
+            {!isAdmin && (
+              <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+                Final approval is admin-only. You can reject a match for review.
+              </p>
+            )}
+            <Button
+              variant="outline"
+              className={`w-full border-destructive/40 text-destructive hover:bg-destructive/5 ${variant !== "decision" && (alertSend || !isAdmin) ? "mt-2" : ""}`}
+              disabled={busy}
+              onClick={() => setPanel((p) => (p === "reject" ? null : "reject"))}
+            >
+              Reject
             </Button>
-          )}
-
-          {panel === "reject" && (
-            <div className="mt-2.5 space-y-2 rounded-md border border-brand-navy/10 bg-card p-2.5">
-              <textarea
-                value={rejectReason}
-                onChange={(e) => setRejectReason(e.target.value)}
-                rows={3}
-                autoFocus
-                placeholder="Why reject? (e.g. wrong entity type, no realistic prime path)"
-                className="flex w-full rounded-md border border-input bg-card px-2.5 py-1.5 text-sm"
-              />
-              <Button
-                size="sm"
-                variant="outline"
-                className="w-full border-destructive/40 text-destructive hover:bg-destructive/5"
-                disabled={busy}
-                onClick={() => decide("passed", { decision_reason: rejectReason })}
-              >
-                Reject match
+            {decision !== "pending" && (
+              <Button variant="ghost" size="sm" className={`w-full ${variant === "decision" ? "" : "mt-2"}`} disabled={busy} onClick={() => decide("pending")}>
+                Reset decision
               </Button>
-            </div>
-          )}
+            )}
+
+            {panel === "reject" && (
+              <div className="mt-2.5 space-y-2 rounded-md border border-brand-navy/10 bg-card p-2.5">
+                <textarea
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  rows={3}
+                  autoFocus
+                  placeholder="Why reject? (e.g. wrong entity type, no realistic prime path)"
+                  className="flex w-full rounded-md border border-input bg-card px-2.5 py-1.5 text-sm"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full border-destructive/40 text-destructive hover:bg-destructive/5"
+                  disabled={busy}
+                  onClick={() => decide("passed", { decision_reason: rejectReason })}
+                >
+                  Reject match
+                </Button>
+              </div>
+            )}
+          </div>
         </>
       )}
 

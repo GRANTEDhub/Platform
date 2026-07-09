@@ -51,7 +51,10 @@ export default async function AppLayout({
           role: profile.role,
         }}
       />
-      <main className="flex-1 overflow-y-auto">{children}</main>
+      {/* scrollbar-gutter:stable reserves the scrollbar space always, so pages
+          (and tab toggles) don't shift a few px when content height crosses the
+          overflow threshold on one view but not the other. */}
+      <main className="flex-1 overflow-y-auto [scrollbar-gutter:stable]">{children}</main>
     </div>
   );
 }

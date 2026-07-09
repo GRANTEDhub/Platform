@@ -95,13 +95,14 @@ export default async function CardDetailPage({
   // Review actions box (top-right, beside the banner): step toggle + Send/Reject
   // only. Score feedback (Agree/Flag) lives in the rail below, not here.
   const reviewActions = (
-    <div className="space-y-4">
+    <div className="flex h-full flex-col gap-4">
       <div className="grid grid-cols-2 gap-2">
         <StepLink id={card.id} tab="grant" n={1} title="The Grant" active={tab === "grant"} />
         <StepLink id={card.id} tab="match" n={2} title="The Match" active={tab === "match"} />
       </div>
       <DecisionPanel
         variant="decision"
+        className="flex-1"
         cardId={card.id}
         decision={card.decision}
         isAdmin={isAdmin}
@@ -121,9 +122,10 @@ export default async function CardDetailPage({
 
   return (
     <div className="min-h-full bg-brand-cream px-6 py-7 sm:px-8">
-      {/* Top strip: narrowed navy banner (left) + review-actions box (right). The
-          banner FORMAT is identical on both tabs; only the body below differs. */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-start">
+      {/* Top strip: narrowed navy banner (left) + review-actions box (right).
+          items-stretch so the right box matches the banner height -> one clean row.
+          The banner FORMAT is identical on both tabs; only the body below differs. */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-stretch">
         <NavyHero
           eyebrow="Grant Match Review"
           eyebrowRight={<GrantStatusPill status={g?.grant_status} />}
@@ -147,24 +149,27 @@ export default async function CardDetailPage({
           {tab === "grant" ? (
             g ? <GrantBody grant={g} showStats={false} showWhoCanApply={false} /> : null
           ) : (
-            <MatchTab card={card} orgName={orgName} isProspect={isProspect} isAdmin={isAdmin} clientMatchCount={clientMatchCount} />
+            <MatchTab card={card} orgName={orgName} isProspect={isProspect} clientMatchCount={clientMatchCount} />
           )}
         </main>
 
         <aside className="space-y-4">
-          <div className="sticky top-6 space-y-4">
-            {/* ProspectContact edits the send recipient. Score feedback (Agree/Flag)
-                moved into the merged Match-summary box (part 3a). */}
-            {isAdmin && isProspect && card.prospects && (
-              <ProspectContact
-                prospectId={card.prospects.id}
-                initialEmail={card.prospects.primary_contact_email}
-                initialName={card.prospects.primary_contact_name}
-              />
-            )}
-          </div>
-          {/* Who Can Apply (chips) suits the narrow rail; Grant tab only. */}
+          {/* Rail beside the main column: its first card top-aligns with the main
+              column's first card (no sticky wrapper -> no stray leading margin).
+              ProspectContact edits the send recipient (prospect cards only). */}
+          {isAdmin && isProspect && card.prospects && (
+            <ProspectContact
+              prospectId={card.prospects.id}
+              initialEmail={card.prospects.primary_contact_email}
+              initialName={card.prospects.primary_contact_name}
+            />
+          )}
+          {/* Grant tab: Who Can Apply beside What It Funds. Match tab: the Agree/Flag
+              score-feedback box in its own card beside the merged Match Score box. */}
           {tab === "grant" && g && <WhoCanApply grant={g} dense />}
+          {tab === "match" && (
+            <DecisionPanel variant="feedback" cardId={card.id} decision={card.decision} isAdmin={isAdmin} />
+          )}
         </aside>
       </div>
     </div>
@@ -176,13 +181,11 @@ function MatchTab({
   card,
   orgName,
   isProspect,
-  isAdmin,
   clientMatchCount,
 }: {
   card: FullCard;
   orgName: string;
   isProspect: boolean;
-  isAdmin: boolean;
   clientMatchCount: number | null;
 }) {
   void orgName;
@@ -191,14 +194,9 @@ function MatchTab({
     <div className="space-y-6">
       {/* Merged summary: score + rationale + score reasoning + Agree/Flag, one box.
           Fit / Proposed role / Recommended prime now live in the banner tiles. */}
-      <MatchSummaryCard card={card} isAdmin={isAdmin} clientMatchCount={clientMatchCount} />
+      <MatchSummaryCard card={card} clientMatchCount={clientMatchCount} />
 
-      {card.concept_synopsis && (
-        <Card className="p-6 sm:p-7">
-          <SectionLabel>Concept Proposal</SectionLabel>
-          <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{card.concept_synopsis}</p>
-        </Card>
-      )}
+      <ConceptProposalCard card={card} />
 
       {watchouts.length > 0 && (
         <Collapsible label="Watch-outs">
@@ -251,11 +249,9 @@ function MatchStatTiles({ card, grant }: { card: FullCard; grant: GrantDetailFie
 // sub-scores (the full multi-metric breakdown is tracked in #105).
 function MatchSummaryCard({
   card,
-  isAdmin,
   clientMatchCount,
 }: {
   card: FullCard;
-  isAdmin: boolean;
   clientMatchCount: number | null;
 }) {
   const rc = card.reasoning_context || {};
@@ -319,10 +315,57 @@ function MatchSummaryCard({
         </div>
       )}
 
-      {/* Score feedback (Agree/Flag) -- relocated here from the rail; its only home. */}
-      <div className="mt-5 border-t border-brand-navy/10 pt-4">
-        <DecisionPanel variant="feedback" bare cardId={card.id} decision={card.decision} isAdmin={isAdmin} />
-      </div>
+    </Card>
+  );
+}
+
+// Concept Proposal card (Match tab, below the merged summary; Watch-outs sits below
+// it). Assembled from REAL engine fields, omitting any that are empty -- never
+// invented:
+//   structure line: client name + proposed_role, plus the recommended-prime
+//     relationship when the client isn't the prime (recommended_prime is set);
+//   scope: concept_synopsis (the engine's purpose-built 2-3 sentence SOW);
+//   show-more: consortium_rationale (team composition / other required players /
+//     gaps) -- prose, since the engine has no structured players list.
+// role_assignment_logic is intentionally NOT repeated here; it lives in the prime
+// click-to-expand overlay from 3a.
+function ConceptProposalCard({ card }: { card: FullCard }) {
+  const clientName = (card.clients?.name || card.prospects?.name || "").trim();
+  const role = (card.proposed_role ?? "").trim();
+  const prime = (card.recommended_prime ?? "").trim();
+  const scope = (card.concept_synopsis ?? "").trim();
+  const team = (card.reasoning_context?.consortium_rationale ?? "").trim();
+
+  // Nothing real to assemble -> render nothing (never a placeholder).
+  if (!scope && !team && !role && !prime) return null;
+
+  return (
+    <Card className="p-6 sm:p-7">
+      <SectionLabel>Concept Proposal</SectionLabel>
+
+      {(clientName || role) && (
+        <p className="mt-3 text-sm text-foreground">
+          {clientName && <span className="font-semibold text-brand-navy">{clientName}</span>}
+          {clientName && role ? " — " : ""}
+          {role}
+        </p>
+      )}
+      {prime && (
+        <p className="mt-1 text-sm text-muted-foreground">
+          under <span className="font-medium text-brand-navy">{prime}</span> as the prime applicant
+        </p>
+      )}
+
+      {scope && (
+        <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{scope}</p>
+      )}
+
+      {team && (
+        <div className="mt-4 border-t border-brand-navy/[0.08] pt-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-brand-orange">Team &amp; structure</p>
+          <ExpandableText text={team} className="mt-2 text-sm leading-relaxed text-foreground" />
+        </div>
+      )}
     </Card>
   );
 }
