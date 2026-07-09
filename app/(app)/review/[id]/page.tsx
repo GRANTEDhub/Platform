@@ -12,6 +12,8 @@ import { DecisionPanel } from "./decision-panel";
 import { AlertSend } from "./alert-send";
 import { ProspectContact } from "./prospect-contact";
 import { RecommendedPrime } from "./recommended-prime";
+import { ExpandableText } from "./expandable-text";
+import { formatDeadlineShort } from "@/lib/grants/format";
 import { getSentAlertForCard } from "@/lib/alerts/sent-status";
 import type { ReviewCard, Client, Grant, Prospect } from "@/types/database";
 
@@ -66,11 +68,8 @@ export default async function CardDetailPage({
   const sentAlert = isAdmin ? await getSentAlertForCard(card.id) : null;
   const contactName = card.prospects?.primary_contact_name || card.clients?.primary_contact_name || null;
 
-  // Additive read for the Match Score card: how many client cards this grant
-  // produced (real, grant-level context -- NOT an invented sub-score).
-  // RETAINED for part 2: the Match Score card moves to the Match tab; this count
-  // and the MatchScoreCard component below are intentionally kept (momentarily
-  // unused after removing the Grant-tab invocation).
+  // Additive read for the merged Match-summary box: how many client cards this grant
+  // produced (real, grant-level context -- NOT an invented sub-score). Shown as a chip.
   let clientMatchCount: number | null = null;
   if (card.grant_id) {
     const { count } = await supabase
@@ -132,7 +131,9 @@ export default async function CardDetailPage({
           subtitle={[g?.funder, g?.fon].filter(Boolean).join(" · ") || "—"}
           actions={scoreBlock}
         >
-          {g && <GrantStatTiles grant={g} tone="onHero" />}
+          {g && (tab === "match"
+            ? <MatchStatTiles card={card} grant={g} />
+            : <GrantStatTiles grant={g} tone="onHero" />)}
         </NavyHero>
         {reviewActions}
       </div>
@@ -146,13 +147,14 @@ export default async function CardDetailPage({
           {tab === "grant" ? (
             g ? <GrantBody grant={g} showStats={false} showWhoCanApply={false} /> : null
           ) : (
-            <MatchTab card={card} orgName={orgName} isProspect={isProspect} />
+            <MatchTab card={card} orgName={orgName} isProspect={isProspect} isAdmin={isAdmin} clientMatchCount={clientMatchCount} />
           )}
         </main>
 
         <aside className="space-y-4">
           <div className="sticky top-6 space-y-4">
-            {/* ProspectContact edits the send recipient. */}
+            {/* ProspectContact edits the send recipient. Score feedback (Agree/Flag)
+                moved into the merged Match-summary box (part 3a). */}
             {isAdmin && isProspect && card.prospects && (
               <ProspectContact
                 prospectId={card.prospects.id}
@@ -160,8 +162,6 @@ export default async function CardDetailPage({
                 initialName={card.prospects.primary_contact_name}
               />
             )}
-            {/* Score feedback (Agree/Flag) -- stays in the rail until part 3. */}
-            <DecisionPanel variant="feedback" cardId={card.id} decision={card.decision} isAdmin={isAdmin} />
           </div>
           {/* Who Can Apply (chips) suits the narrow rail; Grant tab only. */}
           {tab === "grant" && g && <WhoCanApply grant={g} dense />}
@@ -172,43 +172,26 @@ export default async function CardDetailPage({
 }
 
 /* ── Tab 2: The Match (client-match analysis) ─────────────────────────────── */
-function MatchTab({ card, orgName, isProspect }: { card: FullCard; orgName: string; isProspect: boolean }) {
+function MatchTab({
+  card,
+  orgName,
+  isProspect,
+  isAdmin,
+  clientMatchCount,
+}: {
+  card: FullCard;
+  orgName: string;
+  isProspect: boolean;
+  isAdmin: boolean;
+  clientMatchCount: number | null;
+}) {
   void orgName;
-  const rc = card.reasoning_context || {};
   const watchouts = cleanWatchouts(card.before_you_approve);
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Stat tone="onLight" accent label="Fit" value={`${card.fit_score} · ${BAND[card.fit_score] ?? "—"}`} />
-        <Stat tone="onLight" label="Proposed role" value={card.proposed_role || "—"} />
-        <RecommendedPrime
-          prime={card.recommended_prime}
-          proposedRole={card.proposed_role}
-          roleAssignmentLogic={card.reasoning_context?.role_assignment_logic}
-          consortiumRationale={card.reasoning_context?.consortium_rationale}
-        />
-      </div>
-
-      {(card.description_short || (card.why_this_org?.length || 0) > 0) && (
-        <Card className="p-6 sm:p-7">
-          <SectionLabel>Match Rationale</SectionLabel>
-          {card.description_short && (
-            <div className="mt-3">
-              <KeyCallout>{card.description_short}</KeyCallout>
-            </div>
-          )}
-          {(card.why_this_org?.length || 0) > 0 && (
-            <ul className="mt-4 space-y-2.5">
-              {card.why_this_org!.map((w, i) => (
-                <li key={i} className="flex gap-2.5 text-sm leading-relaxed text-foreground">
-                  <Check className="mt-0.5 h-4 w-4 shrink-0 text-brand-navy" strokeWidth={3} />
-                  <span>{w}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
-      )}
+      {/* Merged summary: score + rationale + score reasoning + Agree/Flag, one box.
+          Fit / Proposed role / Recommended prime now live in the banner tiles. */}
+      <MatchSummaryCard card={card} isAdmin={isAdmin} clientMatchCount={clientMatchCount} />
 
       {card.concept_synopsis && (
         <Card className="p-6 sm:p-7">
@@ -230,12 +213,6 @@ function MatchTab({ card, orgName, isProspect }: { card: FullCard; orgName: stri
         </Collapsible>
       )}
 
-      {rc.fit_score_derivation && (
-        <Collapsible label="How this score was reached">
-          <p className="pt-1 text-sm leading-relaxed text-foreground">{rc.fit_score_derivation}</p>
-        </Collapsible>
-      )}
-
       {isProspect && card.prospects?.source_url && (
         <p className="text-sm">
           <a href={card.prospects.source_url} target="_blank" rel="noopener noreferrer" className="font-medium text-brand-orange hover:underline">Prospect source ↗</a>
@@ -245,47 +222,56 @@ function MatchTab({ card, orgName, isProspect }: { card: FullCard; orgName: stri
   );
 }
 
-// Real days-to-deadline chip text, derived from submission_deadline (no invention).
-function daysToDeadline(raw: string | null | undefined): string | null {
-  const s = (raw ?? "").trim();
-  if (!s) return null;
-  const d = new Date(s);
-  if (isNaN(d.getTime()) || !/\d{4}/.test(s)) return null;
-  const days = Math.ceil((d.getTime() - Date.now()) / 86_400_000);
-  if (days < 0) return "Deadline passed";
-  if (days === 0) return "Due today";
-  return `${days} day${days === 1 ? "" : "s"} to deadline`;
+// Match-tab banner tiles: the four cards show MATCH facts (Fit / Proposed role /
+// Recommended prime / Deadline) instead of grant facts, switched by tab in the
+// banner. Same onHero styling; the free-text values (role, prime) truncate to one
+// line -- the full role reads in the merged box below, the full prime in the
+// click-to-expand overlay. Fit uses "N · Band" (fits 16px); "of 3" is implied by
+// the SCORE block top-right.
+function MatchStatTiles({ card, grant }: { card: FullCard; grant: GrantDetailFields }) {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <Stat tone="onHero" truncateValue label="Fit" value={`${card.fit_score} · ${BAND[card.fit_score] ?? "—"}`} />
+      <Stat tone="onHero" truncateValue label="Proposed role" value={card.proposed_role || "—"} />
+      <RecommendedPrime
+        tone="onHero"
+        prime={card.recommended_prime}
+        proposedRole={card.proposed_role}
+        roleAssignmentLogic={card.reasoning_context?.role_assignment_logic}
+        consortiumRationale={card.reasoning_context?.consortium_rationale}
+      />
+      <Stat tone="onHero" accent truncateValue label="Deadline" value={formatDeadlineShort(grant.submission_deadline)} />
+    </div>
+  );
 }
 
-// Match Score card — REAL data only (issue #94 option b; full sub-scores tracked
-// in #105). The fit band + "n of 3" carry meaning; the meter color is redundant,
-// never load-bearing. Supporting text is the engine's real fit_score_derivation.
-// RETAINED for part 2: removed from the Grant tab (it describes the match, not the
-// grant); to be placed on the Match tab. Kept here, do not delete.
-function MatchScoreCard({
-  fitScore,
-  derivation,
-  deadline,
+// The merged Match-summary box (Match tab, first card). One box in place of the old
+// three (Match Score, Match Rationale, "How this score was reached"), and the only
+// home for the Agree/Flag score-feedback cluster. REAL data only -- no invented
+// sub-scores (the full multi-metric breakdown is tracked in #105).
+function MatchSummaryCard({
+  card,
+  isAdmin,
   clientMatchCount,
 }: {
-  fitScore: number;
-  derivation?: string;
-  deadline: string | null | undefined;
+  card: FullCard;
+  isAdmin: boolean;
   clientMatchCount: number | null;
 }) {
+  const rc = card.reasoning_context || {};
+  const fitScore = card.fit_score;
   const band = BAND[fitScore] ?? "—";
   const bandText = fitScore >= 3 ? "text-emerald-700" : fitScore === 2 ? "text-brand-orange" : "text-muted-foreground";
   const seg = (n: number) =>
     n <= fitScore
-      ? fitScore >= 3
-        ? "bg-emerald-500"
-        : fitScore === 2
-          ? "bg-brand-orange"
-          : "bg-muted-foreground"
+      ? fitScore >= 3 ? "bg-emerald-500" : fitScore === 2 ? "bg-brand-orange" : "bg-muted-foreground"
       : "bg-brand-navy/10";
-  const dl = daysToDeadline(deadline);
+  const dl = daysToDeadline(card.grants?.submission_deadline);
+  // Full reasoning behind the show-more: the eligibility read + the engine's score
+  // derivation -- both real reasoning_context fields, nothing invented.
+  const reasoning = [rc.eligibility_analysis, rc.fit_score_derivation].filter(Boolean).join("\n\n");
   return (
-    <div className="rounded-2xl bg-white p-5 shadow-soft">
+    <Card className="p-6 sm:p-7">
       <div className="flex items-center justify-between">
         <SectionLabel>Match score</SectionLabel>
         <span className={`rounded-full bg-brand-navy/[0.06] px-2.5 py-0.5 text-[11px] font-semibold ${bandText}`}>{band}</span>
@@ -299,7 +285,29 @@ function MatchScoreCard({
           <span key={n} className={`h-1.5 flex-1 rounded-full ${seg(n)}`} />
         ))}
       </div>
-      {derivation && <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{derivation}</p>}
+
+      {card.description_short && (
+        <div className="mt-4">
+          <KeyCallout>{card.description_short}</KeyCallout>
+        </div>
+      )}
+      {(card.why_this_org?.length || 0) > 0 && (
+        <ul className="mt-4 space-y-2.5">
+          {card.why_this_org!.map((w, i) => (
+            <li key={i} className="flex gap-2.5 text-sm leading-relaxed text-foreground">
+              <Check className="mt-0.5 h-4 w-4 shrink-0 text-brand-navy" strokeWidth={3} />
+              <span>{w}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {reasoning && (
+        <div className="mt-4 border-t border-brand-navy/[0.08] pt-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-brand-orange">How this score was reached</p>
+          <ExpandableText text={reasoning} className="mt-2 text-sm leading-relaxed text-foreground" />
+        </div>
+      )}
+
       {(dl || (clientMatchCount != null && clientMatchCount > 0)) && (
         <div className="mt-4 flex flex-wrap gap-1.5">
           {dl && <span className="inline-flex items-center rounded-full bg-brand-cream px-2.5 py-0.5 text-[11px] font-medium text-brand-navy">{dl}</span>}
@@ -310,8 +318,25 @@ function MatchScoreCard({
           )}
         </div>
       )}
-    </div>
+
+      {/* Score feedback (Agree/Flag) -- relocated here from the rail; its only home. */}
+      <div className="mt-5 border-t border-brand-navy/10 pt-4">
+        <DecisionPanel variant="feedback" bare cardId={card.id} decision={card.decision} isAdmin={isAdmin} />
+      </div>
+    </Card>
   );
+}
+
+// Real days-to-deadline chip text, derived from submission_deadline (no invention).
+function daysToDeadline(raw: string | null | undefined): string | null {
+  const s = (raw ?? "").trim();
+  if (!s) return null;
+  const d = new Date(s);
+  if (isNaN(d.getTime()) || !/\d{4}/.test(s)) return null;
+  const days = Math.ceil((d.getTime() - Date.now()) / 86_400_000);
+  if (days < 0) return "Deadline passed";
+  if (days === 0) return "Due today";
+  return `${days} day${days === 1 ? "" : "s"} to deadline`;
 }
 
 // Ordinal tab link (sidebar toggle). Active = filled navy with an orange badge.

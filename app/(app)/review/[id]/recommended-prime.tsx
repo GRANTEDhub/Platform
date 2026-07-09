@@ -29,11 +29,16 @@ export function RecommendedPrime({
   proposedRole,
   roleAssignmentLogic,
   consortiumRationale,
+  tone = "onLight",
 }: {
   prime: string | null;
   proposedRole: string | null;
   roleAssignmentLogic?: string;
   consortiumRationale?: string;
+  // "onLight" = the Match-tab body stat (wide card). "onHero" = the narrow banner
+  // tile on the Match tab: same click-to-expand overlay, but the value clips to one
+  // line (the overlay carries the full name + fields).
+  tone?: "onLight" | "onHero";
 }) {
   const [open, setOpen] = useState(false);
 
@@ -55,9 +60,11 @@ export function RecommendedPrime({
         type="button"
         onClick={() => setOpen(true)}
         title="View prime detail"
-        className="group w-full rounded-3xl text-left transition hover:ring-2 hover:ring-brand-orange/25 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/40"
+        className={`group w-full text-left transition hover:ring-2 hover:ring-brand-orange/25 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/40 ${
+          tone === "onHero" ? "rounded-2xl" : "rounded-3xl"
+        }`}
       >
-        <Stat tone="onLight" label="Recommended prime" value={display} />
+        <Stat tone={tone} truncateValue label="Recommended prime" value={display} />
       </button>
 
       {open && (

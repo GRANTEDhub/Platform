@@ -12,6 +12,7 @@ export function Stat({
   icon,
   accent = false,
   tone = "onLight",
+  truncateValue = false,
 }: {
   label: string;
   value: React.ReactNode;
@@ -19,18 +20,21 @@ export function Stat({
   icon?: React.ReactNode;
   accent?: boolean;
   tone?: "onLight" | "onHero";
+  // onHero only: clip the figure to ONE line (ellipsis). Grant facts fit at 16px so
+  // they wrap-free without this; Match-tab facts (proposed role, prime name) are
+  // free text of unknown length, so they opt in to truncation + the title tooltip.
+  truncateValue?: boolean;
 }) {
   if (tone === "onHero") {
     // Tile on the narrowed navy hero. Default: white tile, orange serif figure over
     // a navy label. `accent` (the deadline) inverts to a solid-orange tile with white
-    // text. Figure font is text-base: with the match value now short ("20%"/"Yes")
-    // and the hero deadline abbreviated ("Sep 15, 2026"), real values fit on ONE line
-    // in the narrow card at 16px (verified in-sandbox). `hint` is not rendered here
-    // (dropped in #106); both props still drive the onLight tile below.
+    // text at text-base (16px). Grant facts are short enough to fit one line; longer
+    // Match-tab facts pass `truncateValue` to clip to one line with a hover tooltip.
+    // `hint` is not rendered here (dropped in #106); both props still drive onLight.
     return (
       <div className={cn("rounded-2xl p-4", accent ? "bg-brand-orange" : "bg-white shadow-soft")}>
         <p
-          className={cn("font-serif text-base font-semibold leading-tight", accent ? "text-white" : "text-brand-orange")}
+          className={cn("font-serif text-base font-semibold leading-tight", truncateValue && "truncate", accent ? "text-white" : "text-brand-orange")}
           title={typeof value === "string" ? value : undefined}
         >
           {value}
