@@ -43,7 +43,7 @@ function buildIntroHtml(g: Grant, card: ReviewCard): string {
   if (funder && g.source_url) {
     const fEnc = sanitizeText(funder);
     if (fEnc && clean.includes(fEnc)) {
-      const link = `<a href="${sanitizeText(g.source_url)}" style="color:#b3541e;font-weight:600;text-decoration:underline;text-underline-offset:2px;">${fEnc}</a>`;
+      const link = `<a href="${sanitizeText(g.source_url)}" style="color:#E4761F;font-weight:600;text-decoration:underline;text-underline-offset:2px;">${fEnc}</a>`;
       return clean.replace(fEnc, link);
     }
   }
