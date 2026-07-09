@@ -11,6 +11,7 @@ import { SectionLabel, KeyCallout, Collapsible, GrantBody, GrantStatTiles, Grant
 import { DecisionPanel } from "./decision-panel";
 import { AlertSend } from "./alert-send";
 import { ProspectContact } from "./prospect-contact";
+import { RecommendedPrime } from "./recommended-prime";
 import { getSentAlertForCard } from "@/lib/alerts/sent-status";
 import type { ReviewCard, Client, Grant, Prospect } from "@/types/database";
 
@@ -79,25 +80,24 @@ export default async function CardDetailPage({
 
   return (
     <div className="min-h-full bg-brand-cream px-6 py-7 sm:px-8">
-      {/* Two columns from the top: the navy hero lives in the (constrained) left/main
-          column so it no longer spans the full pane; the decision rail sits beside it. */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-start">
-        <main className="min-w-0 space-y-6">
-          {/* Navy hero: grant identity + the four defining facts as tiles. */}
-          <NavyHero
-            eyebrow="Grant Match Review"
-            eyebrowRight={<GrantStatusPill status={g?.grant_status} />}
-            title={g?.title || "Opportunity"}
-            subtitle={[g?.funder, g?.fon].filter(Boolean).join(" · ") || "—"}
-            actions={card.decision !== "pending" ? <DecisionBadge decision={card.decision} /> : undefined}
-          >
-            {g && <GrantStatTiles grant={g} tone="onHero" />}
-          </NavyHero>
+      {/* Navy hero: full-pane width, grant identity + the four defining facts as tiles. */}
+      <NavyHero
+        eyebrow="Grant Match Review"
+        eyebrowRight={<GrantStatusPill status={g?.grant_status} />}
+        title={g?.title || "Opportunity"}
+        subtitle={[g?.funder, g?.fon].filter(Boolean).join(" · ") || "—"}
+        actions={card.decision !== "pending" ? <DecisionBadge decision={card.decision} /> : undefined}
+      >
+        {g && <GrantStatTiles grant={g} tone="onHero" />}
+      </NavyHero>
 
+      {/* Two-column body below the hero: floating main cards + sticky decision rail. */}
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-start">
+        <main className="min-w-0 space-y-6">
           {tab === "grant" ? (
             g ? (
               <>
-                {/* Match Score leads the main column on the Grant tab (moved out of the rail). */}
+                {/* Match Score leads the main column on the Grant tab. */}
                 <MatchScoreCard
                   fitScore={card.fit_score}
                   derivation={card.reasoning_context?.fit_score_derivation}
@@ -113,12 +113,12 @@ export default async function CardDetailPage({
         </main>
 
         <aside className="space-y-4">
-          {/* Tab toggle + decision pinned beside the hero. */}
           <div className="sticky top-6 space-y-4">
             <div className="grid grid-cols-2 gap-2">
               <StepLink id={card.id} tab="grant" n={1} title="The Grant" active={tab === "grant"} />
               <StepLink id={card.id} tab="match" n={2} title="The Match" active={tab === "match"} />
             </div>
+            {/* ProspectContact edits the send recipient -> sits directly above the decision panel. */}
             {isAdmin && isProspect && card.prospects && (
               <ProspectContact
                 prospectId={card.prospects.id}
@@ -160,7 +160,12 @@ function MatchTab({ card, orgName, isProspect }: { card: FullCard; orgName: stri
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Stat tone="onLight" accent label="Fit" value={`${card.fit_score} · ${BAND[card.fit_score] ?? "—"}`} />
         <Stat tone="onLight" label="Proposed role" value={card.proposed_role || "—"} />
-        <RecommendedPrimeStat prime={card.recommended_prime} />
+        <RecommendedPrime
+          prime={card.recommended_prime}
+          proposedRole={card.proposed_role}
+          roleAssignmentLogic={card.reasoning_context?.role_assignment_logic}
+          consortiumRationale={card.reasoning_context?.consortium_rationale}
+        />
       </div>
 
       {(card.description_short || (card.why_this_org?.length || 0) > 0) && (
@@ -229,30 +234,6 @@ function daysToDeadline(raw: string | null | undefined): string | null {
   if (days < 0) return "Deadline passed";
   if (days === 0) return "Due today";
   return `${days} day${days === 1 ? "" : "s"} to deadline`;
-}
-
-// Recommended prime (Match tab). Real field: review_cards.recommended_prime, which
-// the engine NULLS when the LLM's suggested prime is an ineligible partner
-// (lib/grants/constraints.ts). So detection is exact: a non-empty name -> show it
-// (capped ≤50 char, word-safe) with the KNP-operator fallback as a grey sub-line;
-// null/empty -> the fallback phrasing IS the primary (navy) value, no sub-line.
-const FALLBACK_PRIME = "or a qualified nonprofit KNP operator";
-
-function capChars(s: string, max: number): string {
-  if (s.length <= max) return s;
-  const cut = s.slice(0, max);
-  const sp = cut.lastIndexOf(" ");
-  const base = sp > Math.floor(max * 0.6) ? cut.slice(0, sp) : cut;
-  return base.replace(/[\s.,;:–—-]+$/, "") + "…";
-}
-
-function RecommendedPrimeStat({ prime }: { prime: string | null }) {
-  const name = (prime ?? "").trim();
-  return name ? (
-    <Stat tone="onLight" label="Recommended prime" value={capChars(name, 50)} hint={FALLBACK_PRIME} />
-  ) : (
-    <Stat tone="onLight" label="Recommended prime" value={FALLBACK_PRIME} />
-  );
 }
 
 // Match Score card — REAL data only (issue #94 option b; full sub-scores tracked
