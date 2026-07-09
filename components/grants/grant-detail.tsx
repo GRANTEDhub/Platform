@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Check, AlertTriangle } from "lucide-react";
 import { sanitizeRichText } from "@/lib/sanitize/html";
 import { previewHtml, collapseDuplicatedBlock } from "@/lib/grants/description";
 import { ExpandableDescription } from "@/components/grants/expandable-description";
@@ -39,7 +39,7 @@ export type GrantDetailFields = Pick<
   | "num_awards" | "description"
   | "eligible_entity_types" | "geographic_eligibility" | "ineligible_entities" | "subaward_prohibited"
   | "incumbent_risk" | "technical_burden_flags" | "hard_disqualifiers" | "verification_flags"
-  | "scoring_rubric" | "ideal_applicant_profile"
+  | "scoring_rubric" | "ideal_applicant_profile" | "grant_status"
 >;
 
 /* ── Generic primitives ───────────────────────────────────────────────────── */
@@ -55,10 +55,10 @@ export function InfoRow({ k, v }: { k: string; v: string }) {
 
 // Warm orange-tinted callout with an orange left rule; serif body. Self-contained
 // (parent controls spacing via a stack).
-export function KeyCallout({ label, children }: { label?: string; children: React.ReactNode }) {
+export function KeyCallout({ label, icon, children }: { label?: string; icon?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="rounded-3xl border-l-[3px] border-brand-orange bg-brand-orange/[0.07] px-6 py-5">
-      {label && <p className="text-[10.5px] font-semibold uppercase tracking-[0.1em] text-brand-orange">{label}</p>}
+      {label && <p className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.1em] text-brand-orange">{icon}{label}</p>}
       <p className={`${label ? "mt-2 " : ""}font-serif text-[17px] leading-snug text-brand-navy`}>{children}</p>
     </div>
   );
@@ -82,12 +82,27 @@ export function Collapsible({ label, children }: { label: string; children: Reac
 
 // The four defining grant facts, formatted once. Rendered as tiles either inside
 // the NavyHero (tone="onHero") or as floating cards in the body (tone="onLight").
-function grantStatItems(grant: GrantDetailFields): { label: string; value: string; accent?: boolean }[] {
+// Real deadline sub-label ("28 days left · 2026") derived from submission_deadline.
+// null when the deadline doesn't parse (rolling / TBD) so the tile shows no line.
+function deadlineSublabel(raw: string | null | undefined): string | null {
+  const s = (raw ?? "").trim();
+  if (!s) return null;
+  const d = new Date(s);
+  if (isNaN(d.getTime()) || !/\d{4}/.test(s)) return null;
+  const days = Math.ceil((d.getTime() - Date.now()) / 86_400_000);
+  const year = d.getFullYear();
+  if (days < 0) return `Closed · ${year}`;
+  if (days === 0) return `Due today · ${year}`;
+  return `${days} day${days === 1 ? "" : "s"} left · ${year}`;
+}
+
+function grantStatItems(grant: GrantDetailFields): { label: string; value: string; hint?: string; accent?: boolean }[] {
+  const cs = compactCostShare(grant.cost_share);
   return [
-    { label: `Award range${grant.award_range_is_estimate ? " · est." : ""}`, value: formatAwardRange(grant.award_range_min, grant.award_range_max) },
-    { label: "Est. awards", value: grant.num_awards || "—" },
-    { label: "Match required", value: compactCostShare(grant.cost_share) },
-    { label: "Deadline", value: formatDeadline(grant.submission_deadline), accent: true },
+    { label: `Award range${grant.award_range_is_estimate ? " · est." : ""}`, value: formatAwardRange(grant.award_range_min, grant.award_range_max), hint: "Per project" },
+    { label: "Est. awards", value: grant.num_awards || "—", hint: "This NOFO" },
+    { label: "Match required", value: cs, hint: cs === "None" ? "No cost share" : "Cost share" },
+    { label: "Deadline", value: formatDeadline(grant.submission_deadline), hint: deadlineSublabel(grant.submission_deadline) ?? undefined, accent: true },
   ];
 }
 
@@ -95,9 +110,28 @@ export function GrantStatTiles({ grant, tone = "onLight" }: { grant: GrantDetail
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
       {grantStatItems(grant).map((it, i) => (
-        <Stat key={i} tone={tone} accent={it.accent} label={it.label} value={it.value} />
+        <Stat key={i} tone={tone} accent={it.accent} label={it.label} value={it.value} hint={it.hint} />
       ))}
     </div>
+  );
+}
+
+// Real grant status -> a hero pill. Derived from grant.grant_status (no invented
+// state); styled for the dark hero. Renders nothing when status is absent.
+export function GrantStatusPill({ status }: { status: string | null | undefined }) {
+  const s = (status ?? "").trim().toLowerCase();
+  let label: string;
+  let dot: string;
+  if (/^(active|posted|open)/.test(s)) { label = "Open · Accepting applications"; dot = "bg-emerald-400"; }
+  else if (/forecast/.test(s)) { label = "Forecasted"; dot = "bg-amber-400"; }
+  else if (/(closed|archiv|expired|inactive)/.test(s)) { label = "Closed"; dot = "bg-white/40"; }
+  else if (s) { label = (status ?? "").trim(); dot = "bg-white/40"; }
+  else return null;
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-medium text-white/80">
+      <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
+      {label}
+    </span>
   );
 }
 
@@ -124,16 +158,33 @@ export function WhatItFundsAndEligibility({ grant }: { grant: GrantDetailFields 
         <SectionLabel>Who can apply</SectionLabel>
         {eligibleTypes.length > 0 ? (
           <div className="mt-3 flex flex-wrap gap-1.5">
-            {eligibleTypes.map((t, i) => <Badge key={i} variant="chip">{t}</Badge>)}
+            {eligibleTypes.map((t, i) => (
+              <Badge key={i} variant="chip" className="gap-1">
+                <Check className="h-3 w-3 text-emerald-600" strokeWidth={3} />
+                {t}
+              </Badge>
+            ))}
           </div>
         ) : (
           <p className="mt-3 text-sm text-muted-foreground">Eligible entity types not specified.</p>
         )}
-        <div className="mt-4 space-y-1.5 text-sm text-foreground">
-          {grant.geographic_eligibility && <p><span className="text-muted-foreground">Geography: </span>{grant.geographic_eligibility}</p>}
-          {grant.ineligible_entities && <p><span className="text-muted-foreground">Ineligible: </span>{grant.ineligible_entities}</p>}
-          {grant.subaward_prohibited && <p className="font-medium text-brand-orange">Subawards prohibited</p>}
-        </div>
+        {(grant.geographic_eligibility || grant.ineligible_entities) && (
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {grant.geographic_eligibility && (
+              <div className="rounded-2xl bg-emerald-50 p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-700">Geography</p>
+                <p className="mt-1.5 text-sm text-foreground">{grant.geographic_eligibility}</p>
+              </div>
+            )}
+            {grant.ineligible_entities && (
+              <div className="rounded-2xl bg-brand-orange/[0.07] p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-brand-orange">Ineligible</p>
+                <p className="mt-1.5 text-sm text-foreground">{grant.ineligible_entities}</p>
+              </div>
+            )}
+          </div>
+        )}
+        {grant.subaward_prohibited && <p className="mt-3 text-sm font-medium text-brand-orange">Subawards prohibited</p>}
       </Card>
     </>
   );
@@ -141,7 +192,7 @@ export function WhatItFundsAndEligibility({ grant }: { grant: GrantDetailFields 
 
 export function MakeOrBreak({ grant }: { grant: GrantDetailFields }) {
   if (!grant.incumbent_risk) return null;
-  return <KeyCallout label="Make-or-break">{grant.incumbent_risk}</KeyCallout>;
+  return <KeyCallout label="Make-or-break" icon={<AlertTriangle className="h-3.5 w-3.5" />}>{grant.incumbent_risk}</KeyCallout>;
 }
 
 // Clean pull from grants.ideal_applicant_profile; consortium block renders only

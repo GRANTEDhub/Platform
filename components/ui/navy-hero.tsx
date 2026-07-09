@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 // `children` is an optional content row under the header (e.g. grant stat tiles).
 export function NavyHero({
   eyebrow,
+  eyebrowRight,
   title,
   subtitle,
   actions,
@@ -12,6 +13,7 @@ export function NavyHero({
   className,
 }: {
   eyebrow?: React.ReactNode;
+  eyebrowRight?: React.ReactNode;
   title: React.ReactNode;
   subtitle?: React.ReactNode;
   actions?: React.ReactNode;
@@ -27,8 +29,11 @@ export function NavyHero({
     >
       <div className="flex items-start justify-between gap-6">
         <div className="min-w-0">
-          {eyebrow && (
-            <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-brand-orange">{eyebrow}</p>
+          {(eyebrow || eyebrowRight) && (
+            <div className="mb-3 flex flex-wrap items-center gap-3">
+              {eyebrow && <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-brand-orange">{eyebrow}</p>}
+              {eyebrowRight}
+            </div>
           )}
           <h1 className="font-serif text-[30px] font-semibold leading-[1.12] tracking-tight">{title}</h1>
           {subtitle && <p className="mt-2.5 text-sm text-white/60">{subtitle}</p>}

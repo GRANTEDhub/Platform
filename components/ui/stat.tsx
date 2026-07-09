@@ -22,9 +22,10 @@ export function Stat({
 }) {
   if (tone === "onHero") {
     return (
-      <div className={cn("rounded-3xl p-5", accent ? "bg-brand-orange" : "bg-white/[0.08]")}>
+      <div className={cn("rounded-2xl p-5", accent ? "bg-brand-orange" : "bg-white/[0.08]")}>
         <p className={cn("truncate text-[10px] font-semibold uppercase tracking-widest", accent ? "text-white/80" : "text-white/50")}>{label}</p>
         <p className="mt-2 truncate font-serif text-2xl font-semibold text-white" title={typeof value === "string" ? value : undefined}>{value}</p>
+        {hint && <p className={cn("mt-1 truncate text-[11px]", accent ? "text-white/75" : "text-white/45")}>{hint}</p>}
       </div>
     );
   }
