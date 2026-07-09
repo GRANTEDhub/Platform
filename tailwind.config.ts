@@ -48,6 +48,14 @@ const config: Config = {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+        "4xl": "1.75rem",
+      },
+      boxShadow: {
+        // Design-system elevation scale (visual refresh, epic #92). Warm navy-
+        // tinted soft shadows for the floating-card language.
+        soft: "0 10px 40px -14px rgba(11,30,58,0.16)",
+        softer: "0 6px 22px -12px rgba(11,30,58,0.13)",
+        lift: "0 26px 70px -24px rgba(11,30,58,0.30)",
       },
       fontFamily: {
         sans: ["var(--font-sans)", "system-ui", "sans-serif"],

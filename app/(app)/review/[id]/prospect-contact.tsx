@@ -48,7 +48,7 @@ export function ProspectContact({
   }
 
   return (
-    <div className="rounded-2xl border border-brand-navy/10 bg-white p-4">
+    <div className="rounded-2xl bg-white p-5 shadow-soft">
       <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-brand-orange">Prospect contact</p>
       <p className="mt-1.5 text-xs text-muted-foreground">
         Add a contact to email the grant alert. Sending also adds them to the pipeline as a lead.

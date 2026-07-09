@@ -4,11 +4,14 @@ import { Check } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { DecisionBadge } from "@/components/grants/badges";
-import { interTight, sourceSerif } from "@/lib/fonts";
-import { StatBand, SectionLabel, KeyCallout, Collapsible, GrantBody, type GrantDetailFields } from "@/components/grants/grant-detail";
+import { NavyHero } from "@/components/ui/navy-hero";
+import { Card } from "@/components/ui/card";
+import { Stat } from "@/components/ui/stat";
+import { SectionLabel, KeyCallout, Collapsible, GrantBody, GrantStatTiles, GrantStatusPill, WhoCanApply, type GrantDetailFields } from "@/components/grants/grant-detail";
 import { DecisionPanel } from "./decision-panel";
 import { AlertSend } from "./alert-send";
 import { ProspectContact } from "./prospect-contact";
+import { RecommendedPrime } from "./recommended-prime";
 import { getSentAlertForCard } from "@/lib/alerts/sent-status";
 import type { ReviewCard, Client, Grant, Prospect } from "@/types/database";
 
@@ -46,7 +49,7 @@ export default async function CardDetailPage({
 
   const { data } = await supabase
     .from("review_cards")
-    .select("*, clients(id, name, org_type, engagement_tier, primary_contact_email, primary_contact_name), prospects(id, name, org_type, source_url, primary_contact_email, primary_contact_name), grants(id, title, funder, fon, source_url, submission_deadline, period_of_performance, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, description, eligible_entity_types, geographic_eligibility, ineligible_entities, subaward_prohibited, incumbent_risk, technical_burden_flags, hard_disqualifiers, verification_flags, scoring_rubric, ideal_applicant_profile)")
+    .select("*, clients(id, name, org_type, engagement_tier, primary_contact_email, primary_contact_name), prospects(id, name, org_type, source_url, primary_contact_email, primary_contact_name), grants(id, title, funder, fon, grant_status, source_url, submission_deadline, period_of_performance, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, description, eligible_entity_types, geographic_eligibility, ineligible_entities, subaward_prohibited, incumbent_risk, technical_burden_flags, hard_disqualifiers, verification_flags, scoring_rubric, ideal_applicant_profile)")
     .eq("id", params.id)
     .single();
 
@@ -63,38 +66,93 @@ export default async function CardDetailPage({
   const sentAlert = isAdmin ? await getSentAlertForCard(card.id) : null;
   const contactName = card.prospects?.primary_contact_name || card.clients?.primary_contact_name || null;
 
+  // Additive read for the Match Score card: how many client cards this grant
+  // produced (real, grant-level context -- NOT an invented sub-score).
+  // RETAINED for part 2: the Match Score card moves to the Match tab; this count
+  // and the MatchScoreCard component below are intentionally kept (momentarily
+  // unused after removing the Grant-tab invocation).
+  let clientMatchCount: number | null = null;
+  if (card.grant_id) {
+    const { count } = await supabase
+      .from("review_cards")
+      .select("id", { count: "exact", head: true })
+      .eq("grant_id", card.grant_id)
+      .eq("card_type", "client");
+    clientMatchCount = count ?? null;
+  }
+
+  // Score block: real fit_score + "SCORE" label, top-right inside the banner (both
+  // tabs). Carries the decided-state badge beneath it when a decision is recorded.
+  const scoreBlock = (
+    <div className="flex flex-col items-end gap-2">
+      <div className="flex flex-col items-end leading-none">
+        <span className="font-serif text-[32px] font-semibold text-white">{card.fit_score}</span>
+        <span className="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-brand-orange">Score</span>
+      </div>
+      {card.decision !== "pending" && <DecisionBadge decision={card.decision} />}
+    </div>
+  );
+
+  // Review actions box (top-right, beside the banner): step toggle + Send/Reject
+  // only. Score feedback (Agree/Flag) lives in the rail below, not here.
+  const reviewActions = (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-2">
+        <StepLink id={card.id} tab="grant" n={1} title="The Grant" active={tab === "grant"} />
+        <StepLink id={card.id} tab="match" n={2} title="The Match" active={tab === "match"} />
+      </div>
+      <DecisionPanel
+        variant="decision"
+        cardId={card.id}
+        decision={card.decision}
+        isAdmin={isAdmin}
+        alertSend={
+          isAdmin ? (
+            <AlertSend
+              cardId={card.id}
+              sentAt={sentAlert?.sentAt ?? null}
+              sentTo={sentAlert?.sentTo ?? null}
+              contactName={contactName}
+            />
+          ) : null
+        }
+      />
+    </div>
+  );
+
   return (
-    <div className={`${interTight.variable} ${sourceSerif.variable} min-h-full bg-brand-cream`}>
-      {/* Full-width banner: grant identity (toggle lives in the sidebar). */}
-      <div className="flex items-start justify-between gap-6 border-b border-brand-navy/10 bg-white px-6 py-5 sm:px-8">
-        <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-orange">Grant Match Review</p>
-          <h1 className="mt-1 font-serif text-[26px] font-semibold leading-[1.12] tracking-tight text-brand-navy">
-            {g?.title || "Opportunity"}
-          </h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            {[g?.funder, g?.fon].filter(Boolean).join(" · ") || "—"}
-          </p>
-        </div>
-        {card.decision !== "pending" && (
-          <div className="shrink-0">
-            <DecisionBadge decision={card.decision} />
-          </div>
-        )}
+    <div className="min-h-full bg-brand-cream px-6 py-7 sm:px-8">
+      {/* Top strip: narrowed navy banner (left) + review-actions box (right). The
+          banner FORMAT is identical on both tabs; only the body below differs. */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-start">
+        <NavyHero
+          eyebrow="Grant Match Review"
+          eyebrowRight={<GrantStatusPill status={g?.grant_status} />}
+          title={g?.title || "Opportunity"}
+          subtitle={[g?.funder, g?.fon].filter(Boolean).join(" · ") || "—"}
+          actions={scoreBlock}
+        >
+          {g && <GrantStatTiles grant={g} tone="onHero" />}
+        </NavyHero>
+        {reviewActions}
       </div>
 
-      {/* Two-column body: wide main + right sidebar (toggle + decision panel). */}
-      <div className="grid grid-cols-1 gap-6 px-6 py-7 sm:px-8 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-stretch">
-        <main className="rounded-2xl border border-brand-navy/10 bg-white p-6 sm:p-8">
-          {tab === "grant" ? (g ? <GrantBody grant={g} /> : null) : <MatchTab card={card} orgName={orgName} isProspect={isProspect} />}
+      {/* Body below the strip: main content + rail. Same column template so the rail
+          lines up under the review-actions box. */}
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-start">
+        <main className="min-w-0 space-y-6">
+          {/* The Grant tab describes the grant, not the match -- What It Funds leads
+              here. Match Score lives on the Match tab (wired in a later part). */}
+          {tab === "grant" ? (
+            g ? <GrantBody grant={g} showStats={false} showWhoCanApply={false} /> : null
+          ) : (
+            <MatchTab card={card} orgName={orgName} isProspect={isProspect} />
+          )}
         </main>
 
-        <aside>
+        <aside className="space-y-4">
           <div className="sticky top-6 space-y-4">
-            <div className="grid grid-cols-2 gap-2">
-              <StepLink id={card.id} tab="grant" n={1} title="The Grant" active={tab === "grant"} />
-              <StepLink id={card.id} tab="match" n={2} title="The Match" active={tab === "match"} />
-            </div>
+            {/* ProspectContact edits the send recipient. */}
             {isAdmin && isProspect && card.prospects && (
               <ProspectContact
                 prospectId={card.prospects.id}
@@ -102,22 +160,11 @@ export default async function CardDetailPage({
                 initialName={card.prospects.primary_contact_name}
               />
             )}
-            <DecisionPanel
-              cardId={card.id}
-              decision={card.decision}
-              isAdmin={isAdmin}
-              alertSend={
-                isAdmin ? (
-                  <AlertSend
-                    cardId={card.id}
-                    sentAt={sentAlert?.sentAt ?? null}
-                    sentTo={sentAlert?.sentTo ?? null}
-                    contactName={contactName}
-                  />
-                ) : null
-              }
-            />
+            {/* Score feedback (Agree/Flag) -- stays in the rail until part 3. */}
+            <DecisionPanel variant="feedback" cardId={card.id} decision={card.decision} isAdmin={isAdmin} />
           </div>
+          {/* Who Can Apply (chips) suits the narrow rail; Grant tab only. */}
+          {tab === "grant" && g && <WhoCanApply grant={g} dense />}
         </aside>
       </div>
     </div>
@@ -126,24 +173,32 @@ export default async function CardDetailPage({
 
 /* ── Tab 2: The Match (client-match analysis) ─────────────────────────────── */
 function MatchTab({ card, orgName, isProspect }: { card: FullCard; orgName: string; isProspect: boolean }) {
+  void orgName;
   const rc = card.reasoning_context || {};
   const watchouts = cleanWatchouts(card.before_you_approve);
   return (
-    <div>
-      <StatBand
-        items={[
-          { label: "Fit", value: `${card.fit_score} · ${BAND[card.fit_score] ?? "—"}`, urgent: true },
-          { label: "Proposed role", value: card.proposed_role || "—" },
-          { label: "Recommended prime", value: card.recommended_prime || "—" },
-        ]}
-      />
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Stat tone="onLight" accent label="Fit" value={`${card.fit_score} · ${BAND[card.fit_score] ?? "—"}`} />
+        <Stat tone="onLight" label="Proposed role" value={card.proposed_role || "—"} />
+        <RecommendedPrime
+          prime={card.recommended_prime}
+          proposedRole={card.proposed_role}
+          roleAssignmentLogic={card.reasoning_context?.role_assignment_logic}
+          consortiumRationale={card.reasoning_context?.consortium_rationale}
+        />
+      </div>
 
       {(card.description_short || (card.why_this_org?.length || 0) > 0) && (
-        <section className="mt-8">
+        <Card className="p-6 sm:p-7">
           <SectionLabel>Match Rationale</SectionLabel>
-          {card.description_short && <KeyCallout tight>{card.description_short}</KeyCallout>}
+          {card.description_short && (
+            <div className="mt-3">
+              <KeyCallout>{card.description_short}</KeyCallout>
+            </div>
+          )}
           {(card.why_this_org?.length || 0) > 0 && (
-            <ul className="mt-3.5 space-y-2.5">
+            <ul className="mt-4 space-y-2.5">
               {card.why_this_org!.map((w, i) => (
                 <li key={i} className="flex gap-2.5 text-sm leading-relaxed text-foreground">
                   <Check className="mt-0.5 h-4 w-4 shrink-0 text-brand-navy" strokeWidth={3} />
@@ -152,14 +207,14 @@ function MatchTab({ card, orgName, isProspect }: { card: FullCard; orgName: stri
               ))}
             </ul>
           )}
-        </section>
+        </Card>
       )}
 
       {card.concept_synopsis && (
-        <section className="mt-8">
+        <Card className="p-6 sm:p-7">
           <SectionLabel>Concept Proposal</SectionLabel>
-          <p className="mt-2.5 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{card.concept_synopsis}</p>
-        </section>
+          <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{card.concept_synopsis}</p>
+        </Card>
       )}
 
       {watchouts.length > 0 && (
@@ -182,9 +237,78 @@ function MatchTab({ card, orgName, isProspect }: { card: FullCard; orgName: stri
       )}
 
       {isProspect && card.prospects?.source_url && (
-        <p className="mt-8 text-sm">
+        <p className="text-sm">
           <a href={card.prospects.source_url} target="_blank" rel="noopener noreferrer" className="font-medium text-brand-orange hover:underline">Prospect source ↗</a>
         </p>
+      )}
+    </div>
+  );
+}
+
+// Real days-to-deadline chip text, derived from submission_deadline (no invention).
+function daysToDeadline(raw: string | null | undefined): string | null {
+  const s = (raw ?? "").trim();
+  if (!s) return null;
+  const d = new Date(s);
+  if (isNaN(d.getTime()) || !/\d{4}/.test(s)) return null;
+  const days = Math.ceil((d.getTime() - Date.now()) / 86_400_000);
+  if (days < 0) return "Deadline passed";
+  if (days === 0) return "Due today";
+  return `${days} day${days === 1 ? "" : "s"} to deadline`;
+}
+
+// Match Score card — REAL data only (issue #94 option b; full sub-scores tracked
+// in #105). The fit band + "n of 3" carry meaning; the meter color is redundant,
+// never load-bearing. Supporting text is the engine's real fit_score_derivation.
+// RETAINED for part 2: removed from the Grant tab (it describes the match, not the
+// grant); to be placed on the Match tab. Kept here, do not delete.
+function MatchScoreCard({
+  fitScore,
+  derivation,
+  deadline,
+  clientMatchCount,
+}: {
+  fitScore: number;
+  derivation?: string;
+  deadline: string | null | undefined;
+  clientMatchCount: number | null;
+}) {
+  const band = BAND[fitScore] ?? "—";
+  const bandText = fitScore >= 3 ? "text-emerald-700" : fitScore === 2 ? "text-brand-orange" : "text-muted-foreground";
+  const seg = (n: number) =>
+    n <= fitScore
+      ? fitScore >= 3
+        ? "bg-emerald-500"
+        : fitScore === 2
+          ? "bg-brand-orange"
+          : "bg-muted-foreground"
+      : "bg-brand-navy/10";
+  const dl = daysToDeadline(deadline);
+  return (
+    <div className="rounded-2xl bg-white p-5 shadow-soft">
+      <div className="flex items-center justify-between">
+        <SectionLabel>Match score</SectionLabel>
+        <span className={`rounded-full bg-brand-navy/[0.06] px-2.5 py-0.5 text-[11px] font-semibold ${bandText}`}>{band}</span>
+      </div>
+      <div className="mt-3 flex items-baseline gap-2">
+        <span className="font-serif text-3xl font-semibold text-brand-navy">{fitScore}</span>
+        <span className="text-sm text-muted-foreground">of 3 · {band}</span>
+      </div>
+      <div className="mt-3 flex gap-1.5" aria-hidden>
+        {[1, 2, 3].map((n) => (
+          <span key={n} className={`h-1.5 flex-1 rounded-full ${seg(n)}`} />
+        ))}
+      </div>
+      {derivation && <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{derivation}</p>}
+      {(dl || (clientMatchCount != null && clientMatchCount > 0)) && (
+        <div className="mt-4 flex flex-wrap gap-1.5">
+          {dl && <span className="inline-flex items-center rounded-full bg-brand-cream px-2.5 py-0.5 text-[11px] font-medium text-brand-navy">{dl}</span>}
+          {clientMatchCount != null && clientMatchCount > 0 && (
+            <span className="inline-flex items-center rounded-full bg-brand-cream px-2.5 py-0.5 text-[11px] font-medium text-brand-navy">
+              {clientMatchCount} client match{clientMatchCount === 1 ? "" : "es"} for this grant
+            </span>
+          )}
+        </div>
       )}
     </div>
   );
@@ -195,8 +319,8 @@ function StepLink({ id, tab, n, title, active }: { id: string; tab: TabKey; n: n
   return (
     <Link
       href={`/review/${id}?tab=${tab}`}
-      className={`flex w-full items-center gap-2.5 rounded-xl border px-3.5 py-2.5 transition ${
-        active ? "border-brand-navy bg-brand-navy" : "border-brand-navy/10 bg-white hover:border-brand-navy/25"
+      className={`flex w-full items-center gap-2.5 rounded-2xl px-3.5 py-2.5 transition ${
+        active ? "bg-brand-navy shadow-soft" : "bg-white shadow-softer hover:shadow-soft"
       }`}
     >
       <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-[12.5px] font-semibold ${
