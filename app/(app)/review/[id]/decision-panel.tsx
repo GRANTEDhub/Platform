@@ -25,15 +25,19 @@ export function DecisionPanel({
   isAdmin,
   alertSend,
   variant = "full",
+  bare = false,
 }: {
   cardId: string;
   decision: CardDecision;
   isAdmin: boolean;
   alertSend?: React.ReactNode;
   // "full" = both clusters (default). "decision" = Send/Reject only (top strip).
-  // "feedback" = Agree/Flag score feedback only (rail). Splitting lets the two
-  // clusters live in different columns without duplicating state.
+  // "feedback" = Agree/Flag score feedback only. Splitting lets the two clusters
+  // live in different columns without duplicating state.
   variant?: "full" | "decision" | "feedback";
+  // Drop the white card wrapper so the cluster can sit INSIDE another card (the
+  // merged Match-summary box hosts the feedback cluster this way).
+  bare?: boolean;
 }) {
   const showDecision = variant !== "feedback";
   const showFeedback = variant !== "decision";
@@ -94,7 +98,7 @@ export function DecisionPanel({
   if (confirm) return <DecisionConfirmation summary={confirm} />;
 
   return (
-    <div className="rounded-2xl bg-white p-5 shadow-soft">
+    <div className={bare ? "" : "rounded-2xl bg-white p-5 shadow-soft"}>
       {showDecision && (
         <>
           {/* Decision controls. The primary action is "Send grant alert" (client
