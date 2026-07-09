@@ -26,6 +26,7 @@ export function DecisionPanel({
   alertSend,
   variant = "full",
   bare = false,
+  className,
 }: {
   cardId: string;
   decision: CardDecision;
@@ -35,9 +36,10 @@ export function DecisionPanel({
   // "feedback" = Agree/Flag score feedback only. Splitting lets the two clusters
   // live in different columns without duplicating state.
   variant?: "full" | "decision" | "feedback";
-  // Drop the white card wrapper so the cluster can sit INSIDE another card (the
-  // merged Match-summary box hosts the feedback cluster this way).
+  // Drop the white card wrapper so the cluster can sit INSIDE another card.
   bare?: boolean;
+  // Extra classes on the root (e.g. `flex-1` to fill the top-strip column height).
+  className?: string;
 }) {
   const showDecision = variant !== "feedback";
   const showFeedback = variant !== "decision";
@@ -98,7 +100,7 @@ export function DecisionPanel({
   if (confirm) return <DecisionConfirmation summary={confirm} />;
 
   return (
-    <div className={bare ? "" : "rounded-2xl bg-white p-5 shadow-soft"}>
+    <div className={`${bare ? "" : "rounded-2xl bg-white p-5 shadow-soft"}${className ? ` ${className}` : ""}`}>
       {showDecision && (
         <>
           {/* Decision controls. The primary action is "Send grant alert" (client

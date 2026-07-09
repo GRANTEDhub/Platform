@@ -95,13 +95,14 @@ export default async function CardDetailPage({
   // Review actions box (top-right, beside the banner): step toggle + Send/Reject
   // only. Score feedback (Agree/Flag) lives in the rail below, not here.
   const reviewActions = (
-    <div className="space-y-4">
+    <div className="flex h-full flex-col gap-4">
       <div className="grid grid-cols-2 gap-2">
         <StepLink id={card.id} tab="grant" n={1} title="The Grant" active={tab === "grant"} />
         <StepLink id={card.id} tab="match" n={2} title="The Match" active={tab === "match"} />
       </div>
       <DecisionPanel
         variant="decision"
+        className="flex-1"
         cardId={card.id}
         decision={card.decision}
         isAdmin={isAdmin}
@@ -121,9 +122,10 @@ export default async function CardDetailPage({
 
   return (
     <div className="min-h-full bg-brand-cream px-6 py-7 sm:px-8">
-      {/* Top strip: narrowed navy banner (left) + review-actions box (right). The
-          banner FORMAT is identical on both tabs; only the body below differs. */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-start">
+      {/* Top strip: narrowed navy banner (left) + review-actions box (right).
+          items-stretch so the right box matches the banner height -> one clean row.
+          The banner FORMAT is identical on both tabs; only the body below differs. */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-stretch">
         <NavyHero
           eyebrow="Grant Match Review"
           eyebrowRight={<GrantStatusPill status={g?.grant_status} />}
@@ -147,24 +149,27 @@ export default async function CardDetailPage({
           {tab === "grant" ? (
             g ? <GrantBody grant={g} showStats={false} showWhoCanApply={false} /> : null
           ) : (
-            <MatchTab card={card} orgName={orgName} isProspect={isProspect} isAdmin={isAdmin} clientMatchCount={clientMatchCount} />
+            <MatchTab card={card} orgName={orgName} isProspect={isProspect} clientMatchCount={clientMatchCount} />
           )}
         </main>
 
         <aside className="space-y-4">
-          <div className="sticky top-6 space-y-4">
-            {/* ProspectContact edits the send recipient. Score feedback (Agree/Flag)
-                moved into the merged Match-summary box (part 3a). */}
-            {isAdmin && isProspect && card.prospects && (
-              <ProspectContact
-                prospectId={card.prospects.id}
-                initialEmail={card.prospects.primary_contact_email}
-                initialName={card.prospects.primary_contact_name}
-              />
-            )}
-          </div>
-          {/* Who Can Apply (chips) suits the narrow rail; Grant tab only. */}
+          {/* Rail beside the main column: its first card top-aligns with the main
+              column's first card (no sticky wrapper -> no stray leading margin).
+              ProspectContact edits the send recipient (prospect cards only). */}
+          {isAdmin && isProspect && card.prospects && (
+            <ProspectContact
+              prospectId={card.prospects.id}
+              initialEmail={card.prospects.primary_contact_email}
+              initialName={card.prospects.primary_contact_name}
+            />
+          )}
+          {/* Grant tab: Who Can Apply beside What It Funds. Match tab: the Agree/Flag
+              score-feedback box in its own card beside the merged Match Score box. */}
           {tab === "grant" && g && <WhoCanApply grant={g} dense />}
+          {tab === "match" && (
+            <DecisionPanel variant="feedback" cardId={card.id} decision={card.decision} isAdmin={isAdmin} />
+          )}
         </aside>
       </div>
     </div>
@@ -176,13 +181,11 @@ function MatchTab({
   card,
   orgName,
   isProspect,
-  isAdmin,
   clientMatchCount,
 }: {
   card: FullCard;
   orgName: string;
   isProspect: boolean;
-  isAdmin: boolean;
   clientMatchCount: number | null;
 }) {
   void orgName;
@@ -191,7 +194,7 @@ function MatchTab({
     <div className="space-y-6">
       {/* Merged summary: score + rationale + score reasoning + Agree/Flag, one box.
           Fit / Proposed role / Recommended prime now live in the banner tiles. */}
-      <MatchSummaryCard card={card} isAdmin={isAdmin} clientMatchCount={clientMatchCount} />
+      <MatchSummaryCard card={card} clientMatchCount={clientMatchCount} />
 
       <ConceptProposalCard card={card} />
 
@@ -246,11 +249,9 @@ function MatchStatTiles({ card, grant }: { card: FullCard; grant: GrantDetailFie
 // sub-scores (the full multi-metric breakdown is tracked in #105).
 function MatchSummaryCard({
   card,
-  isAdmin,
   clientMatchCount,
 }: {
   card: FullCard;
-  isAdmin: boolean;
   clientMatchCount: number | null;
 }) {
   const rc = card.reasoning_context || {};
@@ -314,10 +315,6 @@ function MatchSummaryCard({
         </div>
       )}
 
-      {/* Score feedback (Agree/Flag) -- relocated here from the rail; its only home. */}
-      <div className="mt-5 border-t border-brand-navy/10 pt-4">
-        <DecisionPanel variant="feedback" bare cardId={card.id} decision={card.decision} isAdmin={isAdmin} />
-      </div>
     </Card>
   );
 }
