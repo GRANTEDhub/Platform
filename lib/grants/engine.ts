@@ -819,54 +819,18 @@ export function jsPreFilter(
   const grantSuppression = grantLevelSuppressionReason(extracted);
   if (grantSuppression) return grantSuppression;
 
-  const eligibleTypes = (extracted.eligible_entity_types || []).map((t) =>
-    t.toLowerCase()
-  );
-
-  // For-profit clients can never be recipients in federal grants
-  if (
-    client.org_type === "Small Business" ||
-    client.org_type === "small_business" ||
-    client.org_type === "for_profit"
-  ) {
-    const allowsSmallBusiness = eligibleTypes.some(
-      (t) => t.includes("small business") || t.includes("for-profit") || t.includes("unrestricted")
-    );
-    if (!allowsSmallBusiness && eligibleTypes.length > 0) {
-      return "For-profit / small business not in eligible entity types";
-    }
-  }
-
-  // Entity type mismatch check -- skip if client type clearly not in eligible list
-  if (eligibleTypes.length > 0 && !eligibleTypes.some((t) => t.includes("unrestricted"))) {
-    const orgTypeKeywords: Record<string, string[]> = {
-      // Platform org_type values
-      nonprofit: ["nonprofit", "501(c)(3)", "501c3", "non-profit", "private nonprofit"],
-      local_government: ["county", "local government", "municipal", "city or township", "special district"],
-      small_business: ["small business", "for-profit", "profit organization"],
-      for_profit: ["small business", "for-profit", "profit organization"],
-      higher_education: ["higher education", "university", "college", "community college", "institutions of higher", "institution of higher", "ihe"],
-      fqhc: ["nonprofit", "501(c)(3)", "501c3", "non-profit", "private nonprofit"],
-      transit_authority: ["county", "local government", "municipal", "city or township", "special district"],
-      // Legacy / descriptive labels (kept for back-compat with richer profiles)
-      "County Government": ["county", "local government", "municipal", "city or township"],
-      "Nonprofit 501c3": ["nonprofit", "501(c)(3)", "501c3", "non-profit", "private nonprofit"],
-      "Community College": ["higher education", "community college", "college", "university", "institution of higher"],
-      "Transit Authority": ["transit", "special district", "public transit", "transportation authority"],
-      "Health System": ["nonprofit", "501(c)(3)", "health", "hospital"],
-      "FQHC": ["health center", "fqhc", "nonprofit", "501(c)(3)", "federally qualified"],
-      "Small Business": ["small business", "for-profit", "profit organization"],
-      "Other": [],
-    };
-
-    const keywords = orgTypeKeywords[client.org_type ?? ""] || [];
-    if (
-      keywords.length > 0 &&
-      !keywords.some((kw) => eligibleTypes.some((t) => t.includes(kw)))
-    ) {
-      return `Entity type mismatch: ${client.org_type} not in eligible list`;
-    }
-  }
+  // Entity-type eligibility is deliberately NOT gated here anymore. The structured
+  // `eligible_entity_types` field is known-incomplete: it originates from the coarse
+  // Grants.gov / Simpler `applicant_types` export (frequently just ["Other"]), and
+  // the NOFO shred's granular value is dropped by mergeDeepShred -- so hard-excluding
+  // on it silently killed genuinely-eligible matches (e.g. a 501(c)(3) nonprofit vs.
+  // a NOFO that lists nonprofits but was API-tagged "Other"; MAT-PDOA / TI-26-008).
+  // Per-client entity eligibility now defers to the scorer (matchGrantToClient reads
+  // eligible_entity_types / ineligible_entities / hard_disqualifiers with NOFO
+  // context and sets disqualified/suppressed) and to hard_disqualifiers as the
+  // authoritative categorical gate -- consistent with the engine's own rule that
+  // entity type is a soft signal, never an auto-exclude. (The removed blocks hard-
+  // excluded for-profit and mismatched org types off this same lossy field.)
 
   return null; // passed pre-filter -- proceed to Claude
 }
