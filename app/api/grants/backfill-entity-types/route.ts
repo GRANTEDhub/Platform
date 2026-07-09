@@ -72,8 +72,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Admins only" }, { status: 403 });
   }
 
-  const body = (await req.json().catch(() => ({}))) as { apply?: boolean };
+  const body = (await req.json().catch(() => ({}))) as { apply?: boolean; limit?: number };
   const apply = body.apply === true;
+  // Bound the per-call work so a large batch can't exceed the Vercel function
+  // timeout (a 504 mid-run loses the response). The route re-selects coarse rows
+  // every call, so it's naturally resumable: call repeatedly with the same limit
+  // until nothing coarse remains. Omit limit to process the whole remainder.
+  const limit = Number.isFinite(body.limit) && (body.limit as number) > 0 ? Math.floor(body.limit as number) : 0;
 
   const db = createServiceClient();
 
@@ -86,7 +91,9 @@ export async function POST(req: NextRequest) {
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
-  const candidates = (rows ?? []).filter((g) => coarse((g.eligible_entity_types ?? []) as string[])) as Candidate[];
+  const allCoarse = (rows ?? []).filter((g) => coarse((g.eligible_entity_types ?? []) as string[])) as Candidate[];
+  // The work set for THIS call: the whole coarse remainder, or the first `limit`.
+  const candidates = limit > 0 ? allCoarse.slice(0, limit) : allCoarse;
 
   // ── LIST mode (default): no LLM, no writes. Just show what would run + cost. ──
   if (!apply) {
@@ -99,18 +106,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       mode: "list",
       model: "claude-sonnet-4-6",
-      candidates: candidates.length,
+      total_coarse_remaining: allCoarse.length,
+      this_call: candidates.length,
+      limit: limit || null,
       will_process: withText.length,
       skipped_no_raw_text: candidates.length - withText.length,
       estimated_cost_usd: Number(estCost.toFixed(2)),
-      sample: candidates.slice(0, 40).map((c) => ({
+      sample: candidates.map((c) => ({
         id: c.id,
         fon: c.fon,
         title: c.title,
         current: c.eligible_entity_types,
         has_raw_text: (c.raw_text ?? "").trim().length > 0,
       })),
-      note: "Dry list only — no LLM calls, no writes. POST { \"apply\": true } to run.",
+      note: "Dry list only — no LLM calls, no writes. POST { \"apply\": true } to run; add \"limit\": N to bound a batch.",
     });
   }
 
@@ -143,19 +152,25 @@ export async function POST(req: NextRequest) {
         errors.push({ id: c.id, error: upErr.message });
         return;
       }
-      changed.push({ id: c.id, fon: c.fon, old: c.eligible_entity_types, new: derived });
+      const row = { id: c.id, fon: c.fon, old: c.eligible_entity_types, new: derived };
+      // Log EACH write the instant it lands, so the revert record survives even if
+      // the batch later times out and the HTTP response is never returned. Grep
+      // Vercel logs for this line to reconstruct a partial run's snapshot.
+      console.log("[backfill-entity-types] wrote", JSON.stringify(row));
+      changed.push(row);
     } catch (err) {
       errors.push({ id: c.id, error: String((err as Error)?.message ?? err).slice(0, 300) });
     }
   });
 
-  // Emit the full old->new snapshot to logs too, so the revert record survives
-  // even if the HTTP response is lost.
+  // Full old->new snapshot at end of a clean run (per-row lines above cover 504s).
   console.log("[backfill-entity-types] snapshot", JSON.stringify(changed));
 
   return NextResponse.json({
     mode: "apply",
-    candidates: candidates.length,
+    limit: limit || null,
+    processed_this_call: candidates.length,
+    total_coarse_remaining_before_call: allCoarse.length,
     changed_count: changed.length,
     changed, // id -> {old,new} revert record
     skipped_no_raw_text,
