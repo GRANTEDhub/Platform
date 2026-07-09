@@ -193,12 +193,7 @@ function MatchTab({
           Fit / Proposed role / Recommended prime now live in the banner tiles. */}
       <MatchSummaryCard card={card} isAdmin={isAdmin} clientMatchCount={clientMatchCount} />
 
-      {card.concept_synopsis && (
-        <Card className="p-6 sm:p-7">
-          <SectionLabel>Concept Proposal</SectionLabel>
-          <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{card.concept_synopsis}</p>
-        </Card>
-      )}
+      <ConceptProposalCard card={card} />
 
       {watchouts.length > 0 && (
         <Collapsible label="Watch-outs">
@@ -323,6 +318,57 @@ function MatchSummaryCard({
       <div className="mt-5 border-t border-brand-navy/10 pt-4">
         <DecisionPanel variant="feedback" bare cardId={card.id} decision={card.decision} isAdmin={isAdmin} />
       </div>
+    </Card>
+  );
+}
+
+// Concept Proposal card (Match tab, below the merged summary; Watch-outs sits below
+// it). Assembled from REAL engine fields, omitting any that are empty -- never
+// invented:
+//   structure line: client name + proposed_role, plus the recommended-prime
+//     relationship when the client isn't the prime (recommended_prime is set);
+//   scope: concept_synopsis (the engine's purpose-built 2-3 sentence SOW);
+//   show-more: consortium_rationale (team composition / other required players /
+//     gaps) -- prose, since the engine has no structured players list.
+// role_assignment_logic is intentionally NOT repeated here; it lives in the prime
+// click-to-expand overlay from 3a.
+function ConceptProposalCard({ card }: { card: FullCard }) {
+  const clientName = (card.clients?.name || card.prospects?.name || "").trim();
+  const role = (card.proposed_role ?? "").trim();
+  const prime = (card.recommended_prime ?? "").trim();
+  const scope = (card.concept_synopsis ?? "").trim();
+  const team = (card.reasoning_context?.consortium_rationale ?? "").trim();
+
+  // Nothing real to assemble -> render nothing (never a placeholder).
+  if (!scope && !team && !role && !prime) return null;
+
+  return (
+    <Card className="p-6 sm:p-7">
+      <SectionLabel>Concept Proposal</SectionLabel>
+
+      {(clientName || role) && (
+        <p className="mt-3 text-sm text-foreground">
+          {clientName && <span className="font-semibold text-brand-navy">{clientName}</span>}
+          {clientName && role ? " — " : ""}
+          {role}
+        </p>
+      )}
+      {prime && (
+        <p className="mt-1 text-sm text-muted-foreground">
+          under <span className="font-medium text-brand-navy">{prime}</span> as the prime applicant
+        </p>
+      )}
+
+      {scope && (
+        <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{scope}</p>
+      )}
+
+      {team && (
+        <div className="mt-4 border-t border-brand-navy/[0.08] pt-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-brand-orange">Team &amp; structure</p>
+          <ExpandableText text={team} className="mt-2 text-sm leading-relaxed text-foreground" />
+        </div>
+      )}
     </Card>
   );
 }
