@@ -21,16 +21,22 @@ export function Stat({
   tone?: "onLight" | "onHero";
 }) {
   if (tone === "onHero") {
-    // White tile floating on the navy hero: orange serif figure on top, navy label
-    // beneath. Uniform across all four facts (deadline included). `accent`/`hint` are
-    // intentionally NOT applied here -- the sub-label was dropped and every tile reads
-    // the same (#106 refinement); both props still drive the onLight tile below.
+    // Tile on the narrowed navy hero. Default: white tile, orange serif figure over
+    // a navy label. `accent` (the deadline) inverts to a solid-orange tile with white
+    // text. The figure font is deliberately small so real long values -- award ranges
+    // ("$400K – $600K"), long dates ("August 7, 2026"), multi-word match phrases
+    // ("Cost sharing required") -- fit on ONE line in the narrow card without wrapping
+    // or clipping. `hint` is not rendered here (dropped in #106); both props still
+    // drive the onLight tile below.
     return (
-      <div className="rounded-2xl bg-white p-5 shadow-soft">
-        {/* No `truncate`: award-range / deadline values carry spaces and wrap to a
-            second line on a narrow hero rather than clipping the (now-prominent) figure. */}
-        <p className="font-serif text-2xl font-semibold leading-tight text-brand-orange" title={typeof value === "string" ? value : undefined}>{value}</p>
-        <p className="mt-1 truncate text-[10px] font-semibold uppercase tracking-widest text-brand-navy">{label}</p>
+      <div className={cn("rounded-2xl p-4", accent ? "bg-brand-orange" : "bg-white shadow-soft")}>
+        <p
+          className={cn("font-serif text-[11px] font-semibold leading-tight", accent ? "text-white" : "text-brand-orange")}
+          title={typeof value === "string" ? value : undefined}
+        >
+          {value}
+        </p>
+        <p className={cn("mt-1 truncate text-[10px] font-semibold uppercase tracking-widest", accent ? "text-white/90" : "text-brand-navy")}>{label}</p>
       </div>
     );
   }

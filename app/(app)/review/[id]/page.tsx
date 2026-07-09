@@ -81,20 +81,64 @@ export default async function CardDetailPage({
     clientMatchCount = count ?? null;
   }
 
+  // Score block: real fit_score + "SCORE" label, top-right inside the banner (both
+  // tabs). Carries the decided-state badge beneath it when a decision is recorded.
+  const scoreBlock = (
+    <div className="flex flex-col items-end gap-2">
+      <div className="flex flex-col items-end leading-none">
+        <span className="font-serif text-[32px] font-semibold text-white">{card.fit_score}</span>
+        <span className="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-brand-orange">Score</span>
+      </div>
+      {card.decision !== "pending" && <DecisionBadge decision={card.decision} />}
+    </div>
+  );
+
+  // Review actions box (top-right, beside the banner): step toggle + Send/Reject
+  // only. Score feedback (Agree/Flag) lives in the rail below, not here.
+  const reviewActions = (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-2">
+        <StepLink id={card.id} tab="grant" n={1} title="The Grant" active={tab === "grant"} />
+        <StepLink id={card.id} tab="match" n={2} title="The Match" active={tab === "match"} />
+      </div>
+      <DecisionPanel
+        variant="decision"
+        cardId={card.id}
+        decision={card.decision}
+        isAdmin={isAdmin}
+        alertSend={
+          isAdmin ? (
+            <AlertSend
+              cardId={card.id}
+              sentAt={sentAlert?.sentAt ?? null}
+              sentTo={sentAlert?.sentTo ?? null}
+              contactName={contactName}
+            />
+          ) : null
+        }
+      />
+    </div>
+  );
+
   return (
     <div className="min-h-full bg-brand-cream px-6 py-7 sm:px-8">
-      {/* Navy hero: full-pane width, grant identity + the four defining facts as tiles. */}
-      <NavyHero
-        eyebrow="Grant Match Review"
-        eyebrowRight={<GrantStatusPill status={g?.grant_status} />}
-        title={g?.title || "Opportunity"}
-        subtitle={[g?.funder, g?.fon].filter(Boolean).join(" · ") || "—"}
-        actions={card.decision !== "pending" ? <DecisionBadge decision={card.decision} /> : undefined}
-      >
-        {g && <GrantStatTiles grant={g} tone="onHero" />}
-      </NavyHero>
+      {/* Top strip: narrowed navy banner (left) + review-actions box (right). The
+          banner FORMAT is identical on both tabs; only the body below differs. */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-start">
+        <NavyHero
+          eyebrow="Grant Match Review"
+          eyebrowRight={<GrantStatusPill status={g?.grant_status} />}
+          title={g?.title || "Opportunity"}
+          subtitle={[g?.funder, g?.fon].filter(Boolean).join(" · ") || "—"}
+          actions={scoreBlock}
+        >
+          {g && <GrantStatTiles grant={g} tone="onHero" />}
+        </NavyHero>
+        {reviewActions}
+      </div>
 
-      {/* Two-column body below the hero: floating main cards + sticky decision rail. */}
+      {/* Body below the strip: main content + rail. Same column template so the rail
+          lines up under the review-actions box. */}
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-start">
         <main className="min-w-0 space-y-6">
           {/* The Grant tab describes the grant, not the match -- What It Funds leads
@@ -108,11 +152,7 @@ export default async function CardDetailPage({
 
         <aside className="space-y-4">
           <div className="sticky top-6 space-y-4">
-            <div className="grid grid-cols-2 gap-2">
-              <StepLink id={card.id} tab="grant" n={1} title="The Grant" active={tab === "grant"} />
-              <StepLink id={card.id} tab="match" n={2} title="The Match" active={tab === "match"} />
-            </div>
-            {/* ProspectContact edits the send recipient -> sits directly above the decision panel. */}
+            {/* ProspectContact edits the send recipient. */}
             {isAdmin && isProspect && card.prospects && (
               <ProspectContact
                 prospectId={card.prospects.id}
@@ -120,21 +160,8 @@ export default async function CardDetailPage({
                 initialName={card.prospects.primary_contact_name}
               />
             )}
-            <DecisionPanel
-              cardId={card.id}
-              decision={card.decision}
-              isAdmin={isAdmin}
-              alertSend={
-                isAdmin ? (
-                  <AlertSend
-                    cardId={card.id}
-                    sentAt={sentAlert?.sentAt ?? null}
-                    sentTo={sentAlert?.sentTo ?? null}
-                    contactName={contactName}
-                  />
-                ) : null
-              }
-            />
+            {/* Score feedback (Agree/Flag) -- stays in the rail until part 3. */}
+            <DecisionPanel variant="feedback" cardId={card.id} decision={card.decision} isAdmin={isAdmin} />
           </div>
           {/* Who Can Apply (chips) suits the narrow rail; Grant tab only. */}
           {tab === "grant" && g && <WhoCanApply grant={g} dense />}
