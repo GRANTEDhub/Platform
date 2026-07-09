@@ -12,6 +12,7 @@ import {
   formatAwardRange,
   compactCostShare,
   formatDeadline,
+  formatDeadlineShort,
   idealBudget,
   collectRisks,
   rubricRows,
@@ -96,20 +97,23 @@ function deadlineSublabel(raw: string | null | undefined): string | null {
   return `${days} day${days === 1 ? "" : "s"} left · ${year}`;
 }
 
-function grantStatItems(grant: GrantDetailFields): { label: string; value: string; hint?: string; accent?: boolean }[] {
+function grantStatItems(grant: GrantDetailFields, compactDate = false): { label: string; value: string; hint?: string; accent?: boolean }[] {
   const cs = compactCostShare(grant.cost_share);
+  // Hero tiles are narrow -> use the abbreviated date so it never wraps; the wide
+  // onLight tiles keep the full-month date.
+  const deadline = compactDate ? formatDeadlineShort(grant.submission_deadline) : formatDeadline(grant.submission_deadline);
   return [
     { label: `Award range${grant.award_range_is_estimate ? " · est." : ""}`, value: formatAwardRange(grant.award_range_min, grant.award_range_max), hint: "Per project" },
     { label: "Est. awards", value: grant.num_awards || "—", hint: "This NOFO" },
     { label: "Match required", value: cs, hint: cs === "None" ? "No cost share" : "Cost share" },
-    { label: "Deadline", value: formatDeadline(grant.submission_deadline), hint: deadlineSublabel(grant.submission_deadline) ?? undefined, accent: true },
+    { label: "Deadline", value: deadline, hint: deadlineSublabel(grant.submission_deadline) ?? undefined, accent: true },
   ];
 }
 
 export function GrantStatTiles({ grant, tone = "onLight" }: { grant: GrantDetailFields; tone?: "onLight" | "onHero" }) {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      {grantStatItems(grant).map((it, i) => (
+      {grantStatItems(grant, tone === "onHero").map((it, i) => (
         <Stat key={i} tone={tone} accent={it.accent} label={it.label} value={it.value} hint={it.hint} />
       ))}
     </div>

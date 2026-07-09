@@ -36,15 +36,20 @@ export function compactCostShare(raw: string | null | undefined): string {
   const s = (raw ?? "").trim();
   if (!s) return "—";
   if (/^(none|no\b|not required|n\/?a|\$?0\b|0%)/i.test(s)) return "None";
-  // Strip trailing "match" / "match required" / "cost share" wording so the value
-  // is the clean amount only -- the "Match required" label already conveys it, and
-  // it keeps idealBudget's `${cs} match` from doubling to "... match match".
-  // Guard: only when a real amount/percentage/ratio remains, so a bare "Cost
-  // sharing required" (no figure) is left intact rather than emptied to nothing.
+  // Unknown / unspecified is not a value (the API's is_cost_sharing=null path
+  // writes "Not specified") -> show a dash rather than a long phrase.
+  if (/^(not specified|unspecified|unknown|tbd|to be determined)\b/i.test(s)) return "—";
+  // Prefer a real figure: strip trailing "match" / "cost share" / "required" /
+  // "non-federal" wording; if a number/percent/ratio remains, that IS the value.
   const stripped = s
     .replace(/(?:[\s,;:.()\-]*\b(?:cost[-\s]?shar(?:e|ing)|match(?:ing)?|required|non-?federal)\b)+[\s.)]*$/i, "")
     .trim();
   if (stripped && /[\d%]/.test(stripped)) return stripped;
+  // Required but with no figure in the source (the API's is_cost_sharing=true path
+  // writes "Cost sharing required"): collapse to a short "Yes" so the value never
+  // restates the "Match required" label or forces the stat figure tiny. Genuinely
+  // other free-text (e.g. "Varies") is kept verbatim.
+  if (/\b(cost[-\s]?shar|match|required|mandatory|yes)\b/i.test(s)) return "Yes";
   return s;
 }
 
@@ -57,6 +62,18 @@ export function formatDeadline(raw: string | null | undefined): string {
   return s;
 }
 
+// Compact deadline ("Sep 15, 2026") for the NARROW hero stat tile, where a full
+// month name ("September 15, 2026", 18 chars) would wrap. Same verbatim fallback
+// as formatDeadline for non-dates. Only the hero uses this; every other surface
+// (prospects body, ledger, PDF) keeps the full-month formatDeadline.
+export function formatDeadlineShort(raw: string | null | undefined): string {
+  const s = (raw ?? "").trim();
+  if (!s) return "—";
+  const d = new Date(s);
+  if (!isNaN(d.getTime()) && /\d{4}/.test(s)) return format(d, "MMM d, yyyy");
+  return s;
+}
+
 // Budget one-liner for the Ideal Applicant Profile: award range, plus a match
 // note when a real cost share is on file.
 export function idealBudget(
@@ -64,8 +81,12 @@ export function idealBudget(
 ): string | null {
   const award = formatAwardRange(g?.award_range_min, g?.award_range_max);
   const cs = compactCostShare(g?.cost_share);
-  if (award === "—") return cs === "—" ? null : cs;
-  return cs !== "—" && cs !== "None" ? `${award} · ${cs} match` : award;
+  const hasFigure = /[\d%]/.test(cs);
+  // No award: only a real match figure is worth a budget line on its own.
+  if (award === "—") return hasFigure ? cs : null;
+  if (cs === "—" || cs === "None") return award;
+  // "20%" -> "· 20% match"; the figureless "Yes" -> "· match required".
+  return `${award} · ${hasFigure ? `${cs} match` : "match required"}`;
 }
 
 // Substantive risks only: hard disqualifiers + technical-burden flags always;

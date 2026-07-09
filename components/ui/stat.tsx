@@ -23,15 +23,14 @@ export function Stat({
   if (tone === "onHero") {
     // Tile on the narrowed navy hero. Default: white tile, orange serif figure over
     // a navy label. `accent` (the deadline) inverts to a solid-orange tile with white
-    // text. The figure font is deliberately small so real long values -- award ranges
-    // ("$400K – $600K"), long dates ("August 7, 2026"), multi-word match phrases
-    // ("Cost sharing required") -- fit on ONE line in the narrow card without wrapping
-    // or clipping. `hint` is not rendered here (dropped in #106); both props still
-    // drive the onLight tile below.
+    // text. Figure font is text-base: with the match value now short ("20%"/"Yes")
+    // and the hero deadline abbreviated ("Sep 15, 2026"), real values fit on ONE line
+    // in the narrow card at 16px (verified in-sandbox). `hint` is not rendered here
+    // (dropped in #106); both props still drive the onLight tile below.
     return (
       <div className={cn("rounded-2xl p-4", accent ? "bg-brand-orange" : "bg-white shadow-soft")}>
         <p
-          className={cn("font-serif text-[11px] font-semibold leading-tight", accent ? "text-white" : "text-brand-orange")}
+          className={cn("font-serif text-base font-semibold leading-tight", accent ? "text-white" : "text-brand-orange")}
           title={typeof value === "string" ? value : undefined}
         >
           {value}
