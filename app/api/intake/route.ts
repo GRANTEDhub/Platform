@@ -111,6 +111,10 @@ export async function POST(req: NextRequest) {
       primary_contact_email: email,
       location_city: city,
       location_state: state,
+      // Reconnect the priority-area checkboxes to the column the matcher reads
+      // (factor 6, mission alignment). They're also kept in intake_data for
+      // provenance. Null when none picked, so the field reads "blank" not "[]".
+      primary_funding_needs: priorityAreas.length ? priorityAreas : null,
       status: "lead", // non-active -> matcher never scores it (mirrors isUnconvertedLead)
       pipeline_stage: "discovery_pending", // entry stage; intake is a flag, not a gate
       lead_source: "inbound",

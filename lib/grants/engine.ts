@@ -9,6 +9,7 @@ import {
   applyHardConstraints,
   formatConstraintsForPrompt,
 } from "@/lib/grants/constraints";
+import { formatSamForMatcher } from "@/lib/sam/expiry";
 import type { Client, Grant, IdealApplicantProfile } from "@/types/database";
 
 export interface ExtractedGrant {
@@ -627,11 +628,19 @@ Primary Funding Needs: ${(client.primary_funding_needs || []).join(", ")}
 Project Stage: ${client.project_stage || "Unknown"}
 Match/Cost Share Capacity: ${client.match_cost_share_capacity || "Unknown"}
 Federal Grant History: ${usaSpendingContext || client.federal_grant_history || "Unknown -- USASpending not checked"}
-SAM/UEI Status: ${client.sam_uei_status || "Unknown"}
+${formatSamForMatcher(client)}
 Known Constraints: ${client.known_constraints || "None noted"}
 Matching Rules (AUTHORITATIVE OVERRIDES -- apply before general logic): ${client.matching_rules || "None"}
 Hard Constraints (CODE-ENFORCED -- authoritative; these are enforced in code regardless of your output, listed so your reasoning and role assignment align with them):
 ${formatConstraintsForPrompt(client)}`;
+
+  // Verification hook (Tier-1 reconnect): with MATCH_DEBUG=1, log the exact
+  // clientContext sent to the scorer so a reviewer can confirm the reconnected
+  // data (primary_funding_needs, SAM readiness) actually reaches the prompt.
+  // Inert by default -- no output in prod unless the flag is on.
+  if (process.env.MATCH_DEBUG === "1") {
+    console.log(`[match-debug] clientContext for ${client.name}:\n${clientContext}`);
+  }
 
   // Force structured output via a tool call so parsing is not a regex gamble:
   // the model must return the schema as the tool input, which arrives already
