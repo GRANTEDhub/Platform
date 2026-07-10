@@ -306,6 +306,14 @@ export interface ReviewCard {
   decision_reason: string | null;
   decided_by: string | null;
   decided_at: string | null;
+  // Manual add-to-client override audit (migration 0040). overridden_by/at are set
+  // on EVERY manual add (human-added vs engine-surfaced); override_reason is set
+  // ONLY when the add was FORCED past a gate ("<severity>: <reason>") and drives
+  // the "Manual override" badge + the prepended before_you_approve note. All null
+  // for engine-surfaced cards.
+  overridden_by: string | null;
+  overridden_at: string | null;
+  override_reason: string | null;
   // Send tracking. Populated by the (not-yet-built) send step.
   sent_at: string | null;
   sent_to: string | null;
