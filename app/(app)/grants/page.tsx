@@ -57,13 +57,18 @@ function embedName(e: { name: string } | { name: string }[] | null): string | nu
 export default async function LedgerPage({
   searchParams,
 }: {
-  searchParams: { q?: string; tier?: string };
+  searchParams: { q?: string; tier?: string; intl?: string };
 }) {
   await requireUser(); // admins + contractors
   const supabase = createClient();
 
   const search = (searchParams.q ?? "").trim();
   const activeTier = (searchParams.tier ?? "all") as DispositionTier | "all";
+  // International grants are stored (is_domestic=false) but hidden from the Ledger
+  // by default -- domestic-only mandate. Purely a DISPLAY filter: the rows still
+  // exist and are reachable via ?intl=1 (the "Show international" toggle); nothing
+  // is dropped and the flag is untouched.
+  const showIntl = searchParams.intl === "1";
 
   let grantQuery = supabase
     .from("grants")
@@ -77,6 +82,12 @@ export default async function LedgerPage({
     // that would break the filter grammar). Internal admin tool; best-effort.
     const safe = search.replace(/[%*(),:\\]/g, " ").trim();
     if (safe) grantQuery = grantQuery.or(`title.ilike.*${safe}*,funder.ilike.*${safe}*`);
+  }
+  // Exclude international unless toggled on. Keep is_domestic IS NULL legacy rows
+  // (treated as domestic everywhere via `?? true`). Separate .or() from the search
+  // one above -- multiple .or() groups are AND-ed, so this narrows within a search.
+  if (!showIntl) {
+    grantQuery = grantQuery.or("is_domestic.is.null,is_domestic.eq.true");
   }
   const { data: grantData } = await grantQuery;
   const grants = (grantData ?? []) as Partial<Grant>[];
@@ -129,12 +140,13 @@ export default async function LedgerPage({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap gap-1.5">
               {TIER_FILTERS.map((f) => {
-                const href =
-                  f.value === "all"
-                    ? search
-                      ? `/grants?q=${encodeURIComponent(search)}`
-                      : "/grants"
-                    : `/grants?tier=${f.value}${search ? `&q=${encodeURIComponent(search)}` : ""}`;
+                // Preserve q + intl across tier switches so the toggle sticks.
+                const p = new URLSearchParams();
+                if (f.value !== "all") p.set("tier", f.value);
+                if (search) p.set("q", search);
+                if (showIntl) p.set("intl", "1");
+                const qs = p.toString();
+                const href = qs ? `/grants?${qs}` : "/grants";
                 const active = activeTier === f.value;
                 return (
                   <Link
@@ -151,16 +163,35 @@ export default async function LedgerPage({
                 );
               })}
             </div>
-            <form method="get" className="flex gap-2">
-              {activeTier !== "all" && <input type="hidden" name="tier" value={activeTier} />}
-              <input
-                type="text"
-                name="q"
-                defaultValue={search}
-                placeholder="Search title or funder…"
-                className="h-8 w-56 rounded-md border border-input bg-card px-3 text-sm"
-              />
-            </form>
+            <div className="flex items-center gap-2">
+              {(() => {
+                // Toggle to the OPPOSITE state, preserving tier + q.
+                const p = new URLSearchParams();
+                if (activeTier !== "all") p.set("tier", activeTier);
+                if (search) p.set("q", search);
+                if (!showIntl) p.set("intl", "1");
+                const qs = p.toString();
+                return (
+                  <Link
+                    href={qs ? `/grants?${qs}` : "/grants"}
+                    className="rounded-md border bg-card px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent/60"
+                  >
+                    {showIntl ? "Hide international" : "Show international"}
+                  </Link>
+                );
+              })()}
+              <form method="get" className="flex gap-2">
+                {activeTier !== "all" && <input type="hidden" name="tier" value={activeTier} />}
+                {showIntl && <input type="hidden" name="intl" value="1" />}
+                <input
+                  type="text"
+                  name="q"
+                  defaultValue={search}
+                  placeholder="Search title or funder…"
+                  className="h-8 w-56 rounded-md border border-input bg-card px-3 text-sm"
+                />
+              </form>
+            </div>
           </div>
 
           <div className="overflow-hidden rounded-lg border bg-card">

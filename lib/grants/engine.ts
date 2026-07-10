@@ -975,6 +975,18 @@ const INTERNATIONAL_MARKERS = [
   "office of global",
   "overseas",
   "foreign assistance",
+  // Wholly-international agencies (no domestic grant programs) -- high-precision
+  // adds only. A marker sets is_domestic=false, which ALSO skips scoring, so a
+  // false positive silently drops a domestic grant from matching -- precision
+  // matters more than coverage. Broad tokens (international / global / foreign /
+  // refugee) are deliberately excluded: they catch domestic orgs. Gate 1 remains
+  // the authoritative score-time backstop for anything these miss.
+  "millennium challenge corporation",
+  "peace corps",
+  "trade and development agency",
+  "inter-american foundation",
+  "african development foundation",
+  "agency for global media",
 ];
 
 /** True if the opportunity looks international (and should be excluded by default). */
