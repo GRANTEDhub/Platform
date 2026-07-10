@@ -401,9 +401,26 @@ function MatchSummaryCard({
   // Full reasoning behind the show-more: the eligibility read + the engine's score
   // derivation -- both real reasoning_context fields, nothing invented.
   const reasoning = [rc.eligibility_analysis, rc.fit_score_derivation].filter(Boolean).join("\n\n");
+  // Manual-override badge (migration 0040): set when a human forced this card past
+  // a block. "hard: …" = forced past an eligibility warning; "soft: …" = past the
+  // engine's suppression. The full reason also rides in before_you_approve.
+  const override = card.override_reason;
+  const overrideHard = override?.startsWith("hard:");
   return (
     <Card className="p-6 sm:p-7">
-      <SectionLabel>Match score</SectionLabel>
+      <div className="flex items-center justify-between gap-3">
+        <SectionLabel>Match score</SectionLabel>
+        {override && (
+          <span
+            title={override}
+            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
+              overrideHard ? "bg-brand-orange/15 text-brand-orange" : "bg-brand-navy/[0.06] text-muted-foreground"
+            }`}
+          >
+            Manual override
+          </span>
+        )}
+      </div>
 
       <div className="mt-4 flex flex-col items-center gap-6 sm:flex-row sm:items-start sm:gap-7">
         {/* Left: honest N-of-3 ring + band pill */}

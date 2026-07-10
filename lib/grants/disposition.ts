@@ -54,15 +54,24 @@ export function getGrantDisposition(grant: DispGrant, cards: DispositionCard[]):
 
   // Not pursued (gate failures). International and hard disqualifiers derive
   // from existing fields; skip_reason carries the grant-level suppression.
+  // International is never overridable (domestic-only mandate), so it wins
+  // unconditionally -- a card can never exist for one.
   if (!grant.is_domestic)
     return { tier: "not_pursued", label: "Not pursued", detail: "International — excluded by policy" };
-  if ((grant.hard_disqualifiers?.length ?? 0) > 0)
-    return { tier: "not_pursued", label: "Not pursued", detail: grant.hard_disqualifiers!.join("; ") };
-  if (grant.skip_reason)
-    return { tier: "not_pursued", label: "Not pursued", detail: grant.skip_reason };
 
-  // Shredded + scored. Only qualifying matches (fit >= 2) become cards.
-  if (cards.length === 0) return { tier: "no_match", label: "No match", detail: null };
+  // Grant-level suppression gates (hard_disqualifiers / skip_reason) mean the
+  // engine never pursued this -- BUT a human can force a card past them (manual
+  // add-to-client override). When a card exists, its outcome is the real
+  // disposition, so these gates only apply when NO card exists; otherwise a forced
+  // match would be wrongly hidden behind "Not pursued". Only qualifying matches
+  // (fit >= 2) or a human override become cards.
+  if (cards.length === 0) {
+    if ((grant.hard_disqualifiers?.length ?? 0) > 0)
+      return { tier: "not_pursued", label: "Not pursued", detail: grant.hard_disqualifiers!.join("; ") };
+    if (grant.skip_reason)
+      return { tier: "not_pursued", label: "Not pursued", detail: grant.skip_reason };
+    return { tier: "no_match", label: "No match", detail: null };
+  }
 
   const orgs = (cs: DispositionCard[]) =>
     cs.map((c) => c.org_name).filter(Boolean).join(", ") || null;
