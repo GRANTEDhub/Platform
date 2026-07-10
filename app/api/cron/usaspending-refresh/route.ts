@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
 import { cronDeny } from "@/lib/cron/auth";
 import { refreshClientUSASpending, type RefreshableClient } from "@/lib/grants/usaspending-refresh";
+import { sweepProgramAwards } from "@/lib/grants/program-awards";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -25,6 +26,10 @@ export const maxDuration = 300;
 const PER_RUN_CAP = 40;
 const STALE_DAYS = 25;
 const BATCH_SIZE = 5;
+// Grant program-award history (#107 Part 2): a smaller cap since each grant is
+// ~6 USASpending calls (1 geography + up to 5 award pages) vs. 1 for a client.
+// The client-matched-with-CFDA set is small, so it drains in a run or two.
+const PROGRAM_PER_RUN_CAP = 8;
 
 export async function GET(req: NextRequest) {
   const deny = cronDeny(req);
@@ -65,5 +70,17 @@ export async function GET(req: NextRequest) {
 
   const remaining = roster.length === PER_RUN_CAP;
   console.log(`USASpending sweep: refreshed ${refreshed}, skipped/failed ${skippedOrFailed}, more=${remaining}`);
-  return NextResponse.json({ refreshed, skippedOrFailed, processed: roster.length, more: remaining });
+
+  // Grant program-award history sweep (#107 Part 2) -- bounded, full re-pull of
+  // stale client-matched CFDA grants. Runs after the client sweep; its own cap
+  // keeps the combined run within maxDuration.
+  const program = await sweepProgramAwards(db, { cap: PROGRAM_PER_RUN_CAP, staleDays: STALE_DAYS });
+  console.log(
+    `Program-award sweep: refreshed ${program.refreshed}, failed ${program.failed}, more=${program.more}`,
+  );
+
+  return NextResponse.json({
+    clients: { refreshed, skippedOrFailed, processed: roster.length, more: remaining },
+    programAwards: program,
+  });
 }
