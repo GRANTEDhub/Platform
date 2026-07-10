@@ -1,5 +1,7 @@
+import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { canManageUsers } from "@/lib/admin/user-management";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -8,7 +10,7 @@ import type { Profile } from "@/types/database";
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
-  await requireAdmin();
+  const profile = await requireAdmin();
   const supabase = createClient();
   const { data } = await supabase.from("profiles").select("*").order("created_at");
   const team = (data ?? []) as Profile[];
@@ -18,6 +20,16 @@ export default async function SettingsPage() {
       <PageHeader
         title="Settings"
         description="Team members and their access level."
+        action={
+          canManageUsers(profile.email) ? (
+            <Link
+              href="/settings/users"
+              className="text-sm font-medium text-brand-navy underline underline-offset-4"
+            >
+              Manage users →
+            </Link>
+          ) : undefined
+        }
       />
       <div className="p-8">
         <Card>
