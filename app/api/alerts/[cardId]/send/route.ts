@@ -4,7 +4,15 @@ import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { canSendOutreach } from "@/lib/email/guard";
 import { sendGrantAlertEmail, isDeliverableEmail } from "@/lib/email/send";
 import { loadAlertContext, alertRecipient, type AlertContext } from "@/lib/alerts/generate";
-import { getOrCreateDraftAlert, loadAlertPdf, markAlertSent, type GrantAlertRow } from "@/lib/alerts/store";
+import {
+  getOrCreateDraftAlert,
+  loadAlertPdf,
+  markAlertSent,
+  findSentAlert,
+  claimAlertForSend,
+  releaseAlertClaim,
+  type GrantAlertRow,
+} from "@/lib/alerts/store";
 import { buildProspectEmailBody } from "@/lib/alerts/data";
 import { senderFirstName } from "@/lib/alerts/sender";
 import { computeGrantSummary } from "@/lib/review/summary";
@@ -35,6 +43,21 @@ export async function POST(req: NextRequest, { params }: { params: { cardId: str
 
   const ctx = await loadAlertContext(params.cardId);
   if (!ctx) return NextResponse.json({ error: "Card or grant not found" }, { status: 404 });
+
+  // Guard 1 -- a sent card stays sent. If this card already has a delivered
+  // alert, refuse BEFORE (re)generating a draft or emailing, so the
+  // Regenerate->Send path can't cold-email a client/prospect a second time.
+  const priorSent = await findSentAlert(params.cardId);
+  if (priorSent) {
+    const on = priorSent.sent_at
+      ? ` on ${new Date(priorSent.sent_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}`
+      : "";
+    return NextResponse.json({
+      sent: false,
+      alreadySent: true,
+      send_status: `Already sent to ${priorSent.sent_to ?? "the recipient"}${on} — not re-sent.`,
+    });
+  }
 
   const input = (await req.json().catch(() => ({}))) as { to?: string; subject?: string; body?: string };
   const origin = appBaseUrl(req);
@@ -96,13 +119,27 @@ async function prospectSend(a: {
   const gate = canSendOutreach(recipient);
   if (!gate.ok) return NextResponse.json({ sent: false, reason: gate.reason });
 
+  // Guard 2 -- atomic claim BEFORE any send-side effect (convert + email). If a
+  // concurrent send already claimed this draft, refuse: no convert, no email.
+  const claimed = await claimAlertForSend(alert.id, recipient);
+  if (!claimed) {
+    return NextResponse.json({
+      sent: false,
+      alreadySent: true,
+      send_status: "Already sent — a concurrent send delivered this alert.",
+    });
+  }
+
   const db = createServiceClient();
   const { data: prospect } = await db
     .from("prospects")
     .select("*")
     .eq("id", ctx.card.prospect_id)
     .single<Prospect>();
-  if (!prospect) return NextResponse.json({ error: "Prospect not found" }, { status: 404 });
+  if (!prospect) {
+    await releaseAlertClaim(alert.id);
+    return NextResponse.json({ error: "Prospect not found" }, { status: 404 });
+  }
 
   // Remember the confirmed contact email on the prospect (keeps it in sync with
   // what was actually sent, and available for the lead carry below).
@@ -123,6 +160,7 @@ async function prospectSend(a: {
       mintScheduleToken: false,
     });
   } catch (err) {
+    await releaseAlertClaim(alert.id);
     return NextResponse.json(
       { sent: false, error: `Convert failed: ${err instanceof Error ? err.message : String(err)}` },
       { status: 502 },
@@ -130,8 +168,10 @@ async function prospectSend(a: {
   }
 
   // Rare: the org is already an active client -> defer to route-to-account-manager
-  // (start-outreach behavior), do NOT cold-email a prospect one-pager.
+  // (start-outreach behavior), do NOT cold-email a prospect one-pager. Release the
+  // claim so the (unsent) draft isn't left marked sent.
   if (conv.outcome === "routed_to_client") {
+    await releaseAlertClaim(alert.id);
     return NextResponse.json({
       sent: false,
       outcome: conv.outcome,
@@ -155,6 +195,9 @@ async function prospectSend(a: {
     });
     return NextResponse.json({ sent: true, to: result.to, outcome: conv.outcome, leadName: conv.name });
   } catch (err) {
+    // Claimed but the email threw -> roll the draft back so it isn't stuck "sent"
+    // with nothing delivered; the lead promotion is idempotent on retry.
+    await releaseAlertClaim(alert.id);
     return NextResponse.json(
       { sent: false, error: `Send failed: ${err instanceof Error ? err.message : String(err)}` },
       { status: 502 },
@@ -207,6 +250,17 @@ async function clientSend(a: {
       send_status = `approved, alert not sent (${gate.reason})`;
       reason = gate.reason;
     } else {
+      // Guard 2 -- atomic claim BEFORE the email. A concurrent send that already
+      // claimed this draft loses here (0 rows) and must not re-email. The decision
+      // is already recorded 'approved' above, so just refuse the duplicate send.
+      const claimed = await claimAlertForSend(alert.id, recipient);
+      if (!claimed) {
+        return NextResponse.json({
+          sent: false,
+          alreadySent: true,
+          send_status: "Already sent — a concurrent send delivered this alert.",
+        });
+      }
       try {
         const pdf = await loadAlertPdf(alert);
         const result = await sendGrantAlertEmail({ to: recipient, subject, body: emailBody, pdf });
@@ -218,6 +272,9 @@ async function clientSend(a: {
         sent = true;
         send_status = `alert sent to ${result.to}`;
       } catch (err) {
+        // Claimed but the email threw -> roll the draft back so it isn't stuck
+        // "sent" with nothing delivered; the approval stands, retry re-sends.
+        await releaseAlertClaim(alert.id);
         send_status = `approved, alert NOT sent: ${err instanceof Error ? err.message : String(err)}`;
         reason = err instanceof Error ? err.message : String(err);
       }
