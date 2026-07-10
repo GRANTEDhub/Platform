@@ -188,6 +188,13 @@ export interface Grant {
   source_url: string | null;
   funder: string | null;
   fon: string | null;
+  // Assistance-listing / CFDA numbers (migration 0041, #107). Populated on the
+  // Simpler API path; null for manual-paste / non-Simpler grants. program_award_*
+  // are Part 2 (USASpending program-award map) -- columns exist but are unused
+  // until then.
+  assistance_listings: { number: string; program_title: string }[] | null;
+  program_award_summary: Record<string, unknown> | null;
+  program_award_checked_at: string | null;
   title: string | null;
   description: string | null;
   total_funding: string | null;

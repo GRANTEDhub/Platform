@@ -191,6 +191,9 @@ export async function runPipeline(
       subaward_prohibited: extracted.subaward_prohibited,
       verification_flags: extracted.verification_flags,
       hard_disqualifiers: extracted.hard_disqualifiers,
+      // Assistance-listing / CFDA numbers (#107). Populated on the Simpler API path;
+      // null for manual-paste / non-Simpler grants (no source to read them from).
+      assistance_listings: extracted.assistance_listings ?? null,
       raw_text: rawTextForStorage.slice(0, 100000),
       is_domestic: isDomestic,
       shred_depth: shredDepth,

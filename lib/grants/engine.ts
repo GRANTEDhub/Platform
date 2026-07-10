@@ -40,6 +40,10 @@ export interface ExtractedGrant {
   subaward_prohibited: boolean;
   hard_disqualifiers: string[];
   verification_flags: string[];
+  // Assistance-listing / CFDA numbers (#107). Optional: only the Simpler API path
+  // populates it; the Claude NOFO shred never emits it (and mergeDeepShred spreads
+  // the API object first, so the API value survives the merge).
+  assistance_listings?: { number: string; program_title: string }[];
 }
 
 export interface MatchResult {
@@ -1106,6 +1110,18 @@ export async function fetchFromSimplerGovAPI(
       (c: string) => FUNDING_CATEGORY_MAP[c] ?? c
     );
 
+    // Assistance-listing / CFDA numbers (#107). Top-level array on the opportunity
+    // (opportunity_assistance_listings; verified 6/6 on live data). Keep {number,
+    // program_title}, drop any entry missing a number. Handles 0..N cleanly.
+    const assistanceListings: { number: string; program_title: string }[] = (
+      opp.opportunity_assistance_listings ?? []
+    )
+      .map((l: { assistance_listing_number?: string; program_title?: string }) => ({
+        number: (l.assistance_listing_number ?? "").trim(),
+        program_title: (l.program_title ?? "").trim(),
+      }))
+      .filter((l: { number: string }) => l.number !== "");
+
     const awardFloor = summary.award_floor != null ? String(summary.award_floor) : "";
     const awardCeiling = summary.award_ceiling != null ? String(summary.award_ceiling) : "";
     const totalFunding =
@@ -1148,6 +1164,7 @@ export async function fetchFromSimplerGovAPI(
         "Check Grants.gov for full NOFO text including scoring rubric",
         "Confirm eligible entity types match client before outreach",
       ],
+      assistance_listings: assistanceListings,
     };
 
     // Return the parsed opportunity too, so the NOFO-deepening step (Step 2)
