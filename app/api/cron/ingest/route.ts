@@ -230,6 +230,7 @@ export async function GET(req: NextRequest) {
             .from("grants")
             .update({
               status: "processing",
+              processing_started_at: new Date().toISOString(),
               activated_from_forecast_at: new Date().toISOString(),
               source_url: sourceUrl,
               error_detail: null,

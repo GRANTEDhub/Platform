@@ -220,6 +220,11 @@ export interface Grant {
   raw_text: string | null;
   status: string;
   error_detail: string | null;
+  // When the current 'processing' run started (migration 0039). The stuck-pipeline
+  // watchdog measures now() - processing_started_at, NOT ingested_at, so a re-match
+  // of an old grant isn't flipped mid-run. default now() covers inserts; the
+  // re-processing UPDATE paths stamp it explicitly.
+  processing_started_at: string | null;
   // Grant-level skip reason for the Ledger (migration 0020). Set at the pre-shred
   // grant-level gate (e.g. single national award). Null = not a grant-level skip;
   // international / hard-disqualifier reasons derive from is_domestic /

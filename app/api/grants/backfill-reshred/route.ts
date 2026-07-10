@@ -94,7 +94,7 @@ export async function POST(req: NextRequest) {
       skipped_no_source.push(id);
       continue;
     }
-    await db.from("grants").update({ status: "processing" }).eq("id", id);
+    await db.from("grants").update({ status: "processing", processing_started_at: new Date().toISOString() }).eq("id", id);
     waitUntil(
       runPipeline(id, sourceUrl, undefined, db).catch(async (err) => {
         console.error("backfill-reshred pipeline error for grant", id, err);
