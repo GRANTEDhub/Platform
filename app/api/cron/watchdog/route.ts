@@ -9,11 +9,13 @@
 //
 // This sweep flips any grant stuck in 'processing' past a generous threshold
 // (15 min, comfortably above the 300s function cap) to a terminal 'error' the
-// detail page already renders. Keyed off ingested_at -- accurate for the
-// cron-inserted rows that are the real unattended risk. A manual re-ingest
-// reuses an old row, so it could be flipped prematurely, but that self-corrects:
-// the still-running pipeline overwrites status to 'complete' on success, and a
-// human is watching that re-ingest anyway.
+// detail page already renders. Keyed off processing_started_at (migration 0039) --
+// when the CURRENT run started -- NOT ingested_at. ingested_at is set once and is
+// often days old, so a re-match/re-shred of an existing grant was wrongly flipped
+// mid-run; processing_started_at measures the actual run so a legitimate ~5-min
+// re-match gets its full window while a genuinely dead run is still caught 15 min
+// after it started. NULL processing_started_at is never swept (SQL .lt excludes
+// nulls); the migration's default + backfill mean 'processing' rows always have it.
 
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
@@ -38,7 +40,7 @@ export async function GET(req: NextRequest) {
         "Stuck in processing (watchdog): pipeline did not complete -- the function likely timed out or was recycled. Re-ingest to retry.",
     })
     .eq("status", "processing")
-    .lt("ingested_at", cutoff)
+    .lt("processing_started_at", cutoff)
     .select("id");
 
   if (error) {

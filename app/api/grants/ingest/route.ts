@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
       .limit(1);
     if (existing && existing.length > 0) {
       grantId = existing[0].id;
-      await db.from("grants").update({ status: "processing" }).eq("id", grantId);
+      await db.from("grants").update({ status: "processing", processing_started_at: new Date().toISOString() }).eq("id", grantId);
     }
   }
 

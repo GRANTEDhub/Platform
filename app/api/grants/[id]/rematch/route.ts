@@ -55,7 +55,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     );
   }
 
-  await db.from("grants").update({ status: "processing" }).eq("id", params.id);
+  await db.from("grants").update({ status: "processing", processing_started_at: new Date().toISOString() }).eq("id", params.id);
 
   const work = reshred
     ? runPipeline(params.id, grant.source_url ?? undefined, undefined, db)
