@@ -292,13 +292,13 @@ function FactorRow({ label, score }: { label: string; score: FactorScore }) {
           {FACTOR_WORD[score.rating]}
         </span>
         {insufficient ? (
-          <span className="h-2 w-[84px] rounded-full border border-dashed border-brand-navy/30" aria-hidden />
+          <span className="h-2.5 w-[126px] rounded-full border border-dashed border-brand-navy/30" aria-hidden />
         ) : (
-          <span className="flex gap-1" aria-hidden>
+          <span className="flex gap-1.5" aria-hidden>
             {[1, 2, 3].map((n) => (
               <span
                 key={n}
-                className={`h-2 w-[26px] rounded-full ${n <= filled ? "bg-brand-navy" : "bg-brand-navy/[0.12]"}`}
+                className={`h-2.5 w-[38px] rounded-full ${n <= filled ? "bg-brand-navy" : "bg-brand-navy/[0.12]"}`}
               />
             ))}
           </span>
@@ -345,8 +345,8 @@ function FactorBreakdown({ scores }: { scores: FactorScores | null }) {
 // the ring renders even when factor_scores is null. Uniform brand-orange arc on a
 // faint navy track; the center is the literal ordinal, never an invented percentage.
 function ScoreRing({ fitScore }: { fitScore: number }) {
-  const size = 132;
-  const stroke = 11;
+  const size = 168;
+  const stroke = 13;
   const r = (size - stroke) / 2;
   const circ = 2 * Math.PI * r;
   const frac = Math.max(0, Math.min(1, (Number.isFinite(fitScore) ? fitScore : 0) / 3));
@@ -376,8 +376,8 @@ function ScoreRing({ fitScore }: { fitScore: number }) {
         )}
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="font-serif text-4xl font-semibold leading-none text-brand-navy">{fitScore}</span>
-        <span className="mt-1 text-[11px] font-medium text-muted-foreground">of 3</span>
+        <span className="font-serif text-5xl font-semibold leading-none text-brand-navy">{fitScore}</span>
+        <span className="mt-1.5 text-xs font-medium text-muted-foreground">of 3</span>
       </div>
     </div>
   );
@@ -407,9 +407,9 @@ function MatchSummaryCard({
 
       <div className="mt-4 flex flex-col items-center gap-6 sm:flex-row sm:items-start sm:gap-7">
         {/* Left: honest N-of-3 ring + band pill */}
-        <div className="flex flex-none flex-col items-center gap-3 sm:w-[150px]">
+        <div className="flex flex-none flex-col items-center gap-3.5 sm:w-[188px]">
           <ScoreRing fitScore={fitScore} />
-          <span className={`rounded-full bg-brand-navy/[0.06] px-3 py-1 text-[11px] font-semibold ${bandText}`}>{band}</span>
+          <span className={`rounded-full bg-brand-navy/[0.06] px-4 py-1.5 text-xs font-semibold ${bandText}`}>{band}</span>
         </div>
 
         {/* Hairline divider */}
