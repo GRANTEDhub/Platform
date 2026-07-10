@@ -88,6 +88,14 @@ export function AlertSend({
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || "Failed to send");
+      // Refused as already-sent (a sent card stays sent, or a concurrent send won
+      // the claim): show the reason and refresh so the card repaints to its
+      // "✓ Alerted" state. No duplicate email went out.
+      if (d.alreadySent) {
+        setStatus(d.send_status ?? "Already sent — not re-sent.");
+        router.refresh();
+        return;
+      }
       // Sending IS the approval: show the same confirmation screen as the
       // plain-text approve. On a not-sent outcome (blocked/preview) the decision
       // still recorded, so the summary is shown too -- surfacing "recorded, not sent".
@@ -209,9 +217,15 @@ export function AlertSend({
                 sees it, not only in the outer card hidden behind the overlay. */}
             {status && <p className="mt-3 text-sm text-muted-foreground">{status}</p>}
 
+            {alerted && (
+              <p className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                This alert was already sent. Regenerate rebuilds the draft for preview only — it won’t be re-sent.
+              </p>
+            )}
+
             <div className="mt-4 flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setOpen(false)} disabled={busy || regenBusy}>Cancel</Button>
-              <Button onClick={send} disabled={busy || loading || regenBusy || !to.trim() || !body.trim()}>
+              <Button onClick={send} disabled={busy || loading || regenBusy || alerted || !to.trim() || !body.trim()} title={alerted ? "Already sent — cannot re-send" : undefined}>
                 {busy ? "Sending…" : "Send alert"}
               </Button>
             </div>

@@ -137,6 +137,64 @@ export async function loadAlertPdf(alert: GrantAlertRow): Promise<Buffer> {
   return downloadPdf(alert.storage_bucket, alert.storage_path);
 }
 
+// Concurrency guards for the SINGLE send path (double-send prevention):
+//
+//  - findSentAlert: does this card already have a delivered alert? Used to REFUSE
+//    a sequential re-send ("a sent card stays sent") BEFORE any draft is
+//    (re)generated or any email fires.
+//  - claimAlertForSend: the atomic claim. A conditional flip draft->sent that
+//    only succeeds for the ONE caller who finds the row still 'draft'; a
+//    concurrent caller gets `false` and must NOT email. Sets a provisional
+//    sent_to so a crash between claim and finalize doesn't leave a recipient-less
+//    "sent" row. Run this immediately BEFORE the Resend call.
+//  - releaseAlertClaim: rollback. If the email throws after a successful claim,
+//    return the row to 'draft' so it isn't stuck "sent" with nothing delivered
+//    and can be retried.
+
+// The card's delivered alert, if any (most recent). Presence => refuse re-send.
+export async function findSentAlert(
+  cardId: string,
+): Promise<{ id: string; sent_to: string | null; sent_at: string | null } | null> {
+  const db = createServiceClient();
+  const { data } = await db
+    .from("grant_alerts")
+    .select("id, sent_to, sent_at")
+    .eq("card_id", cardId)
+    .eq("status", "sent")
+    .order("sent_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ id: string; sent_to: string | null; sent_at: string | null }>();
+  return data ?? null;
+}
+
+// Atomically claim a draft for sending: flip draft->sent for exactly the caller
+// who still sees it as 'draft'. Returns true iff THIS caller won the claim (1 row
+// updated); false means a concurrent send already claimed/sent it -> do not email.
+export async function claimAlertForSend(id: string, recipient: string): Promise<boolean> {
+  const db = createServiceClient();
+  const { data, error } = await db
+    .from("grant_alerts")
+    .update({ status: "sent", sent_at: new Date().toISOString(), sent_to: recipient })
+    .eq("id", id)
+    .eq("status", "draft")
+    .select("id");
+  if (error) throw new Error(`Failed to claim alert for send: ${error.message}`);
+  return (data?.length ?? 0) === 1;
+}
+
+// Roll a claimed-but-unsent alert back to 'draft' (Resend failed after the
+// claim), so it isn't stuck "sent" and can be retried. Scoped to still-'sent'
+// rows so it never clobbers a genuinely finalized send.
+export async function releaseAlertClaim(id: string): Promise<void> {
+  const db = createServiceClient();
+  const { error } = await db
+    .from("grant_alerts")
+    .update({ status: "draft", sent_at: null, sent_to: null })
+    .eq("id", id)
+    .eq("status", "sent");
+  if (error) console.error(`Failed to release alert claim ${id}: ${error.message}`);
+}
+
 // Mark a draft as sent -- immutable thereafter (a later alert for the same card
 // creates a new draft). Persists the exact subject/body that went out.
 export async function markAlertSent(
