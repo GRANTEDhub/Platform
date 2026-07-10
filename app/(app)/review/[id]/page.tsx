@@ -7,7 +7,7 @@ import { DecisionBadge } from "@/components/grants/badges";
 import { NavyHero } from "@/components/ui/navy-hero";
 import { Card } from "@/components/ui/card";
 import { Stat } from "@/components/ui/stat";
-import { SectionLabel, KeyCallout, Collapsible, GrantBody, GrantStatTiles, GrantStatusPill, WhoCanApply, type GrantDetailFields } from "@/components/grants/grant-detail";
+import { SectionLabel, Collapsible, GrantBody, GrantStatTiles, GrantStatusPill, WhoCanApply, type GrantDetailFields } from "@/components/grants/grant-detail";
 import { DecisionPanel } from "./decision-panel";
 import { AlertSend } from "./alert-send";
 import { ProspectContact } from "./prospect-contact";
@@ -15,7 +15,7 @@ import { RecommendedPrime } from "./recommended-prime";
 import { ExpandableText } from "./expandable-text";
 import { formatDeadlineShort } from "@/lib/grants/format";
 import { getSentAlertForCard } from "@/lib/alerts/sent-status";
-import type { ReviewCard, Client, Grant, Prospect, FactorScores, FactorRating } from "@/types/database";
+import type { ReviewCard, Client, Grant, Prospect, FactorScores, FactorScore, FactorRating } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -257,67 +257,136 @@ const FACTOR_LABELS: { key: keyof FactorScores; label: string }[] = [
   { key: "mission", label: "Mission alignment" },
 ];
 
-function FactorRatingPill({ rating }: { rating: FactorRating }) {
-  if (rating === "insufficient_data") {
-    return (
-      <span className="shrink-0 rounded-full border border-dashed border-brand-navy/25 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-        Insufficient data
-      </span>
-    );
-  }
-  const tone: Record<Exclude<FactorRating, "insufficient_data">, string> = {
-    strong: "bg-emerald-100 text-emerald-800",
-    moderate: "bg-amber-100 text-amber-800",
-    weak: "bg-muted text-muted-foreground",
-  };
-  const label: Record<Exclude<FactorRating, "insufficient_data">, string> = {
-    strong: "Strong",
-    moderate: "Moderate",
-    weak: "Weak",
-  };
+// Segment count per rating: fill carries the meaning, NOT hue (the user is
+// colorblind). Strong=3, Moderate=2, Weak=1; "insufficient data" is a dashed
+// hollow track -- deliberately NOT a 1-segment bar, so it never reads as "Weak".
+const FACTOR_SEGMENTS: Record<Exclude<FactorRating, "insufficient_data">, number> = {
+  strong: 3,
+  moderate: 2,
+  weak: 1,
+};
+const FACTOR_WORD: Record<FactorRating, string> = {
+  strong: "Strong",
+  moderate: "Moderate",
+  weak: "Weak",
+  insufficient_data: "insufficient data",
+};
+
+// One factor row: name + word label + 3-segment bar (or a dashed hollow track for
+// insufficient data). The engine's one-line rationale rides in a desktop-only CSS
+// group-hover tooltip -- no client JS, so this stays a server component.
+function FactorRow({ label, score }: { label: string; score: FactorScore }) {
+  const insufficient = score.rating === "insufficient_data";
+  const filled = score.rating === "insufficient_data" ? 0 : FACTOR_SEGMENTS[score.rating];
   return (
-    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${tone[rating]}`}>
-      {label[rating]}
-    </span>
+    <li
+      className={`group relative flex items-center justify-between gap-3 rounded-md px-1.5 py-1.5 transition-colors hover:bg-brand-cream/70 ${
+        insufficient ? "opacity-60" : ""
+      }`}
+    >
+      <span className="text-sm font-medium text-brand-navy">{label}</span>
+      <div className="flex items-center gap-3">
+        <span
+          className={`min-w-[92px] text-right text-[11px] text-muted-foreground ${insufficient ? "italic" : ""}`}
+        >
+          {FACTOR_WORD[score.rating]}
+        </span>
+        {insufficient ? (
+          <span className="h-2 w-[84px] rounded-full border border-dashed border-brand-navy/30" aria-hidden />
+        ) : (
+          <span className="flex gap-1" aria-hidden>
+            {[1, 2, 3].map((n) => (
+              <span
+                key={n}
+                className={`h-2 w-[26px] rounded-full ${n <= filled ? "bg-brand-navy" : "bg-brand-navy/[0.12]"}`}
+              />
+            ))}
+          </span>
+        )}
+      </div>
+      {score.rationale && (
+        <div className="pointer-events-none absolute bottom-full right-0 z-10 mb-1.5 hidden max-w-[262px] rounded-lg bg-brand-navy px-3 py-2 text-xs leading-relaxed text-white shadow-lg group-hover:block">
+          {score.rationale}
+          <span className="absolute right-6 top-full h-0 w-0 border-x-[6px] border-t-[6px] border-x-transparent border-t-brand-navy" />
+        </div>
+      )}
+    </li>
   );
 }
 
 function FactorBreakdown({ scores }: { scores: FactorScores | null }) {
   return (
-    <div className="mt-4 border-t border-brand-navy/[0.08] pt-3">
+    <div>
       <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-brand-orange">Factor breakdown</p>
       {!scores ? (
         <p className="mt-2 text-sm text-muted-foreground">
           Not yet scored for factors — re-match this grant to generate the per-factor breakdown.
         </p>
       ) : (
-        <ul className="mt-2.5 space-y-2.5">
-          {FACTOR_LABELS.map(({ key, label }) => {
-            const f = scores[key];
-            if (!f) return null;
-            const muted = f.rating === "insufficient_data";
-            return (
-              <li key={key} className={muted ? "opacity-60" : ""}>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-medium text-brand-navy">{label}</span>
-                  <FactorRatingPill rating={f.rating} />
-                </div>
-                {f.rationale && (
-                  <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{f.rationale}</p>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+        <>
+          <ul className="mt-2 space-y-0.5">
+            {FACTOR_LABELS.map(({ key, label }) => {
+              const f = scores[key];
+              if (!f) return null;
+              return <FactorRow key={key} label={label} score={f} />;
+            })}
+          </ul>
+          <p className="mt-3 px-1.5 text-[11px] leading-relaxed text-muted-foreground">
+            Bar fill = rating (3 / 2 / 1 segments). Dashed = no data yet — distinct from a one-segment “Weak.” Hover a row for the rationale.
+          </p>
+        </>
       )}
     </div>
   );
 }
 
-// The merged Match-summary box (Match tab, first card). One box in place of the old
-// three (Match Score, Match Rationale, "How this score was reached"), and the home
-// for the Agree/Flag score-feedback cluster + the #105 per-factor breakdown. REAL
-// data only -- ordinals, no invented precision.
+// Honest "N of 3" radial ring -- NOT a 0-100 gauge. The arc fills fit_score/3 of the
+// circle (2 -> a two-thirds arc). Driven by fit_score, which is ALWAYS present, so
+// the ring renders even when factor_scores is null. Uniform brand-orange arc on a
+// faint navy track; the center is the literal ordinal, never an invented percentage.
+function ScoreRing({ fitScore }: { fitScore: number }) {
+  const size = 132;
+  const stroke = 11;
+  const r = (size - stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const frac = Math.max(0, Math.min(1, (Number.isFinite(fitScore) ? fitScore : 0) / 3));
+  const filled = circ * frac;
+  return (
+    <div className="relative flex-none" style={{ width: size, height: size }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90" aria-hidden>
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          strokeWidth={stroke}
+          className="stroke-brand-navy/10"
+        />
+        {filled > 0 && (
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={r}
+            fill="none"
+            strokeWidth={stroke}
+            strokeLinecap="round"
+            strokeDasharray={`${filled} ${circ - filled}`}
+            className="stroke-brand-orange"
+          />
+        )}
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="font-serif text-4xl font-semibold leading-none text-brand-navy">{fitScore}</span>
+        <span className="mt-1 text-[11px] font-medium text-muted-foreground">of 3</span>
+      </div>
+    </div>
+  );
+}
+
+// The merged Match-summary box (Match tab, first card): an honest N-of-3 ring on the
+// left, the #105 per-factor breakdown as a segment-bar column on the right, then the
+// why-this-org checkmarks + "How this score was reached" show-more below. REAL data
+// only -- ordinals, no invented precision.
 function MatchSummaryCard({
   card,
   clientMatchCount,
@@ -329,37 +398,31 @@ function MatchSummaryCard({
   const fitScore = card.fit_score;
   const band = BAND[fitScore] ?? "—";
   const bandText = fitScore >= 3 ? "text-emerald-700" : fitScore === 2 ? "text-brand-orange" : "text-muted-foreground";
-  const seg = (n: number) =>
-    n <= fitScore
-      ? fitScore >= 3 ? "bg-emerald-500" : fitScore === 2 ? "bg-brand-orange" : "bg-muted-foreground"
-      : "bg-brand-navy/10";
-  const dl = daysToDeadline(card.grants?.submission_deadline);
   // Full reasoning behind the show-more: the eligibility read + the engine's score
   // derivation -- both real reasoning_context fields, nothing invented.
   const reasoning = [rc.eligibility_analysis, rc.fit_score_derivation].filter(Boolean).join("\n\n");
   return (
     <Card className="p-6 sm:p-7">
-      <div className="flex items-center justify-between">
-        <SectionLabel>Match score</SectionLabel>
-        <span className={`rounded-full bg-brand-navy/[0.06] px-2.5 py-0.5 text-[11px] font-semibold ${bandText}`}>{band}</span>
-      </div>
-      <div className="mt-3 flex items-baseline gap-2">
-        <span className="font-serif text-3xl font-semibold text-brand-navy">{fitScore}</span>
-        <span className="text-sm text-muted-foreground">of 3 · {band}</span>
-      </div>
-      <div className="mt-3 flex gap-1.5" aria-hidden>
-        {[1, 2, 3].map((n) => (
-          <span key={n} className={`h-1.5 flex-1 rounded-full ${seg(n)}`} />
-        ))}
+      <SectionLabel>Match score</SectionLabel>
+
+      <div className="mt-4 flex flex-col items-center gap-6 sm:flex-row sm:items-start sm:gap-7">
+        {/* Left: honest N-of-3 ring + band pill */}
+        <div className="flex flex-none flex-col items-center gap-3 sm:w-[150px]">
+          <ScoreRing fitScore={fitScore} />
+          <span className={`rounded-full bg-brand-navy/[0.06] px-3 py-1 text-[11px] font-semibold ${bandText}`}>{band}</span>
+        </div>
+
+        {/* Hairline divider */}
+        <div className="hidden w-px self-stretch bg-brand-navy/[0.08] sm:block" />
+
+        {/* Right: per-factor breakdown */}
+        <div className="min-w-0 w-full flex-1">
+          <FactorBreakdown scores={card.factor_scores} />
+        </div>
       </div>
 
-      {card.description_short && (
-        <div className="mt-4">
-          <KeyCallout>{card.description_short}</KeyCallout>
-        </div>
-      )}
       {(card.why_this_org?.length || 0) > 0 && (
-        <ul className="mt-4 space-y-2.5">
+        <ul className="mt-6 space-y-2.5 border-t border-brand-navy/[0.08] pt-5">
           {card.why_this_org!.map((w, i) => (
             <li key={i} className="flex gap-2.5 text-sm leading-relaxed text-foreground">
               <Check className="mt-0.5 h-4 w-4 shrink-0 text-brand-navy" strokeWidth={3} />
@@ -368,6 +431,7 @@ function MatchSummaryCard({
           ))}
         </ul>
       )}
+
       {reasoning && (
         <div className="mt-4 border-t border-brand-navy/[0.08] pt-3">
           <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-brand-orange">How this score was reached</p>
@@ -375,19 +439,13 @@ function MatchSummaryCard({
         </div>
       )}
 
-      <FactorBreakdown scores={card.factor_scores} />
-
-      {(dl || (clientMatchCount != null && clientMatchCount > 0)) && (
-        <div className="mt-4 flex flex-wrap gap-1.5">
-          {dl && <span className="inline-flex items-center rounded-full bg-brand-cream px-2.5 py-0.5 text-[11px] font-medium text-brand-navy">{dl}</span>}
-          {clientMatchCount != null && clientMatchCount > 0 && (
-            <span className="inline-flex items-center rounded-full bg-brand-cream px-2.5 py-0.5 text-[11px] font-medium text-brand-navy">
-              {clientMatchCount} client match{clientMatchCount === 1 ? "" : "es"} for this grant
-            </span>
-          )}
+      {clientMatchCount != null && clientMatchCount > 0 && (
+        <div className="mt-4">
+          <span className="inline-flex items-center rounded-full bg-brand-cream px-2.5 py-0.5 text-[11px] font-medium text-brand-navy">
+            {clientMatchCount} client match{clientMatchCount === 1 ? "" : "es"} for this grant
+          </span>
         </div>
       )}
-
     </Card>
   );
 }
@@ -441,18 +499,6 @@ function ConceptProposalCard({ card }: { card: FullCard }) {
       )}
     </Card>
   );
-}
-
-// Real days-to-deadline chip text, derived from submission_deadline (no invention).
-function daysToDeadline(raw: string | null | undefined): string | null {
-  const s = (raw ?? "").trim();
-  if (!s) return null;
-  const d = new Date(s);
-  if (isNaN(d.getTime()) || !/\d{4}/.test(s)) return null;
-  const days = Math.ceil((d.getTime() - Date.now()) / 86_400_000);
-  if (days < 0) return "Deadline passed";
-  if (days === 0) return "Due today";
-  return `${days} day${days === 1 ? "" : "s"} to deadline`;
 }
 
 // Ordinal tab link (sidebar toggle). Active = filled navy with an orange badge.
