@@ -37,6 +37,7 @@ export function cardFieldsFromMatch(match: MatchResult) {
     before_you_approve: match.before_you_approve,
     inferred_fields: match.inferred_fields,
     reasoning_context: match.reasoning_context,
+    factor_scores: match.factor_scores,
   };
 }
 

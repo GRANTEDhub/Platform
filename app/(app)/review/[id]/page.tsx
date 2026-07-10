@@ -15,7 +15,7 @@ import { RecommendedPrime } from "./recommended-prime";
 import { ExpandableText } from "./expandable-text";
 import { formatDeadlineShort } from "@/lib/grants/format";
 import { getSentAlertForCard } from "@/lib/alerts/sent-status";
-import type { ReviewCard, Client, Grant, Prospect } from "@/types/database";
+import type { ReviewCard, Client, Grant, Prospect, FactorScores, FactorRating } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -243,10 +243,81 @@ function MatchStatTiles({ card, grant }: { card: FullCard; grant: GrantDetailFie
   );
 }
 
+// Per-factor breakdown (#105): the 6 STRENGTH factors the scorer surfaces, each an
+// ordinal rating + one-line rationale. Ordinals only -- no percentages/gauges.
+// "Insufficient data" rows are muted: they double as a signal of what client data
+// to go collect. Null factor_scores (cards scored before #105) render a "not yet
+// scored" line rather than breaking.
+const FACTOR_LABELS: { key: keyof FactorScores; label: string }[] = [
+  { key: "seat_role", label: "Seat / role fit" },
+  { key: "eligibility", label: "Eligibility" },
+  { key: "geographic", label: "Geographic fit" },
+  { key: "program_history", label: "Program history" },
+  { key: "cost_share", label: "Match / cost-share" },
+  { key: "mission", label: "Mission alignment" },
+];
+
+function FactorRatingPill({ rating }: { rating: FactorRating }) {
+  if (rating === "insufficient_data") {
+    return (
+      <span className="shrink-0 rounded-full border border-dashed border-brand-navy/25 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+        Insufficient data
+      </span>
+    );
+  }
+  const tone: Record<Exclude<FactorRating, "insufficient_data">, string> = {
+    strong: "bg-emerald-100 text-emerald-800",
+    moderate: "bg-amber-100 text-amber-800",
+    weak: "bg-muted text-muted-foreground",
+  };
+  const label: Record<Exclude<FactorRating, "insufficient_data">, string> = {
+    strong: "Strong",
+    moderate: "Moderate",
+    weak: "Weak",
+  };
+  return (
+    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${tone[rating]}`}>
+      {label[rating]}
+    </span>
+  );
+}
+
+function FactorBreakdown({ scores }: { scores: FactorScores | null }) {
+  return (
+    <div className="mt-4 border-t border-brand-navy/[0.08] pt-3">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-brand-orange">Factor breakdown</p>
+      {!scores ? (
+        <p className="mt-2 text-sm text-muted-foreground">
+          Not yet scored for factors — re-match this grant to generate the per-factor breakdown.
+        </p>
+      ) : (
+        <ul className="mt-2.5 space-y-2.5">
+          {FACTOR_LABELS.map(({ key, label }) => {
+            const f = scores[key];
+            if (!f) return null;
+            const muted = f.rating === "insufficient_data";
+            return (
+              <li key={key} className={muted ? "opacity-60" : ""}>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-medium text-brand-navy">{label}</span>
+                  <FactorRatingPill rating={f.rating} />
+                </div>
+                {f.rationale && (
+                  <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{f.rationale}</p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 // The merged Match-summary box (Match tab, first card). One box in place of the old
-// three (Match Score, Match Rationale, "How this score was reached"), and the only
-// home for the Agree/Flag score-feedback cluster. REAL data only -- no invented
-// sub-scores (the full multi-metric breakdown is tracked in #105).
+// three (Match Score, Match Rationale, "How this score was reached"), and the home
+// for the Agree/Flag score-feedback cluster + the #105 per-factor breakdown. REAL
+// data only -- ordinals, no invented precision.
 function MatchSummaryCard({
   card,
   clientMatchCount,
@@ -303,6 +374,8 @@ function MatchSummaryCard({
           <ExpandableText text={reasoning} className="mt-2 text-sm leading-relaxed text-foreground" />
         </div>
       )}
+
+      <FactorBreakdown scores={card.factor_scores} />
 
       {(dl || (clientMatchCount != null && clientMatchCount > 0)) && (
         <div className="mt-4 flex flex-wrap gap-1.5">

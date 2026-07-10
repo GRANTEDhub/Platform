@@ -10,7 +10,7 @@ import {
   formatConstraintsForPrompt,
 } from "@/lib/grants/constraints";
 import { formatSamForMatcher } from "@/lib/sam/expiry";
-import type { Client, Grant, IdealApplicantProfile } from "@/types/database";
+import type { Client, Grant, IdealApplicantProfile, FactorScores } from "@/types/database";
 
 export interface ExtractedGrant {
   funder: string;
@@ -70,6 +70,9 @@ export interface MatchResult {
     concept_derivation: string;
     why_not_others: string;
   };
+  // Per-factor sub-scores (#105): the 6 STRENGTH factors surfaced as ordinal
+  // ratings + one-line rationale. Descriptive only -- does not affect fit_score.
+  factor_scores: FactorScores;
   // Suppression (Phase 0 pre-filter — set before scoring runs)
   suppressed: boolean;
   suppress_reason: string | null;
@@ -323,6 +326,18 @@ within it (it is NOT an average):
 Populate reasoning_context with the per-factor rationale: name the seat, and the
 factor that gated or set the score.
 
+PER-FACTOR SUB-SCORES (factor_scores) -- surface, do NOT re-score:
+For each of the 6 STRENGTH factors above, emit a factor_scores entry: a rating
+(strong | moderate | weak) plus a ONE-LINE rationale drawn from the reasoning you
+already did -- invent no new analysis. Map exactly: seat_role (factor 1),
+eligibility (2), geographic (3), program_history (4), cost_share (5), mission (6).
+HONESTY RULE: when the CLIENT data a factor depends on is blank or "Unknown", rate
+it "insufficient_data" -- NEVER guess a rating off missing inputs. Specifically:
+no budget AND no match/cost-share capacity -> cost_share = insufficient_data;
+federal history unknown/unchecked -> program_history = insufficient_data; no
+service area, RUCC, or location -> geographic = insufficient_data. These sub-scores
+are DESCRIPTIVE ONLY: they do NOT change fit_score or the seat ceiling.
+
 Only create cards for scores 2 and 3. A 1 is awareness only; a 0 never surfaces.
 
 INTRODUCTION VEHICLE RULE:
@@ -431,6 +446,14 @@ Return a JSON object with this exact schema:
     "consortium_rationale": string (team composition: who brings what, completeness check vs. scoring criteria, gaps flagged),
     "concept_derivation": string (how the proposed SOW was scoped -- what NOFO signals and client profile drove the approach),
     "why_not_others": string (brief on why other client types are a weaker fit for this specific opportunity)
+  },
+  "factor_scores": {
+    "seat_role":       { "rating": "strong"|"moderate"|"weak"|"insufficient_data", "rationale": string },
+    "eligibility":     { "rating": "strong"|"moderate"|"weak"|"insufficient_data", "rationale": string },
+    "geographic":      { "rating": "strong"|"moderate"|"weak"|"insufficient_data", "rationale": string },
+    "program_history": { "rating": "strong"|"moderate"|"weak"|"insufficient_data", "rationale": string },
+    "cost_share":      { "rating": "strong"|"moderate"|"weak"|"insufficient_data", "rationale": string },
+    "mission":         { "rating": "strong"|"moderate"|"weak"|"insufficient_data", "rationale": string }
   },
   "suppressed": boolean,
   "suppress_reason": string | null,
@@ -577,6 +600,59 @@ function buildSeatMenu(
   return { menu: lines.join("\n"), seats };
 }
 
+// Shared JSON-schema fragment for one factor sub-score in the submit_match tool.
+const FACTOR_SCORE_SCHEMA = {
+  type: "object",
+  properties: {
+    rating: { type: "string", enum: ["strong", "moderate", "weak", "insufficient_data"] },
+    rationale: { type: "string" },
+  },
+  required: ["rating", "rationale"],
+} as const;
+
+// Honesty backstop (#105): force insufficient_data on the three DATA-DEPENDENT
+// factors when the gating client fields are blank -- a deterministic guarantee
+// that a sub-score is never a guess off missing inputs, regardless of model
+// output. Mirrors the seat-ceiling clamp (code overrides the model). seat_role /
+// eligibility / mission are left to model self-report (assessable from
+// usually-present data). Descriptive only: never touches fit_score.
+function enforceFactorDataFloors(
+  fs: FactorScores | undefined,
+  client: Client,
+  usaSpendingContext: string | undefined,
+): void {
+  if (!fs) return;
+  const blank = (s?: string | null) => !s || !s.trim();
+  const set = (k: keyof FactorScores, rationale: string) => {
+    fs[k] = { rating: "insufficient_data", rationale };
+  };
+  // cost_share: no budget AND no match/cost-share capacity on file.
+  if (blank(client.annual_budget) && blank(client.match_cost_share_capacity)) {
+    set("cost_share", "No annual budget or match/cost-share capacity on file.");
+  }
+  // program_history: no federal award history data at all. A cached "no awards
+  // found" is a REAL answer (not insufficient), so only fire when there is no
+  // lookup data of any kind.
+  if (
+    !client.federal_history_verified &&
+    !client.usaspending_summary &&
+    blank(client.federal_grant_history) &&
+    !usaSpendingContext
+  ) {
+    set("program_history", "Federal award history not on file (USASpending not checked).");
+  }
+  // geographic: no service area, no RUCC, and no location at all.
+  if (
+    (!client.service_area || client.service_area.length === 0) &&
+    blank(client.rucc_codes) &&
+    blank(client.location_city) &&
+    blank(client.location_county) &&
+    blank(client.location_state)
+  ) {
+    set("geographic", "No service area, RUCC, or location on file.");
+  }
+}
+
 export async function matchGrantToClient(
   grant: Grant,
   client: Client,
@@ -694,6 +770,27 @@ ${formatConstraintsForPrompt(client)}`;
                 "why_not_others",
               ],
             },
+            factor_scores: {
+              type: "object",
+              description:
+                "Per-factor sub-scores for the 6 STRENGTH factors. Descriptive only; does not change fit_score.",
+              properties: {
+                seat_role: FACTOR_SCORE_SCHEMA,
+                eligibility: FACTOR_SCORE_SCHEMA,
+                geographic: FACTOR_SCORE_SCHEMA,
+                program_history: FACTOR_SCORE_SCHEMA,
+                cost_share: FACTOR_SCORE_SCHEMA,
+                mission: FACTOR_SCORE_SCHEMA,
+              },
+              required: [
+                "seat_role",
+                "eligibility",
+                "geographic",
+                "program_history",
+                "cost_share",
+                "mission",
+              ],
+            },
             suppressed: { type: "boolean" },
             suppress_reason: { type: ["string", "null"] },
             disqualified: { type: "boolean" },
@@ -712,6 +809,7 @@ ${formatConstraintsForPrompt(client)}`;
             "before_you_approve",
             "inferred_fields",
             "reasoning_context",
+            "factor_scores",
             "suppressed",
             "disqualified",
           ],
@@ -764,6 +862,11 @@ ${formatConstraintsForPrompt(client)}`;
     // No profile to anchor seats: cannot verify a prime seat, so cap at 2.
     result.fit_score = Math.min(rawScore, 2) as 0 | 1 | 2 | 3;
   }
+
+  // Per-factor honesty backstop (#105): force insufficient_data where the client
+  // data a factor depends on is blank. Descriptive-only -- does not touch
+  // fit_score (already clamped above) or any scoring behavior.
+  enforceFactorDataFloors(result.factor_scores, client, usaSpendingContext);
 
   // Hard client constraints (post-model clamp). Same pattern as the seat ceiling
   // above: deterministic code override of the model's structured output. Caps
