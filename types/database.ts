@@ -242,6 +242,22 @@ export interface Grant {
 
 export type CardDecision = "pending" | "approved" | "passed";
 
+// Per-factor match sub-scores (#105). Ordinal, never a percentage; a factor whose
+// underlying client data is blank reads "insufficient_data" (never a guess).
+export type FactorRating = "strong" | "moderate" | "weak" | "insufficient_data";
+export interface FactorScore {
+  rating: FactorRating;
+  rationale: string;
+}
+export interface FactorScores {
+  seat_role: FactorScore;
+  eligibility: FactorScore;
+  geographic: FactorScore;
+  program_history: FactorScore;
+  cost_share: FactorScore;
+  mission: FactorScore;
+}
+
 export interface ReviewCard {
   id: string;
   grant_id: string | null;
@@ -267,6 +283,9 @@ export interface ReviewCard {
     concept_derivation?: string;
     why_not_others?: string;
   } | null;
+  // Per-factor sub-scores (migration 0038, #105). Null for cards scored before it
+  // shipped -- the UI renders a "not yet scored" line rather than breaking.
+  factor_scores: FactorScores | null;
   // Track 2 discriminator (migration 0019). 'client' (default) or 'prospect'.
   // The client-first gate counts only client cards; a prospect card must never
   // enter the lock/release computation. prospect_id is set on prospect cards.
