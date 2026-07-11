@@ -13,8 +13,10 @@ import { AlertSend } from "./alert-send";
 import { ProspectContact } from "./prospect-contact";
 import { RecommendedPrime } from "./recommended-prime";
 import { ExpandableText } from "./expandable-text";
+import { ProgramAwardMap } from "./program-award-map";
 import { formatDeadlineShort } from "@/lib/grants/format";
 import { getSentAlertForCard } from "@/lib/alerts/sent-status";
+import type { ProgramAwardSummary } from "@/lib/grants/program-awards";
 import type { ReviewCard, Client, Grant, Prospect, FactorScores, FactorScore, FactorRating } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +24,7 @@ export const dynamic = "force-dynamic";
 type FullCard = ReviewCard & {
   clients: Pick<Client, "id" | "name" | "org_type" | "engagement_tier" | "primary_contact_email" | "primary_contact_name"> | null;
   prospects: Pick<Prospect, "id" | "name" | "org_type" | "source_url" | "primary_contact_email" | "primary_contact_name"> | null;
-  grants: (GrantDetailFields & Pick<Grant, "title" | "funder" | "fon">) | null;
+  grants: (GrantDetailFields & Pick<Grant, "title" | "funder" | "fon" | "program_award_summary" | "assistance_listings">) | null;
 };
 
 type TabKey = "grant" | "match";
@@ -51,7 +53,7 @@ export default async function CardDetailPage({
 
   const { data } = await supabase
     .from("review_cards")
-    .select("*, clients(id, name, org_type, engagement_tier, primary_contact_email, primary_contact_name), prospects(id, name, org_type, source_url, primary_contact_email, primary_contact_name), grants(id, title, funder, fon, grant_status, source_url, submission_deadline, period_of_performance, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, description, eligible_entity_types, geographic_eligibility, ineligible_entities, subaward_prohibited, incumbent_risk, technical_burden_flags, hard_disqualifiers, verification_flags, scoring_rubric, ideal_applicant_profile)")
+    .select("*, clients(id, name, org_type, engagement_tier, primary_contact_email, primary_contact_name), prospects(id, name, org_type, source_url, primary_contact_email, primary_contact_name), grants(id, title, funder, fon, grant_status, source_url, submission_deadline, period_of_performance, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, description, eligible_entity_types, geographic_eligibility, ineligible_entities, subaward_prohibited, incumbent_risk, technical_burden_flags, hard_disqualifiers, verification_flags, scoring_rubric, ideal_applicant_profile, program_award_summary, assistance_listings)")
     .eq("id", params.id)
     .single();
 
@@ -147,7 +149,16 @@ export default async function CardDetailPage({
           {/* The Grant tab describes the grant, not the match -- What It Funds leads
               here. Match Score lives on the Match tab (wired in a later part). */}
           {tab === "grant" ? (
-            g ? <GrantBody grant={g} showStats={false} showWhoCanApply={false} /> : null
+            g ? (
+              <>
+                <GrantBody grant={g} showStats={false} showWhoCanApply={false} />
+                <ProgramAwardMap
+                  grantId={card.grant_id ?? ""}
+                  initialSummary={(g.program_award_summary as unknown as ProgramAwardSummary | null) ?? null}
+                  hasCfda={Array.isArray(g.assistance_listings) && g.assistance_listings.length > 0}
+                />
+              </>
+            ) : null
           ) : (
             <MatchTab card={card} orgName={orgName} isProspect={isProspect} clientMatchCount={clientMatchCount} />
           )}
