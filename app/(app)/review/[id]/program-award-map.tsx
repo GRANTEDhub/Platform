@@ -93,7 +93,12 @@ export function ProgramAwardMap({
     let cancelled = false;
     setLoading(true);
     fetch(`/api/grants/${grantId}/program-awards`)
-      .then((r) => r.json())
+      .then((r) => {
+        // A non-OK response (e.g. 502 upstream USASpending failure) must surface the
+        // "Couldn't load" error, NOT fall through to the "No data" state.
+        if (!r.ok) throw new Error(`Request failed: ${r.status}`);
+        return r.json();
+      })
       .then((d: { summary?: ProgramAwardSummary | null }) => {
         if (!cancelled) setSummary(d.summary ?? null);
       })
