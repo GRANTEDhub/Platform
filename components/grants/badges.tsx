@@ -33,6 +33,8 @@ export function GrantStatusBadge({
   if (grantStatus === "Forecasted") return <Badge variant="secondary">Forecasted</Badge>;
   const map: Record<string, "default" | "success" | "warning" | "destructive" | "secondary"> = {
     processing: "default",
+    queued: "secondary", // in the matching queue, waiting for the drain
+    matching: "default", // drain is scoring it against the roster
     complete: "success",
     error: "destructive",
   };

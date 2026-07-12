@@ -394,6 +394,7 @@ export async function runMatching(grantId: string, db: DB) {
     }
   }
 
+  const matchStartMs = Date.now();
   let nextIdx = 0;
   async function worker() {
     while (true) {
@@ -403,6 +404,19 @@ export async function runMatching(grantId: string, db: DB) {
     }
   }
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, toScore.length) }, worker));
+
+  // Ceiling tripwire (Move 2): one grant's full-roster match runs inside a single
+  // 300s function. Log wall-clock vs roster size EVERY run so a rising roster
+  // gives us lead time to add within-grant chunking BEFORE a match ever nears the
+  // cap -- rather than discovering the ceiling by hitting it. WARN past a soft
+  // threshold well under 300s.
+  const matchMs = Date.now() - matchStartMs;
+  const timing = `[match-timing] grant ${grantId}: roster=${toScore.length} decided-skipped=${decidedClientIds.size} wallMs=${matchMs}`;
+  if (matchMs > 180_000) {
+    console.warn(`${timing} -- APPROACHING 300s CAP; plan within-grant chunking`);
+  } else {
+    console.log(timing);
+  }
 
   await db.from("grants").update({ status: "complete" }).eq("id", grantId);
 }

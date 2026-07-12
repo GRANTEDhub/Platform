@@ -1,6 +1,7 @@
 {
   "crons": [
     { "path": "/api/cron/ingest", "schedule": "0 1,8 * * *" },
+    { "path": "/api/cron/match", "schedule": "*/10 * * * *" },
     { "path": "/api/cron/watchdog", "schedule": "*/15 * * * *" },
     { "path": "/api/cron/usaspending-refresh", "schedule": "23 9 1 * *" }
   ]

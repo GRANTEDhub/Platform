@@ -47,8 +47,14 @@ export function getGrantDisposition(grant: DispGrant, cards: DispositionCard[]):
   if (grant.grant_status === "Forecasted")
     return { tier: "forecasted", label: "Forecasted", detail: "No NOFO published yet" };
 
-  // Operational, still in flight.
+  // Operational, still in flight. The matching queue (Move 2) parks a grant at
+  // 'queued' (waiting for the drain) and 'matching' (drain is scoring it); both
+  // are in-flight, NOT terminal -- map them to the processing tier so a
+  // freshly-queued grant is never shown as "No match" (it has no cards yet only
+  // because matching hasn't run). Distinct labels; same tier.
   if (grant.status === "processing") return { tier: "processing", label: "Processing", detail: null };
+  if (grant.status === "queued") return { tier: "processing", label: "Queued", detail: null };
+  if (grant.status === "matching") return { tier: "processing", label: "Matching", detail: null };
   if (grant.status === "error")
     return { tier: "error", label: "Analysis failed", detail: grant.error_detail ?? null };
 
