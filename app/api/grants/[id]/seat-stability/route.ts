@@ -32,6 +32,8 @@ type RunResult = {
   seatRef: string | null;
   fitScore: number | null;
   proposedRole: string | null;
+  derivation?: string | null; // reasoning_context.fit_score_derivation -- WHY this score
+  roleLogic?: string | null; // reasoning_context.role_assignment_logic -- WHY this seat
   error?: string;
 };
 
@@ -92,10 +94,13 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         : formatStoredUSASpending(client.usaspending_summary);
       try {
         const m = await matchGrantToClient(grant as Grant, client, ctx);
+        const rc = (m as { reasoning_context?: Record<string, string> | null }).reasoning_context;
         byClient.get(client.id)!.push({
           seatRef: m.seat_ref ?? null,
           fitScore: m.fit_score ?? null,
           proposedRole: m.proposed_role ?? null,
+          derivation: rc?.fit_score_derivation ? rc.fit_score_derivation.slice(0, 400) : null,
+          roleLogic: rc?.role_assignment_logic ? rc.role_assignment_logic.slice(0, 400) : null,
         });
       } catch (err) {
         byClient.get(client.id)!.push({
