@@ -285,95 +285,124 @@ export async function runMatching(grantId: string, db: DB) {
   // wins), and a client with no cache yet scores as "unknown" rather than
   // triggering a fetch.
 
-  // Score clients in parallel batches of 5
-  const BATCH_SIZE = 5;
-  for (let i = 0; i < toScore.length; i += BATCH_SIZE) {
-    const batch = toScore.slice(i, i + BATCH_SIZE);
-    await Promise.all(
-      batch.map(async (client) => {
-        const preFilterReason = jsPreFilter(grantRow, client);
-        if (preFilterReason) {
-          console.log(`Pre-filter skipped ${client.name}: ${preFilterReason}`);
-          await recordAttempt(db, {
+  // Skip human-DECIDED (grant, client) cards: the card upsert below leaves a
+  // non-pending card untouched regardless of any new score, so re-scoring those
+  // clients is pure wasted LLM spend. One query, up front. Pending / no-card
+  // clients are NOT in this set (they still get scored); a fresh grant has no
+  // cards, so the set is empty and nothing is skipped. (Prospect cards have a null
+  // client_id and never match a client here.)
+  const { data: existingCardsForGrant } = await db
+    .from("review_cards")
+    .select("client_id, decision")
+    .eq("grant_id", grantId);
+  const decidedClientIds = new Set(
+    (existingCardsForGrant ?? [])
+      .filter((c) => c.client_id && c.decision !== "pending")
+      .map((c) => c.client_id as string),
+  );
+
+  // Score with a ROLLING concurrency pool (Move 1): CONCURRENCY workers each pull
+  // the next client the instant they finish -- no wave barrier idling while a
+  // batch's slowest call runs. Same peak concurrency, better use of the 300s
+  // budget. Conservative at 8 (each match is a token-heavy Sonnet call; the SDK
+  // retries 429s, but retries cost wall-clock under the cap). STILL 300s-capped --
+  // Move 2 (chunking + splitting matching off ingest) is the structural fix.
+  const CONCURRENCY = 8;
+
+  async function scoreClient(client: (typeof toScore)[number]) {
+    if (decidedClientIds.has(client.id)) return;
+
+    const preFilterReason = jsPreFilter(grantRow, client);
+    if (preFilterReason) {
+      console.log(`Pre-filter skipped ${client.name}: ${preFilterReason}`);
+      await recordAttempt(db, {
+        grant_id: grantId,
+        client_id: client.id,
+        outcome: "prefiltered",
+        prefilter_reason: preFilterReason,
+      });
+      return;
+    }
+    try {
+      const usaSpendingContext = client.federal_history_verified
+        ? undefined
+        : formatStoredUSASpending(client.usaspending_summary);
+      const match = await matchGrantToClient(grantRow, client, usaSpendingContext);
+      const qualifies =
+        !match.suppressed && !match.disqualified && match.fit_score >= 2;
+      const outcome = match.disqualified
+        ? "disqualified"
+        : match.suppressed
+          ? "suppressed"
+          : qualifies
+            ? "carded"
+            : "below_threshold";
+
+      // Record EVERY attempt -- below_threshold, suppressed, and
+      // disqualified included -- so calibration can see why a client did
+      // not match, not just the ones that became cards.
+      await recordAttempt(db, {
+        grant_id: grantId,
+        client_id: client.id,
+        outcome,
+        fit_score: match.fit_score ?? null,
+        suppressed: match.suppressed ?? false,
+        suppress_reason: match.suppress_reason ?? null,
+        disqualified: match.disqualified ?? false,
+        disqualify_reason: match.disqualify_reason ?? null,
+        result: match,
+      });
+
+      // One card per (grant, client). Look up the existing card first so a
+      // re-match can refresh it, leave a human-decided one alone, OR remove
+      // it when the client no longer qualifies.
+      const { data: existingCard } = await db
+        .from("review_cards")
+        .select("id, decision")
+        .eq("grant_id", grantId)
+        .eq("client_id", client.id)
+        .maybeSingle();
+
+      if (qualifies) {
+        const cardFields = cardFieldsFromMatch(match);
+        if (!existingCard) {
+          await db.from("review_cards").insert({
             grant_id: grantId,
             client_id: client.id,
-            outcome: "prefiltered",
-            prefilter_reason: preFilterReason,
+            ...cardFields,
+            decision: "pending",
           });
-          return;
+        } else if (existingCard.decision === "pending") {
+          await db.from("review_cards").update(cardFields).eq("id", existingCard.id);
         }
-        try {
-          const usaSpendingContext = client.federal_history_verified
-            ? undefined
-            : formatStoredUSASpending(client.usaspending_summary);
-          const match = await matchGrantToClient(grantRow, client, usaSpendingContext);
-          const qualifies =
-            !match.suppressed && !match.disqualified && match.fit_score >= 2;
-          const outcome = match.disqualified
-            ? "disqualified"
-            : match.suppressed
-              ? "suppressed"
-              : qualifies
-                ? "carded"
-                : "below_threshold";
-
-          // Record EVERY attempt -- below_threshold, suppressed, and
-          // disqualified included -- so calibration can see why a client did
-          // not match, not just the ones that became cards.
-          await recordAttempt(db, {
-            grant_id: grantId,
-            client_id: client.id,
-            outcome,
-            fit_score: match.fit_score ?? null,
-            suppressed: match.suppressed ?? false,
-            suppress_reason: match.suppress_reason ?? null,
-            disqualified: match.disqualified ?? false,
-            disqualify_reason: match.disqualify_reason ?? null,
-            result: match,
-          });
-
-          // One card per (grant, client). Look up the existing card first so a
-          // re-match can refresh it, leave a human-decided one alone, OR remove
-          // it when the client no longer qualifies.
-          const { data: existingCard } = await db
-            .from("review_cards")
-            .select("id, decision")
-            .eq("grant_id", grantId)
-            .eq("client_id", client.id)
-            .maybeSingle();
-
-          if (qualifies) {
-            const cardFields = cardFieldsFromMatch(match);
-            if (!existingCard) {
-              await db.from("review_cards").insert({
-                grant_id: grantId,
-                client_id: client.id,
-                ...cardFields,
-                decision: "pending",
-              });
-            } else if (existingCard.decision === "pending") {
-              await db.from("review_cards").update(cardFields).eq("id", existingCard.id);
-            }
-            // else: an admin already decided this card -- leave it untouched.
-          } else if (existingCard && existingCard.decision === "pending") {
-            // Re-score dropped this client below the surface threshold (e.g.
-            // 2 -> 0 under the seat ceiling). It no longer surfaces, so remove
-            // the stale un-acted card. A human-decided card (approved / passed /
-            // hold) is preserved -- never silently erase a GO/NO/HOLD.
-            await db.from("review_cards").delete().eq("id", existingCard.id);
-          }
-        } catch (err) {
-          console.error(`Match error for client ${client.name}:`, err);
-          await recordAttempt(db, {
-            grant_id: grantId,
-            client_id: client.id,
-            outcome: "error",
-            error_detail: String(err instanceof Error ? err.message : err).slice(0, 600),
-          });
-        }
-      }),
-    );
+        // else: an admin already decided this card -- leave it untouched.
+      } else if (existingCard && existingCard.decision === "pending") {
+        // Re-score dropped this client below the surface threshold (e.g.
+        // 2 -> 0 under the seat ceiling). It no longer surfaces, so remove
+        // the stale un-acted card. A human-decided card (approved / passed /
+        // hold) is preserved -- never silently erase a GO/NO/HOLD.
+        await db.from("review_cards").delete().eq("id", existingCard.id);
+      }
+    } catch (err) {
+      console.error(`Match error for client ${client.name}:`, err);
+      await recordAttempt(db, {
+        grant_id: grantId,
+        client_id: client.id,
+        outcome: "error",
+        error_detail: String(err instanceof Error ? err.message : err).slice(0, 600),
+      });
+    }
   }
+
+  let nextIdx = 0;
+  async function worker() {
+    while (true) {
+      const i = nextIdx++;
+      if (i >= toScore.length) return;
+      await scoreClient(toScore[i]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, toScore.length) }, worker));
 
   await db.from("grants").update({ status: "complete" }).eq("id", grantId);
 }
