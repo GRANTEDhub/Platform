@@ -183,6 +183,47 @@ export interface IdealApplicantProfile {
   eligibility_note?: string;
 }
 
+// The client-side mirror of IdealApplicantProfile: a distilled, match-optimized
+// profile constructed from intake by constructClientProfile (lib/clients/profile.ts).
+// Mission/programs/demographics-centered (the priority match signal); prime_capacity
+// + supporting_roles + geographic scale carry the prime-vs-partner distinction;
+// inferred[]/gaps[] keep it honest (distill, never fabricate). Stored on
+// clients.client_profile (migration 0043). NOT read by the matcher in Stage 1.
+export interface ClientProgramArea {
+  name: string;
+  status: "existing" | "prospective";
+  description: string;
+  target_demographics: string[];
+}
+
+export interface ClientProfile {
+  summary: string; // 1-2 sentence distilled identity
+  mission: string; // distilled mission/purpose -- the priority signal
+  core_capabilities: string[]; // funded roles the org can actually perform
+  program_areas: ClientProgramArea[];
+  populations_served: string[];
+  geographic_scope: {
+    footprint: string; // e.g. "Northwest Arkansas"
+    scale: "local" | "regional" | "statewide" | "multi_state" | "national";
+    states: string[];
+  };
+  // Prime-vs-partner: GENERAL capacity, not a per-grant seat. can_prime is
+  // conservative (true only with genuine evidence the org performs a core funded
+  // role as its natural function); the matcher still decides the seat per grant.
+  prime_capacity: { can_prime: boolean; rationale: string; conditional_on?: string };
+  supporting_roles: string[]; // supporting/partner seats it can genuinely fill
+  partnerships: string[];
+  funding_priorities: string[]; // what they WANT
+  fiscal_notes?: { annual_budget?: string; match_capacity?: string; rurality?: string };
+  federal_history: {
+    self_reported: string; // client's own answer -- authoritative
+    usaspending_crosscheck?: string; // supplement/flag only, never overrides self-report
+    discrepancy?: string; // set when self-report and USASpending diverge
+  };
+  inferred: string[]; // fields inferred rather than stated
+  gaps: string[]; // thin/missing data -- surfaces confidence
+}
+
 export interface Grant {
   id: string;
   source_url: string | null;
