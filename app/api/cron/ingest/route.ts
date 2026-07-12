@@ -263,6 +263,10 @@ export async function GET(req: NextRequest) {
       .insert({
         source_url: sourceUrl,
         status: "queued",
+        // shred_depth has a DB default of 'summary' (migration 0011); insert it
+        // EXPLICITLY null so the drain's "never shredded -> full pipeline" branch
+        // fires. Without this the fresh grant would skip shredding and match empty.
+        shred_depth: null,
         grant_status: w.status === "forecasted" ? "Forecasted" : null,
       })
       .select("id")

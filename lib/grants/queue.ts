@@ -83,7 +83,7 @@ export async function drainMatchQueue(
     // promptly -- matching the discovery cron's existing "flips first" intent.
     const { data: candidate } = await db
       .from("grants")
-      .select("id, source_url, shred_depth, grant_status")
+      .select("id, source_url, shred_depth, grant_status, raw_text")
       .eq("status", "queued")
       .order("ingested_at", { ascending: true })
       .limit(1)
@@ -92,6 +92,7 @@ export async function drainMatchQueue(
         source_url: string | null;
         shred_depth: string | null;
         grant_status: string | null;
+        raw_text: string | null;
       }>();
     if (!candidate) {
       queueEmpty = true;
@@ -111,13 +112,17 @@ export async function drainMatchQueue(
     if (!claimed || claimed.length === 0) continue;
 
     try {
-      // Cradle-to-grave for this one grant. A grant that has never been shredded
-      // (a fresh discovery row: shred_depth null) gets the FULL pipeline
-      // (shred -> profile -> match); an already-shredded grant (a re-queue / retry
-      // / manual test) skips straight to matching -- no wasteful re-shred. Both
-      // set status='complete' on success, so the drain never sets it: a grant
-      // reaches 'complete' only when matching actually finished.
-      if (candidate.shred_depth == null) {
+      // Cradle-to-grave for this one grant. "Needs shred" = never shredded OR a
+      // forced re-shred (a flip). Two signals, OR'd, because neither alone is
+      // safe: shred_depth is the explicit force-re-shred marker (a flip nulls it),
+      // BUT shred_depth has a DB default of 'summary' (migration 0011), so a fresh
+      // discovery row is NOT reliably null there -- raw_text (no default; only ever
+      // set by a real shred) is the authoritative never-shredded signal. Matching
+      // an unshredded grant would silently produce an empty 'complete', so this
+      // defends the automatic path even if a future enqueue forgets to null
+      // shred_depth. An already-shredded re-queue (both set) matches straight away.
+      const needsShred = candidate.shred_depth == null || candidate.raw_text == null;
+      if (needsShred) {
         // Preserve the discovery cron's forecast handling: a NEW forecasted grant
         // is marked grant_status='Forecasted' at enqueue, so pass the authoritative
         // 'forecasted' hint -> runPipeline shreds the summary, keeps it Forecasted,
