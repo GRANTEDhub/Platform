@@ -83,11 +83,16 @@ export async function drainMatchQueue(
     // promptly -- matching the discovery cron's existing "flips first" intent.
     const { data: candidate } = await db
       .from("grants")
-      .select("id, source_url, shred_depth")
+      .select("id, source_url, shred_depth, grant_status")
       .eq("status", "queued")
       .order("ingested_at", { ascending: true })
       .limit(1)
-      .maybeSingle<{ id: string; source_url: string | null; shred_depth: string | null }>();
+      .maybeSingle<{
+        id: string;
+        source_url: string | null;
+        shred_depth: string | null;
+        grant_status: string | null;
+      }>();
     if (!candidate) {
       queueEmpty = true;
       break;
@@ -113,7 +118,16 @@ export async function drainMatchQueue(
       // set status='complete' on success, so the drain never sets it: a grant
       // reaches 'complete' only when matching actually finished.
       if (candidate.shred_depth == null) {
-        await runPipeline(candidate.id, candidate.source_url ?? undefined, undefined, db);
+        // Preserve the discovery cron's forecast handling: a NEW forecasted grant
+        // is marked grant_status='Forecasted' at enqueue, so pass the authoritative
+        // 'forecasted' hint -> runPipeline shreds the summary, keeps it Forecasted,
+        // and SKIPS matching (no NOFO yet). Posted / flip rows carry no marker;
+        // undefined lets runPipeline read the status from the shred (== 'posted').
+        const opts =
+          candidate.grant_status === "Forecasted"
+            ? { opportunityStatus: "forecasted" }
+            : undefined;
+        await runPipeline(candidate.id, candidate.source_url ?? undefined, undefined, db, opts);
       } else {
         await runMatching(candidate.id, db);
       }

@@ -1,6 +1,11 @@
 // Scheduled ingestion — runs on a Vercel Cron schedule (0 1,8 * * *). Pulls
 // posted + forecasted opportunities from Simpler.gov, deduplicates against what
-// we already have, and runs the shred + match pipeline on anything new.
+// we already have, and ENQUEUES anything new for matching (status='queued').
+// It does NOT shred or match here: the drain cron (/api/cron/match) processes
+// the queue one grant at a time, cradle-to-grave, within its own 300s window.
+// This is the Move 2 split -- discovery used to run the full pipeline inline for
+// up to PER_RUN_CAP grants in THIS function and time out partway (silent partial
+// matches). Discovery is now cheap (search + classify + DB writes, no LLM).
 //
 // Two searches per run:
 //   - POSTED: date-windowed by post_date >= a forward-only cursor (the date of
@@ -18,10 +23,9 @@
 // grant we hold as Forecasted is now posted -- re-shred + re-match the same row,
 // preserving prior client decisions), or SKIP (already held in its status).
 //
-// Concurrency is bounded: NEW + FLIP work is processed in small awaited batches
-// (not a fire-and-forget fan-out), with a per-run cap so the run stays within
-// maxDuration and under Simpler's rate limit (60/min). The remainder drains on
-// the next run.
+// A per-run cap bounds the enqueue writes; the remainder defers to the next run
+// (loss-free -- see the POSTED note above). The Simpler search itself still
+// respects the 60/min rate limit via paginated fetches.
 //
 // NOTE: we filter only by opportunity_status and narrow entities downstream in
 // jsPreFilter (per client). Filtering by applicant_type at the API would require
@@ -30,7 +34,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
 import { cronDeny } from "@/lib/cron/auth";
-import { runPipeline } from "@/lib/grants/pipeline";
 
 export const maxDuration = 300;
 
@@ -38,8 +41,7 @@ const SEARCH_URL = "https://api.simpler.grants.gov/v1/opportunities/search";
 const PAGE_SIZE = 100; // documented max for result pages
 const MAX_PAGES = 50; // safety ceiling (5000 records) so a bad loop can't run away
 const BUFFER_DAYS = 2; // cursor lookback: covers date-granularity + deferred grants
-const PER_RUN_CAP = 25; // bounded so batched processing fits maxDuration; rest drains next run
-const BATCH_SIZE = 5; // concurrent pipelines per batch (mirrors runMatching)
+const PER_RUN_CAP = 25; // bounds a run's enqueue writes; the rest defers, loss-free, to next run
 
 type SortOrder = { order_by: string; sort_direction: "ascending" | "descending" };
 
@@ -203,98 +205,83 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ message: "Nothing new", pulled: tagged.length, processed: 0 });
   }
 
-  // Bounded processing: flips first (a freshly-live grant should re-match
-  // promptly), then new grants (posted are oldest-first, so the per-run cap is
-  // loss-free -- deferred items stay in-window / stay classified as flips and
-  // drain next run). Both NEW and FLIP cost a full shred+match, so both count
-  // against the cap, in awaited batches of BATCH_SIZE.
+  // Enqueue-only (Move 2): discovery does NO shred/match itself -- it parks work
+  // in the matching queue (status='queued') and the drain cron (/api/cron/match)
+  // processes one grant at a time, cradle-to-grave, within the 300s window. This
+  // removes the old failure mode where up to PER_RUN_CAP full pipelines ran inside
+  // THIS 300s function and timed out partway (silent partial matches).
+  //
+  // Flips first (a freshly-live grant should drain promptly -- the queue is
+  // oldest-first and a flip's ingested_at is old). PER_RUN_CAP still bounds a
+  // run's DB writes; posted are oldest-first, so deferred items stay in-window /
+  // stay classified as flips and enqueue next run (loss-free).
   const work: (NewWork | FlipWork)[] = [...flips, ...news];
-  const toProcess = work.slice(0, PER_RUN_CAP);
-  const deferred = work.length - toProcess.length;
-  const processedIds: string[] = [];
+  const toEnqueue = work.slice(0, PER_RUN_CAP);
+  const deferred = work.length - toEnqueue.length;
+  const enqueuedIds: string[] = [];
   let newCount = 0;
   let flipCount = 0;
 
-  for (let i = 0; i < toProcess.length; i += BATCH_SIZE) {
-    const batch = toProcess.slice(i, i + BATCH_SIZE);
-    await Promise.all(
-      batch.map(async (w) => {
-        const sourceUrl = urlFor(w.id);
-        if (w.kind === "flip") {
-          // Reuse the existing row: stamp the activation marker, point source_url
-          // at the now-posted opportunity (the UUID may have changed), reset to
-          // processing, then re-run the pipeline as posted. runPipeline flips
-          // grant_status off Forecasted and runMatching preserves already-decided
-          // client cards while matching newly-acquired clients fresh (v1).
-          const { error } = await db
-            .from("grants")
-            .update({
-              status: "processing",
-              processing_started_at: new Date().toISOString(),
-              activated_from_forecast_at: new Date().toISOString(),
-              source_url: sourceUrl,
-              error_detail: null,
-            })
-            .eq("id", w.existingId);
-          if (error) {
-            console.error(`Failed to mark flip for grant ${w.existingId}:`, error);
-            return;
-          }
-          try {
-            await runPipeline(w.existingId, sourceUrl, undefined, db, {
-              opportunityStatus: "posted",
-            });
-            processedIds.push(w.existingId);
-            flipCount++;
-          } catch (err) {
-            console.error(`Cron flip pipeline error for grant ${w.existingId}:`, err);
-            await db
-              .from("grants")
-              .update({
-                status: "error",
-                error_detail: String(err instanceof Error ? err.message : err).slice(0, 600),
-              })
-              .eq("id", w.existingId);
-          }
-          return;
-        }
-        // NEW: create the row, then shred + match.
-        const { data: grantRow, error } = await db
-          .from("grants")
-          .insert({ source_url: sourceUrl, status: "processing" })
-          .select("id")
-          .single();
-        if (error || !grantRow) {
-          console.error(`Failed to create grant record for ${w.id}:`, error);
-          return;
-        }
-        processedIds.push(grantRow.id);
-        newCount++;
-        try {
-          await runPipeline(grantRow.id, sourceUrl, undefined, db, {
-            opportunityStatus: w.status,
-          });
-        } catch (err) {
-          console.error(`Cron pipeline error for grant ${grantRow.id}:`, err);
-          await db
-            .from("grants")
-            .update({
-              status: "error",
-              error_detail: String(err instanceof Error ? err.message : err).slice(0, 600),
-            })
-            .eq("id", grantRow.id);
-        }
-      }),
-    );
+  // Cheap DB writes only (no LLM / external calls), so a simple sequential loop
+  // is plenty -- no batching needed now that the pipeline runs off in the drain.
+  for (const w of toEnqueue) {
+    const sourceUrl = urlFor(w.id);
+    if (w.kind === "flip") {
+      // A tracked forecast has gone live. Re-queue the EXISTING row for a full
+      // re-shred + re-match by the drain: clear shred_depth (force the drain's
+      // shred branch -> re-fetch the now-published NOFO), drop the Forecasted
+      // marker (so the drain treats it as posted and matches it), reset the retry
+      // budget, point source_url at the now-posted opportunity (the UUID may have
+      // changed), and stamp the activation marker. runMatching still preserves
+      // already-decided client cards on the re-match.
+      const { error } = await db
+        .from("grants")
+        .update({
+          status: "queued",
+          grant_status: null,
+          shred_depth: null,
+          match_retry_count: 0,
+          activated_from_forecast_at: new Date().toISOString(),
+          source_url: sourceUrl,
+          error_detail: null,
+        })
+        .eq("id", w.existingId);
+      if (error) {
+        console.error(`Failed to enqueue flip for grant ${w.existingId}:`, error);
+        continue;
+      }
+      enqueuedIds.push(w.existingId);
+      flipCount++;
+      continue;
+    }
+    // NEW: create the row already queued. A forecasted opportunity carries the
+    // Forecasted marker so the drain shreds-but-doesn't-match it (the drain derives
+    // the authoritative 'forecasted' hint from grant_status); posted carries no
+    // marker, so the drain shreds + matches it.
+    const { data: grantRow, error } = await db
+      .from("grants")
+      .insert({
+        source_url: sourceUrl,
+        status: "queued",
+        grant_status: w.status === "forecasted" ? "Forecasted" : null,
+      })
+      .select("id")
+      .single();
+    if (error || !grantRow) {
+      console.error(`Failed to create grant record for ${w.id}:`, error);
+      continue;
+    }
+    enqueuedIds.push(grantRow.id);
+    newCount++;
   }
 
   return NextResponse.json({
-    message: `Processed ${processedIds.length} grant(s) (${newCount} new, ${flipCount} flipped)${deferred > 0 ? `, ${deferred} deferred to next run` : ""}`,
+    message: `Enqueued ${enqueuedIds.length} grant(s) for matching (${newCount} new, ${flipCount} flipped)${deferred > 0 ? `, ${deferred} deferred to next run` : ""}`,
     pulled: tagged.length,
-    processed: processedIds.length,
+    enqueued: enqueuedIds.length,
     new: newCount,
     flipped: flipCount,
     deferred,
-    grantIds: processedIds,
+    grantIds: enqueuedIds,
   });
 }
