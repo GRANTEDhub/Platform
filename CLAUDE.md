@@ -10,6 +10,7 @@ conventions, locked architecture, and constraints**. Actionable to-dos live in
 - **Migrations are migration-first and the user applies them** to prod (service SQL). Never run prod migrations from here; the sandbox can't reach prod Supabase/Anthropic anyway.
 - **The user (or a teammate) merges PRs.** Don't merge.
 - **CI green is necessary, not sufficient.** The real gate is a **preview-URL check** on the actual deploy. Client-facing / PDF / infra-plumbing changes get **look-before-merge** (show a real regenerated artifact). Sandbox renders are illustrative, never confirmation — verify on real `app.grantedco.com` (not `*.vercel.app`; hard-refresh for Cloudflare cache).
+- **Production is live only when "Current," not "Ready."** A Vercel deploy tagged Production/Ready is NOT serving `app.grantedco.com` until it's the **Current** deployment. After any merge, confirm production actually advanced — Vercel Overview's Production card shows the merge commit, or `app.grantedco.com/api/version` == latest `main`. **Instant Rollback pins production and silently suspends auto-promotion for every later merge** — so if you ever roll back, clear it (promote current) the moment the forward-fix ships. (Incident: a jsdom hotfix rollback to PR #70 on 2026-07-07 stayed pinned ~3 days; merges built "Ready" but never went live.)
 - **Fast-lane** (cosmetic, no deps, no server runtime): may skip scope/mock and just show the diff — still no self-merge.
 
 ## Locked architecture
