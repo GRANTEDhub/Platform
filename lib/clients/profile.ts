@@ -293,3 +293,62 @@ export async function refreshClientProfileById(
     return false; // leave client_profile as-is (null-safe)
   }
 }
+
+// Matcher-facing rendering of a ClientProfile (Stage 4a). SUPPLEMENTARY capacity
+// signal appended to clientContext to help the model pick the RIGHT seat -- it does
+// NOT change the seat rubric, the closed menu, or the clamp (those are unchanged;
+// this is pure additional input). Deliberately a SUBSET, not the full JSON:
+//  - drops inferred[] (provenance, not decision-relevant),
+//  - drops fiscal_notes (duplicates the raw Annual Budget / Match / RUCC lines),
+//  - drops funding_priorities (duplicates the raw Primary Funding Needs line),
+//  - drops federal_history (that is the Stage 4b precedence flip -- kept out of 4a).
+// Returns "" for a null/undefined profile so clientContext is byte-identical when
+// no profile exists (null-safe). The leading "\n" separates it from the SAM line.
+export function formatClientProfileForMatcher(profile: ClientProfile | null | undefined): string {
+  if (!profile) return "";
+  const lines: string[] = [];
+  const joined = (a: string[] | undefined) => (a && a.length ? a.join(", ") : null);
+  const push = (label: string, val: string | null | undefined) => {
+    if (val && val.trim()) lines.push(`${label}: ${val.trim()}`);
+  };
+
+  push("Summary", profile.summary);
+  push("Mission", profile.mission);
+  push("Core capabilities", joined(profile.core_capabilities));
+
+  if (Array.isArray(profile.program_areas) && profile.program_areas.length) {
+    lines.push("Programs:");
+    for (const p of profile.program_areas) {
+      const demo = joined(p.target_demographics);
+      const desc = p.description?.trim() ? ` -- ${p.description.trim().slice(0, 160)}` : "";
+      lines.push(`  - [${p.status}] ${p.name}${demo ? ` (serves: ${demo})` : ""}${desc}`);
+    }
+  }
+  push("Populations served", joined(profile.populations_served));
+
+  const geo = profile.geographic_scope;
+  if (geo) push("Geographic scope", `${geo.footprint?.trim() || "unspecified"} (${geo.scale})`);
+
+  const pc = profile.prime_capacity;
+  if (pc) {
+    const cond = pc.conditional_on?.trim() ? `; conditional on: ${pc.conditional_on.trim()}` : "";
+    push(
+      "Prime capacity",
+      `${pc.can_prime ? "CAN prime" : "cannot prime as lead"} -- ${pc.rationale?.trim() ?? ""}${cond}`,
+    );
+  }
+  push("Supporting roles it can genuinely fill", joined(profile.supporting_roles));
+  push("Existing partnerships", joined(profile.partnerships));
+  push(
+    "Data gaps (thin/uncertain -- score conservatively where a seat depends on these)",
+    joined(profile.gaps),
+  );
+
+  return (
+    `\nCLIENT PROFILE (distilled from this client's intake -- supplementary capacity signal to help you ` +
+    `pick the RIGHT seat from the menu; it does NOT change the seat rules, the menu, or the ceilings):\n` +
+    `${lines.join("\n")}\n` +
+    `prime_capacity / supporting_roles describe GENERAL capacity, not a seat assignment -- you still ` +
+    `choose seat_ref for THIS grant, and can_prime never lifts a ceiling.`
+  );
+}

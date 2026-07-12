@@ -112,6 +112,10 @@ export interface Client {
   lead_source: string | null;
   account_manager_id: string | null;
   intake_data: Record<string, unknown> | null;
+  // Distilled, match-optimized profile (migration 0043). Populated out-of-band
+  // from intake by constructClientProfile; read by the matcher via
+  // formatClientProfileForMatcher (Stage 4a). Null until refined.
+  client_profile: ClientProfile | null;
   needs_review: boolean;
   archived_reason: string | null;
   contract_status: string | null;

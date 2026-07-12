@@ -10,6 +10,7 @@ import {
   formatConstraintsForPrompt,
 } from "@/lib/grants/constraints";
 import { formatSamForMatcher } from "@/lib/sam/expiry";
+import { formatClientProfileForMatcher } from "@/lib/clients/profile";
 import type { Client, Grant, IdealApplicantProfile, FactorScores } from "@/types/database";
 
 export interface ExtractedGrant {
@@ -731,7 +732,7 @@ Primary Funding Needs: ${(client.primary_funding_needs || []).join(", ")}
 Project Stage: ${client.project_stage || "Unknown"}
 Match/Cost Share Capacity: ${client.match_cost_share_capacity || "Unknown"}
 Federal Grant History: ${usaSpendingContext || client.federal_grant_history || "Unknown -- USASpending not checked"}
-${formatSamForMatcher(client)}
+${formatSamForMatcher(client)}${formatClientProfileForMatcher(client.client_profile)}
 Known Constraints: ${client.known_constraints || "None noted"}
 Matching Rules (AUTHORITATIVE OVERRIDES -- apply before general logic): ${client.matching_rules || "None"}
 Hard Constraints (CODE-ENFORCED -- authoritative; these are enforced in code regardless of your output, listed so your reasoning and role assignment align with them):
