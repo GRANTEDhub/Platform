@@ -6,7 +6,7 @@ import { waitUntil } from "@vercel/functions";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { requireAdmin } from "@/lib/auth";
 import { validateConstraint } from "@/lib/grants/constraints";
-import { refreshClientUSASpendingById } from "@/lib/grants/usaspending-refresh";
+import { enrichClient } from "@/lib/clients/enrich";
 import type { HardConstraint } from "@/types/database";
 
 // Parse + validate the hard_constraints hidden field (JSON from the picker).
@@ -88,9 +88,10 @@ export async function createClientAction(formData: FormData) {
 
   if (error) throw new Error(error.message);
 
-  // Cache USASpending history in the background so it's ready before the first
-  // match run -- never blocks the save (must be kicked before redirect throws).
-  waitUntil(refreshClientUSASpendingById(createServiceClient(), data.id));
+  // Enrich in the background (USASpending cache, then the client-profile refine)
+  // so both are ready before the first match run -- never blocks the save (must be
+  // kicked before redirect throws). A failed refine leaves client_profile null.
+  waitUntil(enrichClient(createServiceClient(), data.id));
 
   revalidatePath("/clients");
   revalidatePath("/dashboard");
@@ -106,8 +107,9 @@ export async function updateClientAction(id: string, formData: FormData) {
   const { error } = await supabase.from("clients").update(payload).eq("id", id);
   if (error) throw new Error(error.message);
 
-  // Re-cache USASpending in the background (name / search-name may have changed).
-  waitUntil(refreshClientUSASpendingById(createServiceClient(), id));
+  // Re-enrich in the background: re-cache USASpending (name / search-name may have
+  // changed) then re-refine the client profile (inputs changed on edit).
+  waitUntil(enrichClient(createServiceClient(), id));
 
   revalidatePath("/clients");
   revalidatePath(`/clients/${id}`);

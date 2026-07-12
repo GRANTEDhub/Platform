@@ -12,6 +12,7 @@
 // catches and reports). Stage 1 does NOT store the result and does NOT touch the
 // matcher.
 
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAnthropicClient, MODEL } from "@/lib/anthropic";
 import { formatStoredUSASpending } from "@/lib/grants/usaspending";
 import type { Client, ClientProfile } from "@/types/database";
@@ -256,4 +257,39 @@ export async function constructClientProfile(input: ClientProfileInput): Promise
     throw new Error("Claude did not return a structured client profile");
   }
   return toolUse.input as ClientProfile;
+}
+
+// Populate clients.client_profile for one client (Stage 2). Loads the full row,
+// assembles the Stage-1 input (pulling the stranded intake_data / notes free-text),
+// refines, and stores the result. Safe to fire-and-forget via waitUntil.
+//
+// NULL-SAFE: constructClientProfile throws on failure (truncation / no tool-use);
+// we catch it, log, and leave client_profile untouched (null) so the caller's
+// create / edit / intake action still succeeds. Stage 3's backfill (or the next
+// edit) re-attempts any null. Never read by the matcher in this stage.
+export async function refreshClientProfileById(
+  db: SupabaseClient,
+  clientId: string,
+): Promise<boolean> {
+  const { data } = await db.from("clients").select("*").eq("id", clientId).single();
+  if (!data) return false;
+  try {
+    const profile = await constructClientProfile(buildClientProfileInput(data as Client));
+    const { error } = await db
+      .from("clients")
+      .update({ client_profile: profile })
+      .eq("id", clientId);
+    if (error) {
+      console.error("Client-profile write failed for client", clientId, error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error(
+      "Client-profile refine failed for client",
+      clientId,
+      err instanceof Error ? err.message : err,
+    );
+    return false; // leave client_profile as-is (null-safe)
+  }
 }
