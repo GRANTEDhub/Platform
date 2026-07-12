@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import { createServiceClient } from "@/lib/supabase/server";
 import { isDeliverableEmail } from "@/lib/email/send";
-import { refreshClientUSASpendingById } from "@/lib/grants/usaspending-refresh";
+import { enrichClient } from "@/lib/clients/enrich";
 import { verifyTurnstile, rateLimited } from "@/lib/intake/guard";
 import { ORG_TYPES, ORG_TYPE_LABELS, PRIORITY_AREAS, REFERRAL_SOURCES, US_STATES } from "@/lib/intake/fields";
 
@@ -138,10 +138,12 @@ export async function POST(req: NextRequest) {
     metadata: { lead_source: "inbound", referral_source: referralSource },
   });
 
-  // Auto-enrich federal history in the background so the reviewed lead arrives
-  // already enriched -- no extra question asked of the submitter. Fire-and-forget;
-  // a fresh service client because this outlives the request.
-  waitUntil(refreshClientUSASpendingById(createServiceClient(), lead.id));
+  // Auto-enrich in the background so the reviewed lead arrives already enriched --
+  // USASpending federal history, then the client-profile refine (which distills the
+  // stranded intake_data free-text this form just captured). No extra question
+  // asked of the submitter. Fire-and-forget; a fresh service client because this
+  // outlives the request.
+  waitUntil(enrichClient(createServiceClient(), lead.id));
 
   return NextResponse.json({ ok: true });
 }
