@@ -54,7 +54,14 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
     proposed_role: c.proposed_role,
     recommended_prime: c.recommended_prime,
   }));
-  const processing = grant.status === "processing";
+  // In-flight = not yet terminal. Move 2's matching queue adds 'queued' (waiting
+  // for the drain) and 'matching' (drain is scoring it) alongside the original
+  // 'processing' (shredding). All three must auto-refresh, suppress the
+  // "no match" empty state, and hide calibration -- so they share this flag.
+  const processing =
+    grant.status === "processing" ||
+    grant.status === "queued" ||
+    grant.status === "matching";
   // Forecasted opportunities have no NOFO yet, so summary-shred / failed copy is
   // misleading -- forecasted takes precedence over both.
   const forecasted = grant.grant_status === "Forecasted";
@@ -149,8 +156,11 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
           {processing && (
             <Card>
               <CardContent className="p-6 text-sm text-muted-foreground">
-                Shredding the NOFO and scoring it against the client roster… this page
-                refreshes automatically.
+                {grant.status === "queued"
+                  ? "Queued for matching — the drain will pick this up shortly. This page refreshes automatically."
+                  : grant.status === "matching"
+                    ? "Scoring against the client roster… this page refreshes automatically."
+                    : "Shredding the NOFO and scoring it against the client roster… this page refreshes automatically."}
               </CardContent>
             </Card>
           )}
