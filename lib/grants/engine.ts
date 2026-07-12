@@ -279,15 +279,38 @@ it ceilings everyone at 2 and is the exact error to avoid.
   needs a partner, scope refinement).
 - 1 -- The client occupies a real seat but only weakly / peripherally -- a
   genuine toehold with marginal strength.
-- 0 -- NO genuine seat: topical/mission adjacency only, or not eligible. If you
-  describe the client as "implementation anchor only," a "delivery partner" on a
-  coordination grant, "adjacent," or "not the coordinator/convener," that is a
-  NO-SEAT finding -> seat_ref = NONE -> score 0. It does NOT surface. This is the
-  correct, expected outcome for most clients; surfacing a no-seat client wastes
-  reviewer time and is a costly error.
+- 0 -- NO genuine seat: the client occupies NEITHER a prime archetype NOR any
+  listed supporting seat -- topical/mission adjacency only, or not eligible. The
+  labels "implementation anchor only," "delivery partner," "adjacent," and "not
+  the coordinator/convener" signal NO SEAT *only when the client also fills no
+  listed seat at all* (prime or supporting). They do NOT by themselves zero a
+  client that genuinely occupies a listed seat: a conditional prime fit is a 2,
+  and a genuine supporting seat is a 2 (see SUPPORTING-SEAT FLOOR below) -- NOT a
+  NONE. When the client fills no listed seat at all: seat_ref = NONE -> score 0.
+  It does NOT surface. This is the correct, expected outcome for most clients;
+  surfacing a no-seat client wastes reviewer time and is a costly error.
 
 NO-SEAT IS 0 -- never 1, never 2. A 1 or 2 REQUIRES occupying a real seat from
 the menu. Adjacency with no genuine seat is 0, no matter how topically related.
+
+SUPPORTING-SEAT FLOOR (do not zero a genuine supporting-seat occupant for a
+missing prime):
+A listed supporting seat (S{i}_{j}) supports the ideal prime ARCHETYPE of its
+consortium -- and that archetype ALWAYS exists in the profile. The seat does NOT
+require that a specific client has yet been identified to fill the prime. So when
+the client genuinely occupies a listed supporting seat -- it performs that seat's
+specific named role, not mere topical help -- map it to that seat (seat_ref =
+S{i}_{j}) and score it 2, EVEN IF no prime partner has been identified. The
+unfilled prime is a FLAGGED GAP, not a disqualifier: add a before_you_approve item
+("no prime partner identified yet -- prime identification needed") and name it in
+reasoning_context. Dropping a genuine supporting seat to NONE because no prime is
+named is the specific error this floor prevents.
+This floor does NOT lower the occupancy bar. It applies ONLY when the client
+genuinely fills a SPECIFIC listed seat -- you can name the seat id AND the function
+the client performs in it. A client you cannot place in a specific listed seat
+(topical/mission adjacency, generic "delivery" help) stays NONE/0 per the rule
+above. And it never lifts a ceiling: a supporting seat is capped at 2 in code, the
+missing prime never makes the client a prime, and this floor never yields a 3.
 
 ELIGIBILITY FLOOR (do not zero out a required, seated entity):
 Set entity_required = true when the grant STRUCTURALLY requires this client's
