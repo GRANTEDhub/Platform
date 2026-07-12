@@ -1,0 +1,23 @@
+-- ╔══════════════════════════════════════════════════════════════════════════╗
+-- ║ Per-grant matching queue: capped auto-retry counter                         ║
+-- ╚══════════════════════════════════════════════════════════════════════════╝
+-- Move 2 splits matching out of the ingest/discovery function into a DB-backed
+-- "needs matching" queue drained one grant at a time by a cron (cradle-to-grave:
+-- shred -> profile -> full-roster match per grant, sequentially, within the 300s
+-- window). Grant lifecycle uses the existing `status` text column with two new
+-- values -- 'queued' (waiting for the drain) and 'matching' (drain is running it)
+-- -- which need NO migration (status has no enum/check constraint).
+--
+-- The ONE thing that does need a column: a retry counter so a matching run that
+-- was KILLED (function timeout / instance recycle / deploy mid-run -- a death
+-- with no thrown error, the exact silent-failure mode we are fixing) can be
+-- requeued a bounded number of times by the watchdog before it gives up and
+-- flips the grant to a VISIBLE 'error'. Without a persisted count the watchdog
+-- could requeue the same stuck grant forever. A clean thrown error still goes
+-- straight to 'error' (no retry) -- this counter is only for the no-throw death.
+--
+-- Reset to 0 by the code on each fresh enqueue (new grant / forecast->posted
+-- flip / manual re-match) so every matching episode starts with a full retry
+-- budget. Additive with a default, so it is safe to apply ahead of the code.
+
+alter table grants add column if not exists match_retry_count int not null default 0;
