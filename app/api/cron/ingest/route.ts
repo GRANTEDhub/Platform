@@ -45,12 +45,13 @@ const PER_RUN_CAP = 25; // bounds a run's enqueue writes; the rest defers, loss-
 
 type SortOrder = { order_by: string; sort_direction: "ascending" | "descending" };
 
-// One pulled opportunity: the id (for the URL / re-fetch) plus the federal
-// opportunity number (FON = opportunity_number). The FON is the STABLE identity
-// across the forecast -> posted transition (the opportunity_id UUID is not
-// guaranteed to survive the flip), so it -- not the URL -- is what the
-// flip detector matches on.
-type Pulled = { id: string; fon: string | null };
+// One pulled opportunity: the id (for the URL / re-fetch), the federal
+// opportunity number (FON = opportunity_number), and the listing title. The FON
+// is the STABLE identity across the forecast -> posted transition (the
+// opportunity_id UUID is not guaranteed to survive the flip), so it -- not the
+// URL -- is what the flip detector matches on. The title is carried so a NEW
+// grant shows a real title while it sits queued, before the drain shreds it.
+type Pulled = { id: string; fon: string | null; title: string | null };
 
 // Paginate one filter to exhaustion; returns each opportunity's id (UUID
 // preferred, falling back to the legacy integer id, matching the
@@ -80,10 +81,11 @@ async function searchAllPages(
       opportunity_id?: string;
       legacy_opportunity_id?: number | string;
       opportunity_number?: string | null;
+      opportunity_title?: string | null;
     }> = json.data ?? [];
     for (const o of data) {
       const id = String(o.opportunity_id ?? o.legacy_opportunity_id ?? "");
-      if (id) out.push({ id, fon: o.opportunity_number ?? null });
+      if (id) out.push({ id, fon: o.opportunity_number ?? null, title: o.opportunity_title ?? null });
     }
     if (data.length < PAGE_SIZE) break; // short page = last page
   }
@@ -182,7 +184,7 @@ export async function GET(req: NextRequest) {
     if (g.source_url) existingByUrl.set(g.source_url, g);
   }
 
-  type NewWork = { kind: "new"; id: string; status: "posted" | "forecasted" };
+  type NewWork = { kind: "new"; id: string; status: "posted" | "forecasted"; title: string | null };
   type FlipWork = { kind: "flip"; id: string; existingId: string };
   const news: NewWork[] = [];
   const flips: FlipWork[] = [];
@@ -190,7 +192,7 @@ export async function GET(req: NextRequest) {
     const match =
       (t.fon ? existingByFon.get(fonKey(t.fon)) : undefined) ?? existingByUrl.get(urlFor(t.id));
     if (!match) {
-      news.push({ kind: "new", id: t.id, status: t.status });
+      news.push({ kind: "new", id: t.id, status: t.status, title: t.title });
     } else if (t.status === "posted" && match.grant_status === "Forecasted") {
       // The one transition we act on: a tracked forecast has gone live.
       flips.push({ kind: "flip", id: t.id, existingId: match.id });
@@ -268,6 +270,10 @@ export async function GET(req: NextRequest) {
         // fires. Without this the fresh grant would skip shredding and match empty.
         shred_depth: null,
         grant_status: w.status === "forecasted" ? "Forecasted" : null,
+        // Listing title from the Simpler search, so a queued row shows the real
+        // opportunity title immediately instead of the "Processing…" placeholder.
+        // The drain's shred later overwrites it with the authoritative shred title.
+        title: w.title,
       })
       .select("id")
       .single();
