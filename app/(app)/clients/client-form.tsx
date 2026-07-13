@@ -1,6 +1,8 @@
 import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { MatchingConfig } from "./matching-config";
+import { NarrativeFields } from "@/components/intake/narrative-fields";
+import { narrativeFromClient } from "@/lib/intake/narrative";
 import type { Client } from "@/types/database";
 
 const ORG_TYPES = ["nonprofit", "local_government", "small_business", "higher_education"];
@@ -134,6 +136,18 @@ export function ClientForm({
 
       <section className="space-y-4">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          Narrative
+        </h2>
+        <p className="text-xs text-muted-foreground">
+          Feeds the client profile (enrichment). Mission, programs + who they serve, priority
+          areas, partnerships. Not used for seat/eligibility scoring — that runs on the structured
+          fields below.
+        </p>
+        <NarrativeFields defaultValue={client ? narrativeFromClient(client) : undefined} />
+      </section>
+
+      <section className="space-y-4">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
           Grant-matching profile
         </h2>
         <p className="text-xs text-muted-foreground">
@@ -147,12 +161,6 @@ export function ClientForm({
           <Field label="Project stage" name="project_stage" defaultValue={client?.project_stage} placeholder="e.g. planning, implementation" />
           <Field label="RUCC codes" name="rucc_codes" defaultValue={client?.rucc_codes} />
         </div>
-        <Field
-          label="Primary funding needs"
-          name="primary_funding_needs"
-          defaultValue={client?.primary_funding_needs?.join(", ")}
-          placeholder="Comma-separated, e.g. broadband, workforce, health access"
-        />
         <Field
           label="Service area"
           name="service_area"

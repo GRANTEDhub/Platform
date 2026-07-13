@@ -4,10 +4,10 @@ import { useState } from "react";
 import Script from "next/script";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
-import { ORG_TYPES, PRIORITY_AREAS, REFERRAL_SOURCES, US_STATES } from "@/lib/intake/fields";
+import { ORG_TYPES, REFERRAL_SOURCES, US_STATES } from "@/lib/intake/fields";
+import { NarrativeFields } from "@/components/intake/narrative-fields";
 
 const FIELD = "flex h-11 w-full rounded-md border border-input bg-white px-3 py-2 text-sm";
-const AREA = "flex w-full rounded-md border border-input bg-white px-3 py-2 text-sm leading-relaxed";
 
 // Public intake form. Posts to /api/intake, which creates an inbound lead. Lean
 // by design: only what the org uniquely knows. Honeypot + optional Turnstile
@@ -20,18 +20,12 @@ export function IntakeForm({ turnstileSiteKey }: { turnstileSiteKey: string | nu
   const [orgType, setOrgType] = useState("");
   const [city, setCity] = useState("");
   const [state, setState] = useState("");
-  const [areas, setAreas] = useState<string[]>([]);
-  const [need, setNeed] = useState("");
-  const [additional, setAdditional] = useState("");
   const [referral, setReferral] = useState("");
   const [honeypot, setHoneypot] = useState(""); // hidden; bots fill it
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
-
-  const toggleArea = (a: string) =>
-    setAreas((prev) => (prev.includes(a) ? prev.filter((x) => x !== a) : [...prev, a]));
 
   async function submit() {
     setBusy(true);
@@ -43,6 +37,10 @@ export function IntakeForm({ turnstileSiteKey }: { turnstileSiteKey: string | nu
       if (turnstileSiteKey && !turnstileToken) {
         throw new Error("Please complete the captcha.");
       }
+      // Read the narrative from the shared component's hidden input (same pattern
+      // as the Turnstile token above); the server parses it via parseNarrative.
+      const narrative =
+        document.querySelector<HTMLInputElement>('[name="intake_narrative"]')?.value ?? "";
       const res = await fetch("/api/intake", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -54,9 +52,7 @@ export function IntakeForm({ turnstileSiteKey }: { turnstileSiteKey: string | nu
           orgType,
           city,
           state,
-          priorityAreas: areas,
-          fundingNeed: need,
-          additionalInfo: additional,
+          narrative,
           referralSource: referral,
           website: honeypot,
           turnstileToken,
@@ -151,39 +147,7 @@ export function IntakeForm({ turnstileSiteKey }: { turnstileSiteKey: string | nu
         </Field>
       </div>
 
-      <Field label="What are you looking for?" required>
-        <textarea
-          value={need}
-          onChange={(e) => setNeed(e.target.value)}
-          rows={4}
-          maxLength={2000}
-          className={AREA}
-          placeholder="A sentence or two on what you're hoping to fund — a program, staffing, equipment, a project…"
-          required
-        />
-      </Field>
-
-      <div>
-        <Label>Priority funding areas (optional)</Label>
-        <div className="mt-2 grid gap-2 sm:grid-cols-2">
-          {PRIORITY_AREAS.map((a) => (
-            <label key={a} className="flex items-center gap-2 text-sm text-neutral-700">
-              <input type="checkbox" checked={areas.includes(a)} onChange={() => toggleArea(a)} />
-              {a}
-            </label>
-          ))}
-        </div>
-      </div>
-
-      <Field label="Anything else we should know? (optional)">
-        <textarea
-          value={additional}
-          onChange={(e) => setAdditional(e.target.value)}
-          rows={3}
-          maxLength={2000}
-          className={AREA}
-        />
-      </Field>
+      <NarrativeFields fundingNeedRequired />
 
       <Field label="How did you hear about us? (optional)">
         <select value={referral} onChange={(e) => setReferral(e.target.value)} className={FIELD}>

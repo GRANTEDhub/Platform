@@ -7,6 +7,7 @@ import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { requireAdmin } from "@/lib/auth";
 import { validateConstraint } from "@/lib/grants/constraints";
 import { enrichClient } from "@/lib/clients/enrich";
+import { parseNarrative, narrativeToIntakeData } from "@/lib/intake/narrative";
 import type { HardConstraint } from "@/types/database";
 
 // Parse + validate the hard_constraints hidden field (JSON from the picker).
@@ -42,7 +43,11 @@ function parse(formData: FormData) {
       ?.split(",")
       .map((s) => s.trim())
       .filter(Boolean) ?? null;
-  return {
+  // Narrative (shared component -> hidden `intake_narrative` JSON). Its checked
+  // priority areas are the single source for the primary_funding_needs column
+  // (the matcher reads that column); the full narrative goes to intake_data.
+  const narrative = parseNarrative(get("intake_narrative"));
+  const payload = {
     name: get("name"),
     org_type: get("org_type"),
     status: get("status") || "active",
@@ -61,7 +66,7 @@ function parse(formData: FormData) {
     // Grant-matching profile
     rucc_codes: get("rucc_codes"),
     annual_budget: get("annual_budget"),
-    primary_funding_needs: csv("primary_funding_needs"),
+    primary_funding_needs: narrative.priority_areas.length ? narrative.priority_areas : null,
     project_stage: get("project_stage"),
     match_cost_share_capacity: get("match_cost_share_capacity"),
     federal_grant_history: get("federal_grant_history"),
@@ -72,17 +77,18 @@ function parse(formData: FormData) {
     matching_rules: get("matching_rules"),
     hard_constraints: parseConstraints(get("hard_constraints")),
   };
+  return { payload, narrative };
 }
 
 export async function createClientAction(formData: FormData) {
   await requireAdmin();
   const supabase = createClient();
-  const payload = parse(formData);
+  const { payload, narrative } = parse(formData);
   if (!payload.name) throw new Error("Client name is required");
 
   const { data, error } = await supabase
     .from("clients")
-    .insert(payload)
+    .insert({ ...payload, intake_data: narrativeToIntakeData(narrative) })
     .select("id")
     .single();
 
@@ -101,10 +107,25 @@ export async function createClientAction(formData: FormData) {
 export async function updateClientAction(id: string, formData: FormData) {
   await requireAdmin();
   const supabase = createClient();
-  const payload = parse(formData);
+  const { payload, narrative } = parse(formData);
   if (!payload.name) throw new Error("Client name is required");
 
-  const { error } = await supabase.from("clients").update(payload).eq("id", id);
+  // Merge the narrative into existing intake_data -- never clobber non-narrative
+  // keys (phone, org_type_code, referral_source, submitted_at from a public intake).
+  const { data: existing } = await supabase
+    .from("clients")
+    .select("intake_data")
+    .eq("id", id)
+    .single();
+  const mergedIntake = {
+    ...((existing?.intake_data as Record<string, unknown> | null) ?? {}),
+    ...narrativeToIntakeData(narrative),
+  };
+
+  const { error } = await supabase
+    .from("clients")
+    .update({ ...payload, intake_data: mergedIntake })
+    .eq("id", id);
   if (error) throw new Error(error.message);
 
   // Re-enrich in the background: re-cache USASpending (name / search-name may have

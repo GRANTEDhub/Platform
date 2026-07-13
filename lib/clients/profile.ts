@@ -15,6 +15,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAnthropicClient, MODEL } from "@/lib/anthropic";
 import { formatStoredUSASpending } from "@/lib/grants/usaspending";
+import { formatProgramsForDump } from "@/lib/intake/narrative";
 import type { Client, ClientProfile } from "@/types/database";
 
 // One input shape for everyone (lead / prospect / client) -- the lead/client flag
@@ -76,8 +77,11 @@ export function buildClientProfileInput(client: Client): ClientProfileInput {
     Array.isArray(v) ? v.filter((x) => typeof x === "string" && x.trim()).join(", ") : null;
 
   const dump = [
-    ["Mission / what they're looking for", str(intake.funding_need)],
+    ["Mission", str(intake.mission)],
+    ["Programs", formatProgramsForDump(intake.programs)],
+    ["What they're looking for", str(intake.funding_need)],
     ["Priority areas", list(intake.priority_areas) ?? list(client.primary_funding_needs)],
+    ["Partnerships", str(intake.partnerships)],
     ["Additional context (client's words)", str(intake.additional_info)],
     ["Internal notes", str(client.notes)],
   ]
