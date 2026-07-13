@@ -159,7 +159,7 @@ export function ClientForm({
       <section className="space-y-4">
         <Field label="Next step" name="next_step" defaultValue={client?.next_step} placeholder="What's next for this record?" />
         <div className="space-y-2">
-          <Label htmlFor="notes">Notes</Label>
+          <Label htmlFor="notes">Internal notes</Label>
           <textarea
             id="notes"
             name="notes"
@@ -167,6 +167,10 @@ export function ClientForm({
             rows={4}
             className="flex w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
           />
+          <p className="text-xs text-muted-foreground">
+            Not used for seat/eligibility scoring. Shown internally and distilled into the client
+            profile narrative.
+          </p>
         </div>
       </section>
 
@@ -213,8 +217,6 @@ export function ClientForm({
           Used by the matching engine. Not financial data — visible to contractors.
         </p>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Federal grant history" name="federal_grant_history" defaultValue={client?.federal_grant_history} placeholder="e.g. 2 prior HRSA awards as prime, or Unknown" />
-          <Field label="SAM / UEI status" name="sam_uei_status" defaultValue={client?.sam_uei_status} placeholder="e.g. Active, expires 2026-09" />
           <Field label="Match / cost-share capacity" name="match_cost_share_capacity" defaultValue={client?.match_cost_share_capacity} />
           <Field label="Annual budget" name="annual_budget" defaultValue={client?.annual_budget} />
           <Field label="Project stage" name="project_stage" defaultValue={client?.project_stage} placeholder="e.g. planning, implementation" />
@@ -226,22 +228,13 @@ export function ClientForm({
           defaultValue={client?.service_area ?? undefined}
           placeholder="Type a county or region, press Enter"
         />
-        <div className="space-y-2">
-          <Label htmlFor="known_constraints">Known constraints</Label>
-          <textarea
-            id="known_constraints"
-            name="known_constraints"
-            defaultValue={client?.known_constraints ?? undefined}
-            rows={3}
-            className="flex w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
-          />
-        </div>
       </section>
 
       {/* 7. Matching config -- admin-only, optional. */}
       <MatchingConfig
         defaultConstraints={client?.hard_constraints ?? []}
         defaultMatchingRules={client?.matching_rules}
+        defaultKnownConstraints={client?.known_constraints}
       />
 
       <div className="flex gap-3">

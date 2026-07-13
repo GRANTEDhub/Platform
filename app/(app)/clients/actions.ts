@@ -77,8 +77,10 @@ function parse(formData: FormData) {
     primary_funding_needs: narrative.priority_areas.length ? narrative.priority_areas : null,
     project_stage: get("project_stage"),
     match_cost_share_capacity: get("match_cost_share_capacity"),
-    federal_grant_history: get("federal_grant_history"),
-    sam_uei_status: get("sam_uei_status"),
+    // federal_grant_history + sam_uei_status are no longer hand-entered on the
+    // admin form: USASpending auto-pulls history (enrichClient) and the SAM.gov
+    // bind tool owns registration. Omitted from the payload so a save PRESERVES
+    // any existing stored value rather than nulling it.
     known_constraints: get("known_constraints"),
     // Matching configuration (matcher-consumed, previously editable nowhere).
     service_area: parseChipList(get("service_area")),

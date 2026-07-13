@@ -74,9 +74,11 @@ function toRow(c: HardConstraint): Row {
 export function MatchingConfig({
   defaultConstraints = [],
   defaultMatchingRules,
+  defaultKnownConstraints,
 }: {
   defaultConstraints?: HardConstraint[];
   defaultMatchingRules?: string | null;
+  defaultKnownConstraints?: string | null;
 }) {
   const [rows, setRows] = useState<Row[]>(defaultConstraints.map(toRow));
 
@@ -104,34 +106,18 @@ export function MatchingConfig({
     <section className="space-y-4">
       <div>
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          Matching configuration
+          Matcher controls
         </h2>
         <p className="text-xs text-muted-foreground">
-          Admin-only. Drives how the engine scores this client. Constraints are enforced in code;
-          an invalid entry is rejected on save (never silently ignored).
-        </p>
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="matching_rules">Matching rules (authoritative overrides)</Label>
-        <textarea
-          id="matching_rules"
-          name="matching_rules"
-          defaultValue={defaultMatchingRules ?? undefined}
-          rows={4}
-          className="flex w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
-          placeholder={
-            'Free-text the model applies before general logic. e.g. "Only pursue rural health grants." / "Never recommend as prime on research-heavy programs."'
-          }
-        />
-        <p className="text-xs text-muted-foreground">
-          Read by the model as authoritative guidance. For a hard legal/eligibility gate, add a
-          constraint below instead — those are enforced in code, not left to the model.
+          Admin-only. How the matcher is constrained for this client, strongest first: hard
+          constraints are enforced in code; matching rules are authoritative guidance the model
+          applies; advisory constraints are context the model weighs. An invalid hard constraint is
+          rejected on save (never silently ignored).
         </p>
       </div>
 
       <div className="space-y-3">
-        <Label>Hard constraints (code-enforced)</Label>
+        <Label>1. Hard constraints (code-enforced gates)</Label>
         {rows.length === 0 && (
           <p className="text-xs text-muted-foreground">No hard constraints. Most clients need none.</p>
         )}
@@ -223,6 +209,39 @@ export function MatchingConfig({
       </div>
 
       <input type="hidden" name="hard_constraints" value={serialized} />
+
+      <div className="space-y-2">
+        <Label htmlFor="matching_rules">2. Matching rules (authoritative overrides)</Label>
+        <textarea
+          id="matching_rules"
+          name="matching_rules"
+          defaultValue={defaultMatchingRules ?? undefined}
+          rows={4}
+          className="flex w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
+          placeholder={
+            'Free-text the model applies before general logic. e.g. "Only pursue rural health grants." / "Never recommend as prime on research-heavy programs."'
+          }
+        />
+        <p className="text-xs text-muted-foreground">
+          Read by the model as authoritative guidance. For a hard legal/eligibility gate, use a hard
+          constraint above instead — those are enforced in code, not left to the model.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="known_constraints">3. Advisory constraints / context</Label>
+        <textarea
+          id="known_constraints"
+          name="known_constraints"
+          defaultValue={defaultKnownConstraints ?? undefined}
+          rows={3}
+          className="flex w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
+          placeholder={'e.g. "Limited grant-writing capacity" / "Board wary of federal reporting burden."'}
+        />
+        <p className="text-xs text-muted-foreground">
+          Context the matcher weighs but does not treat as a hard rule.
+        </p>
+      </div>
     </section>
   );
 }
