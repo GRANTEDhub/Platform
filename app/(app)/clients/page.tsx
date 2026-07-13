@@ -27,7 +27,7 @@ export default async function ClientsPage() {
         description="Your active roster and prospects."
         action={
           <Link href="/clients/new">
-            <Button>Add client</Button>
+            <Button>Add Client/Prospect</Button>
           </Link>
         }
       />

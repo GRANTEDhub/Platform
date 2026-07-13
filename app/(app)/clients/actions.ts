@@ -7,7 +7,8 @@ import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { requireAdmin } from "@/lib/auth";
 import { validateConstraint } from "@/lib/grants/constraints";
 import { enrichClient } from "@/lib/clients/enrich";
-import { parseNarrative, narrativeToIntakeData } from "@/lib/intake/narrative";
+import { parseNarrative, narrativeToIntakeData, parseChipList } from "@/lib/intake/narrative";
+import { isUnconvertedLead } from "@/lib/leads/stage";
 import type { HardConstraint } from "@/types/database";
 
 // Parse + validate the hard_constraints hidden field (JSON from the picker).
@@ -38,20 +39,27 @@ function parse(formData: FormData) {
     const v = formData.get(k);
     return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
   };
-  const csv = (k: string) =>
-    get(k)
-      ?.split(",")
-      .map((s) => s.trim())
-      .filter(Boolean) ?? null;
   // Narrative (shared component -> hidden `intake_narrative` JSON). Its checked
   // priority areas are the single source for the primary_funding_needs column
   // (the matcher reads that column); the full narrative goes to intake_data.
   const narrative = parseNarrative(get("intake_narrative"));
+
+  // Kind drives the prospect-safe write, SERVER-AUTHORITATIVELY (the client only
+  // hides the engagement fields). THE invariant: runMatching scores a row iff
+  // pipeline_stage IS NULL or 'converted'. So a prospect MUST get a non-null,
+  // non-'converted' stage ('discovery_pending') or it would be scored as a live
+  // client. A client gets pipeline_stage=null (scored) -- set explicitly so an
+  // edit-time prospect->client flip resets it.
+  const kind: "client" | "prospect" = get("kind") === "prospect" ? "prospect" : "client";
+  const isProspect = kind === "prospect";
+
   const payload = {
     name: get("name"),
     org_type: get("org_type"),
-    status: get("status") || "active",
-    engagement_tier: get("engagement_tier"),
+    status: isProspect ? "lead" : get("status") || "active",
+    engagement_tier: isProspect ? null : get("engagement_tier"),
+    pipeline_stage: isProspect ? "discovery_pending" : null,
+    lead_source: isProspect ? "outbound" : null,
     primary_contact_name: get("primary_contact_name"),
     primary_contact_email: get("primary_contact_email"),
     primary_contact_phone: get("primary_contact_phone"),
@@ -73,11 +81,24 @@ function parse(formData: FormData) {
     sam_uei_status: get("sam_uei_status"),
     known_constraints: get("known_constraints"),
     // Matching configuration (matcher-consumed, previously editable nowhere).
-    service_area: csv("service_area"),
+    service_area: parseChipList(get("service_area")),
     matching_rules: get("matching_rules"),
     hard_constraints: parseConstraints(get("hard_constraints")),
   };
-  return { payload, narrative };
+  return { payload, narrative, kind };
+}
+
+// A duplicate org name trips the clients_name_uniq constraint (Postgres 23505).
+// Surface a friendly message instead of the raw DB error.
+function friendlyClientError(
+  error: { code?: string; message: string } | null,
+  name: string | null,
+): string | null {
+  if (!error) return null;
+  if (error.code === "23505") {
+    return `An organization named "${name ?? ""}" already exists — edit that record instead.`;
+  }
+  return error.message;
 }
 
 export async function createClientAction(formData: FormData) {
@@ -92,7 +113,9 @@ export async function createClientAction(formData: FormData) {
     .select("id")
     .single();
 
-  if (error) throw new Error(error.message);
+  const friendly = friendlyClientError(error, payload.name);
+  if (friendly) throw new Error(friendly);
+  if (!data) throw new Error("Client insert returned no row");
 
   // Enrich in the background (USASpending cache, then the client-profile refine)
   // so both are ready before the first match run -- never blocks the save (must be
@@ -107,26 +130,57 @@ export async function createClientAction(formData: FormData) {
 export async function updateClientAction(id: string, formData: FormData) {
   await requireAdmin();
   const supabase = createClient();
-  const { payload, narrative } = parse(formData);
+  const { payload, narrative, kind } = parse(formData);
   if (!payload.name) throw new Error("Client name is required");
 
   // Merge the narrative into existing intake_data -- never clobber non-narrative
   // keys (phone, org_type_code, referral_source, submitted_at from a public intake).
+  // pipeline_stage rides along for the kind-flip audit (client<->prospect).
   const { data: existing } = await supabase
     .from("clients")
-    .select("intake_data")
+    .select("intake_data, pipeline_stage, lead_source")
     .eq("id", id)
     .single();
   const mergedIntake = {
     ...((existing?.intake_data as Record<string, unknown> | null) ?? {}),
     ...narrativeToIntakeData(narrative),
   };
+  const oldKind = isUnconvertedLead(existing?.pipeline_stage as string | null) ? "prospect" : "client";
+  const flipped = oldKind !== kind;
+
+  // Lifecycle fields (pipeline_stage, lead_source) are rewritten ONLY on a genuine
+  // kind FLIP. A non-flip edit PRESERVES the stored lifecycle -- otherwise every
+  // edit would reset a 'converted' client to null (orphaning converted_at,
+  // dropping it from the Converted card) and resurrect a terminal
+  // 'rejected'/'archived' lead to 'discovery_pending'. On a flip, parse()'s
+  // kind-derived values apply (client->prospect: discovery_pending/outbound;
+  // prospect->client: null/null).
+  const lifecycle = flipped
+    ? { pipeline_stage: payload.pipeline_stage, lead_source: payload.lead_source }
+    : {
+        pipeline_stage: (existing?.pipeline_stage as string | null) ?? null,
+        lead_source: (existing?.lead_source as string | null) ?? null,
+      };
 
   const { error } = await supabase
     .from("clients")
-    .update({ ...payload, intake_data: mergedIntake })
+    .update({ ...payload, ...lifecycle, intake_data: mergedIntake })
     .eq("id", id);
-  if (error) throw new Error(error.message);
+  const friendly = friendlyClientError(error, payload.name);
+  if (friendly) throw new Error(friendly);
+
+  // Audit a client<->prospect flip (a promote/demote outside the normal convert
+  // flow). Service role: mirrors the public-intake pipeline_events write.
+  if (oldKind !== kind) {
+    await createServiceClient()
+      .from("pipeline_events")
+      .insert({
+        event_type: "kind_changed",
+        client_id: id,
+        subject_snapshot: { name: payload.name },
+        metadata: { from: oldKind, to: kind },
+      });
+  }
 
   // Re-enrich in the background: re-cache USASpending (name / search-name may have
   // changed) then re-refine the client profile (inputs changed on edit).
