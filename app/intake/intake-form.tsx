@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { ORG_TYPES, REFERRAL_SOURCES, US_STATES } from "@/lib/intake/fields";
 import { NarrativeFields } from "@/components/intake/narrative-fields";
+import { ChipInput } from "@/components/ui/chip-input";
 
 const FIELD = "flex h-11 w-full rounded-md border border-input bg-white px-3 py-2 text-sm";
 
@@ -37,10 +38,12 @@ export function IntakeForm({ turnstileSiteKey }: { turnstileSiteKey: string | nu
       if (turnstileSiteKey && !turnstileToken) {
         throw new Error("Please complete the captcha.");
       }
-      // Read the narrative from the shared component's hidden input (same pattern
-      // as the Turnstile token above); the server parses it via parseNarrative.
+      // Read the narrative + service-area chips from their hidden inputs (same
+      // pattern as the Turnstile token above); the server parses them.
       const narrative =
         document.querySelector<HTMLInputElement>('[name="intake_narrative"]')?.value ?? "";
+      const serviceArea =
+        document.querySelector<HTMLInputElement>('[name="service_area"]')?.value ?? "";
       const res = await fetch("/api/intake", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -53,6 +56,7 @@ export function IntakeForm({ turnstileSiteKey }: { turnstileSiteKey: string | nu
           city,
           state,
           narrative,
+          serviceArea,
           referralSource: referral,
           website: honeypot,
           turnstileToken,
@@ -146,6 +150,12 @@ export function IntakeForm({ turnstileSiteKey }: { turnstileSiteKey: string | nu
           </select>
         </Field>
       </div>
+
+      <ChipInput
+        name="service_area"
+        label="Service area (counties or regions you serve)"
+        placeholder="Type a county or region, press Enter"
+      />
 
       <NarrativeFields fundingNeedRequired />
 

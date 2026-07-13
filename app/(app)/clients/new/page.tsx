@@ -8,9 +8,9 @@ export default async function NewClientPage() {
 
   return (
     <div>
-      <PageHeader title="Add client" description="Create a new client record." />
+      <PageHeader title="Add Client/Prospect" description="Create a new client or prospect record." />
       <div className="p-8">
-        <ClientForm action={createClientAction} submitLabel="Create client" />
+        <ClientForm action={createClientAction} submitLabel="Create record" />
       </div>
     </div>
   );

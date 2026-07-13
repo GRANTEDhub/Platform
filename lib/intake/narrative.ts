@@ -123,6 +123,26 @@ export function formatProgramsForDump(programs: unknown): string | null {
   return lines.length ? lines.join("\n") : null;
 }
 
+// Parse a ChipInput hidden field (JSON array of strings) into a clean string[]
+// or null. Server-side; used by the intake route and the client server actions
+// for service_area. Lenient: bad JSON / non-array -> null (never throws).
+export function parseChipList(input: unknown): string[] | null {
+  let raw: unknown = input;
+  if (typeof input === "string") {
+    if (!input.trim()) return null;
+    try {
+      raw = JSON.parse(input);
+    } catch {
+      return null;
+    }
+  }
+  if (!Array.isArray(raw)) return null;
+  const arr = raw
+    .filter((x): x is string => typeof x === "string" && x.trim() !== "")
+    .map((s) => s.trim().slice(0, 120));
+  return arr.length ? arr : null;
+}
+
 // Build the editor's default value from a stored client row (admin edit prefill).
 // priority_areas falls back to the primary_funding_needs column for clients
 // created before intake_data existed (all current admin-created clients); values

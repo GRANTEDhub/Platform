@@ -5,7 +5,7 @@ import { isDeliverableEmail } from "@/lib/email/send";
 import { enrichClient } from "@/lib/clients/enrich";
 import { verifyTurnstile, rateLimited } from "@/lib/intake/guard";
 import { ORG_TYPES, ORG_TYPE_LABELS, REFERRAL_SOURCES, US_STATES } from "@/lib/intake/fields";
-import { parseNarrative, narrativeToIntakeData } from "@/lib/intake/narrative";
+import { parseNarrative, narrativeToIntakeData, parseChipList } from "@/lib/intake/narrative";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -26,6 +26,7 @@ type Body = {
   city?: string;
   state?: string;
   narrative?: unknown; // JSON string or object -- parsed via parseNarrative
+  serviceArea?: unknown; // JSON string of chips -- parsed via parseChipList
   referralSource?: string;
   website?: string; // honeypot -- must stay empty
   turnstileToken?: string;
@@ -114,6 +115,7 @@ export async function POST(req: NextRequest) {
       // (factor 6, mission alignment). They're also kept in intake_data for
       // provenance. Null when none picked, so the field reads "blank" not "[]".
       primary_funding_needs: priorityAreas.length ? priorityAreas : null,
+      service_area: parseChipList(body.serviceArea),
       status: "lead", // non-active -> matcher never scores it (mirrors isUnconvertedLead)
       pipeline_stage: "discovery_pending", // entry stage; intake is a flag, not a gate
       lead_source: "inbound",
