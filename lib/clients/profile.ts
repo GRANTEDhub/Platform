@@ -293,3 +293,55 @@ export async function refreshClientProfileById(
     return false; // leave client_profile as-is (null-safe)
   }
 }
+
+// Enrichment-facing rendering of a ClientProfile (Stage 4 redesign). This feeds
+// the SEPARATE enrichment call (enrichMatchWithProfile) that runs AFTER the seat
+// and score are fixed -- it grounds the outward narrative (why-this-org, concept,
+// draft email) in the client's actual programs/mission/populations. It is NOT the
+// occupancy path: the calibration proved a distilled profile pushes the scorer
+// into strict itemized seat-matching that buries integrative-fit clients, so the
+// profile no longer touches seat selection. Here it can only help -- richer client
+// context for the narrative, with no channel to change the seat.
+// Returns "" for a null/undefined profile (caller falls back to Phase-1 narrative).
+export function formatClientProfileForEnrichment(profile: ClientProfile | null | undefined): string {
+  if (!profile) return "";
+  const lines: string[] = [];
+  const joined = (a: string[] | undefined) => (a && a.length ? a.join(", ") : null);
+  const push = (label: string, val: string | null | undefined) => {
+    if (val && val.trim()) lines.push(`${label}: ${val.trim()}`);
+  };
+
+  push("Summary", profile.summary);
+  push("Mission", profile.mission);
+  push("Core capabilities", joined(profile.core_capabilities));
+
+  if (Array.isArray(profile.program_areas) && profile.program_areas.length) {
+    lines.push("Programs:");
+    for (const p of profile.program_areas) {
+      const demo = joined(p.target_demographics);
+      const desc = p.description?.trim() ? ` -- ${p.description.trim().slice(0, 160)}` : "";
+      lines.push(`  - [${p.status}] ${p.name}${demo ? ` (serves: ${demo})` : ""}${desc}`);
+    }
+  }
+  push("Populations served", joined(profile.populations_served));
+
+  const geo = profile.geographic_scope;
+  if (geo) push("Geographic footprint", geo.footprint);
+
+  // prime_capacity.rationale / supporting_roles are fine here (they only ground
+  // narrative language about what the org does -- they cannot move the seat,
+  // which is already fixed before this runs).
+  if (profile.prime_capacity?.rationale?.trim()) {
+    push("Capacity note", profile.prime_capacity.rationale);
+  }
+  push("Supporting roles it can genuinely fill", joined(profile.supporting_roles));
+  push("Existing partnerships", joined(profile.partnerships));
+  push("What they want to fund", joined(profile.funding_priorities));
+
+  return (
+    `\nCLIENT PROFILE (distilled context to GROUND the outreach narrative -- the seat, ` +
+    `score, and eligibility are ALREADY decided and are NOT yours to revisit; use this only ` +
+    `to make why-this-org, the concept, and the draft email specific and accurate to THIS client):\n` +
+    `${lines.join("\n")}`
+  );
+}

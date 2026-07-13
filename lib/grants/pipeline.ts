@@ -8,6 +8,7 @@ import {
   fetchGrantTextFromUrl,
   extractGrantData,
   matchGrantToClient,
+  enrichMatchWithProfile,
   constructIdealApplicantProfile,
   jsPreFilter,
   looksInternational,
@@ -364,7 +365,12 @@ export async function runMatching(grantId: string, db: DB) {
         .maybeSingle();
 
       if (qualifies) {
-        const cardFields = cardFieldsFromMatch(match);
+        // Profile-grounded narrative enrichment -- a SEPARATE call that runs only
+        // for surfacing matches, cannot change the seat/score (see
+        // enrichMatchWithProfile), and falls back to the Phase-1 narrative on any
+        // failure. Occupancy above is already fixed and profile-free.
+        const enriched = await enrichMatchWithProfile(grantRow, client, match);
+        const cardFields = cardFieldsFromMatch(enriched);
         if (!existingCard) {
           await db.from("review_cards").insert({
             grant_id: grantId,
