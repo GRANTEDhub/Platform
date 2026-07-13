@@ -332,10 +332,14 @@ export function formatClientProfileForMatcher(profile: ClientProfile | null | un
   const pc = profile.prime_capacity;
   if (pc) {
     const cond = pc.conditional_on?.trim() ? `; conditional on: ${pc.conditional_on.trim()}` : "";
-    push(
-      "Prime capacity",
-      `${pc.can_prime ? "CAN prime" : "cannot prime as lead"} -- ${pc.rationale?.trim() ?? ""}${cond}`,
-    );
+    // can_prime is a conservative, default-FALSE capacity read (see the builder:
+    // "a regional org rarely primes a statewide program"). Render false as a
+    // NARROWER-scope signal, NOT a categorical bar -- the absolute phrasing was
+    // what tipped a genuine conditional-prime seat all the way to NONE/0.
+    const primeSignal = pc.can_prime
+      ? "can anchor/prime"
+      : "not a natural sole prime (may still conditionally prime at 2, or hold a supporting seat)";
+    push("Prime capacity", `${primeSignal} -- ${pc.rationale?.trim() ?? ""}${cond}`);
   }
   push("Supporting roles it can genuinely fill", joined(profile.supporting_roles));
   push("Existing partnerships", joined(profile.partnerships));
@@ -349,6 +353,11 @@ export function formatClientProfileForMatcher(profile: ClientProfile | null | un
     `pick the RIGHT seat from the menu; it does NOT change the seat rules, the menu, or the ceilings):\n` +
     `${lines.join("\n")}\n` +
     `prime_capacity / supporting_roles describe GENERAL capacity, not a seat assignment -- you still ` +
-    `choose seat_ref for THIS grant, and can_prime never lifts a ceiling.`
+    `choose seat_ref for THIS grant. can_prime never LIFTS a ceiling (a can_prime:true org is not ` +
+    `anointed into a prime seat it does not occupy). Symmetrically, can_prime:false or a regional/local ` +
+    `scale never by itself FORCES a NONE: an org that genuinely occupies the prime seat but at a narrower ` +
+    `scale than the grant wants is a CONDITIONAL prime -- seat_ref = that prime seat, score 2, flag the ` +
+    `scale gap; or map it to a genuine supporting seat at 2. NONE/0 stays correct only when the org fills ` +
+    `NO listed seat at all -- prime or supporting.`
   );
 }
