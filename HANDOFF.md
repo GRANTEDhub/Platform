@@ -1,7 +1,8 @@
 # Handoff — prospect one-time-match ("Tara's tool") — 2026-07-13
 
 Cold-start doc for a fresh Code thread. Read `CLAUDE.md` first; this layers the
-session context on top. The immediate blocker is the **budget-stop overrun** (§4).
+session context on top. BUG #1 (budget-stop overrun, §4) is **CLOSED**; the remaining
+open item is the navigation gap (§4b).
 
 ---
 
@@ -12,13 +13,15 @@ session context on top. The immediate blocker is the **budget-stop overrun** (§
   dashboard with an in-progress state until done. NOT recurring daily matching.
 - Built as an **enqueue/drain queue** mirroring the grant matching queue. Enqueue +
   resume + self-heal all **work**. UI progress + partial-safety **work**.
-- **One open blocker:** a single drain invocation does not stop at its 210s budget —
-  it still runs to the Vercel 300s kill. Resume papers over it (each call makes real
-  progress and it self-heals via cron), so it's a robustness bug, not data loss —
-  but it must be fixed before Tara/prod use. Two prior fix attempts did not resolve
-  it; see §4 for the strongest leads (start by confirming the deployed commit).
-- Branch `claude/alert-pdf-cost-share-di6c1l` @ `0a5110d`, **no PR opened**, 6 commits
-  on top of `main` (`fb89a53`). Migration **0045 is applied to prod**.
+- **BUG #1 (budget-stop overrun) — CLOSED 2026-07-13.** The `0a5110d` race fix works:
+  verified on the `7c2b556` deploy, the drain returns cleanly AT its 210s budget
+  (HTTP 200, `budgetExhausted=true`, `[client-match-timing] peakInFlight=6/6`), and a
+  second drain completed the pool (`completedClients=1`). Root cause of the earlier
+  "300s timeout + no timing log": every prior test ran on a STALE pre-fix preview
+  (`ccc4053`/`9e89458`) — the fix had never actually executed. See §4.
+- **Remaining open item:** the navigation gap (§4b) — being addressed on the resume branch.
+- Work rebased onto branch `claude/alert-pdf-cost-share-resume-8ais55` (the di6c1l commits
+  through `7c2b556`), **no PR opened**. Migration **0045 is applied to prod**.
 
 ---
 
@@ -112,7 +115,16 @@ On branch `claude/alert-pdf-cost-share-di6c1l` (NOT merged, no PR):
 
 ---
 
-## 4. OPEN BUG #1 — drain doesn't stop at budget (the blocker)
+## 4. ~~OPEN~~ CLOSED BUG #1 — drain doesn't stop at budget
+
+**RESOLVED 2026-07-13.** Lead #1 was correct: the fix was never exercised. Runtime logs
+showed every failing drain ran on a stale pre-fix deploy (`ccc4053`/`9e89458`, which
+predate the race + the `[client-match-timing]` log); the `0a5110d` deploy took zero drain
+requests. Re-tested on `7c2b556` (contains `0a5110d`): clean return at the budget —
+`wallMs=210050` vs `budgetMs=210000`, HTTP 200, `budgetExhausted=true`, `peakInFlight=6/6`
+(genuinely parallel; low throughput is heavy per-pair LLM cost, not 429 backoff — zero
+429s in any log). A second drain landed `completedClients=1`, `queueEmpty=true`. The
+historical diagnosis below is kept for context.
 
 **Symptom (preview):** reset a prospect (`29noc8y4`) to `initial_match_status='queued'`,
 hit `/api/clients/drain-match-queue` → **`Vercel Runtime Timeout Error: Task timed out
