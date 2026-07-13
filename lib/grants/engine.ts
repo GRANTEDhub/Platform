@@ -570,7 +570,12 @@ export async function constructIdealApplicantProfile(
   const anthropic = getAnthropicClient();
   const response = await anthropic.messages.create({
     model: MODEL,
-    max_tokens: 3000,
+    // Function-first seat labels (each carrying a REQUIRES/EXAMPLE basis) are
+    // longer per seat, and a full consortium can run up to 3 archetypes x a dozen
+    // seats. 3000 truncated those; 8000 matches the matcher's ceiling on the same
+    // model and leaves comfortable headroom. Truncation still throws below rather
+    // than writing a partial profile.
+    max_tokens: 8000,
     temperature: 0,
     system: IDEAL_PROFILE_SYSTEM_PROMPT,
     tools: [
