@@ -539,6 +539,26 @@ Produce:
     IHE on a cross-sector program) still has a seat -- the sector-technical seat --
     so list it. Be specific; do not collapse distinct seats into one generic
     "partner" line.
+    LABEL EVERY SEAT FUNCTION-FIRST. A seat is defined by the FUNCTION it performs
+    in the consortium, NOT by the kind of organization that usually performs it.
+    Lead with the function, then mark the entity as REQUIRED or as an EXAMPLE:
+      * If a specific entity or designation is a HARD requirement -- a legal or
+        statutory designation, a federal program authority, or an eligibility rule
+        that the NOFO ITSELF states for that role (e.g. a WIOA-designated workforce
+        board, an SBA-designated SBDC, a land-grant Cooperative Extension) -- write
+        it as: "<function> -- REQUIRES <entity/designation> (basis: <the statute,
+        designation, or NOFO eligibility rule that ties this function to this
+        entity>)". Naming the basis is MANDATORY; if you cannot cite a real
+        statutory or eligibility basis, it is NOT a requirement.
+      * Otherwise the entity is only a representative EXAMPLE of who typically
+        performs the function, and OTHER entity types can perform it too (e.g. a
+        chamber of commerce as one example of private-sector engagement). Write it
+        as: "<function> -- e.g. <entity> (example only; any org that genuinely
+        performs this function occupies this seat, regardless of entity type)".
+    Do NOT downgrade a genuine statutory designation to an example, and do NOT
+    invent a requirement for a seat that is really function-defined. When the NOFO
+    is silent on whether an entity is required, default to EXAMPLE -- the seat is
+    the function.
 - eligibility_note: brief note on the stated eligibility, explicitly secondary.
 
 Be concrete and grant-specific. Do not use em dashes. Return via the submit_profile tool.`;
@@ -549,7 +569,12 @@ export async function constructIdealApplicantProfile(
   const anthropic = getAnthropicClient();
   const response = await anthropic.messages.create({
     model: MODEL,
-    max_tokens: 3000,
+    // Function-first seat labels (each carrying a REQUIRES/EXAMPLE basis) are
+    // longer per seat, and a full consortium can run up to 3 archetypes x a dozen
+    // seats. 3000 truncated those; 8000 matches the matcher's ceiling on the same
+    // model and leaves comfortable headroom. Truncation still throws below rather
+    // than writing a partial profile.
+    max_tokens: 8000,
     temperature: 0,
     system: IDEAL_PROFILE_SYSTEM_PROMPT,
     tools: [
