@@ -213,8 +213,6 @@ export function ClientForm({
           Used by the matching engine. Not financial data — visible to contractors.
         </p>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Federal grant history" name="federal_grant_history" defaultValue={client?.federal_grant_history} placeholder="e.g. 2 prior HRSA awards as prime, or Unknown" />
-          <Field label="SAM / UEI status" name="sam_uei_status" defaultValue={client?.sam_uei_status} placeholder="e.g. Active, expires 2026-09" />
           <Field label="Match / cost-share capacity" name="match_cost_share_capacity" defaultValue={client?.match_cost_share_capacity} />
           <Field label="Annual budget" name="annual_budget" defaultValue={client?.annual_budget} />
           <Field label="Project stage" name="project_stage" defaultValue={client?.project_stage} placeholder="e.g. planning, implementation" />
