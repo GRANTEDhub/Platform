@@ -71,13 +71,27 @@ export function ClientForm({
   const [kind, setKind] = useState<"client" | "prospect">(initialKind);
   const isClient = kind === "client";
   const [formError, setFormError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(formData: FormData) {
+    // Guard the double-submit: one intent must never fire two POSTs. Without this,
+    // a successful create (which redirects) gave no pending feedback, so the user
+    // thought it failed and resubmitted -- the second POST then collided with the
+    // row the first one created, surfacing as a phantom duplicate-name error. The
+    // disabled button covers the hydrated case; this early return guards re-entry.
+    if (submitting) return;
+    setSubmitting(true);
     setFormError(null);
     const result = await action(formData);
-    // Only a failure resolves to a value; a success redirects and unmounts before
-    // this runs, so the form data the user typed is preserved on error.
-    if (result?.error) setFormError(result.error);
+    // A successful create redirects to the new record's dashboard and unmounts this
+    // form, so we reach here ONLY on an expected validation failure: show it and
+    // RE-ENABLE so the user can correct and retry. On success the button stays
+    // disabled through the navigation -- no window for a phantom second submit, and
+    // the typed input is preserved on error.
+    if (result?.error) {
+      setFormError(result.error);
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -261,7 +275,9 @@ export function ClientForm({
       )}
 
       <div className="flex gap-3">
-        <Button type="submit">{submitLabel}</Button>
+        <Button type="submit" disabled={submitting} aria-busy={submitting}>
+          {submitting ? "Saving…" : submitLabel}
+        </Button>
       </div>
     </form>
   );
