@@ -326,20 +326,25 @@ export function formatClientProfileForMatcher(profile: ClientProfile | null | un
   }
   push("Populations served", joined(profile.populations_served));
 
+  // Footprint prose only -- NOT the categorical scale tag. The distilled
+  // "(regional)" label collides head-on with a statewide-framed seat and was a
+  // sole driver of the NONE flip; the raw Location / Service Area lines already
+  // convey reach without triggering that gate (profileOff, which keeps those raw
+  // lines but has no distilled scale label, is stable at 2).
   const geo = profile.geographic_scope;
-  if (geo) push("Geographic scope", `${geo.footprint?.trim() || "unspecified"} (${geo.scale})`);
+  if (geo) push("Geographic footprint", geo.footprint);
 
+  // prime_capacity is emitted ASYMMETRICALLY. can_prime defaults to FALSE (see the
+  // builder), so a false value is a low-information default that only deflates --
+  // omit it entirely; the rubric already routes a non-prime org to its real seat.
+  // Emit only the INFORMATIVE true case, carrying its anti-inflation ceiling-cap.
   const pc = profile.prime_capacity;
-  if (pc) {
+  if (pc?.can_prime) {
     const cond = pc.conditional_on?.trim() ? `; conditional on: ${pc.conditional_on.trim()}` : "";
-    // can_prime is a conservative, default-FALSE capacity read (see the builder:
-    // "a regional org rarely primes a statewide program"). Render false as a
-    // NARROWER-scope signal, NOT a categorical bar -- the absolute phrasing was
-    // what tipped a genuine conditional-prime seat all the way to NONE/0.
-    const primeSignal = pc.can_prime
-      ? "can anchor/prime"
-      : "not a natural sole prime (may still conditionally prime at 2, or hold a supporting seat)";
-    push("Prime capacity", `${primeSignal} -- ${pc.rationale?.trim() ?? ""}${cond}`);
+    push(
+      "Prime capacity",
+      `has general prime capacity (this never LIFTS a ceiling -- must still occupy THIS grant's prime seat to score as one) -- ${pc.rationale?.trim() ?? ""}${cond}`,
+    );
   }
   push("Supporting roles it can genuinely fill", joined(profile.supporting_roles));
   push("Existing partnerships", joined(profile.partnerships));
@@ -352,16 +357,8 @@ export function formatClientProfileForMatcher(profile: ClientProfile | null | un
     `\nCLIENT PROFILE (distilled from this client's intake -- supplementary capacity signal to help you ` +
     `pick the RIGHT seat from the menu; it does NOT change the seat rules, the menu, or the ceilings):\n` +
     `${lines.join("\n")}\n` +
-    `prime_capacity / supporting_roles describe GENERAL capacity, not a seat assignment -- you still ` +
-    `choose seat_ref for THIS grant. can_prime never LIFTS a ceiling (a can_prime:true org is not ` +
-    `anointed into a prime seat it does not occupy). Symmetrically, can_prime:false or a regional/local ` +
-    `scale never justifies NONE. For such an org, work the SUPPORTING seats first: when a role on the ` +
-    `"Supporting roles it can genuinely fill" line matches a listed supporting seat (S{i}_{j}), that match ` +
-    `IS occupancy of that seat -- select it, score 2. That is the DEFAULT landing for a regional/` +
-    `can_prime:false org that supports the funded work -- NOT NONE. Only if it also truly occupies the ` +
-    `prime role at narrower scale is it instead a conditional prime at 2. Treat "not the statewide prime" ` +
-    `or "no statewide-scale seat" as a SCALE-GAP to flag at 2, never as grounds to zero an org that fills ` +
-    `a listed supporting seat. NONE/0 remains correct ONLY when the org fills NO listed seat at all -- ` +
-    `neither a prime seat nor any listed supporting seat (topical/mission adjacency only).`
+    `This describes GENERAL capacity, not a seat assignment -- you still choose seat_ref for THIS grant ` +
+    `from the menu, and prime capacity never LIFTS a ceiling (general capacity to prime does not anoint an ` +
+    `org into a prime seat it does not occupy on this grant).`
   );
 }
