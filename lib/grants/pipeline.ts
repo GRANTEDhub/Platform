@@ -253,7 +253,7 @@ async function recordAttempt(db: DB, row: AttemptRow) {
  *
  * Extracted verbatim from runMatching's per-client loop so the grant-centric
  * batch (one grant -> the roster) and the client-centric one-time match
- * (runInitialMatchForClient, one client -> the grant pool) score a pair through a
+ * (drainClientMatchQueue, one client -> the grant pool) score a pair through a
  * PROVABLY identical path -- the DRY-safe way to add the second orientation
  * without forking the scorer. Callers own the decided-card SPEND skip (runMatching
  * pre-skips decided clients to save the LLM call); this function is still safe to

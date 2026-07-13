@@ -7,7 +7,6 @@ import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { requireAdmin } from "@/lib/auth";
 import { validateConstraint } from "@/lib/grants/constraints";
 import { enrichClient } from "@/lib/clients/enrich";
-import { runInitialMatchForClient } from "@/lib/grants/initial-match";
 import { parseNarrative, narrativeToIntakeData, parseChipList } from "@/lib/intake/narrative";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import type { HardConstraint } from "@/types/database";
@@ -129,18 +128,20 @@ export async function createClientAction(formData: FormData): Promise<ClientActi
   const { payload, narrative, kind } = parsed;
   if (!payload.name) return { error: "Client name is required." };
 
-  // A new prospect fires a ONE-TIME match against the current grant pool so its
-  // dashboard fills without waiting on the daily batch. Stamp 'running' at insert
-  // time -- it drives the dashboard "matching in progress" banner AND guards the
-  // run from double-firing. Active clients get no one-time run (the daily batch
-  // covers them), so their status stays null.
+  // A new prospect is ENQUEUED for a one-time match against the current grant
+  // pool (initial_match_status='queued'); the client-match drain
+  // (lib/clients/match-queue.ts, cron + admin route) picks it up and scores it
+  // across as many invocations as the pool needs, so a 45-grant run never has to
+  // fit in one 300s function. 'queued' drives the dashboard "matching in progress"
+  // banner immediately. Active clients get no one-time run (the daily batch covers
+  // them), so their status stays null.
   const isProspect = kind === "prospect";
   const { data, error } = await supabase
     .from("clients")
     .insert({
       ...payload,
       intake_data: narrativeToIntakeData(narrative),
-      ...(isProspect ? { initial_match_status: "running" } : {}),
+      ...(isProspect ? { initial_match_status: "queued" } : {}),
     })
     .select("id")
     .single();
@@ -151,23 +152,17 @@ export async function createClientAction(formData: FormData): Promise<ClientActi
   if (friendly) return { error: friendly };
   if (!data) return { error: "Could not create the record — please try again." };
 
-  // Background work, kicked before redirect throws (never blocks the save). Enrich
-  // first (USASpending cache, then the client-profile refine) so both are ready
-  // before scoring; for a prospect, chain the one-time match after enrich so it
-  // reads the enriched org. A failed refine leaves client_profile null but the
-  // match still runs. runInitialMatchForClient stamps 'complete'/'error' itself.
+  // Enrich in the background (USASpending cache, then the client-profile refine),
+  // kicked before redirect throws so it never blocks the save. Matching does NOT
+  // run here -- it is drained separately -- so this is bounded work. Occupancy is
+  // profile-free, so if the drain scores a pair before this finishes the card just
+  // falls back to the Phase-1 narrative; a failed refine leaves client_profile null.
   const bg = createServiceClient();
   const clientId = data.id;
-  waitUntil(
-    isProspect
-      ? (async () => {
-          await enrichClient(bg, clientId);
-          await runInitialMatchForClient(bg, clientId);
-        })()
-      : enrichClient(bg, clientId),
-  );
+  waitUntil(enrichClient(bg, clientId));
 
   revalidatePath("/clients");
+  revalidatePath(`/clients/${clientId}`);
   revalidatePath("/dashboard");
   redirect(`/clients/${clientId}`);
 }

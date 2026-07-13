@@ -108,6 +108,27 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   const bills = (invoices ?? []) as Invoice[];
   const cards = (cardRows ?? []) as ClientCardRow[];
 
+  // One-time prospect match (initial_match_status). While queued/running the pool
+  // is still being scored, so every card-derived surface below MUST read as
+  // in-progress -- partial cards presented as a finished result is the exact
+  // failure mode to prevent. "scored X of Y" is derived: distinct grants attempted
+  // for this client (match_attempts) over the scorable pool. Only queried while a
+  // match is actually in flight (skipped for real clients / completed prospects).
+  const matchStatus = client.initial_match_status;
+  const matchInProgress = matchStatus === "queued" || matchStatus === "running";
+  let matchProgress: { scored: number; total: number } | null = null;
+  if (matchInProgress) {
+    const [{ data: attemptRows }, { count: poolCount }] = await Promise.all([
+      supabase.from("match_attempts").select("grant_id").eq("client_id", params.id),
+      supabase
+        .from("grants")
+        .select("id", { count: "exact", head: true })
+        .not("ideal_applicant_profile", "is", null),
+    ]);
+    const scored = new Set((attemptRows ?? []).map((r) => (r as { grant_id: string }).grant_id)).size;
+    matchProgress = { scored, total: poolCount ?? 0 };
+  }
+
   // Alerted grants = approved client cards; the grant-tracking list + chart both
   // read from the same fetch.
   const tracked: TrackedGrant[] = cards
@@ -162,20 +183,24 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         <StatCard icon={CalendarClock} value={overview?.next_deadline ? format(parseISO(overview.next_deadline), "MMM d") : "—"} label="next deadline" />
       </div>
 
-      {/* One-time prospect match progress (migration 0045). While 'running', poll
-          so the newly-scored cards appear without a manual refresh; the banner and
-          AutoRefresh both drop out the moment status flips to 'complete'. 'error'
-          surfaces so a stalled run is visible rather than looking like "no matches". */}
-      {client.initial_match_status === "running" && (
+      {/* One-time prospect match progress. Shown for 'queued' AND 'running' with a
+          live "scored X of Y" count; AutoRefresh polls so the count advances and
+          the whole in-progress framing drops the moment status flips to 'complete'.
+          'error' surfaces a hard failure rather than looking like "no matches". */}
+      {matchInProgress && (
         <div className="px-8 pt-6">
-          <div className="flex items-center gap-2 rounded-xl bg-brand-navy/[0.04] px-4 py-3 text-sm font-medium text-brand-navy ring-1 ring-brand-navy/10">
-            <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-            Initial grant matching in progress — this may take a few minutes. Results appear automatically.
+          <div className="flex items-center gap-2 rounded-xl bg-brand-orange/10 px-4 py-3 text-sm font-medium text-brand-navy ring-1 ring-brand-orange/30">
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-brand-orange" />
+            <span>
+              Initial grant matching in progress
+              {matchProgress ? ` — scored ${matchProgress.scored} of ${matchProgress.total} grants` : ""}. Results
+              appear here when it finishes.
+            </span>
           </div>
           <AutoRefresh enabled />
         </div>
       )}
-      {client.initial_match_status === "error" && (
+      {matchStatus === "error" && (
         <div className="px-8 pt-6">
           <div className="flex items-center gap-2 rounded-xl bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900 ring-1 ring-amber-200">
             <AlertTriangle className="h-4 w-4 shrink-0" />
@@ -204,13 +229,27 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
           <Card className={CARD_MAIN}>
             <CardHeader><CardTitle>Grant activity</CardTitle></CardHeader>
             <CardContent>
-              <ClientMatchChart
-                data={[
-                  { label: "In review", count: counts.pending, color: BRAND.slate },
-                  { label: "Alerted", count: counts.approved, color: BRAND.orange },
-                  { label: "Passed", count: counts.passed, color: BRAND.taupe },
-                ]}
-              />
+              {matchInProgress ? (
+                // Suppress the counts chart while matching is still running -- a
+                // partial "In review: N" would read as a finished tally. The full
+                // chart returns once initial_match_status flips to 'complete'.
+                <div className="flex items-center gap-3 py-6 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-brand-orange" />
+                  <span>
+                    Matching this prospect against the grant pool
+                    {matchProgress ? ` (${matchProgress.scored} of ${matchProgress.total} scored)` : ""}. The full
+                    result appears once matching completes — partial matches aren&apos;t shown as a finished list.
+                  </span>
+                </div>
+              ) : (
+                <ClientMatchChart
+                  data={[
+                    { label: "In review", count: counts.pending, color: BRAND.slate },
+                    { label: "Alerted", count: counts.approved, color: BRAND.orange },
+                    { label: "Passed", count: counts.passed, color: BRAND.taupe },
+                  ]}
+                />
+              )}
             </CardContent>
           </Card>
 

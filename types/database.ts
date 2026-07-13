@@ -119,10 +119,11 @@ export interface Client {
   // fields). Null until refined.
   client_profile: ClientProfile | null;
   // One-time client-centric match progress (migration 0045). Set only for a
-  // prospect added via the client form, which fires runInitialMatchForClient once
-  // against the current grant pool: null = never run, 'running' = in flight (the
-  // dashboard shows a progress banner + polls), 'complete', 'error'. Doubles as
-  // the double-fire guard. Active clients stay null (the daily batch covers them).
+  // prospect added via the client form, which ENQUEUES a one-time match against the
+  // current grant pool (drained by lib/clients/match-queue.ts): null = never run,
+  // 'queued' = awaiting the drain, 'running' = being scored across invocations (the
+  // dashboard shows a progress banner + polls), 'complete', 'error'. Active clients
+  // stay null (the daily batch covers them).
   initial_match_status: string | null;
   needs_review: boolean;
   archived_reason: string | null;

@@ -3,13 +3,12 @@ import { PageHeader } from "@/components/layout/page-header";
 import { ClientForm } from "../client-form";
 import { createClientAction } from "../actions";
 
-// createClientAction fires a one-time prospect match in a background waitUntil.
-// The waitUntil inherits this page's function budget, so raise it to the 300s cap
-// (default 10-15s) to give the pool-scoring run room. HARD PREVIEW GATE: confirm
-// on a real preview deploy that this page-level maxDuration actually extends the
-// server-action's waitUntil to 300s; if it does not hold, the run must move to a
-// dedicated route/fn with its own maxDuration.
-export const maxDuration = 300;
+// createClientAction runs enrichClient in a background waitUntil (the one-time
+// prospect match is no longer run here -- it is drained by /api/cron/client-match).
+// The waitUntil inherits this page's function budget, so give enrichClient (a
+// USASpending cache + one profile-refine call) modest headroom above the ~15s
+// default; the heavy pool-scoring work lives in the drain, not here.
+export const maxDuration = 60;
 
 export default async function NewClientPage() {
   await requireAdmin();
