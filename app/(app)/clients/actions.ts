@@ -104,11 +104,30 @@ function friendlyClientError(
   return error.message;
 }
 
-export async function createClientAction(formData: FormData) {
+// Expected validation failures return this to the form (rendered inline by
+// ClientForm) instead of throwing -- a thrown error in a server action renders as
+// a 500 "Application error" page, not a form error. Success paths call redirect()
+// (return type never), so a normal completion never returns a value. NOT exported:
+// a "use server" module may only export async functions, so ClientForm mirrors
+// this shape in its own prop type.
+type ClientActionResult = { error: string } | undefined;
+
+export async function createClientAction(formData: FormData): Promise<ClientActionResult> {
   await requireAdmin();
   const supabase = createClient();
-  const { payload, narrative, kind } = parse(formData);
-  if (!payload.name) throw new Error("Client name is required");
+
+  // parse() throws on a malformed matcher-constraints payload -- an expected
+  // validation failure, so surface it inline rather than as a 500. The redirect()
+  // on success stays OUTSIDE any try/catch so its NEXT_REDIRECT control-flow is
+  // never swallowed and mistaken for an error.
+  let parsed;
+  try {
+    parsed = parse(formData);
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Could not read the form." };
+  }
+  const { payload, narrative, kind } = parsed;
+  if (!payload.name) return { error: "Client name is required." };
 
   // A new prospect fires a ONE-TIME match against the current grant pool so its
   // dashboard fills without waiting on the daily batch. Stamp 'running' at insert
@@ -126,9 +145,11 @@ export async function createClientAction(formData: FormData) {
     .select("id")
     .single();
 
+  // Duplicate name (23505) and any other insert error come back as a friendly
+  // message the form shows inline -- never a thrown 500.
   const friendly = friendlyClientError(error, payload.name);
-  if (friendly) throw new Error(friendly);
-  if (!data) throw new Error("Client insert returned no row");
+  if (friendly) return { error: friendly };
+  if (!data) return { error: "Could not create the record — please try again." };
 
   // Background work, kicked before redirect throws (never blocks the save). Enrich
   // first (USASpending cache, then the client-profile refine) so both are ready
@@ -151,11 +172,23 @@ export async function createClientAction(formData: FormData) {
   redirect(`/clients/${clientId}`);
 }
 
-export async function updateClientAction(id: string, formData: FormData) {
+export async function updateClientAction(
+  id: string,
+  formData: FormData,
+): Promise<ClientActionResult> {
   await requireAdmin();
   const supabase = createClient();
-  const { payload, narrative, kind } = parse(formData);
-  if (!payload.name) throw new Error("Client name is required");
+
+  // Same as createClientAction: expected validation failures return inline; the
+  // redirect() on success stays outside any try/catch.
+  let parsed;
+  try {
+    parsed = parse(formData);
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Could not read the form." };
+  }
+  const { payload, narrative, kind } = parsed;
+  if (!payload.name) return { error: "Client name is required." };
 
   // Merge the narrative into existing intake_data -- never clobber non-narrative
   // keys (phone, org_type_code, referral_source, submitted_at from a public intake).
@@ -191,7 +224,7 @@ export async function updateClientAction(id: string, formData: FormData) {
     .update({ ...payload, ...lifecycle, intake_data: mergedIntake })
     .eq("id", id);
   const friendly = friendlyClientError(error, payload.name);
-  if (friendly) throw new Error(friendly);
+  if (friendly) return { error: friendly };
 
   // Audit a client<->prospect flip (a promote/demote outside the normal convert
   // flow). Service role: mirrors the public-intake pipeline_events write.

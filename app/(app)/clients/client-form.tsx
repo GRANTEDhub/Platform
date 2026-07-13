@@ -56,7 +56,12 @@ export function ClientForm({
   submitLabel,
 }: {
   client?: Client;
-  action: (formData: FormData) => void;
+  // Mirrors actions.ts ClientActionResult: an expected validation failure resolves
+  // to { error } (rendered inline below); success redirects, so it never resolves
+  // to a value. Awaiting the action here -- rather than passing it straight to
+  // <form action> -- is what lets a duplicate-name error surface on the form
+  // instead of as a 500 page.
+  action: (formData: FormData) => Promise<{ error: string } | undefined>;
   submitLabel: string;
 }) {
   // On edit, default the toggle from the stored row: an un-converted lead
@@ -65,9 +70,18 @@ export function ClientForm({
     client && isUnconvertedLead(client.pipeline_stage) ? "prospect" : "client";
   const [kind, setKind] = useState<"client" | "prospect">(initialKind);
   const isClient = kind === "client";
+  const [formError, setFormError] = useState<string | null>(null);
+
+  async function handleSubmit(formData: FormData) {
+    setFormError(null);
+    const result = await action(formData);
+    // Only a failure resolves to a value; a success redirects and unmounts before
+    // this runs, so the form data the user typed is preserved on error.
+    if (result?.error) setFormError(result.error);
+  }
 
   return (
-    <form action={action} className="max-w-3xl space-y-8">
+    <form action={handleSubmit} className="max-w-3xl space-y-8">
       {/* 1. Kind -- required, first, drives the conditional UI below. */}
       <section className="space-y-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
@@ -236,6 +250,15 @@ export function ClientForm({
         defaultMatchingRules={client?.matching_rules}
         defaultKnownConstraints={client?.known_constraints}
       />
+
+      {formError && (
+        <div
+          role="alert"
+          className="flex items-center gap-2 rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-800 ring-1 ring-red-200"
+        >
+          {formError}
+        </div>
+      )}
 
       <div className="flex gap-3">
         <Button type="submit">{submitLabel}</Button>
