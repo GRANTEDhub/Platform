@@ -4,7 +4,8 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { isDeliverableEmail } from "@/lib/email/send";
 import { enrichClient } from "@/lib/clients/enrich";
 import { verifyTurnstile, rateLimited } from "@/lib/intake/guard";
-import { ORG_TYPES, ORG_TYPE_LABELS, PRIORITY_AREAS, REFERRAL_SOURCES, US_STATES } from "@/lib/intake/fields";
+import { ORG_TYPES, ORG_TYPE_LABELS, REFERRAL_SOURCES, US_STATES } from "@/lib/intake/fields";
+import { parseNarrative, narrativeToIntakeData } from "@/lib/intake/narrative";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -24,9 +25,7 @@ type Body = {
   orgType?: string;
   city?: string;
   state?: string;
-  priorityAreas?: string[];
-  fundingNeed?: string;
-  additionalInfo?: string;
+  narrative?: unknown; // JSON string or object -- parsed via parseNarrative
   referralSource?: string;
   website?: string; // honeypot -- must stay empty
   turnstileToken?: string;
@@ -65,7 +64,10 @@ export async function POST(req: NextRequest) {
   const orgType = clean(body.orgType, 120);
   const city = clean(body.city, 120);
   const state = clean(body.state, 2).toUpperCase();
-  const fundingNeed = clean(body.fundingNeed, 2000);
+  // Narrative (mission, programs, funding need, priority areas, partnerships,
+  // additional context) -- the enrichment signal. parseNarrative caps + filters.
+  const narrative = parseNarrative(body.narrative);
+  const fundingNeed = narrative.funding_need;
 
   const errors: string[] = [];
   if (!orgName) errors.push("Organization name is required.");
@@ -79,24 +81,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: errors.join(" ") }, { status: 400 });
   }
 
-  // Normalize the optional fields against the known lists (drop anything off-list
-  // rather than trust arbitrary input).
-  const priorityAreas = Array.isArray(body.priorityAreas)
-    ? body.priorityAreas.filter((a) => PRIORITY_AREAS.includes(a))
-    : [];
+  // Normalize the optional non-narrative fields against the known lists (drop
+  // anything off-list rather than trust arbitrary input).
   const referralSource = REFERRAL_SOURCES.includes(clean(body.referralSource))
     ? clean(body.referralSource)
     : null;
   const orgTypeCode = ORG_TYPES.find((t) => t.label === orgType)?.code ?? null;
   const phone = clean(body.phone, 40) || null;
-  const additionalInfo = clean(body.additionalInfo, 2000) || null;
+  const priorityAreas = narrative.priority_areas;
 
+  // intake_data = the narrative keys (refiner priority signal) + the non-narrative
+  // provenance keys. funding_need is single-sourced here (no longer echoed into notes).
   const intakeData = {
+    ...narrativeToIntakeData(narrative),
     org_type_code: orgTypeCode,
     phone,
-    priority_areas: priorityAreas,
-    funding_need: fundingNeed,
-    additional_info: additionalInfo,
     referral_source: referralSource,
     submitted_at: new Date().toISOString(),
   };
@@ -120,7 +119,9 @@ export async function POST(req: NextRequest) {
       lead_source: "inbound",
       needs_review: true,
       intake_data: intakeData,
-      notes: fundingNeed ? `Seeking funding for: ${fundingNeed}` : null,
+      // funding_need is single-sourced in intake_data now; notes stays purely
+      // human/internal (was previously an echo of the funding-need text).
+      notes: null,
     })
     .select("id")
     .single<{ id: string }>();
