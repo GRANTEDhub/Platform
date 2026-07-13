@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { matchGrantToClient } from "@/lib/grants/engine";
+import { matchGrantToClient, enrichMatchWithProfile } from "@/lib/grants/engine";
 import { funderExclusionReason } from "@/lib/grants/constraints";
 import { cardFieldsFromMatch } from "@/lib/grants/pipeline";
 import { formatStoredUSASpending } from "@/lib/grants/usaspending";
@@ -232,7 +232,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   // Allowed: create the card. Identical shape to an engine card (shared
-  // cardFieldsFromMatch) + card_type defaults to 'client'.
+  // cardFieldsFromMatch) + card_type defaults to 'client'. Profile-grounded
+  // narrative enrichment first -- self-gates on surfacing + profile presence and
+  // cannot change the seat/score (see enrichMatchWithProfile); best-effort.
+  match = await enrichMatchWithProfile(grant, client, match);
   const cardFields = cardFieldsFromMatch(match);
   const beforeApprove = [...(cardFields.before_you_approve ?? [])];
   let overrideReason: string | null = null;

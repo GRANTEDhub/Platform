@@ -112,6 +112,12 @@ export interface Client {
   lead_source: string | null;
   account_manager_id: string | null;
   intake_data: Record<string, unknown> | null;
+  // Distilled, match-optimized profile (migration 0043). Populated out-of-band
+  // from intake by constructClientProfile. Read ONLY by the enrichment layer
+  // (lib/grants/engine.ts enrichMatchWithProfile) to ground the outward narrative
+  // -- it does NOT feed occupancy/seat selection (that is grant + rubric + raw
+  // fields). Null until refined.
+  client_profile: ClientProfile | null;
   needs_review: boolean;
   archived_reason: string | null;
   contract_status: string | null;

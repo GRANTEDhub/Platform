@@ -10,6 +10,7 @@ import {
   formatConstraintsForPrompt,
 } from "@/lib/grants/constraints";
 import { formatSamForMatcher } from "@/lib/sam/expiry";
+import { formatClientProfileForEnrichment } from "@/lib/clients/profile";
 import type { Client, Grant, IdealApplicantProfile, FactorScores } from "@/types/database";
 
 export interface ExtractedGrant {
@@ -935,6 +936,117 @@ ${formatConstraintsForPrompt(client)}`;
     client.primary_contact_name,
   );
   return result;
+}
+
+// ─── Enrichment (Stage 4 redesign) ───────────────────────────────────────────
+// A SEPARATE call that runs AFTER matchGrantToClient has fixed the seat + score.
+// It grounds the outward narrative (why-this-org, concept, draft email) in the
+// client's distilled profile. The profile is structurally BARRED from occupancy:
+//   1. it is never in the matchGrantToClient prompt (occupancy is profile-free);
+//   2. this tool's schema has NO seat_ref / fit_score / eligibility field, so the
+//      model has no channel to emit an occupancy decision here;
+//   3. the merge below takes EVERY occupancy field from the Phase-1 match and
+//      overwrites only the four narrative fields.
+// Best-effort: any failure (or no profile / non-surfacing score) returns the
+// Phase-1 match unchanged, so the card always has complete Phase-1 narrative.
+const ENRICHMENT_SYSTEM_PROMPT = `You are GRANTED's outreach-narrative writer. A grant-client match has ALREADY been scored and seated by the matching engine. The seat, the fit score, the role, and eligibility are DECIDED and are NOT yours to revisit or second-guess -- treat them as fixed facts.
+
+Your ONLY job: using the client's distilled profile, rewrite the outward-facing narrative so it is specific and accurate to THIS client -- grounded in their real programs, mission, and populations rather than generic. Sharpen:
+- why_this_org: the concrete reasons THIS client fits the seat it already holds.
+- concept_synopsis: the project concept, grounded in the client's actual programs.
+- description_short: a one-line description of the play.
+- draft_outreach_email: the outreach email (plain text, no "Subject:" line, no placeholder names).
+
+Do NOT reconsider the seat, the score, or whether the client should surface -- that is settled. Do NOT invent client capacity that is not in the profile. Do not use em dashes. Return via the submit_enrichment tool exactly once.`;
+
+export async function enrichMatchWithProfile(
+  grant: Grant,
+  client: Client,
+  match: MatchResult,
+): Promise<MatchResult> {
+  // Gate: only surfacing matches (2-3) get a card, and only a present profile
+  // adds anything. Either miss -> Phase-1 match stands, no second call.
+  if (match.fit_score < 2 || !client.client_profile) return match;
+  const profileText = formatClientProfileForEnrichment(client.client_profile);
+  if (!profileText.trim()) return match;
+
+  const anthropic = getAnthropicClient();
+  try {
+    const response = await anthropic.messages.create({
+      model: MODEL,
+      max_tokens: 4000,
+      temperature: 0,
+      system: ENRICHMENT_SYSTEM_PROMPT,
+      tools: [
+        {
+          name: "submit_enrichment",
+          description:
+            "Return the profile-grounded outreach narrative. Call this tool exactly once.",
+          input_schema: {
+            type: "object",
+            properties: {
+              why_this_org: { type: "array", items: { type: "string" } },
+              concept_synopsis: { type: "string" },
+              description_short: { type: "string" },
+              draft_outreach_email: { type: "string" },
+            },
+            required: [
+              "why_this_org",
+              "concept_synopsis",
+              "description_short",
+              "draft_outreach_email",
+            ],
+          },
+        },
+      ],
+      tool_choice: { type: "tool", name: "submit_enrichment" },
+      messages: [
+        {
+          role: "user",
+          content: `The match is already scored and seated -- these are FIXED:
+Client: ${client.name}
+Seat: ${match.seat_ref} | Role: ${match.proposed_role} | Fit score: ${match.fit_score}
+Why it fits (engine reasoning): ${match.reasoning_context?.fit_score_derivation ?? ""}
+Role logic (engine reasoning): ${match.reasoning_context?.role_assignment_logic ?? ""}
+
+GRANT: ${grant.title} (${grant.funder}). ${grant.description ?? ""}
+${profileText}
+
+Rewrite why_this_org, concept_synopsis, description_short, and draft_outreach_email to be specific and accurate to this client, grounded in the profile above. Keep the seat, score, and role exactly as given.`,
+        },
+      ],
+    });
+
+    // Best-effort: truncation or a missing tool call -> keep Phase-1 narrative.
+    if (response.stop_reason === "max_tokens") return match;
+    const toolUse = response.content.find((b) => b.type === "tool_use");
+    if (!toolUse || toolUse.type !== "tool_use") return match;
+    const e = toolUse.input as {
+      why_this_org?: string[];
+      concept_synopsis?: string;
+      description_short?: string;
+      draft_outreach_email?: string;
+    };
+
+    // Merge: occupancy + everything else stays from Phase 1; overwrite ONLY the
+    // four narrative fields. The enriched email is re-sanitized (same as Phase 1).
+    return {
+      ...match,
+      why_this_org: e.why_this_org?.length ? e.why_this_org : match.why_this_org,
+      concept_synopsis: e.concept_synopsis?.trim() ? e.concept_synopsis : match.concept_synopsis,
+      description_short: e.description_short?.trim() ? e.description_short : match.description_short,
+      draft_outreach_email: e.draft_outreach_email?.trim()
+        ? sanitizeOutreachEmail(e.draft_outreach_email, client.primary_contact_name)
+        : match.draft_outreach_email,
+    };
+  } catch (err) {
+    console.error(
+      "enrichMatchWithProfile failed for client",
+      client.name,
+      err instanceof Error ? err.message : err,
+    );
+    return match; // best-effort: Phase-1 narrative stands
+  }
 }
 
 // ─── JavaScript Pre-Filter ──────────────────────────────────────────────────
