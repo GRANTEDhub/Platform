@@ -355,9 +355,13 @@ export function formatClientProfileForMatcher(profile: ClientProfile | null | un
     `prime_capacity / supporting_roles describe GENERAL capacity, not a seat assignment -- you still ` +
     `choose seat_ref for THIS grant. can_prime never LIFTS a ceiling (a can_prime:true org is not ` +
     `anointed into a prime seat it does not occupy). Symmetrically, can_prime:false or a regional/local ` +
-    `scale never by itself FORCES a NONE: an org that genuinely occupies the prime seat but at a narrower ` +
-    `scale than the grant wants is a CONDITIONAL prime -- seat_ref = that prime seat, score 2, flag the ` +
-    `scale gap; or map it to a genuine supporting seat at 2. NONE/0 stays correct only when the org fills ` +
-    `NO listed seat at all -- prime or supporting.`
+    `scale never justifies NONE. For such an org, work the SUPPORTING seats first: when a role on the ` +
+    `"Supporting roles it can genuinely fill" line matches a listed supporting seat (S{i}_{j}), that match ` +
+    `IS occupancy of that seat -- select it, score 2. That is the DEFAULT landing for a regional/` +
+    `can_prime:false org that supports the funded work -- NOT NONE. Only if it also truly occupies the ` +
+    `prime role at narrower scale is it instead a conditional prime at 2. Treat "not the statewide prime" ` +
+    `or "no statewide-scale seat" as a SCALE-GAP to flag at 2, never as grounds to zero an org that fills ` +
+    `a listed supporting seat. NONE/0 remains correct ONLY when the org fills NO listed seat at all -- ` +
+    `neither a prime seat nor any listed supporting seat (topical/mission adjacency only).`
   );
 }
