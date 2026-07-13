@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { format, parseISO } from "date-fns";
 import { requireAdmin } from "@/lib/auth";
@@ -171,6 +172,13 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
         description={[lead.lead_source?.replace(/_/g, " "), lead.org_type?.replace(/_/g, " "), [lead.location_city, lead.location_state].filter(Boolean).join(", ")].filter(Boolean).join(" · ") || undefined}
         action={
           <div className="flex items-center gap-3 text-sm">
+            {/* Bridge to the match dashboard (/clients/[id]). A lead/prospect lives
+                under /leads but its one-time-match results render on the client
+                dashboard, which is otherwise only reachable by URL. Text label +
+                arrow, not color alone (accessibility). */}
+            <Link href={`/clients/${lead.id}`} className="font-medium text-primary hover:underline">
+              View matches →
+            </Link>
             <Badge variant="secondary">{(eff ?? "—").replace(/_/g, " ")}</Badge>
             <span className="text-muted-foreground">{owner}</span>
           </div>
