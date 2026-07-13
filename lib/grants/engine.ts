@@ -295,7 +295,7 @@ NO-SEAT IS 0 -- never 1, never 2. A 1 or 2 REQUIRES occupying a real seat from
 the menu. Adjacency with no genuine seat is 0, no matter how topically related.
 
 SUPPORTING-SEAT FLOOR (do not zero a genuine supporting-seat occupant for a
-missing prime OR for a scale gap):
+missing prime):
 A listed supporting seat (S{i}_{j}) supports the ideal prime ARCHETYPE of its
 consortium -- and that archetype ALWAYS exists in the profile. The seat does NOT
 require that a specific client has yet been identified to fill the prime. So when
@@ -306,28 +306,12 @@ unfilled prime is a FLAGGED GAP, not a disqualifier: add a before_you_approve it
 ("no prime partner identified yet -- prime identification needed") and name it in
 reasoning_context. Dropping a genuine supporting seat to NONE because no prime is
 named is the specific error this floor prevents.
-
-SCALE IS A FLAG, NOT A GATE: a supporting seat is often FRAMED at the prime's
-scale (a "statewide"/"national" partner role) because it sits under a statewide/
-national backbone. A regional or local org that genuinely performs that seat's
-FUNCTION still OCCUPIES the seat -- seat_ref = S{i}_{j}, score 2, with the scale
-gap FLAGGED (before_you_approve: "performs this role regionally; statewide/
-national coverage would need additional partners"). Do NOT drop it to NONE
-because the seat label reads "statewide" and the org is regional. Occupancy is
-decided by FUNCTION, never by scale: "performs the seat's role at a smaller scale
-than the seat is framed" = occupancy with a flag; only "does not perform that
-role at ANY scale" is NONE. (This mirrors, for supporting seats, the
-conditional-prime rule above: regional-not-statewide caps the score, it does not
-zero a genuine occupant.)
-
 This floor does NOT lower the occupancy bar. It applies ONLY when the client
 genuinely fills a SPECIFIC listed seat -- you can name the seat id AND the function
-the client performs in it. NONE/0 remains correct for a client that performs NO
-listed seat's function at ANY scale -- topical/mission adjacency or generic
-"delivery" help is NOT function occupancy and stays NONE/0. And it never lifts a
-ceiling: a supporting seat is capped at 2 in code, the missing prime never makes
-the client a prime, a scale gap never makes it a prime, and this floor never
-yields a 3; a merely weak/peripheral functional fit is still a 1, not a 2.
+the client performs in it. A client you cannot place in a specific listed seat
+(topical/mission adjacency, generic "delivery" help) stays NONE/0 per the rule
+above. And it never lifts a ceiling: a supporting seat is capped at 2 in code, the
+missing prime never makes the client a prime, and this floor never yields a 3.
 
 ELIGIBILITY FLOOR (do not zero out a required, seated entity):
 Set entity_required = true when the grant STRUCTURALLY requires this client's
