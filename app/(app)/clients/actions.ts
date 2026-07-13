@@ -7,6 +7,7 @@ import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { requireAdmin } from "@/lib/auth";
 import { validateConstraint } from "@/lib/grants/constraints";
 import { enrichClient } from "@/lib/clients/enrich";
+import { runInitialMatchForClient } from "@/lib/grants/initial-match";
 import { parseNarrative, narrativeToIntakeData, parseChipList } from "@/lib/intake/narrative";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import type { HardConstraint } from "@/types/database";
@@ -106,12 +107,22 @@ function friendlyClientError(
 export async function createClientAction(formData: FormData) {
   await requireAdmin();
   const supabase = createClient();
-  const { payload, narrative } = parse(formData);
+  const { payload, narrative, kind } = parse(formData);
   if (!payload.name) throw new Error("Client name is required");
 
+  // A new prospect fires a ONE-TIME match against the current grant pool so its
+  // dashboard fills without waiting on the daily batch. Stamp 'running' at insert
+  // time -- it drives the dashboard "matching in progress" banner AND guards the
+  // run from double-firing. Active clients get no one-time run (the daily batch
+  // covers them), so their status stays null.
+  const isProspect = kind === "prospect";
   const { data, error } = await supabase
     .from("clients")
-    .insert({ ...payload, intake_data: narrativeToIntakeData(narrative) })
+    .insert({
+      ...payload,
+      intake_data: narrativeToIntakeData(narrative),
+      ...(isProspect ? { initial_match_status: "running" } : {}),
+    })
     .select("id")
     .single();
 
@@ -119,14 +130,25 @@ export async function createClientAction(formData: FormData) {
   if (friendly) throw new Error(friendly);
   if (!data) throw new Error("Client insert returned no row");
 
-  // Enrich in the background (USASpending cache, then the client-profile refine)
-  // so both are ready before the first match run -- never blocks the save (must be
-  // kicked before redirect throws). A failed refine leaves client_profile null.
-  waitUntil(enrichClient(createServiceClient(), data.id));
+  // Background work, kicked before redirect throws (never blocks the save). Enrich
+  // first (USASpending cache, then the client-profile refine) so both are ready
+  // before scoring; for a prospect, chain the one-time match after enrich so it
+  // reads the enriched org. A failed refine leaves client_profile null but the
+  // match still runs. runInitialMatchForClient stamps 'complete'/'error' itself.
+  const bg = createServiceClient();
+  const clientId = data.id;
+  waitUntil(
+    isProspect
+      ? (async () => {
+          await enrichClient(bg, clientId);
+          await runInitialMatchForClient(bg, clientId);
+        })()
+      : enrichClient(bg, clientId),
+  );
 
   revalidatePath("/clients");
   revalidatePath("/dashboard");
-  redirect(`/clients/${data.id}`);
+  redirect(`/clients/${clientId}`);
 }
 
 export async function updateClientAction(id: string, formData: FormData) {
@@ -173,8 +195,9 @@ export async function updateClientAction(id: string, formData: FormData) {
 
   // Audit a client<->prospect flip (a promote/demote outside the normal convert
   // flow). Service role: mirrors the public-intake pipeline_events write.
-  if (oldKind !== kind) {
-    await createServiceClient()
+  if (flipped) {
+    const service = createServiceClient();
+    await service
       .from("pipeline_events")
       .insert({
         event_type: "kind_changed",
@@ -182,6 +205,19 @@ export async function updateClientAction(id: string, formData: FormData) {
         subject_snapshot: { name: payload.name },
         metadata: { from: oldKind, to: kind },
       });
+
+    // Demoting a client -> prospect: it drops out of the daily batch (now an
+    // un-converted lead), so its PENDING cards would otherwise sit stale forever
+    // with no run to refresh or retire them. Clear the pending ones; PRESERVE any
+    // human-decided card (approved / passed) -- those are a record of a real
+    // decision, never silently erased. Re-promoting later re-scores from scratch.
+    if (kind === "prospect") {
+      await service
+        .from("review_cards")
+        .delete()
+        .eq("client_id", id)
+        .eq("decision", "pending");
+    }
   }
 
   // Re-enrich in the background: re-cache USASpending (name / search-name may have

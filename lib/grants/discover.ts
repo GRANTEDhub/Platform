@@ -288,6 +288,7 @@ function prospectAsClient(c: Record<string, string>): Client {
     account_manager_id: null,
     intake_data: null,
     client_profile: null,
+    initial_match_status: null,
     needs_review: false,
     archived_reason: null,
     contract_status: null,

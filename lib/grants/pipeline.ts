@@ -14,8 +14,9 @@ import {
   looksInternational,
   grantLevelSuppressionReason,
   type MatchResult,
+  type ExtractedGrant,
 } from "@/lib/grants/engine";
-import type { IdealApplicantProfile } from "@/types/database";
+import type { Client, Grant, IdealApplicantProfile } from "@/types/database";
 import { resolveNofoText, mergeDeepShred } from "@/lib/grants/nofo";
 import { formatStoredUSASpending } from "@/lib/grants/usaspending";
 import { NON_LEAD_OR_FILTER } from "@/lib/leads/stage";
@@ -244,6 +245,114 @@ async function recordAttempt(db: DB, row: AttemptRow) {
 }
 
 /**
+ * Scores ONE (grant, client) pair and reconciles its single review card:
+ * jsPreFilter -> matchGrantToClient (profile-free occupancy) -> record the
+ * attempt -> enrichMatchWithProfile (narrative only) -> upsert one card per
+ * (grant, client): insert if new, refresh if PENDING, leave a human-DECIDED card
+ * untouched, or delete a now-unqualified PENDING card. Every attempt is logged.
+ *
+ * Extracted verbatim from runMatching's per-client loop so the grant-centric
+ * batch (one grant -> the roster) and the client-centric one-time match
+ * (runInitialMatchForClient, one client -> the grant pool) score a pair through a
+ * PROVABLY identical path -- the DRY-safe way to add the second orientation
+ * without forking the scorer. Callers own the decided-card SPEND skip (runMatching
+ * pre-skips decided clients to save the LLM call); this function is still safe to
+ * call on a decided card -- it never overwrites one.
+ */
+export async function scoreGrantClientPair(grantRow: Grant, client: Client, db: DB) {
+  const grantId = grantRow.id;
+
+  // jsPreFilter is typed against ExtractedGrant (the shred shape); the stored
+  // grants row is a structural superset, so the cast is safe -- this preserves the
+  // exact runtime call runMatching made when grantRow was untyped.
+  const preFilterReason = jsPreFilter(grantRow as unknown as ExtractedGrant, client);
+  if (preFilterReason) {
+    console.log(`Pre-filter skipped ${client.name}: ${preFilterReason}`);
+    await recordAttempt(db, {
+      grant_id: grantId,
+      client_id: client.id,
+      outcome: "prefiltered",
+      prefilter_reason: preFilterReason,
+    });
+    return;
+  }
+  try {
+    const usaSpendingContext = client.federal_history_verified
+      ? undefined
+      : formatStoredUSASpending(client.usaspending_summary);
+    const match = await matchGrantToClient(grantRow, client, usaSpendingContext);
+    const qualifies =
+      !match.suppressed && !match.disqualified && match.fit_score >= 2;
+    const outcome = match.disqualified
+      ? "disqualified"
+      : match.suppressed
+        ? "suppressed"
+        : qualifies
+          ? "carded"
+          : "below_threshold";
+
+    // Record EVERY attempt -- below_threshold, suppressed, and disqualified
+    // included -- so calibration can see why a client did not match, not just the
+    // ones that became cards.
+    await recordAttempt(db, {
+      grant_id: grantId,
+      client_id: client.id,
+      outcome,
+      fit_score: match.fit_score ?? null,
+      suppressed: match.suppressed ?? false,
+      suppress_reason: match.suppress_reason ?? null,
+      disqualified: match.disqualified ?? false,
+      disqualify_reason: match.disqualify_reason ?? null,
+      result: match,
+    });
+
+    // One card per (grant, client). Look up the existing card first so a re-match
+    // can refresh it, leave a human-decided one alone, OR remove it when the
+    // client no longer qualifies.
+    const { data: existingCard } = await db
+      .from("review_cards")
+      .select("id, decision")
+      .eq("grant_id", grantId)
+      .eq("client_id", client.id)
+      .maybeSingle();
+
+    if (qualifies) {
+      // Profile-grounded narrative enrichment -- a SEPARATE call that runs only
+      // for surfacing matches, cannot change the seat/score (see
+      // enrichMatchWithProfile), and falls back to the Phase-1 narrative on any
+      // failure. Occupancy above is already fixed and profile-free.
+      const enriched = await enrichMatchWithProfile(grantRow, client, match);
+      const cardFields = cardFieldsFromMatch(enriched);
+      if (!existingCard) {
+        await db.from("review_cards").insert({
+          grant_id: grantId,
+          client_id: client.id,
+          ...cardFields,
+          decision: "pending",
+        });
+      } else if (existingCard.decision === "pending") {
+        await db.from("review_cards").update(cardFields).eq("id", existingCard.id);
+      }
+      // else: an admin already decided this card -- leave it untouched.
+    } else if (existingCard && existingCard.decision === "pending") {
+      // Re-score dropped this client below the surface threshold (e.g. 2 -> 0
+      // under the seat ceiling). It no longer surfaces, so remove the stale
+      // un-acted card. A human-decided card (approved / passed / hold) is
+      // preserved -- never silently erase a GO/NO/HOLD.
+      await db.from("review_cards").delete().eq("id", existingCard.id);
+    }
+  } catch (err) {
+    console.error(`Match error for client ${client.name}:`, err);
+    await recordAttempt(db, {
+      grant_id: grantId,
+      client_id: client.id,
+      outcome: "error",
+      error_detail: String(err instanceof Error ? err.message : err).slice(0, 600),
+    });
+  }
+}
+
+/**
  * Scores a grant against the full client roster. Re-runnable (e.g. an admin
  * "Re-match"): every client is re-scored each run and every attempt is logged
  * to match_attempts. A qualifying score keeps ONE card per (grant, client) --
@@ -311,93 +420,10 @@ export async function runMatching(grantId: string, db: DB) {
   const CONCURRENCY = 8;
 
   async function scoreClient(client: (typeof toScore)[number]) {
+    // Skip human-DECIDED cards up front to save the LLM call (scoreGrantClientPair
+    // would leave them untouched anyway, but only after paying for the match).
     if (decidedClientIds.has(client.id)) return;
-
-    const preFilterReason = jsPreFilter(grantRow, client);
-    if (preFilterReason) {
-      console.log(`Pre-filter skipped ${client.name}: ${preFilterReason}`);
-      await recordAttempt(db, {
-        grant_id: grantId,
-        client_id: client.id,
-        outcome: "prefiltered",
-        prefilter_reason: preFilterReason,
-      });
-      return;
-    }
-    try {
-      const usaSpendingContext = client.federal_history_verified
-        ? undefined
-        : formatStoredUSASpending(client.usaspending_summary);
-      const match = await matchGrantToClient(grantRow, client, usaSpendingContext);
-      const qualifies =
-        !match.suppressed && !match.disqualified && match.fit_score >= 2;
-      const outcome = match.disqualified
-        ? "disqualified"
-        : match.suppressed
-          ? "suppressed"
-          : qualifies
-            ? "carded"
-            : "below_threshold";
-
-      // Record EVERY attempt -- below_threshold, suppressed, and
-      // disqualified included -- so calibration can see why a client did
-      // not match, not just the ones that became cards.
-      await recordAttempt(db, {
-        grant_id: grantId,
-        client_id: client.id,
-        outcome,
-        fit_score: match.fit_score ?? null,
-        suppressed: match.suppressed ?? false,
-        suppress_reason: match.suppress_reason ?? null,
-        disqualified: match.disqualified ?? false,
-        disqualify_reason: match.disqualify_reason ?? null,
-        result: match,
-      });
-
-      // One card per (grant, client). Look up the existing card first so a
-      // re-match can refresh it, leave a human-decided one alone, OR remove
-      // it when the client no longer qualifies.
-      const { data: existingCard } = await db
-        .from("review_cards")
-        .select("id, decision")
-        .eq("grant_id", grantId)
-        .eq("client_id", client.id)
-        .maybeSingle();
-
-      if (qualifies) {
-        // Profile-grounded narrative enrichment -- a SEPARATE call that runs only
-        // for surfacing matches, cannot change the seat/score (see
-        // enrichMatchWithProfile), and falls back to the Phase-1 narrative on any
-        // failure. Occupancy above is already fixed and profile-free.
-        const enriched = await enrichMatchWithProfile(grantRow, client, match);
-        const cardFields = cardFieldsFromMatch(enriched);
-        if (!existingCard) {
-          await db.from("review_cards").insert({
-            grant_id: grantId,
-            client_id: client.id,
-            ...cardFields,
-            decision: "pending",
-          });
-        } else if (existingCard.decision === "pending") {
-          await db.from("review_cards").update(cardFields).eq("id", existingCard.id);
-        }
-        // else: an admin already decided this card -- leave it untouched.
-      } else if (existingCard && existingCard.decision === "pending") {
-        // Re-score dropped this client below the surface threshold (e.g.
-        // 2 -> 0 under the seat ceiling). It no longer surfaces, so remove
-        // the stale un-acted card. A human-decided card (approved / passed /
-        // hold) is preserved -- never silently erase a GO/NO/HOLD.
-        await db.from("review_cards").delete().eq("id", existingCard.id);
-      }
-    } catch (err) {
-      console.error(`Match error for client ${client.name}:`, err);
-      await recordAttempt(db, {
-        grant_id: grantId,
-        client_id: client.id,
-        outcome: "error",
-        error_detail: String(err instanceof Error ? err.message : err).slice(0, 600),
-      });
-    }
+    await scoreGrantClientPair(grantRow, client, db);
   }
 
   const matchStartMs = Date.now();

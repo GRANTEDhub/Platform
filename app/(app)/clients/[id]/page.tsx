@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { format, parseISO } from "date-fns";
-import { FileCheck2, DollarSign, Clock, CalendarClock, AlertTriangle } from "lucide-react";
+import { FileCheck2, DollarSign, Clock, CalendarClock, AlertTriangle, Loader2 } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,6 +15,7 @@ import { ClientGrantTracking, type TrackedGrant } from "@/components/clients/cli
 import { ClientActionItems } from "@/components/clients/client-action-items";
 import { samExpiryFlag } from "@/lib/sam/expiry";
 import { ClientRepository } from "@/components/clients/client-repository";
+import { AutoRefresh } from "@/components/ui/auto-refresh";
 import { signedUrl } from "@/lib/storage";
 import { BRAND } from "@/lib/brand";
 import type { Client, Invoice, Grant, ClientOverview, CardDecision } from "@/types/database";
@@ -160,6 +161,28 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         <StatCard icon={Clock} value={hoursRemaining !== null ? `${Number(hoursRemaining).toFixed(1)}h` : "—"} label="hours remaining" />
         <StatCard icon={CalendarClock} value={overview?.next_deadline ? format(parseISO(overview.next_deadline), "MMM d") : "—"} label="next deadline" />
       </div>
+
+      {/* One-time prospect match progress (migration 0045). While 'running', poll
+          so the newly-scored cards appear without a manual refresh; the banner and
+          AutoRefresh both drop out the moment status flips to 'complete'. 'error'
+          surfaces so a stalled run is visible rather than looking like "no matches". */}
+      {client.initial_match_status === "running" && (
+        <div className="px-8 pt-6">
+          <div className="flex items-center gap-2 rounded-xl bg-brand-navy/[0.04] px-4 py-3 text-sm font-medium text-brand-navy ring-1 ring-brand-navy/10">
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+            Initial grant matching in progress — this may take a few minutes. Results appear automatically.
+          </div>
+          <AutoRefresh enabled />
+        </div>
+      )}
+      {client.initial_match_status === "error" && (
+        <div className="px-8 pt-6">
+          <div className="flex items-center gap-2 rounded-xl bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900 ring-1 ring-amber-200">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            Initial grant matching didn&apos;t finish — results below may be incomplete.
+          </div>
+        </div>
+      )}
 
       {samFlag && (
         <div className="px-8 pt-6">
