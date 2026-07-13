@@ -159,7 +159,7 @@ export function ClientForm({
       <section className="space-y-4">
         <Field label="Next step" name="next_step" defaultValue={client?.next_step} placeholder="What's next for this record?" />
         <div className="space-y-2">
-          <Label htmlFor="notes">Notes</Label>
+          <Label htmlFor="notes">Internal notes</Label>
           <textarea
             id="notes"
             name="notes"
@@ -167,6 +167,10 @@ export function ClientForm({
             rows={4}
             className="flex w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
           />
+          <p className="text-xs text-muted-foreground">
+            Not used for seat/eligibility scoring. Shown internally and distilled into the client
+            profile narrative.
+          </p>
         </div>
       </section>
 
@@ -224,22 +228,13 @@ export function ClientForm({
           defaultValue={client?.service_area ?? undefined}
           placeholder="Type a county or region, press Enter"
         />
-        <div className="space-y-2">
-          <Label htmlFor="known_constraints">Known constraints</Label>
-          <textarea
-            id="known_constraints"
-            name="known_constraints"
-            defaultValue={client?.known_constraints ?? undefined}
-            rows={3}
-            className="flex w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
-          />
-        </div>
       </section>
 
       {/* 7. Matching config -- admin-only, optional. */}
       <MatchingConfig
         defaultConstraints={client?.hard_constraints ?? []}
         defaultMatchingRules={client?.matching_rules}
+        defaultKnownConstraints={client?.known_constraints}
       />
 
       <div className="flex gap-3">
