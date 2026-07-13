@@ -138,7 +138,7 @@ export async function updateClientAction(id: string, formData: FormData) {
   // pipeline_stage rides along for the kind-flip audit (client<->prospect).
   const { data: existing } = await supabase
     .from("clients")
-    .select("intake_data, pipeline_stage")
+    .select("intake_data, pipeline_stage, lead_source")
     .eq("id", id)
     .single();
   const mergedIntake = {
@@ -146,10 +146,25 @@ export async function updateClientAction(id: string, formData: FormData) {
     ...narrativeToIntakeData(narrative),
   };
   const oldKind = isUnconvertedLead(existing?.pipeline_stage as string | null) ? "prospect" : "client";
+  const flipped = oldKind !== kind;
+
+  // Lifecycle fields (pipeline_stage, lead_source) are rewritten ONLY on a genuine
+  // kind FLIP. A non-flip edit PRESERVES the stored lifecycle -- otherwise every
+  // edit would reset a 'converted' client to null (orphaning converted_at,
+  // dropping it from the Converted card) and resurrect a terminal
+  // 'rejected'/'archived' lead to 'discovery_pending'. On a flip, parse()'s
+  // kind-derived values apply (client->prospect: discovery_pending/outbound;
+  // prospect->client: null/null).
+  const lifecycle = flipped
+    ? { pipeline_stage: payload.pipeline_stage, lead_source: payload.lead_source }
+    : {
+        pipeline_stage: (existing?.pipeline_stage as string | null) ?? null,
+        lead_source: (existing?.lead_source as string | null) ?? null,
+      };
 
   const { error } = await supabase
     .from("clients")
-    .update({ ...payload, intake_data: mergedIntake })
+    .update({ ...payload, ...lifecycle, intake_data: mergedIntake })
     .eq("id", id);
   const friendly = friendlyClientError(error, payload.name);
   if (friendly) throw new Error(friendly);
