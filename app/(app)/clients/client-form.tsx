@@ -64,11 +64,17 @@ export function ClientForm({
   action: (formData: FormData) => Promise<{ error: string } | undefined>;
   submitLabel: string;
 }) {
-  // On edit, default the toggle from the stored row: an un-converted lead
-  // (pipeline_stage set, not 'converted') is a prospect; otherwise a client.
-  const initialKind: "client" | "prospect" =
-    client && isUnconvertedLead(client.pipeline_stage) ? "prospect" : "client";
-  const [kind, setKind] = useState<"client" | "prospect">(initialKind);
+  // Record type gates the whole form on CREATE (Option A): a NEW record starts with
+  // NO kind selected (null), so the user must choose client or prospect before the
+  // rest of the form appears -- no silent 'client' default to overlook. On EDIT the
+  // type is known, so derive it from the stored row (an un-converted lead is a
+  // prospect; otherwise a client) and show the full form immediately.
+  const initialKind: "client" | "prospect" | null = !client
+    ? null
+    : isUnconvertedLead(client.pipeline_stage)
+      ? "prospect"
+      : "client";
+  const [kind, setKind] = useState<"client" | "prospect" | null>(initialKind);
   const isClient = kind === "client";
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -117,11 +123,19 @@ export function ClientForm({
           ))}
         </div>
         <p className="text-xs text-muted-foreground">
-          {isClient
-            ? "An active client the matcher scores against live grants."
-            : "An outreach target — never scored by the matcher until converted to a client."}
+          {kind === null
+            ? "Choose a record type to continue — this can't be skipped."
+            : isClient
+              ? "An active client the matcher scores against live grants."
+              : "An outreach target — never scored by the matcher until converted to a client."}
         </p>
       </section>
+
+      {/* Everything below is GATED on an explicit record-type choice (Option A): it
+          renders only once the user picks client or prospect, so the type can't be
+          skipped. On edit `kind` is pre-set, so the full form shows immediately. */}
+      {kind !== null && (
+        <>
 
       {/* 2. Organization + contact + location -- always shown (parity with public intake). */}
       <section className="space-y-4">
@@ -279,6 +293,8 @@ export function ClientForm({
           {submitting ? "Saving…" : submitLabel}
         </Button>
       </div>
+        </>
+      )}
     </form>
   );
 }

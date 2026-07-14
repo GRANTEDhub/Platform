@@ -131,6 +131,8 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
     <div>
       <AutoRefresh enabled={processing} />
       <PageHeader
+        backHref="/grants"
+        backLabel="Ledger"
         title={grant.title || "Processing opportunity…"}
         description={[grant.funder, grant.fon].filter(Boolean).join(" · ") || undefined}
         action={

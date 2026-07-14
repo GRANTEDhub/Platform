@@ -17,6 +17,7 @@ import { samExpiryFlag } from "@/lib/sam/expiry";
 import { ClientRepository } from "@/components/clients/client-repository";
 import { AutoRefresh } from "@/components/ui/auto-refresh";
 import { signedUrl } from "@/lib/storage";
+import { isUnconvertedLead } from "@/lib/leads/stage";
 import { BRAND } from "@/lib/brand";
 import type { Client, Invoice, Grant, ClientOverview, CardDecision } from "@/types/database";
 
@@ -166,6 +167,11 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
       .filter(Boolean)
       .join(" · ") || null;
 
+  // An unconverted lead (prospect) lives in the Pipeline (/leads); a client/converted
+  // record lives in /clients (which filters leads OUT). Point "up" to whichever list
+  // actually contains this record, so the back link never dead-ends.
+  const isProspect = isUnconvertedLead(client.pipeline_stage);
+
   return (
     <div className={`${interTight.variable} ${sourceSerif.variable} min-h-full bg-brand-cream pb-10 font-tight`}>
       <ClientHero
@@ -173,6 +179,8 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         humanLine={humanLine}
         subLine={subLine}
         editHref={`/clients/${client.id}/edit`}
+        backHref={isProspect ? "/leads" : "/clients"}
+        backLabel={isProspect ? "Pipeline" : "Clients/Prospects"}
       />
 
       {/* Stat tiles float over the hero's lower edge -- the visual anchor. */}
