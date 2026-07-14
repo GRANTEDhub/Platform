@@ -64,10 +64,11 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     );
   }
 
-  // Write ONLY the profile column. No status change, no runMatching.
+  // Write the profile column and clear any recorded Stage-A error (this build
+  // succeeded). No status change, no runMatching.
   const { error: updateError } = await db
     .from("grants")
-    .update({ ideal_applicant_profile: idealProfile })
+    .update({ ideal_applicant_profile: idealProfile, ideal_profile_error: null })
     .eq("id", params.id);
   if (updateError) {
     return NextResponse.json({ error: `Write failed: ${updateError.message}` }, { status: 500 });

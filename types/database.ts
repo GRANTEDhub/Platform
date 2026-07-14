@@ -298,6 +298,10 @@ export interface Grant {
   shred_reason: string | null;
   // Step 3 / Stage A: the grant's ideal applicant/consortium (multi-archetype).
   ideal_applicant_profile: IdealApplicantProfile | null;
+  // Why Stage A failed to build a profile on a FULL shred (migration 0048). Null =
+  // Stage A succeeded or was not attempted; a message = the last profiling attempt
+  // threw (was previously swallowed). Resolver-gap failures live in shred_reason.
+  ideal_profile_error: string | null;
   // Closed for prospecting by an admin (migration 0037): drops out of the prospect
   // feed but persists in the Ledger with history. Null = open. Reopen (future
   // Ledger action) sets it back to null.

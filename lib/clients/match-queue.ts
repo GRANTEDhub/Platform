@@ -25,6 +25,7 @@
 
 import { createServiceClient } from "@/lib/supabase/server";
 import { scoreGrantClientPair } from "@/lib/grants/pipeline";
+import { isGrantOpen } from "@/lib/grants/lifecycle";
 import type { Client, Grant } from "@/types/database";
 
 type DB = ReturnType<typeof createServiceClient>;
@@ -50,15 +51,20 @@ export type ClientDrainResult = {
 };
 
 // The scorable pool: grants that reached Stage A (an ideal_applicant_profile was
-// built). A grant with no profile is never scored by the daily batch either, so
-// scoring it here would waste calls and mint nothing. Mirrors willScore.
+// built) AND are still OPEN. A grant with no profile is never scored by the daily
+// batch either, so scoring it here would waste calls and mint nothing (mirrors
+// willScore); a CLOSED grant (deadline strictly in the past) must never surface on
+// a report as if open. The open/closed cut uses the shared lifecycle classifier
+// (null-safe: null/today/future deadlines stay in) rather than an inline predicate,
+// so the tier logic reuses the same rule.
 async function loadPool(db: DB): Promise<Grant[]> {
   const { data, error } = await db
     .from("grants")
     .select("*")
     .not("ideal_applicant_profile", "is", null);
   if (error) throw new Error(`Pool load failed: ${error.message}`);
-  return (data ?? []) as Grant[];
+  const now = new Date(); // one clock for the whole pool
+  return ((data ?? []) as Grant[]).filter((g) => isGrantOpen(g, now));
 }
 
 // Grant ids already attempted for this client (any outcome counts as done).

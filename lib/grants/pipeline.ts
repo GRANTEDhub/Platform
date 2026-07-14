@@ -149,12 +149,17 @@ export async function runPipeline(
   // hard-disqualified, not forecasted) and only when we have the real NOFO text
   // (full shred) -- a summary is too thin to anchor a trustworthy profile.
   let idealProfile: IdealApplicantProfile | null = null;
+  // Capture (don't swallow) a Stage-A failure so it becomes a durable, queryable
+  // record instead of a console-only log -- see migration 0048 / the Ledger
+  // "Profile gap" tier. Null on success clears any stale error from a prior attempt.
+  let idealProfileError: string | null = null;
   const willScore =
     isDomestic && (extracted.hard_disqualifiers?.length ?? 0) === 0 && !skipReason && !isForecasted;
   if (willScore && shredDepth === "full") {
     try {
       idealProfile = await constructIdealApplicantProfile(rawTextForStorage);
     } catch (err) {
+      idealProfileError = String(err instanceof Error ? err.message : err).slice(0, 600);
       console.error("Ideal applicant profile failed for grant", grantId, err);
     }
   }
@@ -202,6 +207,7 @@ export async function runPipeline(
       shred_reason: shredReason,
       skip_reason: skipReason,
       ideal_applicant_profile: idealProfile,
+      ideal_profile_error: idealProfileError,
     })
     .eq("id", grantId);
 
