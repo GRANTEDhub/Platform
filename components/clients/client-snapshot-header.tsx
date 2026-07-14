@@ -9,14 +9,28 @@ export function ClientHero({
   humanLine,
   subLine,
   editHref,
+  backHref,
+  backLabel,
 }: {
   name: string;
   humanLine: string | null;
   subLine: string | null;
   editHref: string;
+  // Contextual "up" link to the record's parent list (a real link, not history
+  // back). Both must be set to show it.
+  backHref?: string;
+  backLabel?: string;
 }) {
   return (
     <div className="bg-gradient-to-br from-brand-navy via-brand-navy to-brand-navyDeep px-8 pb-20 pt-12 text-brand-cream">
+      {backHref && backLabel && (
+        <Link
+          href={backHref}
+          className="mb-4 inline-flex items-center gap-1 text-sm text-brand-cream/70 transition-colors hover:text-brand-cream"
+        >
+          <span aria-hidden="true">←</span> {backLabel}
+        </Link>
+      )}
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <h1 className="font-serif text-4xl font-semibold leading-tight tracking-tight">{name}</h1>
