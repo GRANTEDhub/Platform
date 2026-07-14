@@ -146,6 +146,18 @@ export function getGrantDisposition(grant: DispGrant, cards: DispositionCard[]):
     return { tier: "no_match", label: "No match", detail: null };
   }
 
+  // Cards exist. A human DECISION (approved/passed) is the real disposition and
+  // wins (rendered below) -- a resolved grant is never resurfaced as "needs
+  // attention". But an all-PENDING card set on a willScore-eligible grant with NO
+  // profile is a stale match generated without a real profile: the actionable truth
+  // is the missing profile, so route it to profile_gap exactly like the no-card
+  // case. (A single approved/passed card exempts the whole grant.)
+  const willScoreEligible =
+    (grant.hard_disqualifiers?.length ?? 0) === 0 && !grant.skip_reason;
+  const hasDecidedCard = cards.some((c) => DECIDED.has(c.decision));
+  if (!hasDecidedCard && willScoreEligible && !grant.has_ideal_profile)
+    return profileGapDisposition(grant);
+
   const orgs = (cs: DispositionCard[]) =>
     cs.map((c) => c.org_name).filter(Boolean).join(", ") || null;
 

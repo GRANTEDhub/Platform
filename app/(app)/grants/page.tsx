@@ -72,13 +72,20 @@ export default async function LedgerPage({
   // is dropped and the flag is untouched.
   const showIntl = searchParams.intl === "1";
 
+  // The default "all" browse is capped for speed, but a SELECTED tier must be
+  // COMPLETE -- disposition is derived in-memory over the fetched rows, so a cap
+  // would silently truncate the tier (e.g. Profile gap, a triage queue that must
+  // show every qualifying grant). When a tier is active, fetch uncapped (small
+  // text columns; internal admin page; 561 grants today, headroom to 2000).
+  const rowCap = activeTier === "all" ? 200 : 2000;
+
   let grantQuery = supabase
     .from("grants")
     .select(
       "id, title, funder, status, grant_status, error_detail, submission_deadline, deadline, ingested_at, is_domestic, hard_disqualifiers, skip_reason, activated_from_forecast_at, shred_depth, shred_reason, description, ideal_profile_error",
     )
     .order("ingested_at", { ascending: false })
-    .limit(200);
+    .limit(rowCap);
   if (search) {
     // Sanitize before interpolating into the PostgREST or-filter (strip chars
     // that would break the filter grammar). Internal admin tool; best-effort.
@@ -95,13 +102,16 @@ export default async function LedgerPage({
   const grants = (grantData ?? []) as Partial<Grant>[];
 
   // Cards for these grants, for disposition derivation (org names + decisions).
+  // Chunk the id filter so a large tier view (up to rowCap ids) never builds an
+  // over-long PostgREST URL that could fail silently -- cards exist only for matched
+  // grants, so the results stay small.
   const ids = grants.map((g) => g.id!).filter(Boolean);
   const cardsByGrant = new Map<string, DispositionCard[]>();
-  if (ids.length > 0) {
+  for (let i = 0; i < ids.length; i += 150) {
     const { data: cards } = await supabase
       .from("review_cards")
       .select("grant_id, card_type, decision, clients(name), prospects(name)")
-      .in("grant_id", ids);
+      .in("grant_id", ids.slice(i, i + 150));
     for (const c of (cards ?? []) as CardRow[]) {
       if (!c.grant_id) continue;
       const arr = cardsByGrant.get(c.grant_id) ?? [];
@@ -114,15 +124,15 @@ export default async function LedgerPage({
     }
   }
 
-  // Which of these grants have a built profile? Lightweight `is not null` probe --
-  // select only id so we never pull the (large) ideal_applicant_profile jsonb just
-  // to test presence. Drives the "Profile gap" disposition (willScore + no profile).
+  // Which grants have a built profile? Global `is not null` probe (the profiled
+  // pool is small, ~50), so we never pull the large jsonb NOR build a big id-filter
+  // URL; extra ids beyond the loaded page are harmless (only loaded ids are read).
+  // Drives the "Profile gap" disposition (willScore + no profile).
   const profiledIds = new Set<string>();
-  if (ids.length > 0) {
+  {
     const { data: profiledRows } = await supabase
       .from("grants")
       .select("id")
-      .in("id", ids)
       .not("ideal_applicant_profile", "is", null);
     for (const r of (profiledRows ?? []) as { id: string }[]) profiledIds.add(r.id);
   }
