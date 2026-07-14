@@ -1,38 +1,31 @@
 -- Client profile load: 23 active clients (20 UPDATE + 3 INSERT).
 --
--- Writes the approved narrative into clients.intake_data (the refiner INPUT) and
--- the structured occupancy columns (org_type, service_area, primary_funding_needs,
--- rucc_codes where provided, and hard_constraints where a categorical gate applies).
--- Keeps the two separate per the locked #138-140 architecture: narrative prose ->
--- intake_data ONLY; occupancy columns get structured values, never narrative prose.
+-- UPDATES (20 existing clients): set clients.intake_data ONLY (the narrative block,
+-- the refiner INPUT), MERGED via coalesce(intake_data,'{}') || <narrative> so any
+-- existing keys survive. Occupancy columns (org_type, service_area,
+-- primary_funding_needs, hard_constraints, rucc_codes) are DELIBERATELY LEFT
+-- UNTOUCHED: the existing rows already hold good, curated values and must not be
+-- overwritten with coarser ones. intake_data.priority_areas (enum tags) is allowed
+-- to diverge from the primary_funding_needs column (project phrases) -- they feed the
+-- refiner vs the occupancy scorer, two different systems.
 --
--- intake_data is MERGED (coalesce(intake_data,'{}') || <narrative>) so non-narrative
--- keys (phone, referral_source, submitted_at, org_type_code) are never clobbered.
--- UPDATEs key on the exact client name; each should report "UPDATE 1" (a "UPDATE 0"
--- means a name mismatch to reconcile). INSERTs upsert via ON CONFLICT (name), which
--- arbitrates on the clients_name_uniq UNIQUE INDEX (migration 0016, on clients(name)),
--- so a re-run is idempotent. (It is an index, not a named constraint, so column
--- inference is used, not ON CONFLICT ON CONSTRAINT.)
+-- INSERTS (3 new clients: GreenLab / Arkansas Game and Fish Foundation / Epic Glass):
+-- full record -- intake_data narrative PLUS occupancy fields in the existing house
+-- style (org_type, "AR — …"/"US — …" service_area, project-phrase primary_funding_needs
+-- drawn from each funding_need). GreenLab gets a role_ceiling "sub" hard_constraint
+-- (for-profit cannot be federal prime/co-applicant; same shape as RROK). AGFF and
+-- Epic Glass get none (their limits are advisory). Upsert via ON CONFLICT (name),
+-- arbitrated on the clients_name_uniq UNIQUE INDEX (0016, on clients(name)).
 --
--- priority_areas / primary_funding_needs use the real PRIORITY_AREAS enum
--- (lib/intake/fields.ts). Four batch tokens have no clean enum equivalent and were
--- dropped from the enum lists (their intent survives in funding_need/programs prose):
--- "Public Safety", "General Operating Support", "Research/R&D", "Capacity Building".
+-- NOTE: the 3 gates that exist on already-loaded clients (CACHE NEA-GAP, Mississippi
+-- County Galactic Air, RROK role_ceiling) are NOT written here -- they already live
+-- in the DB and the UPDATEs no longer touch hard_constraints.
 --
--- hard_constraints encode 4 gates in the real HardConstraint schema:
---   CACHE Creative       -> entity_screen  (NEA GAP reviewer screen; RAO ineligibility)
---   Mississippi County   -> ineligible_partner (Galactic Air named-entity exclusion)
---   RROK / Dunyasi       -> role_ceiling "sub" (never federal prime/co-applicant)
---   UAMS NorthWest       -> entity_screen  (RHTP/THRIVE "do not pursue" reviewer screen)
--- GreenLab's for-profit/nonprofit-only exclusion is NOT encoded: jsPreFilter no longer
--- gates on entity type (engine.ts) -- org_type=for_profit carries that signal to the
--- scorer -- and the schema has no entity-type exclude type, so an explicit gate would
--- be redundant/inexpressible.
---
--- Migration-first: the USER applies this in Supabase. Does NOT write client_profile
--- (that is the refiner's job -- Phase 2: run /api/clients/backfill-profiles after apply).
--- Text honors the refiner caps (mission/funding_need/partnerships/additional_info <=2000,
--- program description <=1000, serves <=300).
+-- UPDATEs key on exact name; each should report "UPDATE 1" (a "UPDATE 0" = name
+-- mismatch to reconcile). Migration-first: the USER applies this in Supabase. Does
+-- NOT write client_profile (refiner's job -- Phase 2: /api/clients/backfill-profiles
+-- after apply). Text honors the refiner caps (mission/funding_need/partnerships/
+-- additional_info <=2000, program description <=1000, serves <=300).
 
 begin;
 
@@ -57,10 +50,7 @@ update clients set
     ),
     'partnerships', $t$UAMS Institute for Community Health Innovation (RHTP evaluator); Netsmart (EHR); Bell's AI; HUML Health; Arkansas SHARE/ADH OHIT; Blue & You Foundation/Arkansas BCBS; Conway PD, Jonesboro PD, Craighead Co. Sheriff (CIT); Postpartum Support International; Ozarks Community Hospital; Mercy Hospital Berryville.$t$,
     'additional_info', $t$Formed Feb 2020 from four legacy CMHCs. Certified CCBHC, National Health Service Corps site. EIN 84-4286440, UEI EY97RELNYMH5. Operating budget ~$76.6M (FY2024 single audit; public 990 shows ~$91.8M FY2024). Context: lost state CMHC designation 7/1/26, consolidating from 26 clinics into 13 hubs due to a ~$4.4M annual state funding reduction. Advisory constraints (not hard gates): no supplanting the ended state CMHC contract, funding must add to not replace; avoid funding existing staff/positions (past Blue & You feedback); applied-services focus, not a university/research org; TC models must align with Medicaid billing for sustainability.$t$
-  ),
-  org_type = $t$nonprofit$t$,
-  service_area = array[$t$Arkansas — 41 northern counties$t$, $t$Arkansas statewide (TC placement only)$t$]::text[],
-  primary_funding_needs = array[$t$Program expansion / direct services$t$, $t$Equipment / technology$t$, $t$Capital / construction / renovation$t$, $t$Staffing / workforce$t$]::text[]
+  )
 where name = $t$Arisa Health$t$;
 
 -- Columbia County
@@ -77,10 +67,7 @@ update clients set
     ),
     'partnerships', $t$Southwest Arkansas Planning & Development District; Road Management Technologies; Southern Arkansas University (limited, solid waste/recycling); local fire departments; Arkansas Game & Fish Commission (road-access grants).$t$,
     'additional_info', $t$County government, Magnolia, AR; serves Magnolia, Waldo, Emerson, McNeil, Taylor. Advisory constraints (not hard gates): prefers to avoid cash match where possible, especially for road dollars, though not an absolute barrier; LMI eligibility constraints affect some community-development/fire options; limited staff time to gather application materials before funds are exhausted.$t$
-  ),
-  org_type = $t$government$t$,
-  service_area = array[$t$Columbia County, Arkansas$t$]::text[],
-  primary_funding_needs = array[$t$Capital / construction / renovation$t$, $t$Equipment / technology$t$]::text[]
+  )
 where name = $t$Columbia County$t$;
 
 -- CACHE Creative
@@ -99,11 +86,7 @@ update clients set
     ),
     'partnerships', $t$Crystal Bridges and The Momentary; Art Bridges; Downtown Springdale Alliance; TheatreSquared; Latinx Theatre Project; Crowder College; Canopy NWA; Arts Live Theatre; Engage NWA. Funder relationships include Walton Family Foundation, Tyson Family Foundation, George Kaiser Family Foundation (contract services), and Arkansas Community Foundation.$t$,
     'additional_info', $t$Regional arts intermediary nonprofit, Springdale, AR (The Medium, 25,000 sq ft), 501(c)(3) confirmed, RAO (Regional Arts Organization) classification per NEA. Service area is NWA plus NE Oklahoma/Tulsa, but the OK/Tulsa geography is reachable only through the ACF/GKFF channel, not general eligibility. 77% of CACHE awards go directly to artists. Advisory (not a hard gate): prefers to avoid NEA grants generally over censorship/uncertainty concerns.$t$
-  ),
-  org_type = $t$nonprofit$t$,
-  service_area = array[$t$Northwest Arkansas$t$, $t$NE Oklahoma / Tulsa (ACF/GKFF channel only)$t$]::text[],
-  primary_funding_needs = array[$t$Planning / assessment$t$, $t$Program expansion / direct services$t$]::text[],
-  hard_constraints = jsonb_build_array(jsonb_build_object('type', $t$entity_screen$t$, 'value', $t$NEA Grants for Arts Projects (GAP)$t$, 'note', $t$CACHE's RAO (Regional Arts Organization) classification categorically bars it from NEA Grants for Arts Projects (GAP). Do not pursue NEA GAP. (Schema note: encoded as a reviewer screen because GAP-ness is not a structured grant field; the broader "prefers to avoid NEA" is advisory, not gated.)$t$, 'action', $t$flag$t$))
+  )
 where name = $t$CACHE Creative$t$;
 
 -- WorkAbility Alliance
@@ -119,10 +102,7 @@ update clients set
     ),
     'partnerships', $t$Ability Tree (Siloam Springs) — staffing, training, and community promotion partner; Open Avenues — small-business-community promotion partner.$t$,
     'additional_info', $t$Nonprofit, Bentonville, AR (expanding to Siloam Springs), 501(c)(3). No prior grant history — fully self-funded to date. No hard limits stated.$t$
-  ),
-  org_type = $t$nonprofit$t$,
-  service_area = array[$t$Northwest Arkansas$t$, $t$Bentonville, AR$t$, $t$Siloam Springs, AR$t$]::text[],
-  primary_funding_needs = array[$t$Capital / construction / renovation$t$, $t$Program expansion / direct services$t$]::text[]
+  )
 where name = $t$WorkAbility Alliance$t$;
 
 -- Community Clinic
@@ -139,10 +119,7 @@ update clients set
     ),
     'partnerships', $t$Potter's House (CHW/nurse navigator site); University of Arkansas (IQR convening); Market Center of the Ozarks; Arkansas Food Innovation Center; Hartland Whole Health Institute; UA Extension; Canopy; local school districts; state-program access routed through Susanna/Anchor (AORP, ARAG, RHT, Public Health Local Grant Trust Fund).$t$,
     'additional_info', $t$Nonprofit Federally Qualified Health Center (FQHC), Springdale, AR, serving Benton and Washington Counties across 27+ sites, 501(c)(3) (confirmed). Owned by St. Francis House NWA Inc. (public IRS records list this EIN under that name — confirm correct grant applicant entity if a federal submission requires it). Advisory constraints (not hard gates): program sustainability must include a reimbursement pathway (Medicaid/Medicare, CHW/RPM billing); prefers no/low-match grants or in-kind; generally avoids grants under $10,000.$t$
-  ),
-  org_type = $t$nonprofit$t$,
-  service_area = array[$t$Benton County, Arkansas$t$, $t$Washington County, Arkansas$t$]::text[],
-  primary_funding_needs = array[$t$Staffing / workforce$t$, $t$Program expansion / direct services$t$, $t$Equipment / technology$t$, $t$Capital / construction / renovation$t$]::text[]
+  )
 where name = $t$Community Clinic$t$;
 
 -- EverHope
@@ -160,10 +137,7 @@ update clients set
     ),
     'partnerships', $t$Bentonville Public School District; Springdale Public School District; Arkansas DHS (foster licensing liaison).$t$,
     'additional_info', $t$Nonprofit (formerly NWA Children's Shelter), Bentonville, AR, 501(c)(3). Service area is statewide Arkansas (shelter/school) with foster licensing across NWA. Advisory constraints (not hard gates): statewide service area (only ~27% of youth from NWA) may affect fit for regionally restricted funders; ~1 month application lead time plus advance notice for board-signature requirements; grants lead is new to the role.$t$
-  ),
-  org_type = $t$nonprofit$t$,
-  service_area = array[$t$Arkansas statewide (shelter/school)$t$, $t$Northwest Arkansas (foster licensing)$t$]::text[],
-  primary_funding_needs = array[$t$Equipment / technology$t$, $t$Capital / construction / renovation$t$]::text[]
+  )
 where name = $t$EverHope$t$;
 
 -- Harbor House
@@ -182,10 +156,7 @@ update clients set
     ),
     'partnerships', $t$United Way of Fort Smith; Washington/Madison County Drug Court (justice-involved referrals); Paula Stone/OSAMH (state contracts); Center for Nonprofits Fort Smith (grant vendor); Rural Health Association of Arkansas; congressional appropriations lobbyists (Capitol Consulting).$t$,
     'additional_info', $t$Nonprofit behavioral health/addiction treatment provider, Fort Smith, AR (with Hot Springs presence), 501(c)(3). Public 990 revenue ~$11.2M FY2024. Advisory constraints (not hard gates): capital only, not seeking funding for payroll or routine operations; stays focused on adult substance use treatment, not broadening into unrelated service models; federal competitive grants require multi-month lead time and pre-positioning; Walker Foundation has a 30-day pre-contact rule; Tyson Foundation requires plant-level contact or chaplain vouch before pursuing.$t$
-  ),
-  org_type = $t$nonprofit$t$,
-  service_area = array[$t$Fort Smith, Arkansas$t$, $t$Hot Springs, Arkansas$t$, $t$Northwest Arkansas (expansion)$t$]::text[],
-  primary_funding_needs = array[$t$Capital / construction / renovation$t$, $t$Program expansion / direct services$t$]::text[]
+  )
 where name = $t$Harbor House$t$;
 
 -- Havenwood
@@ -203,10 +174,7 @@ update clients set
     ),
     'partnerships', $t$Pathways (on-site counseling/therapy); University of Arkansas & NWACC (informal referral/education support); UpSkill (medical-field referrals); Community Development of NWA (landlord); Restore Hope; Benchmark Group (pro bono architectural support).$t$,
     'additional_info', $t$Standalone nonprofit, Bentonville, AR, 501(c)(3), serving Northwest Arkansas. Advisory constraints (not hard gates): has deliberately not pursued Arkansas DV shelter licensure (excludes it from the state's DV Shelter Fund); can house mothers with up to 2 children only, cannot safely house teens; cautious about public funding after prior mission-drift/audit concerns with pass-through grants; board expects visible new grant revenue.$t$
-  ),
-  org_type = $t$nonprofit$t$,
-  service_area = array[$t$Northwest Arkansas$t$, $t$Bentonville, AR$t$]::text[],
-  primary_funding_needs = array[$t$Program expansion / direct services$t$, $t$Capital / construction / renovation$t$]::text[]
+  )
 where name = $t$Havenwood$t$;
 
 -- NWA Council
@@ -226,10 +194,7 @@ update clients set
     ),
     'partnerships', $t$Anchor corporate/founding members and philanthropic funders (Arnold Ventures, Winthrop Rockefeller Foundation, Blue & You Foundation); public-sector (NWARPC, NWAEDD, XNA Airport, Arkansas EDC); education (University of Arkansas, NWACC); health systems (Washington Regional, Arisa Health, Community Clinic NWA, UAMS Northwest, Heartland Whole Health Institute, Alice L. Walton School of Medicine); Growing Home NWA planning team.$t$,
     'additional_info', $t$Regional leadership org (est. 1990), Bentonville/Springdale corridor, serving primarily Benton & Washington Counties with select statewide exceptions. Current President & CEO: Nelson Peacock. Entity structure: the NWA Council is a 501(c)(6) business league; its affiliated 501(c)(3), NWA Council Foundation (EIN 46-0807914), serves as grant applicant of record. Per GRANTED direction, treat Council and Foundation as the same applicant for matching purposes and resolve the specific prime/applicant entity per grant. Advisory context (not a hard gate): the Council role is often convener/facilitator rather than direct-service prime, and requires a public-sector or clinical prime on infrastructure/housing-construction/clinical health grants; high-income fast-growing metro profile can exclude programs targeting distressed/rural/low-income areas; per standing GRANTED instruction, Walton Family Foundation, Walmart Foundation, Tyson Family Foundation, Simmons Foods Foundation, and J.B. & Johnelle Hunt Family Foundation are excluded from workstream-level opportunity lists (Hunt permitted only on the Cross-Cutting list, December cycle).$t$
-  ),
-  org_type = $t$nonprofit$t$,
-  service_area = array[$t$Benton County, Arkansas$t$, $t$Washington County, Arkansas$t$, $t$Arkansas statewide (select programs)$t$]::text[],
-  primary_funding_needs = array[$t$Program expansion / direct services$t$, $t$Planning / assessment$t$, $t$Staffing / workforce$t$, $t$Capital / construction / renovation$t$]::text[]
+  )
 where name = $t$NWA Council$t$;
 
 -- NWACC
@@ -248,10 +213,7 @@ update clients set
     ),
     'partnerships', $t$HWCEC (CCAMPIS); UpSkill of NWA (multi-year); City of Bentonville; Walmart and regional employers; University of Arkansas (Biotechnology/NAABI).$t$,
     'additional_info', $t$Public two-year community college, Bentonville, AR (Benton County and surrounding NWA region). Advisory constraints (not hard gates): not research-heavy, avoid highly technical/university-based research grants unless applied/workforce-relevant; per May 2025 client direction, avoid private philanthropic and pure-research opportunities and outside-partner collaborations beyond existing relationships; standing flag — on the Eagle Way Tunnel & Trail, NWACC is partner/beneficiary only. A separate NWACC Foundation (EIN 71-0697377) is a 501(c)(3) that can serve as applicant for philanthropic funding.$t$
-  ),
-  org_type = $t$government$t$,
-  service_area = array[$t$Benton County, Arkansas$t$, $t$Northwest Arkansas region$t$]::text[],
-  primary_funding_needs = array[$t$Staffing / workforce$t$, $t$Equipment / technology$t$, $t$Program expansion / direct services$t$, $t$Capital / construction / renovation$t$]::text[]
+  )
 where name = $t$NWACC$t$;
 
 -- Faulkner County
@@ -269,10 +231,7 @@ update clients set
     ),
     'partnerships', $t$OEM/FEMA; Metroplan; ARDOT; City of Conway; Conway Corp; Garver (engineering); GRANTED (grant admin support).$t$,
     'additional_info', $t$County government, Conway, AR (Central Arkansas). Arkansas county structure: the County Judge is the chief executive; Quorum Court approval gates all expenditures and match commitments. Advisory constraints (not hard gates): limited internal grant-management capacity; matching-fund constraints on large capital projects; resistance among independent volunteer fire departments to consolidation; ARPA flexibility largely exhausted; must avoid double-dipping across grants; coordination with Metroplan required to avoid conflicts of interest.$t$
-  ),
-  org_type = $t$government$t$,
-  service_area = array[$t$Faulkner County, Arkansas$t$]::text[],
-  primary_funding_needs = array[$t$Capital / construction / renovation$t$, $t$Equipment / technology$t$]::text[]
+  )
 where name = $t$Faulkner County$t$;
 
 -- Greene County
@@ -292,10 +251,7 @@ update clients set
     ),
     'partnerships', $t$East Arkansas Planning & Development District (Judge McMillon is Vice President); Clay County (joint applicant, Marine Fuel Tax); City of Paragould (shared econ dev commission, courthouse expansion co-funding, CDBG applicant of record for health unit); Arkansas Game & Fish (Marine Fuel Tax alignment); Arkansas Community Foundation (Greene Co. Giving Tree affiliate).$t$,
     'additional_info', $t$County government, Paragould, AR (Paragould, Marmaduke, Lafe, Delaplaine, Oak Grove Heights, Walcott). 1888 courthouse undergoing preservation (National Register status not confirmed — verify before citing). Arkansas county structure: County Judge is chief executive; Quorum Court approval gates all expenditures and match commitments. Note: several FY27 pursuits (SS4A, FEMA BRIC, ARCAG, USDA ELRP) are sourced from a July 2026 client brief and not yet corroborated in Drive strategy docs — verify status before acting.$t$
-  ),
-  org_type = $t$government$t$,
-  service_area = array[$t$Greene County, Arkansas$t$]::text[],
-  primary_funding_needs = array[$t$Capital / construction / renovation$t$, $t$Planning / assessment$t$]::text[]
+  )
 where name = $t$Greene County$t$;
 
 -- Mississippi County
@@ -314,11 +270,7 @@ update clients set
     ),
     'partnerships', $t$Arkansas Northeastern College; Great River Economic Development Foundation; Garver LLC; Blytheville-Gosnell Regional Airport Authority; City of Blytheville; AEDC; Congressman Crawford's and Congressman Westerman's offices; East Arkansas Planning & Development District.$t$,
     'additional_info', $t$County government, Delta region, AR (Blytheville/Osceola, 19 incorporated communities). Arkansas county structure: County Judge is chief executive; Quorum Court must approve any matching-fund commitment before application (flag deadlines at least 6 weeks in advance). Advisory constraints (not hard gates): limited capacity for match/cost-share, prioritize no/low-match programs and flag match requirements explicitly. The hospital-system modernization workstream (NYITCOM residency) is flagged inactive as of June 2026 — hold until re-raised by client. Note: private-runway/AIP point (FAA public-use airport grants not viable) is a real eligibility fact but grant-specific and left advisory.$t$
-  ),
-  org_type = $t$government$t$,
-  service_area = array[$t$Mississippi County, Arkansas$t$]::text[],
-  primary_funding_needs = array[$t$Capital / construction / renovation$t$, $t$Equipment / technology$t$, $t$Staffing / workforce$t$]::text[],
-  hard_constraints = jsonb_build_array(jsonb_build_object('type', $t$ineligible_partner$t$, 'value', $t$Galactic Air$t$, 'note', $t$Galactic Air (for-profit tenant / named industry partner) may never be named as a recipient or subrecipient on any federal application; tenant only, never co-applicant. Standing compliance hard line.$t$, 'action', $t$flag$t$))
+  )
 where name = $t$Mississippi County$t$;
 
 -- Pope County
@@ -336,10 +288,7 @@ update clients set
     ),
     'partnerships', $t$West Central Planning & Development District; Arkansas Dept. of Emergency Management; FEMA; ARDOT; AEDC; Entergy (nuclear-adjacent preparedness); River Valley Alliance for Economic Development; Cooperative Extension; Area Agency on Aging; City of Russellville.$t$,
     'additional_info', $t$County government, Russellville, AR. Arkansas county structure: County Judge is chief executive; Quorum Court approval gates expenditures and match. Advisory constraints (not hard gates): no dedicated county sales tax since 1995, limiting capital funds; demographic undercount (~82K estimated vs ~64K census) reduces formula funding; LMI qualification gaps restrict some federal/state rural programs; lean administrative capacity requires external grant support.$t$
-  ),
-  org_type = $t$government$t$,
-  service_area = array[$t$Pope County, Arkansas$t$]::text[],
-  primary_funding_needs = array[$t$Equipment / technology$t$, $t$Capital / construction / renovation$t$]::text[]
+  )
 where name = $t$Pope County$t$;
 
 -- Saline County
@@ -359,10 +308,7 @@ update clients set
     ),
     'partnerships', $t$Metroplan (MPO, primary infrastructure funding conduit); CAPDD; ARDOT (Local Bridge Program, TAP/RTP); ADEM (FEMA BRIC state administrator); Garver (engineer of record); Volkert; McClelland Engineering; AGFC (river access); Keep Arkansas Beautiful; Blue & You Foundation; USDA Rural Development.$t$,
     'additional_info', $t$County government, Benton, AR (county seat), serving Saline County. Arkansas county structure: County Judge is chief executive; Quorum Court approval gates expenditures and match. Match capacity comfortable at 80/20 and 90/10; 60/40 or 1:1 on large capital is a stretch and must be programmed in advance. Advisory constraints (not hard gates): CDBG ineligible (population/income profile disqualify from entitlement and state-administered CDBG); owns no street lights/sidewalks/gutters, limiting SS4A Implementation fit; city-specific projects inside Benton or Bryant route through Metroplan rather than the County.$t$
-  ),
-  org_type = $t$government$t$,
-  service_area = array[$t$Saline County, Arkansas$t$]::text[],
-  primary_funding_needs = array[$t$Capital / construction / renovation$t$, $t$Program expansion / direct services$t$]::text[]
+  )
 where name = $t$Saline County$t$;
 
 -- Ozark Regional Transit
@@ -376,10 +322,7 @@ update clients set
     ),
     'partnerships', $t$Not yet documented (onboarding intake incomplete).$t$,
     'additional_info', $t$Government/transit authority, Springdale, AR, serving the Northwest Arkansas transit corridor. Contact: Joel Gardner, Executive Director. IMPORTANT: onboarding intake/kickoff has not been completed and no full client profile exists in Drive beyond the signed contract. This profile is built from limited known information. Per firm policy, no grant outreach proceeds until onboarding is complete and Shannon is present. FHWA ATTAIN and FTA ICAM Pilot noted as prospective fits pending Shannon-led onboarding.$t$
-  ),
-  org_type = $t$government$t$,
-  service_area = array[$t$Northwest Arkansas$t$, $t$Springdale, AR$t$]::text[],
-  primary_funding_needs = array[$t$Equipment / technology$t$, $t$Capital / construction / renovation$t$]::text[]
+  )
 where name = $t$Ozark Regional Transit$t$;
 
 -- Pathway to Freedom
@@ -397,10 +340,7 @@ update clients set
     ),
     'partnerships', $t$Arkansas Department of Corrections / Wrightsville Hawkins Unit; local churches and volunteers; Tyson Foods, George's, Walmart (second-chance hiring); Rock City Re-entry; Little Rock Workforce Development Board; Pulaski Tech; Restore Hope; Office of Skill Development.$t$,
     'additional_info', $t$Faith-based reentry nonprofit, Wrightsville, AR, 501(c)(3), serving statewide Arkansas (in-facility at Wrightsville Hawkins Unit plus statewide post-release) with targeted NWA expansion. Public revenue ~$806K FY2024. Advisory constraints (not hard gates): faith-based (Christ-centered) may exclude some secular funders; won't pursue grants that restrict/hamper mission or operations; cannot pursue new opioid-settlement funding until the existing $972K AG grant is closed out; key funder (Serving USA) typically doesn't fund construction; some funders require large non-government match.$t$
-  ),
-  org_type = $t$nonprofit$t$,
-  service_area = array[$t$Arkansas statewide$t$, $t$Northwest Arkansas (expansion)$t$]::text[],
-  primary_funding_needs = array[$t$Capital / construction / renovation$t$, $t$Program expansion / direct services$t$]::text[]
+  )
 where name = $t$Pathway to Freedom$t$;
 
 -- RROK / Dunyasi Ventures
@@ -416,11 +356,7 @@ update clients set
     ),
     'partnerships', $t$Oklahoma Baptist University (lead IHE partner, confirmed); UpskillOK/Oklahoma State Regents (prospective credentialing); Choctaw Nation of Oklahoma (warm, status uncertain); Oklahoma Farm Bureau (LOI in progress); Oklahoma CareerTech; Activate Oklahoma Accelerator; GRANTED (grant strategy/writing, proposed post-award admin contractor).$t$,
     'additional_info', $t$For-profit LLC, Oklahoma (statewide, rural emphasis). OUT-OF-STATE (Oklahoma) — an exception to GRANTED's domestic-Arkansas focus. Advisory/structural flags (not simple gates): staffing-commission revenue model must stay structurally and narratively separate from grant-funded scope (audit/fraud risk); needs operating/bridge support between now and any EDA award (earliest Nov 2026).$t$
-  ),
-  org_type = $t$for_profit$t$,
-  service_area = array[$t$Oklahoma statewide (rural emphasis)$t$]::text[],
-  primary_funding_needs = array[$t$Staffing / workforce$t$, $t$Program expansion / direct services$t$]::text[],
-  hard_constraints = jsonb_build_array(jsonb_build_object('type', $t$role_ceiling$t$, 'value', $t$sub$t$, 'note', $t$For-profit LLC cannot be federal prime or co-applicant; cap at subawardee/contractor under an eligible IHE lead (funder prior approval required for the subaward). Applied unscoped (conservative) because scope matching cannot reliably detect federal-ness; verify per grant.$t$, 'action', $t$cap_role$t$))
+  )
 where name = $t$RROK / Dunyasi Ventures$t$;
 
 -- MSET
@@ -436,10 +372,7 @@ update clients set
     ),
     'partnerships', $t$NASA; federal labs; Mississippi universities/research foundations; Mississippi Development Authority; Aerospace and Defense Trade Association; Accelerate Mississippi; Plug and Play; Innovate Mississippi (potential).$t$,
     'additional_info', $t$Private nonprofit, John C. Stennis Space Center, Hancock County, MS, 501(c)(3), serving Mississippi statewide (aerospace/defense/tech sectors). OUT-OF-STATE (Mississippi) — an exception to GRANTED's domestic-Arkansas focus. Operates Mississippi's official Technology Transfer Office (state designation). Advisory constraints (not hard gates): facing loss of ~$200K NASA funding in 2026; state-level grant access is politically sensitive, avoids direct competition with MDA/Innovate Mississippi and often positions as subcontractor/partner rather than prime; small administrative team; difficulty securing match for higher-match programs.$t$
-  ),
-  org_type = $t$nonprofit$t$,
-  service_area = array[$t$Mississippi statewide$t$]::text[],
-  primary_funding_needs = array[$t$Staffing / workforce$t$, $t$Program expansion / direct services$t$]::text[]
+  )
 where name = $t$MSET$t$;
 
 -- UAMS NorthWest
@@ -461,25 +394,20 @@ update clients set
     ),
     'partnerships', $t$Welcome Health; Fayetteville Public Library; Canopy NWA/ICI; Butterfield Trail Village Retirement Community; University of Arkansas (psychology, social work, education); NWA Education Service Co-op; Hope Cancer Resources; Community Clinic NWA; Arkansas Coalition of Marshallese; Springdale Public Schools; UAMS Little Rock main campus (poison control, GME/StARR infrastructure, culinary medicine); I-49 Corridor group (AI in healthcare); Arkansas AI and Analytics Center of Excellence; Arkansas Department of Health NW regional office.$t$,
     'additional_info', $t$Public academic health sciences regional campus, Fayetteville, AR, serving Washington, Benton, Carroll, and Madison counties. Part of the University of Arkansas for Medical Sciences (UA system) — not independently tax-exempt; all federal grants route through the UAMS Muse system with a minimum 2-week lead time for institutional signatures and AVC sign-off. Advisory constraints (not hard gates): RURALITY GAP — Washington and Benton counties are RUCC 2 (metro) and ineligible for most federal rural-health (HRSA) and USDA rural programs; applications must structure around rural end-user activity in the rural-qualifying counties, not HQ location (see rucc_codes). On large research-heavy awards (R34, K12, PRIMED-AI), the realistic role is partner or regional hub under UAMS main campus, not prime. No psychology training program at NW (housed at University of Arkansas) — cannot be prime on psychology-workforce-specific grants; needs U of A or NWA Education Service Co-op as prime. System-level AI/EMR implementation requires UA-system governance — NW can be a pilot site but not an independent applicant. Match sensitivity: institutional caution on committing faculty time or cash match (student time match acceptable) — flag early. Blue & You routes through a central UAMS clearinghouse with a per-institution application limit. BINDING OUTREACH RULE: any outreach email to Ryan Cork on grants involving NWAC must exclude all mention of NWAC (confidentiality constraint). Verify with Ryan Cork / Tina Maddox / Eric Leemis before assuming institutional clearance.$t$
-  ),
-  org_type = $t$government$t$,
-  service_area = array[$t$Northwest Arkansas$t$, $t$Washington County, Arkansas$t$, $t$Benton County, Arkansas$t$, $t$Carroll County, Arkansas$t$, $t$Madison County, Arkansas$t$]::text[],
-  primary_funding_needs = array[$t$Staffing / workforce$t$, $t$Program expansion / direct services$t$, $t$Equipment / technology$t$, $t$Capital / construction / renovation$t$, $t$Planning / assessment$t$]::text[],
-  rucc_codes = $t$Washington: 2, Benton: 2, Carroll: 6, Madison: unverified (confirm; source cited 'Boone RUCC 7', but Boone is not in the service area)$t$,
-  hard_constraints = jsonb_build_array(jsonb_build_object('type', $t$entity_screen$t$, 'value', $t$RHTP / THRIVE (Rural Health Transformation Program)$t$, 'note', $t$UAMS Northwest will not apply for the Rural Health Transformation Program (RHTP/THRIVE), independently or through GRANTED — confirmed by Ryan Cork. Do not pursue or recommend. (Schema note: entity_screen, not a silent exclude, because RHTP is a program name not a structured grant field; matching the administering funder would over-exclude. Fires a reviewer flag on every match.)$t$, 'action', $t$flag$t$))
+  )
 where name = $t$UAMS NorthWest$t$;
 
 
 -- 3 INSERTs (new active clients; upsert on clients_name_uniq)
 
 -- GreenLab, Inc.
-insert into clients (name, status, org_type, service_area, primary_funding_needs, intake_data)
+insert into clients (name, status, org_type, service_area, primary_funding_needs, intake_data, hard_constraints)
 values (
   $t$GreenLab, Inc.$t$,
   'active',
   $t$for_profit$t$,
-  array[$t$National / global markets$t$, $t$Arkansas (operations / feedstock)$t$]::text[],
-  array[$t$Equipment / technology$t$]::text[],
+  array[$t$AR — Statewide (operations / feedstock)$t$, $t$US — National / global markets$t$]::text[],
+  array[$t$R&D / scale-up (corn-expressed proteins & enzymes)$t$, $t$SBIR/STTR federal biotech funding$t$, $t$Lab relocation to Arkansas$t$, $t$Equipment / lab instrumentation$t$, $t$Ag-innovation / farmer value-add$t$]::text[],
   jsonb_build_object(
     'mission', $t$To green industry with next-generation plant biotechnology, using its proprietary GreenLab Vector Technology (GVT) farmentation platform to grow proteins and enzymes directly in corn, replacing costly fermentation-based production with a scalable, waste-free, cornfield-based manufacturing model.$t$,
     'funding_need', $t$R&D and scale-up for corn-expressed proteins and enzymes (SBIR/STTR-style federal biotech funding), funding to relocate/replicate the Woburn, MA lab capability to Arkansas, support for a proposed 501(c) AI-driven protein discovery arm, and programs tied to Arkansas farmer value-add and agricultural innovation.$t$,
@@ -492,13 +420,15 @@ values (
     ),
     'partnerships', $t$Nutriba (sweetener-systems company supplying Westrock/Walmart RTD lines); Novus International-owned contract lab (Woburn, MA); Ginkgo Bioworks; Allonnia; ASU research affiliation; prospective University of Arkansas Center of Excellence for Food Science and Innovation and Market Center of the Ozarks food hub.$t$,
     'additional_info', $t$For-profit biotechnology company, Arkansas (verify HQ address), serving national/global markets with Arkansas agricultural-feedstock framing. No prior grant history (first-time applicant, SAM.gov status unconfirmed). Advisory flag (not a hard gate): a pending ~$6M commercial fundraise is a live SBIR/STTR size/ownership eligibility question and must be checked against each program's standards. Contact: use paigejernigan@mac.com for Paige (corporate email has deliverability issues).$t$
-  )
+  ),
+  jsonb_build_array(jsonb_build_object('type', $t$role_ceiling$t$, 'value', $t$sub$t$, 'note', $t$For-profit entity cannot be federal prime or co-applicant; cap at subawardee/contractor under an eligible lead (matches the RROK for-profit encoding). Applied unscoped (conservative); verify per grant.$t$, 'action', $t$cap_role$t$))
 )
 on conflict (name) do update set
   intake_data = coalesce(clients.intake_data, '{}'::jsonb) || excluded.intake_data,
   org_type = excluded.org_type,
   service_area = excluded.service_area,
-  primary_funding_needs = excluded.primary_funding_needs;
+  primary_funding_needs = excluded.primary_funding_needs,
+  hard_constraints = excluded.hard_constraints;
 
 -- Arkansas Game and Fish Foundation
 insert into clients (name, status, org_type, service_area, primary_funding_needs, intake_data)
@@ -506,8 +436,8 @@ values (
   $t$Arkansas Game and Fish Foundation$t$,
   'active',
   $t$nonprofit$t$,
-  array[$t$Arkansas statewide$t$, $t$Northwest Arkansas (regional projects)$t$]::text[],
-  array[$t$Program expansion / direct services$t$, $t$Equipment / technology$t$, $t$Capital / construction / renovation$t$]::text[],
+  array[$t$AR — Statewide$t$, $t$AR — Northwest Arkansas (regional projects)$t$]::text[],
+  array[$t$Youth outdoor education / R3$t$, $t$Habitat & pollinator conservation$t$, $t$Game warden / enforcement equipment$t$, $t$Capital / land restoration$t$, $t$Foundation & corporate philanthropy$t$]::text[],
   jsonb_build_object(
     'mission', $t$Nonprofit partner to the Arkansas Game and Fish Commission since 1982, supporting the Commission's conservation, wildlife habitat, and education work and keeping the next generation of Arkansans Unplugged and Engaged in the outdoors.$t$,
     'funding_need', $t$Youth development and outdoor education (R3: recruit, retain, reactivate), habitat restoration and pollinator/species-of-concern conservation, law enforcement and game warden equipment, and family-foundation and corporate philanthropy.$t$,
@@ -536,8 +466,8 @@ values (
   $t$Epic Glass and Recycling$t$,
   'active',
   $t$nonprofit$t$,
-  array[$t$Arkansas statewide$t$, $t$Surrounding states (potential expansion)$t$]::text[],
-  array[$t$Equipment / technology$t$, $t$Program expansion / direct services$t$, $t$Planning / assessment$t$]::text[],
+  array[$t$AR — Statewide$t$, $t$AR — Surrounding-states expansion (potential)$t$]::text[],
+  array[$t$Drop-off containers & collection equipment$t$, $t$Collection vehicles$t$, $t$Community outreach / engagement$t$, $t$Program expansion (new municipalities)$t$, $t$Planning / strategic assessment$t$]::text[],
   jsonb_build_object(
     'mission', $t$Help Arkansas communities and municipalities start sustainable, efficient glass recycling programs, keeping glass out of landfills and closing the recycling loop statewide.$t$,
     'funding_need', $t$Drop-off containers and collection equipment, collection vehicles, community outreach and engagement, program expansion into new municipalities, and planning/strategic assessment.$t$,
