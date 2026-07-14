@@ -1,10 +1,10 @@
--- Client profile load: 22 active clients (19 UPDATE + 3 INSERT).
+-- Client profile load: 23 active clients (20 UPDATE + 3 INSERT).
 --
 -- Writes the approved narrative into clients.intake_data (the refiner INPUT) and
 -- the structured occupancy columns (org_type, service_area, primary_funding_needs,
--- and hard_constraints where a categorical gate applies). Keeps the two separate
--- per the locked #138-140 architecture: narrative prose -> intake_data ONLY;
--- occupancy columns get structured values, never narrative prose.
+-- rucc_codes where provided, and hard_constraints where a categorical gate applies).
+-- Keeps the two separate per the locked #138-140 architecture: narrative prose ->
+-- intake_data ONLY; occupancy columns get structured values, never narrative prose.
 --
 -- intake_data is MERGED (coalesce(intake_data,'{}') || <narrative>) so non-narrative
 -- keys (phone, referral_source, submitted_at, org_type_code) are never clobbered.
@@ -19,10 +19,11 @@
 -- dropped from the enum lists (their intent survives in funding_need/programs prose):
 -- "Public Safety", "General Operating Support", "Research/R&D", "Capacity Building".
 --
--- hard_constraints encode 3 gates in the real HardConstraint schema:
+-- hard_constraints encode 4 gates in the real HardConstraint schema:
 --   CACHE Creative       -> entity_screen  (NEA GAP reviewer screen; RAO ineligibility)
 --   Mississippi County   -> ineligible_partner (Galactic Air named-entity exclusion)
 --   RROK / Dunyasi       -> role_ceiling "sub" (never federal prime/co-applicant)
+--   UAMS NorthWest       -> entity_screen  (RHTP/THRIVE "do not pursue" reviewer screen)
 -- GreenLab's for-profit/nonprofit-only exclusion is NOT encoded: jsPreFilter no longer
 -- gates on entity type (engine.ts) -- org_type=for_profit carries that signal to the
 -- scorer -- and the schema has no entity-type exclude type, so an explicit gate would
@@ -35,7 +36,7 @@
 
 begin;
 
--- 19 UPDATEs (existing active clients, keyed on exact name)
+-- 20 UPDATEs (existing active clients, keyed on exact name)
 
 -- Arisa Health
 update clients set
@@ -440,6 +441,33 @@ update clients set
   service_area = array[$t$Mississippi statewide$t$]::text[],
   primary_funding_needs = array[$t$Staffing / workforce$t$, $t$Program expansion / direct services$t$]::text[]
 where name = $t$MSET$t$;
+
+-- UAMS NorthWest
+update clients set
+  intake_data = coalesce(intake_data, '{}'::jsonb) || jsonb_build_object(
+    'mission', $t$UAMS Northwest expands access to healthcare education, research, and clinical services in Northwest Arkansas, training the next generation of health professionals while addressing regional workforce shortages and community health needs across medicine, pharmacy, nursing, and allied health.$t$,
+    'funding_need', $t$GME and residency slot expansion (psychiatry, family medicine, nursing), behavioral health integration for rural and Spanish-speaking populations, community health worker and mobile health delivery, rural telehealth infrastructure, Food is Medicine and interprofessional curriculum, maternal and child health, rural cancer screening and navigation, biomedical equipment, capital infrastructure (shell space, flood mitigation), USDA rural development capital, AI-in-healthcare curriculum and faculty training, and opioid recovery and behavioral health workforce development.$t$,
+    'priority_areas', to_jsonb(array[$t$Staffing / workforce$t$, $t$Program expansion / direct services$t$, $t$Equipment / technology$t$, $t$Capital / construction / renovation$t$, $t$Planning / assessment$t$]::text[]),
+    'programs', jsonb_build_array(
+      jsonb_build_object('name', $t$Mobile Health Van (CHW/RN model)$t$, 'description', $t$Delivers primary care, screenings, and student-volunteer health services on-site at community locations. Van available since fall 2025; staffing/operations funding still prospective.$t$, 'serves', $t$Rural/underserved NWA residents, seniors, uninsured/underinsured$t$, 'status', $t$existing$t$),
+      jsonb_build_object('name', $t$OurHealthNow Telehealth Booths / Rural Library Telehealth Network$t$, 'description', $t$Kiosk-based telehealth access points at rural libraries, senior centers, and community sites on the existing OurHealthNow backbone.$t$, 'serves', $t$Rural residents without reliable transportation/broadband, especially seniors$t$, 'status', $t$prospective$t$),
+      jsonb_build_object('name', $t$Food is Medicine / IPE Curriculum$t$, 'description', $t$Interprofessional curriculum integrating food-as-treatment training with clinical practice; possible CME/CE component.$t$, 'serves', $t$Health professions students, clinicians, food-insecure patients$t$, 'status', $t$prospective$t$),
+      jsonb_build_object('name', $t$Psychiatry Residency / Behavioral Health Expansion$t$, 'description', $t$GME slot growth and behavioral health service expansion, emphasis on rural and Spanish-speaking populations.$t$, 'serves', $t$Residents, rural/underserved patients$t$, 'status', $t$existing$t$),
+      jsonb_build_object('name', $t$Community Health Worker (CHW) Expansion$t$, 'description', $t$Extends the CHW model beyond the current Marshallese-population focus to broader NWA communities.$t$, 'serves', $t$Marshallese community, broader NWA underserved populations$t$, 'status', $t$existing$t$),
+      jsonb_build_object('name', $t$Rural Cancer Screening and Navigation$t$, 'description', $t$Screening events and patient navigation/transportation support (Hope Cancer Resources potential partner).$t$, 'serves', $t$Rural NWA patients$t$, 'status', $t$prospective$t$),
+      jsonb_build_object('name', $t$Maternal and Child Health / Perinatal Mental Health$t$, 'description', $t$Perinatal behavioral health screening and treatment, tied to a new women's health psychiatrist.$t$, 'serves', $t$Pregnant/postpartum patients$t$, 'status', $t$existing$t$),
+      jsonb_build_object('name', $t$Capital Infrastructure (shell space, biomedical equipment, flood mitigation)$t$, 'description', $t$9,000 sq ft shell-space build-out (simulation/cadaver lab, psych/nursing expansion), NSF biomedical instrumentation (~$90K), and FEMA/EPA flood mitigation retrofit (requires a government sponsor; UAMS NW cannot apply directly).$t$, 'serves', $t$Health professions students, campus users, patients$t$, 'status', $t$prospective$t$),
+      jsonb_build_object('name', $t$AI in Healthcare Curriculum + Faculty Training$t$, 'description', $t$Elective course and faculty development on AI in clinical practice.$t$, 'serves', $t$Health professions students, faculty$t$, 'status', $t$prospective$t$)
+    ),
+    'partnerships', $t$Welcome Health; Fayetteville Public Library; Canopy NWA/ICI; Butterfield Trail Village Retirement Community; University of Arkansas (psychology, social work, education); NWA Education Service Co-op; Hope Cancer Resources; Community Clinic NWA; Arkansas Coalition of Marshallese; Springdale Public Schools; UAMS Little Rock main campus (poison control, GME/StARR infrastructure, culinary medicine); I-49 Corridor group (AI in healthcare); Arkansas AI and Analytics Center of Excellence; Arkansas Department of Health NW regional office.$t$,
+    'additional_info', $t$Public academic health sciences regional campus, Fayetteville, AR, serving Washington, Benton, Carroll, and Madison counties. Part of the University of Arkansas for Medical Sciences (UA system) — not independently tax-exempt; all federal grants route through the UAMS Muse system with a minimum 2-week lead time for institutional signatures and AVC sign-off. Advisory constraints (not hard gates): RURALITY GAP — Washington and Benton counties are RUCC 2 (metro) and ineligible for most federal rural-health (HRSA) and USDA rural programs; applications must structure around rural end-user activity in the rural-qualifying counties, not HQ location (see rucc_codes). On large research-heavy awards (R34, K12, PRIMED-AI), the realistic role is partner or regional hub under UAMS main campus, not prime. No psychology training program at NW (housed at University of Arkansas) — cannot be prime on psychology-workforce-specific grants; needs U of A or NWA Education Service Co-op as prime. System-level AI/EMR implementation requires UA-system governance — NW can be a pilot site but not an independent applicant. Match sensitivity: institutional caution on committing faculty time or cash match (student time match acceptable) — flag early. Blue & You routes through a central UAMS clearinghouse with a per-institution application limit. BINDING OUTREACH RULE: any outreach email to Ryan Cork on grants involving NWAC must exclude all mention of NWAC (confidentiality constraint). Verify with Ryan Cork / Tina Maddox / Eric Leemis before assuming institutional clearance.$t$
+  ),
+  org_type = $t$government$t$,
+  service_area = array[$t$Northwest Arkansas$t$, $t$Washington County, Arkansas$t$, $t$Benton County, Arkansas$t$, $t$Carroll County, Arkansas$t$, $t$Madison County, Arkansas$t$]::text[],
+  primary_funding_needs = array[$t$Staffing / workforce$t$, $t$Program expansion / direct services$t$, $t$Equipment / technology$t$, $t$Capital / construction / renovation$t$, $t$Planning / assessment$t$]::text[],
+  rucc_codes = $t$Washington: 2, Benton: 2, Carroll: 6, Madison: unverified (confirm; source cited 'Boone RUCC 7', but Boone is not in the service area)$t$,
+  hard_constraints = jsonb_build_array(jsonb_build_object('type', $t$entity_screen$t$, 'value', $t$RHTP / THRIVE (Rural Health Transformation Program)$t$, 'note', $t$UAMS Northwest will not apply for the Rural Health Transformation Program (RHTP/THRIVE), independently or through GRANTED — confirmed by Ryan Cork. Do not pursue or recommend. (Schema note: entity_screen, not a silent exclude, because RHTP is a program name not a structured grant field; matching the administering funder would over-exclude. Fires a reviewer flag on every match.)$t$, 'action', $t$flag$t$))
+where name = $t$UAMS NorthWest$t$;
 
 
 -- 3 INSERTs (new active clients; upsert on clients_name_uniq)
