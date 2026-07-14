@@ -103,37 +103,87 @@ function friendlyClientError(
   return error.message;
 }
 
-export async function createClientAction(formData: FormData) {
+// Expected validation failures return this to the form (rendered inline by
+// ClientForm) instead of throwing -- a thrown error in a server action renders as
+// a 500 "Application error" page, not a form error. Success paths call redirect()
+// (return type never), so a normal completion never returns a value. NOT exported:
+// a "use server" module may only export async functions, so ClientForm mirrors
+// this shape in its own prop type.
+type ClientActionResult = { error: string } | undefined;
+
+export async function createClientAction(formData: FormData): Promise<ClientActionResult> {
   await requireAdmin();
   const supabase = createClient();
-  const { payload, narrative } = parse(formData);
-  if (!payload.name) throw new Error("Client name is required");
 
+  // parse() throws on a malformed matcher-constraints payload -- an expected
+  // validation failure, so surface it inline rather than as a 500. The redirect()
+  // on success stays OUTSIDE any try/catch so its NEXT_REDIRECT control-flow is
+  // never swallowed and mistaken for an error.
+  let parsed;
+  try {
+    parsed = parse(formData);
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Could not read the form." };
+  }
+  const { payload, narrative, kind } = parsed;
+  if (!payload.name) return { error: "Client name is required." };
+
+  // A new prospect is ENQUEUED for a one-time match against the current grant
+  // pool (initial_match_status='queued'); the client-match drain
+  // (lib/clients/match-queue.ts, cron + admin route) picks it up and scores it
+  // across as many invocations as the pool needs, so a 45-grant run never has to
+  // fit in one 300s function. 'queued' drives the dashboard "matching in progress"
+  // banner immediately. Active clients get no one-time run (the daily batch covers
+  // them), so their status stays null.
+  const isProspect = kind === "prospect";
   const { data, error } = await supabase
     .from("clients")
-    .insert({ ...payload, intake_data: narrativeToIntakeData(narrative) })
+    .insert({
+      ...payload,
+      intake_data: narrativeToIntakeData(narrative),
+      ...(isProspect ? { initial_match_status: "queued" } : {}),
+    })
     .select("id")
     .single();
 
+  // Duplicate name (23505) and any other insert error come back as a friendly
+  // message the form shows inline -- never a thrown 500.
   const friendly = friendlyClientError(error, payload.name);
-  if (friendly) throw new Error(friendly);
-  if (!data) throw new Error("Client insert returned no row");
+  if (friendly) return { error: friendly };
+  if (!data) return { error: "Could not create the record — please try again." };
 
-  // Enrich in the background (USASpending cache, then the client-profile refine)
-  // so both are ready before the first match run -- never blocks the save (must be
-  // kicked before redirect throws). A failed refine leaves client_profile null.
-  waitUntil(enrichClient(createServiceClient(), data.id));
+  // Enrich in the background (USASpending cache, then the client-profile refine),
+  // kicked before redirect throws so it never blocks the save. Matching does NOT
+  // run here -- it is drained separately -- so this is bounded work. Occupancy is
+  // profile-free, so if the drain scores a pair before this finishes the card just
+  // falls back to the Phase-1 narrative; a failed refine leaves client_profile null.
+  const bg = createServiceClient();
+  const clientId = data.id;
+  waitUntil(enrichClient(bg, clientId));
 
   revalidatePath("/clients");
+  revalidatePath(`/clients/${clientId}`);
   revalidatePath("/dashboard");
-  redirect(`/clients/${data.id}`);
+  redirect(`/clients/${clientId}`);
 }
 
-export async function updateClientAction(id: string, formData: FormData) {
+export async function updateClientAction(
+  id: string,
+  formData: FormData,
+): Promise<ClientActionResult> {
   await requireAdmin();
   const supabase = createClient();
-  const { payload, narrative, kind } = parse(formData);
-  if (!payload.name) throw new Error("Client name is required");
+
+  // Same as createClientAction: expected validation failures return inline; the
+  // redirect() on success stays outside any try/catch.
+  let parsed;
+  try {
+    parsed = parse(formData);
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Could not read the form." };
+  }
+  const { payload, narrative, kind } = parsed;
+  if (!payload.name) return { error: "Client name is required." };
 
   // Merge the narrative into existing intake_data -- never clobber non-narrative
   // keys (phone, org_type_code, referral_source, submitted_at from a public intake).
@@ -169,12 +219,13 @@ export async function updateClientAction(id: string, formData: FormData) {
     .update({ ...payload, ...lifecycle, intake_data: mergedIntake })
     .eq("id", id);
   const friendly = friendlyClientError(error, payload.name);
-  if (friendly) throw new Error(friendly);
+  if (friendly) return { error: friendly };
 
   // Audit a client<->prospect flip (a promote/demote outside the normal convert
   // flow). Service role: mirrors the public-intake pipeline_events write.
-  if (oldKind !== kind) {
-    await createServiceClient()
+  if (flipped) {
+    const service = createServiceClient();
+    await service
       .from("pipeline_events")
       .insert({
         event_type: "kind_changed",
@@ -182,6 +233,19 @@ export async function updateClientAction(id: string, formData: FormData) {
         subject_snapshot: { name: payload.name },
         metadata: { from: oldKind, to: kind },
       });
+
+    // Demoting a client -> prospect: it drops out of the daily batch (now an
+    // un-converted lead), so its PENDING cards would otherwise sit stale forever
+    // with no run to refresh or retire them. Clear the pending ones; PRESERVE any
+    // human-decided card (approved / passed) -- those are a record of a real
+    // decision, never silently erased. Re-promoting later re-scores from scratch.
+    if (kind === "prospect") {
+      await service
+        .from("review_cards")
+        .delete()
+        .eq("client_id", id)
+        .eq("decision", "pending");
+    }
   }
 
   // Re-enrich in the background: re-cache USASpending (name / search-name may have

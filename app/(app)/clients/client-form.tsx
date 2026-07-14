@@ -56,7 +56,12 @@ export function ClientForm({
   submitLabel,
 }: {
   client?: Client;
-  action: (formData: FormData) => void;
+  // Mirrors actions.ts ClientActionResult: an expected validation failure resolves
+  // to { error } (rendered inline below); success redirects, so it never resolves
+  // to a value. Awaiting the action here -- rather than passing it straight to
+  // <form action> -- is what lets a duplicate-name error surface on the form
+  // instead of as a 500 page.
+  action: (formData: FormData) => Promise<{ error: string } | undefined>;
   submitLabel: string;
 }) {
   // On edit, default the toggle from the stored row: an un-converted lead
@@ -65,9 +70,32 @@ export function ClientForm({
     client && isUnconvertedLead(client.pipeline_stage) ? "prospect" : "client";
   const [kind, setKind] = useState<"client" | "prospect">(initialKind);
   const isClient = kind === "client";
+  const [formError, setFormError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(formData: FormData) {
+    // Guard the double-submit: one intent must never fire two POSTs. Without this,
+    // a successful create (which redirects) gave no pending feedback, so the user
+    // thought it failed and resubmitted -- the second POST then collided with the
+    // row the first one created, surfacing as a phantom duplicate-name error. The
+    // disabled button covers the hydrated case; this early return guards re-entry.
+    if (submitting) return;
+    setSubmitting(true);
+    setFormError(null);
+    const result = await action(formData);
+    // A successful create redirects to the new record's dashboard and unmounts this
+    // form, so we reach here ONLY on an expected validation failure: show it and
+    // RE-ENABLE so the user can correct and retry. On success the button stays
+    // disabled through the navigation -- no window for a phantom second submit, and
+    // the typed input is preserved on error.
+    if (result?.error) {
+      setFormError(result.error);
+      setSubmitting(false);
+    }
+  }
 
   return (
-    <form action={action} className="max-w-3xl space-y-8">
+    <form action={handleSubmit} className="max-w-3xl space-y-8">
       {/* 1. Kind -- required, first, drives the conditional UI below. */}
       <section className="space-y-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
@@ -237,8 +265,19 @@ export function ClientForm({
         defaultKnownConstraints={client?.known_constraints}
       />
 
+      {formError && (
+        <div
+          role="alert"
+          className="flex items-center gap-2 rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-800 ring-1 ring-red-200"
+        >
+          {formError}
+        </div>
+      )}
+
       <div className="flex gap-3">
-        <Button type="submit">{submitLabel}</Button>
+        <Button type="submit" disabled={submitting} aria-busy={submitting}>
+          {submitting ? "Saving…" : submitLabel}
+        </Button>
       </div>
     </form>
   );

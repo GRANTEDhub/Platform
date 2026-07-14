@@ -10,7 +10,7 @@ import { GrantOverview, GrantKeyFacts } from "@/components/grants/grant-facts";
 import { MatchOutcomes, type OutcomeCard } from "@/components/grants/match-outcomes";
 import { ConsortiumPairings } from "@/components/grants/consortium-pairings";
 import { computeConsortiumPairings, type SeatedClient } from "@/lib/grants/consortium";
-import { AutoRefresh } from "./auto-refresh";
+import { AutoRefresh } from "@/components/ui/auto-refresh";
 import { RematchButton } from "./rematch-button";
 import { AddToClientControl } from "./add-to-client";
 import type { Grant, ReviewCard, Client } from "@/types/database";

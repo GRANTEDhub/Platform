@@ -19,7 +19,7 @@ const ADMIN_NAV: NavItem[] = [
   { href: "/matches", label: "Matches", icon: "matching" },
   { href: "/intel", label: "Prospecting", icon: "intel" },
   { href: "/leads", label: "Pipeline", icon: "leads" },
-  { href: "/clients", label: "Clients/Leads", icon: "clients" },
+  { href: "/clients", label: "Clients", icon: "clients" },
   { href: "/time", label: "Time", icon: "time" },
   { href: "/invoices", label: "Invoices", icon: "invoices" },
   { href: "/contracts", label: "Contracts", icon: "contracts" },
