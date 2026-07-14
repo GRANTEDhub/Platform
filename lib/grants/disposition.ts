@@ -17,6 +17,7 @@ export type DispositionTier =
   | "forecasted"
   | "not_pursued"
   | "no_match"
+  | "profile_gap"
   | "matched_pending"
   | "matched_rejected"
   | "matched_alerted";
@@ -35,10 +36,71 @@ export interface DispositionCard {
 
 type DispGrant = Pick<
   Grant,
-  "status" | "is_domestic" | "hard_disqualifiers" | "skip_reason" | "error_detail" | "grant_status"
->;
+  | "status"
+  | "is_domestic"
+  | "hard_disqualifiers"
+  | "skip_reason"
+  | "error_detail"
+  | "grant_status"
+  | "shred_depth"
+  | "shred_reason"
+  | "description"
+  | "ideal_profile_error"
+> & {
+  // Whether an ideal_applicant_profile exists. Passed explicitly (not Picked from
+  // Grant) so a caller can supply it from a lightweight `is not null` query without
+  // fetching the large jsonb column.
+  has_ideal_profile: boolean;
+};
 
 const DECIDED = new Set<CardDecision>(["approved", "passed"]);
+
+// The resolver logs this verbatim (lib/grants/nofo.ts) when a structured
+// additional_info_url link-out WAS followed but no NOFO validated -- the STRONG
+// signal that a real NOFO exists behind a portal/JS wall and is worth a manual
+// hunt, vs. a grant with nothing to chase.
+const RESOLVER_LINK_UNRESOLVED = "additional_info_url did not yield a NOFO";
+// Secondary, LOWER-confidence signal: the description itself carries a URL or a
+// known application-portal marker. Deliberately narrow so the triage queue stays
+// high-signal -- we would rather under-flag and loosen once real volume shows.
+const DESCRIPTION_PORTAL =
+  /(https?:\/\/|nasaprs|nspires|sam\.gov\/opp|grants\.nih\.gov|see the (full )?(announcement|solicitation)|full announcement (is )?(available )?at)/i;
+
+// A willScore=true, complete grant with NO profile: an instrumentation gap, not a
+// genuine "no match". Split by sub-cause so the label states the ACTION (text, not
+// color): Stage-A failure -> retry; unreachable/description NOFO -> manual hunt.
+function profileGapDisposition(grant: DispGrant): GrantDisposition {
+  // FULL shred + no profile => Stage A ran and threw (the now-recorded swallow).
+  if (grant.shred_depth === "full") {
+    return {
+      tier: "profile_gap",
+      label: "Profile gap · Stage-A failed (retry)",
+      detail: grant.ideal_profile_error ?? "Profiling failed; no error recorded (retry to capture it).",
+    };
+  }
+  // SUMMARY shred => no full NOFO was reached, so Stage A never ran. Sub-classify
+  // how reachable a real NOFO looks so the manual-hunt queue isn't noise.
+  const reason = grant.shred_reason ?? "";
+  if (reason.includes(RESOLVER_LINK_UNRESOLVED)) {
+    return {
+      tier: "profile_gap",
+      label: "Profile gap · NOFO unreachable (manual hunt)",
+      detail: `Link-out didn't resolve — likely a real NOFO behind a portal. ${reason}`,
+    };
+  }
+  if (grant.description && DESCRIPTION_PORTAL.test(grant.description)) {
+    return {
+      tier: "profile_gap",
+      label: "Profile gap · NOFO may be in description (low confidence)",
+      detail: `Possible portal/link in the description — lower-confidence lead. ${reason || "summary shred"}`,
+    };
+  }
+  return {
+    tier: "profile_gap",
+    label: "Profile gap · no NOFO found",
+    detail: reason || "Summary shred; no reachable NOFO.",
+  };
+}
 
 export function getGrantDisposition(grant: DispGrant, cards: DispositionCard[]): GrantDisposition {
   // Forecasted opportunities have no NOFO published yet, so a summary shred or a
@@ -76,6 +138,11 @@ export function getGrantDisposition(grant: DispGrant, cards: DispositionCard[]):
       return { tier: "not_pursued", label: "Not pursued", detail: grant.hard_disqualifiers!.join("; ") };
     if (grant.skip_reason)
       return { tier: "not_pursued", label: "Not pursued", detail: grant.skip_reason };
+    // Reaching here = willScore=true (domestic, no hard-disq, no skip, not
+    // forecasted) + complete + no cards. A MISSING profile is an instrumentation
+    // gap (a swallowed Stage-A failure or an unreachable NOFO), NOT a genuine "no
+    // match" -- surface it distinctly so it can never hide inside No match again.
+    if (!grant.has_ideal_profile) return profileGapDisposition(grant);
     return { tier: "no_match", label: "No match", detail: null };
   }
 

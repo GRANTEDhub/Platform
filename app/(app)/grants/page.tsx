@@ -22,6 +22,7 @@ const TIER_BADGE: Record<DispositionTier, { variant: "default" | "secondary" | "
   matched_pending: { variant: "default" },
   matched_rejected: { variant: "outline" },
   no_match: { variant: "secondary" },
+  profile_gap: { variant: "warning" },
   not_pursued: { variant: "warning" },
   processing: { variant: "secondary" },
   error: { variant: "destructive" },
@@ -34,6 +35,7 @@ const TIER_FILTERS: { value: DispositionTier | "all"; label: string }[] = [
   { value: "matched_pending", label: "In review" },
   { value: "matched_rejected", label: "Rejected" },
   { value: "no_match", label: "No match" },
+  { value: "profile_gap", label: "Profile gap" },
   { value: "not_pursued", label: "Not pursued" },
   { value: "processing", label: "Processing" },
   { value: "forecasted", label: "Forecasted" },
@@ -73,7 +75,7 @@ export default async function LedgerPage({
   let grantQuery = supabase
     .from("grants")
     .select(
-      "id, title, funder, status, grant_status, error_detail, submission_deadline, deadline, ingested_at, is_domestic, hard_disqualifiers, skip_reason, activated_from_forecast_at",
+      "id, title, funder, status, grant_status, error_detail, submission_deadline, deadline, ingested_at, is_domestic, hard_disqualifiers, skip_reason, activated_from_forecast_at, shred_depth, shred_reason, description, ideal_profile_error",
     )
     .order("ingested_at", { ascending: false })
     .limit(200);
@@ -112,6 +114,19 @@ export default async function LedgerPage({
     }
   }
 
+  // Which of these grants have a built profile? Lightweight `is not null` probe --
+  // select only id so we never pull the (large) ideal_applicant_profile jsonb just
+  // to test presence. Drives the "Profile gap" disposition (willScore + no profile).
+  const profiledIds = new Set<string>();
+  if (ids.length > 0) {
+    const { data: profiledRows } = await supabase
+      .from("grants")
+      .select("id")
+      .in("id", ids)
+      .not("ideal_applicant_profile", "is", null);
+    for (const r of (profiledRows ?? []) as { id: string }[]) profiledIds.add(r.id);
+  }
+
   const rows = grants
     .map((g) => ({
       grant: g,
@@ -123,6 +138,11 @@ export default async function LedgerPage({
           hard_disqualifiers: g.hard_disqualifiers ?? null,
           skip_reason: g.skip_reason ?? null,
           error_detail: g.error_detail ?? null,
+          shred_depth: g.shred_depth ?? "summary",
+          shred_reason: g.shred_reason ?? null,
+          description: g.description ?? null,
+          ideal_profile_error: g.ideal_profile_error ?? null,
+          has_ideal_profile: profiledIds.has(g.id!),
         },
         cardsByGrant.get(g.id!) ?? [],
       ),

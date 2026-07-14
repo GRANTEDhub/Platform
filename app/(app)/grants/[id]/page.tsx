@@ -194,6 +194,29 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
             </Card>
           )}
 
+          {!processing && !forecasted && grant.status !== "error" &&
+            grant.shred_depth === "full" && !grant.ideal_applicant_profile && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
+                <p className="text-sm font-medium text-amber-900">
+                  Profile not built — this grant can&apos;t match
+                </p>
+                <p className="mt-1 text-sm text-amber-800">
+                  The NOFO shredded fully, but building the ideal-applicant profile (Stage A)
+                  failed, so no client can score against it. Rebuild the grant profile to retry.
+                </p>
+                {grant.ideal_profile_error && (
+                  <p className="mt-2 whitespace-pre-wrap font-mono text-xs text-amber-900/80">
+                    {grant.ideal_profile_error}
+                  </p>
+                )}
+                {canCalibrate && (
+                  <div className="mt-3">
+                    <RematchButton grantId={grant.id} />
+                  </div>
+                )}
+              </div>
+            )}
+
           <GrantOverview grant={grant} />
 
           {erroredClientCount > 0 && !processing && (
