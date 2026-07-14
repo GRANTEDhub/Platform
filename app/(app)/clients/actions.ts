@@ -115,6 +115,17 @@ export async function createClientAction(formData: FormData): Promise<ClientActi
   await requireAdmin();
   const supabase = createClient();
 
+  // Record type must be an EXPLICIT choice on CREATE. The UI gates the form on it;
+  // this backstops any submit that arrives without it (JS disabled, a crafted
+  // request) rather than parse() silently coercing a missing kind to 'client'.
+  // Scoped to create only -- parse()/updateClientAction and the direct-insert paths
+  // (public intake, prospect convert) never rely on the kind default, so they are
+  // untouched.
+  const rawKind = formData.get("kind");
+  if (rawKind !== "client" && rawKind !== "prospect") {
+    return { error: "Choose a record type (client or prospect)." };
+  }
+
   // parse() throws on a malformed matcher-constraints payload -- an expected
   // validation failure, so surface it inline rather than as a 500. The redirect()
   // on success stays OUTSIDE any try/catch so its NEXT_REDIRECT control-flow is
