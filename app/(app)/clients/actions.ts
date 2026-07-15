@@ -136,23 +136,21 @@ export async function createClientAction(formData: FormData): Promise<ClientActi
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Could not read the form." };
   }
-  const { payload, narrative, kind } = parsed;
+  const { payload, narrative } = parsed;
   if (!payload.name) return { error: "Client name is required." };
 
-  // A new prospect is ENQUEUED for a one-time match against the current grant
-  // pool (initial_match_status='queued'); the client-match drain
-  // (lib/clients/match-queue.ts, cron + admin route) picks it up and scores it
-  // across as many invocations as the pool needs, so a 45-grant run never has to
-  // fit in one 300s function. 'queued' drives the dashboard "matching in progress"
-  // banner immediately. Active clients get no one-time run (the daily batch covers
-  // them), so their status stays null.
-  const isProspect = kind === "prospect";
+  // Match generation is MANUAL-ONLY: a new record is created with
+  // initial_match_status = null (the column default) and is NEVER auto-enqueued.
+  // The one-time match runs only when someone clicks "Generate report" on the
+  // dashboard, which flips the record to 'queued' and kicks drainClientMatchQueue
+  // immediately (POST /api/clients/[id]/generate-report). Auto-enqueuing on create
+  // left the record stuck behind the 10-min cron AND disabled the manual button
+  // (disabled-while-queued), so no match could start at all -- hence it's gone.
   const { data, error } = await supabase
     .from("clients")
     .insert({
       ...payload,
       intake_data: narrativeToIntakeData(narrative),
-      ...(isProspect ? { initial_match_status: "queued" } : {}),
     })
     .select("id")
     .single();

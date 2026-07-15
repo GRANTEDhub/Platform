@@ -13,6 +13,7 @@ import { StatCard } from "@/components/clients/stat-card";
 import { ClientMatchChart } from "@/components/clients/client-match-chart";
 import { ClientGrantTracking, type TrackedGrant } from "@/components/clients/client-grant-tracking";
 import { ClientActionItems } from "@/components/clients/client-action-items";
+import { GenerateReportButton } from "@/components/clients/generate-report-button";
 import { samExpiryFlag } from "@/lib/sam/expiry";
 import { ClientRepository } from "@/components/clients/client-repository";
 import { AutoRefresh } from "@/components/ui/auto-refresh";
@@ -152,6 +153,14 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
     passed: cards.filter((c) => c.decision === "passed").length,
   };
 
+  // "Generate report" trigger state. hasResults = this record already has at least
+  // one card, so a re-run refreshes something visible (drives keep-results-visible
+  // below + the confirm dialog). confirmRerun = the record has already been matched
+  // (completed/errored, or has cards) -> re-clicking should confirm; a first run
+  // (null/queued/running) fires without a prompt.
+  const hasResults = cards.length > 0;
+  const confirmRerun = matchStatus === "complete" || matchStatus === "error" || hasResults;
+
   const owedCents = overview?.owed_cents ?? 0;
   const hoursRemaining = overview?.hours_remaining ?? null;
 
@@ -200,9 +209,11 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
           <div className="flex items-center gap-2 rounded-xl bg-brand-orange/10 px-4 py-3 text-sm font-medium text-brand-navy ring-1 ring-brand-orange/30">
             <Loader2 className="h-4 w-4 shrink-0 animate-spin text-brand-orange" />
             <span>
-              Initial grant matching in progress
-              {matchProgress ? ` — scored ${matchProgress.scored} of ${matchProgress.total} grants` : ""}. Results
-              appear here when it finishes.
+              {hasResults ? "Re-scoring against the current grant pool" : "Grant matching in progress"}
+              {matchProgress ? ` — scored ${matchProgress.scored} of ${matchProgress.total} grants` : ""}.{" "}
+              {hasResults
+                ? "Existing results stay visible below and refresh when it finishes."
+                : "Results appear here when it finishes."}
             </span>
           </div>
           <AutoRefresh enabled />
@@ -235,28 +246,50 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
       <div className="grid gap-6 p-8 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
           <Card className={CARD_MAIN}>
-            <CardHeader><CardTitle>Grant activity</CardTitle></CardHeader>
+            <CardHeader className="flex-row items-center justify-between space-y-0">
+              <CardTitle>Grant activity</CardTitle>
+              <GenerateReportButton
+                clientId={client.id}
+                inProgress={matchInProgress}
+                confirmRerun={confirmRerun}
+              />
+            </CardHeader>
             <CardContent>
-              {matchInProgress ? (
-                // Suppress the counts chart while matching is still running -- a
-                // partial "In review: N" would read as a finished tally. The full
-                // chart returns once initial_match_status flips to 'complete'.
+              {matchInProgress && !hasResults ? (
+                // FRESH run with nothing prior to show -> suppress the chart entirely:
+                // a partial "In review: N" would read as a finished tally. The full
+                // chart appears once initial_match_status flips to 'complete'.
                 <div className="flex items-center gap-3 py-6 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 shrink-0 animate-spin text-brand-orange" />
                   <span>
-                    Matching this prospect against the grant pool
+                    Matching this record against the grant pool
                     {matchProgress ? ` (${matchProgress.scored} of ${matchProgress.total} scored)` : ""}. The full
                     result appears once matching completes — partial matches aren&apos;t shown as a finished list.
                   </span>
                 </div>
               ) : (
-                <ClientMatchChart
-                  data={[
-                    { label: "In review", count: counts.pending, color: BRAND.slate },
-                    { label: "Alerted", count: counts.approved, color: BRAND.orange },
-                    { label: "Passed", count: counts.passed, color: BRAND.taupe },
-                  ]}
-                />
+                <div className="space-y-3">
+                  {matchInProgress && (
+                    // RE-RUN over existing results -> keep the prior chart visible under
+                    // a subtle "refreshing" note rather than blanking it (which reads as
+                    // "my data vanished"). Counts update on the next AutoRefresh tick.
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-brand-orange" />
+                      <span>
+                        Refreshing against the current pool
+                        {matchProgress ? ` — scored ${matchProgress.scored} of ${matchProgress.total}` : ""}. Showing
+                        the last results until it finishes.
+                      </span>
+                    </div>
+                  )}
+                  <ClientMatchChart
+                    data={[
+                      { label: "In review", count: counts.pending, color: BRAND.slate },
+                      { label: "Alerted", count: counts.approved, color: BRAND.orange },
+                      { label: "Passed", count: counts.passed, color: BRAND.taupe },
+                    ]}
+                  />
+                </div>
               )}
             </CardContent>
           </Card>

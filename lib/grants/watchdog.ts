@@ -18,7 +18,9 @@ export type WatchdogResult = {
   matchingErrored: number;
   queuedBacklog: number;
   oldestQueuedMinutes: number;
+  clientMatchRequeued: number;
   grantIds: { processing: string[]; requeued: string[]; matchingErrored: string[] };
+  clientIds: { matchRequeued: string[] };
 };
 
 export async function runWatchdogSweep(db: DB): Promise<WatchdogResult> {
@@ -101,10 +103,30 @@ export async function runWatchdogSweep(db: DB): Promise<WatchdogResult> {
     }
   }
 
+  // 4) Dead CLIENT one-time-match runs (lib/clients/match-queue.ts). The drain marks
+  //    a client 'running' and renews its lease (match_locked_at) every ~25s while
+  //    scoring; a clean stop / the client-match cron resumes a stopped one within
+  //    ~10 min. A record still 'running' with NO update in STUCK_THRESHOLD_MINUTES
+  //    means BOTH the drain and that cron failed to touch it -- a genuinely dead run
+  //    (the exact stuck-'running' dead-end that otherwise needed a manual SQL reset).
+  //    Requeue it (clear the lease) so the next cron / dashboard continuation round
+  //    resumes it. No retry cap: the attempts-diff makes the re-drain idempotent and
+  //    every resume makes monotonic progress to 'complete', so requeue can't loop
+  //    forever burning calls the way an unmatchable grant could. Bulk + returning,
+  //    guarded on status='running' so a drain that just finished isn't clobbered.
+  const { data: stuckClientMatch } = await db
+    .from("clients")
+    .update({ initial_match_status: "queued", match_locked_at: null })
+    .eq("initial_match_status", "running")
+    .lt("updated_at", cutoff)
+    .select("id");
+  const clientMatchRequeued = (stuckClientMatch ?? []).map((c) => c.id as string);
+
   const sweptProcessingIds = (sweptProcessing ?? []).map((g) => g.id);
-  if (sweptProcessingIds.length || requeued.length || matchingErrored.length) {
+  if (sweptProcessingIds.length || requeued.length || matchingErrored.length || clientMatchRequeued.length) {
     console.log(
-      `Watchdog: processing->error ${sweptProcessingIds.length}, matching->requeued ${requeued.length}, matching->error ${matchingErrored.length}`,
+      `Watchdog: processing->error ${sweptProcessingIds.length}, matching->requeued ${requeued.length}, ` +
+        `matching->error ${matchingErrored.length}, client-match->requeued ${clientMatchRequeued.length}`,
     );
   }
 
@@ -114,6 +136,8 @@ export async function runWatchdogSweep(db: DB): Promise<WatchdogResult> {
     matchingErrored: matchingErrored.length,
     queuedBacklog: queuedCount,
     oldestQueuedMinutes,
+    clientMatchRequeued: clientMatchRequeued.length,
     grantIds: { processing: sweptProcessingIds, requeued, matchingErrored },
+    clientIds: { matchRequeued: clientMatchRequeued },
   };
 }
