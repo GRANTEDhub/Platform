@@ -7,16 +7,20 @@ import { loadAlertContext, alertRecipient, type AlertContext } from "@/lib/alert
 import {
   getOrCreateDraftAlert,
   loadAlertPdf,
-  markAlertSent,
   findSentAlert,
   claimAlertForSend,
   releaseAlertClaim,
   type GrantAlertRow,
 } from "@/lib/alerts/store";
+import {
+  recordClientDecision,
+  finalizeClientCardSent,
+  prospectConvertForSend,
+  finalizeProspectSent,
+} from "@/lib/alerts/send-core";
 import { buildProspectEmailBody } from "@/lib/alerts/data";
 import { senderFirstName } from "@/lib/alerts/sender";
 import { computeGrantSummary } from "@/lib/review/summary";
-import { convertProspectToLead } from "@/lib/prospects/convert";
 import type { Prospect } from "@/types/database";
 
 // Confirm-send for the grant alert -- the SINGLE send path. Reuses the SAVED
@@ -141,24 +145,11 @@ async function prospectSend(a: {
     return NextResponse.json({ error: "Prospect not found" }, { status: 404 });
   }
 
-  // Remember the confirmed contact email on the prospect (keeps it in sync with
-  // what was actually sent, and available for the lead carry below).
-  await db.from("prospects").update({ primary_contact_email: recipient }).eq("id", prospect.id);
-  prospect.primary_contact_email = recipient;
-
-  // Promote to a tracked lead (idempotent: reuses an existing lead / client).
+  // Sync the confirmed contact email + promote to a tracked lead (idempotent:
+  // reuses an existing lead / client). Pre-email half -- see send-core.
   let conv;
   try {
-    conv = await convertProspectToLead(db, {
-      prospect,
-      grantId: ctx.grant.id,
-      userId,
-      contactEmail: recipient,
-      contactName: prospect.primary_contact_name,
-      // No link token here -- the booking link is baked into the PDF at draft time
-      // (prospect-scoped). This call is purely for pipeline tracking now.
-      mintScheduleToken: false,
-    });
+    conv = await prospectConvertForSend(db, { prospect, grantId: ctx.grant.id, userId, recipient });
   } catch (err) {
     await releaseAlertClaim(alert.id);
     return NextResponse.json(
@@ -184,14 +175,14 @@ async function prospectSend(a: {
   try {
     const pdf = await loadAlertPdf(alert);
     const result = await sendGrantAlertEmail({ to: recipient, subject, body: emailBody, pdf });
-    await markAlertSent(alert.id, { sentTo: result.to, subject, emailBody, clientId: conv.clientId });
-    await db.from("pipeline_events").insert({
-      event_type: "grant_alert_sent",
-      client_id: conv.clientId,
-      prospect_id: prospect.id,
-      grant_id: ctx.grant.id,
-      subject_snapshot: { name: prospect.name },
-      metadata: { to: result.to },
+    await finalizeProspectSent(db, {
+      alertId: alert.id,
+      sentTo: result.to,
+      subject,
+      emailBody,
+      conv,
+      prospect,
+      grantId: ctx.grant.id,
     });
     return NextResponse.json({ sent: true, to: result.to, outcome: conv.outcome, leadName: conv.name });
   } catch (err) {
@@ -218,20 +209,12 @@ async function clientSend(a: {
 }) {
   const { supabase, ctx, alert, recipient, subject, emailBody, userId, cardId } = a;
 
-  // Record the terminal decision first, via the USER client so the admin-only
-  // approval trigger validates. The decision stands even if the send is unsent.
-  const { error: decideErr } = await supabase
-    .from("review_cards")
-    .update({
-      decision: "approved",
-      decision_reason: null,
-      decided_by: userId,
-      decided_at: new Date().toISOString(),
-      final_outreach_email: emailBody,
-    })
-    .eq("id", cardId);
-  if (decideErr) {
-    const isApprovalBlock = decideErr.message?.toLowerCase().includes("approve");
+  // Record the terminal decision first (pre-everything half -- see send-core), via
+  // the USER client so the admin-only approval trigger validates. The decision
+  // stands even if the send is later blocked/unsent.
+  const decision = await recordClientDecision(supabase, cardId, userId, emailBody);
+  if (!decision.ok) {
+    const isApprovalBlock = decision.reason === "approval_forbidden";
     return NextResponse.json(
       { error: isApprovalBlock ? "Only admins can approve a match for client delivery" : "Failed to record decision" },
       { status: isApprovalBlock ? 403 : 500 },
@@ -264,11 +247,7 @@ async function clientSend(a: {
       try {
         const pdf = await loadAlertPdf(alert);
         const result = await sendGrantAlertEmail({ to: recipient, subject, body: emailBody, pdf });
-        await markAlertSent(alert.id, { sentTo: result.to, subject, emailBody });
-        await supabase
-          .from("review_cards")
-          .update({ sent_at: new Date().toISOString(), sent_to: result.to })
-          .eq("id", cardId);
+        await finalizeClientCardSent(supabase, cardId, alert.id, result.to, subject, emailBody);
         sent = true;
         send_status = `alert sent to ${result.to}`;
       } catch (err) {
