@@ -30,12 +30,26 @@ import type { Client, Grant } from "@/types/database";
 
 type DB = ReturnType<typeof createServiceClient>;
 
-// Hard deadline for a single invocation, well under the 300s function cap. The
-// drain returns AT this deadline no matter what (see scorePairsWithinBudget's
-// race) -- a pair stuck in 429 backoff can't drag the invocation to the 300s kill.
-// 210s leaves ~90s of headroom for the response + any straggler the platform
-// drains; the cron/resume finishes whatever this invocation didn't.
+// CLAIM-cutoff for a single invocation: workers stop claiming NEW pairs at this
+// wall-clock. Well under the 300s function cap. The invocation actually returns a
+// little later -- at cutoff + GRACE_MS -- so the in-flight wave can COMMIT before we
+// hand off (see scorePairsWithinBudget / GRACE_MS). 210s + grace still leaves ample
+// headroom under the 300s kill; the cron/resume finishes whatever didn't fit.
 const DEFAULT_BUDGET_MS = 210_000;
+
+// Grace window appended AFTER the claim-cutoff: workers stop claiming at the budget,
+// but the invocation waits up to this long for the (<= CONCURRENCY) still-in-flight
+// pairs to finish and write their attempts BEFORE returning. Without it, the hard
+// race abandoned the whole in-flight wave every window boundary; those pairs then
+// committed just after the next round had already read `done`, so the next round
+// re-scored them -- duplicate attempts + double LLM spend (~CONCURRENCY per boundary).
+// Draining the wave here means each round commits everything it dispatched before the
+// next round computes `remaining`, so there's no boundary re-score. The race is still
+// HARD-bounded at cutoff + GRACE_MS, so a 429-backoff straggler can't drag us to the
+// 300s kill (it's abandoned past the grace -- the rare, bounded residual). Sized so
+// budget + grace stays under BOTH caps: the interactive round (65s budget) + 25s =
+// 90s < Cloudflare's ~100s origin limit; the cron (210s) + 25s = 235s < 300s.
+const GRACE_MS = 25_000;
 
 // Below runMatching's 8: 45 concurrent pool calls in one window is what tripped
 // the rate-limit backoff that ballooned wall-clock. 6 keeps throughput up while
@@ -98,24 +112,28 @@ async function scoredGrantIds(db: DB, clientId: string): Promise<Set<string>> {
   return new Set((data ?? []).map((r) => r.grant_id as string));
 }
 
-// Score (grant, client) pairs with a bounded rolling pool. TWO stops, both needed:
-//   1. Each worker refuses to CLAIM a new pair once the deadline passes.
-//   2. The whole batch is RACED against the deadline, so a slow in-flight pair
-//      (typically one stuck in 429 backoff) can never hold the invocation past
-//      budget. Stop 1 alone was the bug: `await Promise.all(...)` waited for the
-//      in-flight wave, and a backoff-laden straggler ran past the 300s cap and was
-//      killed before the drain could return budgetExhausted.
-// An abandoned in-flight pair is caught inside scoreGrantClientPair (no unhandled
-// rejection) and simply re-scored on the next resume -- the attempts-diff makes
-// that safe. Returns pairs actually finished + peak concurrency observed, so a run
-// can confirm the pool is genuinely parallel (peak ~= CONCURRENCY) rather than
-// effectively serialized by rate-limit backoff (peak collapsing toward 1).
+// Score (grant, client) pairs with a bounded rolling pool. TWO deadlines:
+//   1. CLAIM-cutoff (`deadlineMs`): each worker refuses to CLAIM a new pair once
+//      this passes -- so we never START work we can't hope to finish in budget.
+//   2. HARD-return (`deadlineMs + GRACE_MS`): the whole batch is RACED against this,
+//      so a pair stuck in 429 backoff can never hold the invocation past the cap.
+// The GRACE between them is the fix for the window-boundary cost leak: at the cutoff
+// the <= CONCURRENCY in-flight pairs keep running and, given the grace, finish and
+// COMMIT their attempts before this returns. So the round hands off with everything
+// it dispatched already recorded -- the next round's `remaining` excludes them and
+// nothing is re-scored. (Previously cutoff == hard-return, so the entire in-flight
+// wave was abandoned every boundary and re-scored by the next round: duplicate
+// attempts + double LLM spend.) Only a straggler that outlasts the grace is still
+// abandoned -- the rare, bounded residual, surfaced as `abandonedAtCutoff`.
+// Returns pairs finished, peak concurrency (peak ~= CONCURRENCY confirms real
+// parallelism vs backoff serialization), and how many were still in flight when the
+// hard-return fired (0 on a clean grace-drain).
 async function scorePairsWithinBudget(
   db: DB,
   client: Client,
   pairs: Grant[],
   deadlineMs: number,
-): Promise<{ completed: number; peakInFlight: number }> {
+): Promise<{ completed: number; peakInFlight: number; abandonedAtCutoff: number }> {
   let nextIdx = 0;
   let inFlight = 0;
   let peakInFlight = 0;
@@ -151,19 +169,25 @@ async function scorePairsWithinBudget(
   const workers = Promise.all(
     Array.from({ length: Math.min(CONCURRENCY, pairs.length) }, worker),
   );
-  // Hard stop: resolve at the deadline even if in-flight pairs are still running.
-  // Clear the timer if the workers win the race so a fast run doesn't keep the
-  // event loop (and the billed function) alive until the deadline fires.
+  // Hard-return at cutoff + GRACE_MS. Workers stop CLAIMING at deadlineMs (their while
+  // check); the extra grace lets the in-flight wave finish and commit before we return,
+  // so the next round doesn't re-score it. If a straggler outlasts the grace the race
+  // resolves here anyway, so we never blow the cap. Clear the timer if the workers win
+  // so a fast run doesn't keep the billed function alive to the hard-return.
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<void>((resolve) => {
-    timer = setTimeout(resolve, Math.max(0, deadlineMs - Date.now()));
+  const hardReturn = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, Math.max(0, deadlineMs + GRACE_MS - Date.now()));
   });
   try {
-    await Promise.race([workers, deadline]);
+    await Promise.race([workers, hardReturn]);
   } finally {
     if (timer) clearTimeout(timer);
   }
-  return { completed, peakInFlight };
+  // Whatever is still running now (0 if the workers won the race) is what the grace
+  // did NOT drain -- a straggler that will commit after we return and may be re-scored
+  // by the next round. Surfaced for the timing log so the residual is observable.
+  const abandonedAtCutoff = inFlight;
+  return { completed, peakInFlight, abandonedAtCutoff };
 }
 
 /**
@@ -189,6 +213,9 @@ export async function drainClientMatchQueue(
   // peak, reveals whether the pool is genuinely parallel or throttled to ~1.
   let totalScored = 0;
   let peakInFlight = 0;
+  // Pairs still in flight when a window hit its hard-return (grace didn't drain them).
+  // 0 on a clean run; a nonzero value is the re-score/dup-attempt residual to watch.
+  let totalAbandoned = 0;
 
   // Pool is stable for the whole drain -- load it once.
   let pool: Grant[];
@@ -256,13 +283,10 @@ export async function drainClientMatchQueue(
         continue;
       }
 
-      const { completed: pairsDone, peakInFlight: peak } = await scorePairsWithinBudget(
-        db,
-        candidate,
-        remaining,
-        deadlineMs,
-      );
+      const { completed: pairsDone, peakInFlight: peak, abandonedAtCutoff } =
+        await scorePairsWithinBudget(db, candidate, remaining, deadlineMs);
       totalScored += pairsDone;
+      totalAbandoned += abandonedAtCutoff;
       if (peak > peakInFlight) peakInFlight = peak;
       advanced.push(candidate.id);
 
@@ -300,9 +324,9 @@ export async function drainClientMatchQueue(
 
   const wallMs = Date.now() - startedAt;
   console.log(
-    `[client-match-timing] scoredPairs=${totalScored} peakInFlight=${peakInFlight}/${CONCURRENCY} ` +
-      `wallMs=${wallMs} budgetMs=${budgetMs} budgetExhausted=${budgetExhausted} ` +
-      `advancedClients=${advanced.length} completedClients=${completed.length}`,
+    `[client-match-timing] scoredPairs=${totalScored} abandonedAtCutoff=${totalAbandoned} ` +
+      `peakInFlight=${peakInFlight}/${CONCURRENCY} wallMs=${wallMs} budgetMs=${budgetMs} ` +
+      `budgetExhausted=${budgetExhausted} advancedClients=${advanced.length} completedClients=${completed.length}`,
   );
 
   return { advanced, completed, errored, budgetExhausted, queueEmpty };

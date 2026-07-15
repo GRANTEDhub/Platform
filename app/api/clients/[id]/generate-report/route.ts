@@ -5,12 +5,15 @@ import { drainClientMatchQueue } from "@/lib/clients/match-queue";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-// Per-round drain budget for the client-driven continuation loop. Kept comfortably
-// under Cloudflare's ~100s origin-response limit (prod fronts app.grantedco.com with
-// Cloudflare; a longer awaited request would 524) AND under maxDuration. Each round
-// scores whatever fits in this window; the dashboard re-POSTs until `done`, so a pool
-// of any size finishes from a single "Generate report" click with no cron wait.
-const CONTINUE_BUDGET_MS = 75_000;
+// Per-round CLAIM-cutoff for the client-driven continuation loop. The drain keeps
+// scoring for up to this long, then spends a fixed grace (GRACE_MS, ~25s) draining
+// its in-flight wave before returning -- so the whole round is ~65s + 25s = ~90s,
+// comfortably under Cloudflare's ~100s origin-response limit (prod fronts
+// app.grantedco.com with Cloudflare; a longer awaited request would 524) AND under
+// maxDuration. The grace is what stops the next round from re-scoring this round's
+// in-flight pairs (the boundary dup leak). The dashboard re-POSTs until `done`, so a
+// pool of any size finishes from a single "Generate report" click with no cron wait.
+const CONTINUE_BUDGET_MS = 65_000;
 
 // Admin-only, on-demand "Generate report" — ONE round of the client one-time match.
 // The client->pool mirror of the grant->roster "Re-match" button. It only manages
