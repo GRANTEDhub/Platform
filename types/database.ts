@@ -125,6 +125,11 @@ export interface Client {
   // dashboard shows a progress banner + polls), 'complete', 'error'. Active clients
   // stay null (the daily batch covers them).
   initial_match_status: string | null;
+  // Concurrency lease for the one-time-match drain (migration 0049): a drain sets
+  // this to now() when it claims the record, renews it while scoring, and clears it
+  // on a clean stop / terminal state. Other drains skip a record whose lease is
+  // still fresh; an expired/null lease is claimable. See lib/clients/match-queue.ts.
+  match_locked_at: string | null;
   needs_review: boolean;
   archived_reason: string | null;
   contract_status: string | null;

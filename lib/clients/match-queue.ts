@@ -42,6 +42,27 @@ const DEFAULT_BUDGET_MS = 210_000;
 // staying under the per-minute ceiling; the drain resumes next tick regardless.
 const CONCURRENCY = 6;
 
+// Concurrency lease (migration 0049, clients.match_locked_at). A drain CLAIMS a
+// client by setting match_locked_at=now() and RENEWS it every RENEW_INTERVAL_MS
+// while scoring; another drain skips a client whose lease is younger than
+// LEASE_TTL_MS. This serializes drains per client so the client-driven continuation
+// loop, the 10-min cron, and a second browser tab never score the same pool at once
+// (no double LLM spend). A dead drain's lease expires after LEASE_TTL_MS, so the
+// record is reclaimable -- never permanently stuck. RENEW is well under TTL (3x
+// headroom) so a live drain never lets its own lease lapse.
+const LEASE_TTL_MS = 90_000;
+const RENEW_INTERVAL_MS = 25_000;
+
+// A claimable record is one whose lease is null or older than LEASE_TTL_MS. Built as
+// a PostgREST or-filter. The expiry timestamp is emitted WITHOUT milliseconds so it
+// carries no '.' -- PostgREST splits an or-condition on '.' (column.op.value), and a
+// millisecond '.' in the value would mis-parse; ':' and 'T'/'Z' are not separators,
+// so the trimmed ISO string is safe unquoted.
+function leaseClaimableFilter(): string {
+  const expiry = new Date(Date.now() - LEASE_TTL_MS).toISOString().replace(/\.\d{3}Z$/, "Z");
+  return `match_locked_at.is.null,match_locked_at.lt.${expiry}`;
+}
+
 export type ClientDrainResult = {
   advanced: string[]; // clients that had pairs scored this run
   completed: string[]; // clients that reached 'complete' this run
@@ -99,8 +120,22 @@ async function scorePairsWithinBudget(
   let inFlight = 0;
   let peakInFlight = 0;
   let completed = 0;
+
+  // Keep our lease fresh while scoring so concurrent drains keep skipping this
+  // client. Throttled to RENEW_INTERVAL_MS; the shared lastRenewAt is raced by the
+  // workers but a double-renew is harmless. Best-effort: a failed renewal only
+  // risks the lease lapsing early, which is safe (attempts-diff => idempotent).
+  let lastRenewAt = Date.now();
+  const renewLease = async () => {
+    const now = Date.now();
+    if (now - lastRenewAt < RENEW_INTERVAL_MS) return;
+    lastRenewAt = now;
+    await db.from("clients").update({ match_locked_at: new Date(now).toISOString() }).eq("id", client.id);
+  };
+
   const worker = async () => {
     while (Date.now() < deadlineMs) {
+      await renewLease();
       const i = nextIdx++;
       if (i >= pairs.length) return;
       inFlight++;
@@ -175,33 +210,52 @@ export async function drainClientMatchQueue(
       break;
     }
 
-    // Oldest waiting client first. 'queued' = never started; 'running' = started by
-    // a prior invocation and resuming. created_at orders the queue.
+    // Oldest CLAIMABLE client first. 'queued' = never started; 'running' = a prior
+    // invocation resuming. The lease filter excludes a client another drain is
+    // actively scoring (fresh lease), so we never pick one that's already in flight;
+    // a client with an expired/null lease is fair game (resume or dead-drain recovery).
     const { data: candidate } = await db
       .from("clients")
       .select("*")
       .in("initial_match_status", ["queued", "running"])
+      .or(leaseClaimableFilter())
       .order("created_at", { ascending: true })
       .limit(1)
       .maybeSingle<Client>();
     if (!candidate) {
+      // Nothing claimable: either the queue is empty, or every waiting client is
+      // currently leased by another live drain. Either way this invocation is done.
       queueEmpty = true;
       break;
     }
+
+    // Atomically CLAIM the lease: set 'running' + match_locked_at=now(), still guarded
+    // on the lease being claimable. If another drain claimed it between the select and
+    // here, this touches 0 rows -> skip to the next candidate rather than double-score.
+    const { data: claimed } = await db
+      .from("clients")
+      .update({ initial_match_status: "running", match_locked_at: new Date().toISOString() })
+      .eq("id", candidate.id)
+      .in("initial_match_status", ["queued", "running"])
+      .or(leaseClaimableFilter())
+      .select("id");
+    if (!claimed || claimed.length === 0) continue;
 
     try {
       const done = await scoredGrantIds(db, candidate.id);
       const remaining = pool.filter((g) => !done.has(g.id));
 
       if (remaining.length === 0) {
-        // Nothing left (pool empty, or a prior invocation finished it) -> land it.
-        await db.from("clients").update({ initial_match_status: "complete" }).eq("id", candidate.id);
+        // Nothing left (pool empty, or a prior invocation finished it) -> land it and
+        // release the lease.
+        await db
+          .from("clients")
+          .update({ initial_match_status: "complete", match_locked_at: null })
+          .eq("id", candidate.id);
         completed.push(candidate.id);
         continue;
       }
 
-      // Claim: mark 'running' so the dashboard banner reflects active work.
-      await db.from("clients").update({ initial_match_status: "running" }).eq("id", candidate.id);
       const { completed: pairsDone, peakInFlight: peak } = await scorePairsWithinBudget(
         db,
         candidate,
@@ -213,24 +267,33 @@ export async function drainClientMatchQueue(
       advanced.push(candidate.id);
 
       // Re-derive after scoring: if the whole pool is now attempted, complete it;
-      // otherwise leave it 'running' for the next invocation to resume.
+      // otherwise release the lease and leave it 'running' so the next continuation
+      // round / cron resumes it immediately (a clean stop -- this drain is ending).
       const doneNow = await scoredGrantIds(db, candidate.id);
       const stillRemaining = pool.some((g) => !doneNow.has(g.id));
       if (!stillRemaining) {
-        await db.from("clients").update({ initial_match_status: "complete" }).eq("id", candidate.id);
+        await db
+          .from("clients")
+          .update({ initial_match_status: "complete", match_locked_at: null })
+          .eq("id", candidate.id);
         completed.push(candidate.id);
       } else {
         // Budget must be spent (scorePairsWithinBudget only returns early on the
-        // deadline). Stop so we don't spin re-picking the same client.
+        // deadline). Release the lease so the immediate next resume can reclaim, then
+        // stop so we don't spin re-picking the same client.
+        await db.from("clients").update({ match_locked_at: null }).eq("id", candidate.id);
         budgetExhausted = true;
         break;
       }
     } catch (err) {
-      // A hard failure (attempt lookup / claim) -> mark 'error' and move on. Per-
-      // pair failures never reach here (scoreGrantClientPair swallows them).
+      // A hard failure (attempt lookup / claim) -> mark 'error', release the lease,
+      // move on. Per-pair failures never reach here (scoreGrantClientPair swallows them).
       const detail = String(err instanceof Error ? err.message : err).slice(0, 300);
       console.error(`Client match drain error for ${candidate.id}:`, err);
-      await db.from("clients").update({ initial_match_status: "error" }).eq("id", candidate.id);
+      await db
+        .from("clients")
+        .update({ initial_match_status: "error", match_locked_at: null })
+        .eq("id", candidate.id);
       errored.push({ id: candidate.id, error: detail });
     }
   }

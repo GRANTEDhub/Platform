@@ -1,20 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
-import { waitUntil } from "@vercel/functions";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { drainClientMatchQueue } from "@/lib/clients/match-queue";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-// Admin-only, on-demand "Generate report": (re-)run the one-time match for ONE
-// prospect/client against the current grant pool, landing the results in the
-// dashboard's Grant activity. This is the client->pool mirror of the grant->roster
-// "Re-match" button (app/api/grants/[id]/rematch). It ONLY flips the record to
-// 'queued' and kicks the SAME drainClientMatchQueue the cron runs -- no matching
-// logic lives here. The drain is incremental (scores only pool grants not yet
-// attempted for this record) and resumable, so a re-click on an already-matched
-// record scores just the grants added since the last run (usually zero -> a
-// near-instant no-op with no LLM spend).
+// Per-round drain budget for the client-driven continuation loop. Kept comfortably
+// under Cloudflare's ~100s origin-response limit (prod fronts app.grantedco.com with
+// Cloudflare; a longer awaited request would 524) AND under maxDuration. Each round
+// scores whatever fits in this window; the dashboard re-POSTs until `done`, so a pool
+// of any size finishes from a single "Generate report" click with no cron wait.
+const CONTINUE_BUDGET_MS = 75_000;
+
+// Admin-only, on-demand "Generate report" — ONE round of the client one-time match.
+// The client->pool mirror of the grant->roster "Re-match" button. It only manages
+// initial_match_status and runs the SAME drainClientMatchQueue the cron runs (no
+// matching logic here). The drain is incremental (scores only pool grants not yet
+// attempted for this record), lease-serialized (never double-scores against the cron
+// or a second tab), and resumable. The dashboard button loops POST->(<=75s)->POST
+// until this response reports { done: true }, so the match completes from one click
+// with no manual SQL/route-poking.
 //
 // POST (state-changing, admin-gated because it can trigger paid LLM work).
 export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
@@ -38,29 +43,32 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     .single();
   if (!client) return NextResponse.json({ error: "Record not found" }, { status: 404 });
 
-  // Server-side backstop for the 2x-spend hole: if a drain is already working this
-  // record ('queued' = a prior kick is pending, 'running' = actively scoring), a
-  // drain is already in flight -- do NOT start a second one over the same
-  // not-yet-attempted pool. The primary guard is the button's disable-on-submit;
-  // this covers a duplicate/crafted request. A record genuinely stuck 'running'
-  // (a killed invocation) is still finished by the cron, which is self-healing.
-  const alreadyInFlight =
+  // Enqueue only when NOT already in flight. A first click / re-run (null, 'complete',
+  // 'error') is (re)queued with the lease cleared so the drain claims it immediately.
+  // A continuation round ('queued'/'running') is left as-is -- the drain resumes it via
+  // the lease. Concurrency is enforced in the drain (the lease), not here, so a second
+  // tab or the cron can't double-score even if both POST.
+  const inFlight =
     client.initial_match_status === "queued" || client.initial_match_status === "running";
-  if (alreadyInFlight) {
-    return NextResponse.json({ ok: true, status: "already_in_progress" }, { status: 202 });
+  if (!inFlight) {
+    await db
+      .from("clients")
+      .update({ initial_match_status: "queued", match_locked_at: null })
+      .eq("id", params.id);
   }
 
-  // Enqueue THIS record, then kick the global drain immediately -- the click expects
-  // matching to start now, not on the next cron tick. drainClientMatchQueue picks the
-  // oldest queued/running record first and is self-healing, so whatever doesn't fit
-  // this invocation's budget is finished by the cron.
-  await db.from("clients").update({ initial_match_status: "queued" }).eq("id", params.id);
+  // Drive ONE bounded round, awaited (not waitUntil) so we can tell the client whether
+  // to loop again. drainClientMatchQueue drains the whole queue oldest-first; this
+  // record is scored within this round (or a subsequent one), and we report ITS status.
+  await drainClientMatchQueue(db, { budgetMs: CONTINUE_BUDGET_MS });
 
-  waitUntil(
-    drainClientMatchQueue(db).catch((err) => {
-      console.error(`Generate-report drain error for client ${params.id}:`, err);
-    }),
-  );
+  const { data: after } = await db
+    .from("clients")
+    .select("initial_match_status")
+    .eq("id", params.id)
+    .single();
+  const status = after?.initial_match_status ?? null;
+  const done = status === "complete" || status === "error";
 
-  return NextResponse.json({ ok: true, status: "queued" }, { status: 202 });
+  return NextResponse.json({ ok: true, done, status }, { status: 200 });
 }
