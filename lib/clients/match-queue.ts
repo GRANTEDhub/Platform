@@ -30,26 +30,15 @@ import type { Client, Grant } from "@/types/database";
 
 type DB = ReturnType<typeof createServiceClient>;
 
-// CLAIM-cutoff for a single invocation: workers stop claiming NEW pairs at this
-// wall-clock. Well under the 300s function cap. The invocation actually returns a
-// little later -- at cutoff + GRACE_MS -- so the in-flight wave can COMMIT before we
-// hand off (see scorePairsWithinBudget / GRACE_MS). 210s + grace still leaves ample
-// headroom under the 300s kill; the cron/resume finishes whatever didn't fit.
+// Hard deadline for a single invocation, well under the 300s function cap. Workers
+// stop claiming at this wall-clock and the invocation returns at it (see
+// scorePairsWithinBudget's race), so a pair stuck in 429 backoff can't drag it to the
+// 300s kill. In-flight pairs abandoned at the cutoff are NOT re-scored -- each holds a
+// per-pair reservation lock (below), so the next round skips them; the cron/resume
+// finishes whatever didn't fit. (A grace window that tried to drain the wave in-band
+// was removed: the logs showed pairs run ~60-90s under backoff, far past any grace
+// that fits under the ~100s cap, so it never drained -- reservation is the real fix.)
 const DEFAULT_BUDGET_MS = 210_000;
-
-// Grace window appended AFTER the claim-cutoff: workers stop claiming at the budget,
-// but the invocation waits up to this long for the (<= CONCURRENCY) still-in-flight
-// pairs to finish and write their attempts BEFORE returning. Without it, the hard
-// race abandoned the whole in-flight wave every window boundary; those pairs then
-// committed just after the next round had already read `done`, so the next round
-// re-scored them -- duplicate attempts + double LLM spend (~CONCURRENCY per boundary).
-// Draining the wave here means each round commits everything it dispatched before the
-// next round computes `remaining`, so there's no boundary re-score. The race is still
-// HARD-bounded at cutoff + GRACE_MS, so a 429-backoff straggler can't drag us to the
-// 300s kill (it's abandoned past the grace -- the rare, bounded residual). Sized so
-// budget + grace stays under BOTH caps: the interactive round (65s budget) + 25s =
-// 90s < Cloudflare's ~100s origin limit; the cron (210s) + 25s = 235s < 300s.
-const GRACE_MS = 25_000;
 
 // Below runMatching's 8: 45 concurrent pool calls in one window is what tripped
 // the rate-limit backoff that ballooned wall-clock. 6 keeps throughput up while
@@ -66,6 +55,19 @@ const CONCURRENCY = 6;
 // headroom) so a live drain never lets its own lease lapse.
 const LEASE_TTL_MS = 90_000;
 const RENEW_INTERVAL_MS = 25_000;
+
+// Per-pair reservation lock TTL (migration 0050, match_pair_locks). A worker CLAIMS
+// (client_id, grant_id) before its LLM call and RENEWS the lock every
+// RENEW_INTERVAL_MS while scoring; another worker/round skips a pair whose lock is
+// younger than this. That's what stops the window-boundary re-score: an in-flight
+// pair abandoned when a round returns keeps a live lock, so the next round can't
+// re-score it. The TTL is deliberately NOT sized to "worst-case pair time" -- the
+// Anthropic SDK has no hard request timeout, so a backed-off pair can run for minutes
+// with no clean upper bound. Renewal makes that irrelevant: a slow-but-alive pair
+// stays fresh and is never stolen; only a worker that STOPS renewing (frozen/killed)
+// lets its lock age past the TTL and be reclaimed (so the pool still completes). So
+// the TTL only has to clear the renewal interval -- 90s is 3.6x the 25s renew.
+const PAIR_LOCK_TTL_MS = 90_000;
 
 // A claimable record is one whose lease is null or older than LEASE_TTL_MS. Built as
 // a PostgREST or-filter. The expiry timestamp is emitted WITHOUT milliseconds so it
@@ -112,28 +114,80 @@ async function scoredGrantIds(db: DB, clientId: string): Promise<Set<string>> {
   return new Set((data ?? []).map((r) => r.grant_id as string));
 }
 
-// Score (grant, client) pairs with a bounded rolling pool. TWO deadlines:
-//   1. CLAIM-cutoff (`deadlineMs`): each worker refuses to CLAIM a new pair once
-//      this passes -- so we never START work we can't hope to finish in budget.
-//   2. HARD-return (`deadlineMs + GRACE_MS`): the whole batch is RACED against this,
-//      so a pair stuck in 429 backoff can never hold the invocation past the cap.
-// The GRACE between them is the fix for the window-boundary cost leak: at the cutoff
-// the <= CONCURRENCY in-flight pairs keep running and, given the grace, finish and
-// COMMIT their attempts before this returns. So the round hands off with everything
-// it dispatched already recorded -- the next round's `remaining` excludes them and
-// nothing is re-scored. (Previously cutoff == hard-return, so the entire in-flight
-// wave was abandoned every boundary and re-scored by the next round: duplicate
-// attempts + double LLM spend.) Only a straggler that outlasts the grace is still
-// abandoned -- the rare, bounded residual, surfaced as `abandonedAtCutoff`.
-// Returns pairs finished, peak concurrency (peak ~= CONCURRENCY confirms real
-// parallelism vs backoff serialization), and how many were still in flight when the
-// hard-return fired (0 on a clean grace-drain).
+// Atomically CLAIM the per-pair reservation for (client, grant) before its LLM call.
+// Returns true if we own it (go score), false if a live worker/round holds a fresh
+// lock (skip -- this is what prevents the boundary re-score). Two atomic steps:
+//   1. insert the lock; if the row didn't already exist, we claimed it.
+//   2. on PK conflict, take over ONLY if the existing lock is stale (>TTL) -- a
+//      conditional UPDATE, so a fresh lock held by a live worker is never stolen.
+// Any unexpected (non-conflict) error -> false: safer to skip and let a later round
+// retry than to risk a double LLM call. A skipped-on-error pair set no lock, so it's
+// immediately re-claimable next round (no permanent stall).
+async function claimPair(db: DB, clientId: string, grantId: string): Promise<boolean> {
+  const nowIso = new Date().toISOString();
+  const { error } = await db
+    .from("match_pair_locks")
+    .insert({ client_id: clientId, grant_id: grantId, locked_at: nowIso });
+  if (!error) return true; // no prior lock -> claimed
+  if (error.code !== "23505") {
+    // NOT a PK conflict -> a real DB error, distinct from a normal "lock held" skip
+    // (which returns false SILENTLY below). Log LOUD + greppable: if migration 0050
+    // wasn't applied this fires for EVERY pair -> scoredPairs=0, which would otherwise
+    // read as a mysterious no-op instead of an obvious missing migration. Fail closed
+    // (skip) regardless -- never risk a double LLM call on an unknown error.
+    const detail =
+      error.code === "42P01"
+        ? "match_pair_locks table MISSING -- apply migration 0050"
+        : "unexpected DB error";
+    console.error(`[claimPair] ${detail} (code=${error.code ?? "?"}): ${error.message}`);
+    return false;
+  }
+  const staleIso = new Date(Date.now() - PAIR_LOCK_TTL_MS).toISOString();
+  const { data } = await db
+    .from("match_pair_locks")
+    .update({ locked_at: nowIso })
+    .eq("client_id", clientId)
+    .eq("grant_id", grantId)
+    .lt("locked_at", staleIso)
+    .select("grant_id");
+  return !!(data && data.length); // took over a stale lock, else a live worker owns it
+}
+
+// Renew our reservation every RENEW_INTERVAL_MS while a pair is scoring, so a
+// slow-but-alive pair (60-90s+, unbounded under backoff) is never seen as stale and
+// stolen. Returns a stop fn (cleared when the pair finishes/errors). Fire-and-forget
+// updates -- a missed renewal only risks the lock aging early, which is safe.
+function startPairLockRenewal(db: DB, clientId: string, grantId: string): () => void {
+  const iv = setInterval(() => {
+    void db
+      .from("match_pair_locks")
+      .update({ locked_at: new Date().toISOString() })
+      .eq("client_id", clientId)
+      .eq("grant_id", grantId);
+  }, RENEW_INTERVAL_MS);
+  return () => clearInterval(iv);
+}
+
+// Score (grant, client) pairs with a bounded rolling pool. Two stops:
+//   1. Each worker refuses to CLAIM a new pair once deadlineMs passes.
+//   2. The batch is RACED against deadlineMs, so a pair stuck in 429 backoff can't
+//      hold the invocation past budget (the original 300s-overrun guard).
+// Correctness against the window boundary comes from the PER-PAIR RESERVATION, not
+// timing: each worker claimPair()s (client, grant) BEFORE its LLM call and renews the
+// lock while scoring. A pair still in flight when this returns keeps a live lock, so
+// the next round's claimPair skips it -- it is never re-scored (which is what caused
+// the duplicate attempts + double LLM spend). A pair whose worker is frozen/killed
+// stops renewing, its lock ages past PAIR_LOCK_TTL_MS, and a later round reclaims it,
+// so the pool still completes. Returns pairs finished, peak concurrency (peak ~=
+// CONCURRENCY confirms real parallelism vs backoff serialization), and how many were
+// still in flight at return (`inFlightAtCutoff`) -- now HARMLESS (lock-protected),
+// kept as a backoff-pressure signal, not a dup indicator.
 async function scorePairsWithinBudget(
   db: DB,
   client: Client,
   pairs: Grant[],
   deadlineMs: number,
-): Promise<{ completed: number; peakInFlight: number; abandonedAtCutoff: number }> {
+): Promise<{ completed: number; peakInFlight: number; inFlightAtCutoff: number }> {
   let nextIdx = 0;
   let inFlight = 0;
   let peakInFlight = 0;
@@ -156,38 +210,50 @@ async function scorePairsWithinBudget(
       await renewLease();
       const i = nextIdx++;
       if (i >= pairs.length) return;
+      const grantId = pairs[i].id;
+      // Reserve the pair before its (paid) LLM call. If a live worker/round already
+      // holds it (fresh lock), skip -- this is what stops the next round re-scoring a
+      // pair still in flight from this one.
+      if (!(await claimPair(db, client.id, grantId))) continue;
       inFlight++;
       if (inFlight > peakInFlight) peakInFlight = inFlight;
+      const stopRenew = startPairLockRenewal(db, client.id, grantId);
       try {
         await scoreGrantClientPair(pairs[i], client, db);
         completed++;
       } finally {
         inFlight--;
+        // Stop renewing, but do NOT delete the lock here. A finished pair is already
+        // excluded via its match_attempts row; deleting the lock would reopen the
+        // dup race (a concurrent round computed `remaining` while this pair was still
+        // unattempted, then finds no lock and re-scores it). The lock is swept when
+        // the client completes, or reclaimed via TTL if a worker died pre-commit.
+        stopRenew();
       }
     }
   };
   const workers = Promise.all(
     Array.from({ length: Math.min(CONCURRENCY, pairs.length) }, worker),
   );
-  // Hard-return at cutoff + GRACE_MS. Workers stop CLAIMING at deadlineMs (their while
-  // check); the extra grace lets the in-flight wave finish and commit before we return,
-  // so the next round doesn't re-score it. If a straggler outlasts the grace the race
-  // resolves here anyway, so we never blow the cap. Clear the timer if the workers win
-  // so a fast run doesn't keep the billed function alive to the hard-return.
+  // Hard stop: resolve at the deadline even if in-flight pairs are still running, so a
+  // backoff straggler can't push the invocation to the 300s kill. Abandoning the wave
+  // here is now SAFE -- each in-flight pair holds a live reservation lock, so the next
+  // round skips (never re-scores) it. Clear the timer if the workers win the race so a
+  // fast run doesn't keep the billed function alive until the deadline fires.
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const hardReturn = new Promise<void>((resolve) => {
-    timer = setTimeout(resolve, Math.max(0, deadlineMs + GRACE_MS - Date.now()));
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, Math.max(0, deadlineMs - Date.now()));
   });
   try {
-    await Promise.race([workers, hardReturn]);
+    await Promise.race([workers, deadline]);
   } finally {
     if (timer) clearTimeout(timer);
   }
-  // Whatever is still running now (0 if the workers won the race) is what the grace
-  // did NOT drain -- a straggler that will commit after we return and may be re-scored
-  // by the next round. Surfaced for the timing log so the residual is observable.
-  const abandonedAtCutoff = inFlight;
-  return { completed, peakInFlight, abandonedAtCutoff };
+  // In-flight at return (0 if the workers won the race). Lock-protected -- NOT re-scored
+  // -- so this is a backoff-pressure signal (how many pairs are mid-flight at the cutoff),
+  // not a dup count. Dups are verified directly (match_attempts total vs distinct).
+  const inFlightAtCutoff = inFlight;
+  return { completed, peakInFlight, inFlightAtCutoff };
 }
 
 /**
@@ -213,9 +279,9 @@ export async function drainClientMatchQueue(
   // peak, reveals whether the pool is genuinely parallel or throttled to ~1.
   let totalScored = 0;
   let peakInFlight = 0;
-  // Pairs still in flight when a window hit its hard-return (grace didn't drain them).
-  // 0 on a clean run; a nonzero value is the re-score/dup-attempt residual to watch.
-  let totalAbandoned = 0;
+  // Pairs still in flight at a window's cutoff, summed across windows. Lock-protected
+  // (not re-scored) -- a backoff-pressure signal, not a dup count.
+  let totalInFlightAtCutoff = 0;
 
   // Pool is stable for the whole drain -- load it once.
   let pool: Grant[];
@@ -273,20 +339,21 @@ export async function drainClientMatchQueue(
       const remaining = pool.filter((g) => !done.has(g.id));
 
       if (remaining.length === 0) {
-        // Nothing left (pool empty, or a prior invocation finished it) -> land it and
-        // release the lease.
+        // Nothing left (pool empty, or a prior invocation finished it) -> land it,
+        // release the lease, and clear any orphan pair locks for this client.
         await db
           .from("clients")
           .update({ initial_match_status: "complete", match_locked_at: null })
           .eq("id", candidate.id);
+        await db.from("match_pair_locks").delete().eq("client_id", candidate.id);
         completed.push(candidate.id);
         continue;
       }
 
-      const { completed: pairsDone, peakInFlight: peak, abandonedAtCutoff } =
+      const { completed: pairsDone, peakInFlight: peak, inFlightAtCutoff } =
         await scorePairsWithinBudget(db, candidate, remaining, deadlineMs);
       totalScored += pairsDone;
-      totalAbandoned += abandonedAtCutoff;
+      totalInFlightAtCutoff += inFlightAtCutoff;
       if (peak > peakInFlight) peakInFlight = peak;
       advanced.push(candidate.id);
 
@@ -300,11 +367,16 @@ export async function drainClientMatchQueue(
           .from("clients")
           .update({ initial_match_status: "complete", match_locked_at: null })
           .eq("id", candidate.id);
+        await db.from("match_pair_locks").delete().eq("client_id", candidate.id);
         completed.push(candidate.id);
       } else {
-        // Budget must be spent (scorePairsWithinBudget only returns early on the
-        // deadline). Release the lease so the immediate next resume can reclaim, then
-        // stop so we don't spin re-picking the same client.
+        // Work remains, but this round is done with it: either the budget is spent, or
+        // every still-unattempted pair is currently locked by an in-flight worker (from
+        // this round's abandoned wave), so there's nothing left to claim right now.
+        // Release the lease so the next continuation round / cron reclaims, and stop so
+        // we don't spin re-picking the same client within this invocation. The client
+        // loop re-POSTs; those locked pairs commit (or their locks expire) and the next
+        // round finishes them.
         await db.from("clients").update({ match_locked_at: null }).eq("id", candidate.id);
         budgetExhausted = true;
         break;
@@ -324,7 +396,7 @@ export async function drainClientMatchQueue(
 
   const wallMs = Date.now() - startedAt;
   console.log(
-    `[client-match-timing] scoredPairs=${totalScored} abandonedAtCutoff=${totalAbandoned} ` +
+    `[client-match-timing] scoredPairs=${totalScored} inFlightAtCutoff=${totalInFlightAtCutoff} ` +
       `peakInFlight=${peakInFlight}/${CONCURRENCY} wallMs=${wallMs} budgetMs=${budgetMs} ` +
       `budgetExhausted=${budgetExhausted} advancedClients=${advanced.length} completedClients=${completed.length}`,
   );
