@@ -34,7 +34,8 @@ export function AlertSend({
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [rev, setRev] = useState(0); // cache-buster for the preview PDF after regenerate
-  const [schedulingLink, setSchedulingLink] = useState(false); // prospect: booking link appended on send
+  const [schedulingLink, setSchedulingLink] = useState(false); // prospect/lead: PDF carries a booking link
+  const [priorEmailedAt, setPriorEmailedAt] = useState<string | null>(null); // soft "emailed this address before" flag
   const [summary, setSummary] = useState<GrantSummary | null>(null);
 
   async function openModal() {
@@ -50,6 +51,7 @@ export function AlertSend({
       setSubject(d.subject || "");
       setBody(d.body || "");
       setSchedulingLink(!!d.schedulingLink);
+      setPriorEmailedAt(d.priorEmailedAt ?? null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load draft");
     } finally {
@@ -68,6 +70,7 @@ export function AlertSend({
       setTo(d.to || "");
       setSubject(d.subject || "");
       setBody(d.body || "");
+      setPriorEmailedAt(d.priorEmailedAt ?? null);
       setRev((r) => r + 1); // force the preview link to fetch the new saved PDF
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to regenerate");
@@ -176,6 +179,11 @@ export function AlertSend({
                   <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">To</span>
                   <input type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder="name@org.org"
                     className="flex h-9 w-full rounded-md border border-input bg-card px-3 text-sm" />
+                  {priorEmailedAt && (
+                    <span className="text-[11px] text-amber-700">
+                      You’ve emailed this address before {new Date(priorEmailedAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}.
+                    </span>
+                  )}
                 </label>
                 <label className="block space-y-1">
                   <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Subject</span>
