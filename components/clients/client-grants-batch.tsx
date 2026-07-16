@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { ScoreBadge, DecisionBadge } from "@/components/grants/badges";
 import { MAX_BATCH_GRANTS, deadlineSortKey } from "@/lib/alerts/batch-shared";
-import { buildClientBatchEmail } from "@/lib/alerts/compose-batch";
+import { buildClientBatchEmail, buildLeadBatchEmail } from "@/lib/alerts/compose-batch";
 import type { CardDecision } from "@/types/database";
 
 // The interactive grant-activity table for a client: multi-select the pending /
@@ -33,10 +33,12 @@ function sortByDeadlineUi(cards: BatchUiCard[]): BatchUiCard[] {
     .sort((a, b) => deadlineSortKey(a) - deadlineSortKey(b) || (a.title ?? "").localeCompare(b.title ?? ""));
 }
 
-function composeFor(cards: BatchUiCard[]) {
-  return buildClientBatchEmail(
-    sortByDeadlineUi(cards).map((c) => ({ title: c.title, funder: c.funder, submission_deadline: c.submission_deadline })),
-  );
+function composeFor(cards: BatchUiCard[], isLead: boolean, senderName: string | null) {
+  const grants = sortByDeadlineUi(cards).map((c) => ({ title: c.title, funder: c.funder, submission_deadline: c.submission_deadline }));
+  // A lead (Tara-build manual prospect) gets the COLD multi-grant pitch; a client gets
+  // the warm alert. Same sort/order both ways so the displayed body matches the merged
+  // PDF page order (and what the server sends).
+  return isLead ? buildLeadBatchEmail(grants, senderName) : buildClientBatchEmail(grants);
 }
 
 export function ClientGrantsBatch({
@@ -45,12 +47,19 @@ export function ClientGrantsBatch({
   recipient,
   cards,
   alertedCardIds,
+  isLead,
+  senderName,
 }: {
   clientId: string;
   clientName: string;
   recipient: string;
   cards: BatchUiCard[];
   alertedCardIds: string[];
+  // A lead (Tara-build manual prospect) sends a COLD multi-grant pitch; a client sends
+  // the warm alert. senderName names the cold intro. When isLead=false the behavior is
+  // identical to before (warm composer, "Alerted" confirmation).
+  isLead: boolean;
+  senderName: string | null;
 }) {
   const router = useRouter();
   const alerted = useMemo(() => new Set(alertedCardIds), [alertedCardIds]);
@@ -126,7 +135,7 @@ export function ClientGrantsBatch({
         if (!res.ok) throw new Error(d.error || "Preparation failed");
         setReady(ids.length - (d.remaining ?? ids.length));
         if (d.done) {
-          const c = composeFor(cards.filter((x) => ids.includes(x.id)));
+          const c = composeFor(cards.filter((x) => ids.includes(x.id)), isLead, senderName);
           setSubject(c.subject);
           setBody(c.body);
           setPhase("ready");
@@ -167,7 +176,7 @@ export function ClientGrantsBatch({
       setError("None of the selected alerts could be prepared.");
       return;
     }
-    const c = composeFor(cards.filter((x) => readyIds.includes(x.id)));
+    const c = composeFor(cards.filter((x) => readyIds.includes(x.id)), isLead, senderName);
     setSubject(c.subject);
     setBody(c.body);
     setActiveIds(readyIds);
@@ -374,7 +383,9 @@ export function ClientGrantsBatch({
             {phase === "done" && result && (
               <div className="mt-6 space-y-3 text-center">
                 <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50 text-2xl text-emerald-600">✓</div>
-                <h3 className="text-base font-semibold text-neutral-900">Alerted {clientName} on {result.count} {result.count === 1 ? "grant" : "grants"}</h3>
+                <h3 className="text-base font-semibold text-neutral-900">
+                  {isLead ? "Sent to" : "Alerted"} {clientName} {isLead ? "·" : "on"} {result.count} {result.count === 1 ? "grant" : "grants"}
+                </h3>
                 {result.finalizeFailed > 0 && (
                   <p className="text-xs text-muted-foreground">
                     Delivered. {result.finalizeFailed} {result.finalizeFailed === 1 ? "grant's" : "grants'"} status didn&apos;t finish updating (cosmetic — the alerts were sent).

@@ -1,4 +1,5 @@
 import { formatDeadline } from "@/lib/grants/format";
+import { PROSPECT_CREDENTIAL } from "./copy";
 import type { Grant } from "@/types/database";
 
 // Aggregate (multi-select) client alert email -- the cover note for a batch send.
@@ -51,6 +52,44 @@ export function buildClientBatchEmail(grants: BatchGrant[]): { subject: string; 
     lead,
     "",
     ...grants.map(grantLine),
+    "",
+    pdfLine,
+    "",
+    "Best,",
+    "GRANTED",
+  ].join("\n");
+  return { subject: batchAlertSubject(grants), body };
+}
+
+// Aggregate LEAD (Tara-build manual prospect) cold pitch -- a not-yet-client matched
+// against the full pool like a client, but sent COLD to win their business. Mirrors
+// the single-send cold body (buildProspectEmailBody) -- sender-named intro, the same
+// verbatim credential block, a book-a-call CTA -- but for N grants (the compact list),
+// not one. The attached merged PDF carries a /go booking link per page (minted at
+// prepare time), so the CTA is always honest for a lead batch. `senderFirstName` is
+// null-safe to a name-less intro (never an email as a name). Warm CLIENT batches use
+// buildClientBatchEmail; this is never used for a client.
+export function buildLeadBatchEmail(
+  grants: BatchGrant[],
+  senderFirstName: string | null,
+): { subject: string; body: string } {
+  const n = grants.length;
+  const name = senderFirstName?.trim();
+  const intro = name
+    ? `I'm ${name} with GRANTED. A few grants look like strong fits for your organization and I wanted to flag them.`
+    : `I'm reaching out from GRANTED. A few grants look like strong fits for your organization and I wanted to flag them.`;
+  const pdfLine =
+    n === 1
+      ? "The full alert, including a link to schedule a call, is attached as a one-page PDF."
+      : `The full alerts, including a link to schedule a call, are attached as a ${n}-page PDF, one page per grant.`;
+  const body = [
+    "Hello,",
+    "",
+    intro,
+    "",
+    ...grants.map(grantLine),
+    "",
+    PROSPECT_CREDENTIAL,
     "",
     pdfLine,
     "",
