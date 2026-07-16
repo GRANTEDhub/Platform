@@ -142,7 +142,13 @@ function escHtml(s: string): string {
 
 export type HorizonRenderItem = { title: string; funder: string | null; rationale: string };
 
-function horizonHtml(items: HorizonRenderItem[], fontCss: string, logo: string): string {
+// Fit-cap: the horizon is ONE letter page, no pagination (a clean single page beats
+// an awkward page break). Five items with their rationales fit comfortably; any extra
+// (rare -- post-calibration lists run 1 to 5) rolls into an honest "+N more" line
+// rather than being silently dropped or clipping mid-item off the bottom.
+const HORIZON_PAGE_MAX = 5;
+
+function horizonHtml(items: HorizonRenderItem[], overflow: number, fontCss: string, logo: string): string {
   const rows = items
     .map(
       (it) => `<li class="item">
@@ -152,6 +158,10 @@ function horizonHtml(items: HorizonRenderItem[], fontCss: string, logo: string):
     </li>`,
     )
     .join("");
+  const more =
+    overflow > 0
+      ? `<div class="more">Plus ${overflow} more anticipated ${overflow === 1 ? "opportunity" : "opportunities"} we are tracking for your organization.</div>`
+      : "";
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     ${fontCss}
     @page { size: letter; margin: 0; }
@@ -171,6 +181,7 @@ function horizonHtml(items: HorizonRenderItem[], fontCss: string, logo: string):
     .title { font-family: 'Source Serif 4', Georgia, serif; font-size: 14px; font-weight: 600; color: #0B1E3A; line-height: 1.3; }
     .funder { font-size: 10.5px; color: #8a7a66; margin-top: 3px; }
     .rationale { font-size: 11.5px; color: #3a4a63; line-height: 1.5; margin-top: 5px; }
+    .more { margin-top: 14px; font-size: 11px; font-style: italic; color: #8a7a66; }
     .foot { padding: 8px 56px 32px; font-size: 10px; color: #8a7a66; line-height: 1.45; }
   </style></head><body>
     <div class="header">
@@ -182,6 +193,7 @@ function horizonHtml(items: HorizonRenderItem[], fontCss: string, logo: string):
     <div class="body">
       <div class="lede">Worth watching for your organization, most relevant first:</div>
       <ul>${rows}</ul>
+      ${more}
     </div>
     <div class="foot">Forecasted opportunities are estimates and not yet open for application. GRANTED verifies eligibility and timing against the official notice once each one posts.</div>
   </body></html>`;
@@ -189,7 +201,10 @@ function horizonHtml(items: HorizonRenderItem[], fontCss: string, logo: string):
 
 export async function renderHorizonPdf(items: HorizonRenderItem[]): Promise<Buffer> {
   const [assets, fontCss] = await Promise.all([loadAssets(), loadFontCss()]);
-  const html = horizonHtml(items, fontCss, assets.white);
+  // Fit-cap to one clean page; surface any remainder as an honest "+N more" line.
+  const shown = items.slice(0, HORIZON_PAGE_MAX);
+  const overflow = Math.max(0, items.length - shown.length);
+  const html = horizonHtml(shown, overflow, fontCss, assets.white);
   const browser = await launch();
   try {
     const page = await browser.newPage();
