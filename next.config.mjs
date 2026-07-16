@@ -31,6 +31,25 @@ const nextConfig = {
         "./lib/contracts/fonts/**",
         "./node_modules/@sparticuz/chromium/**",
       ],
+      // The draft GET / regenerate POST also render (getOrCreateDraftAlert), so a
+      // first render routed through this route needs the same Chromium + asset
+      // trace -- otherwise executablePath() 500s exactly like the batch route did.
+      "/api/alerts/[cardId]/draft": [
+        "./lib/alerts/template/**",
+        "./lib/alerts/assets/**",
+        "./lib/contracts/fonts/**",
+        "./node_modules/@sparticuz/chromium/**",
+      ],
+      // The aggregate-send PREPARE round renders missing drafts (getOrCreateDraftAlert),
+      // so it needs the same Chromium + asset trace as the single-send render routes.
+      // (send-batch never renders -- it loads saved PDFs + merges via pdf-lib -- so it
+      // needs no trace-include here.)
+      "/api/clients/[id]/prepare-batch": [
+        "./lib/alerts/template/**",
+        "./lib/alerts/assets/**",
+        "./lib/contracts/fonts/**",
+        "./node_modules/@sparticuz/chromium/**",
+      ],
     },
   },
 };
