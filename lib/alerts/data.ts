@@ -1,6 +1,7 @@
 import { format } from "date-fns";
 import { formatAwardRange, compactCostShare, formatDeadline } from "@/lib/grants/format";
 import { sanitizeRichText, sanitizeText } from "@/lib/sanitize/html";
+import { PROSPECT_CREDENTIAL } from "./copy";
 import type { Grant, ReviewCard } from "@/types/database";
 import type { AlertData, AlertEnrichment, AlertStat } from "./types";
 
@@ -201,10 +202,8 @@ export function buildAlertEmailBody(g: Grant, card: ReviewCard): string {
   ].join("\n");
 }
 
-// Static credential block for prospect (cold) outreach -- VERBATIM and identical
-// for every sender, never LLM-generated or paraphrased.
-const PROSPECT_CREDENTIAL =
-  "GRANTED is a grant solutions company based in Northwest Arkansas. We work with nonprofit organizations, local governments, and institutions on grant strategy and proposal development.";
+// The static cold-outreach credential block lives in ./copy (PROSPECT_CREDENTIAL),
+// shared byte-identically with the batch cold composer.
 
 // Plain-text body for a PROSPECT (cold-outreach) alert: salutation, a one-line
 // intro naming the sender, the shared grant announcement, the static credential
