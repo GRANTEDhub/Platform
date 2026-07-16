@@ -12,10 +12,12 @@ import {
   type GrantAlertRow,
 } from "@/lib/alerts/store";
 import { getSentAlertsByCards } from "@/lib/alerts/sent-status";
-import { recordClientDecision, finalizeClientCardSent } from "@/lib/alerts/send-core";
+import { recordClientDecision, finalizeClientCardSent, finalizeLeadSent } from "@/lib/alerts/send-core";
 import { mergeAlertPdfs } from "@/lib/alerts/merge-pdf";
-import { buildClientBatchEmail, type BatchGrant } from "@/lib/alerts/compose-batch";
+import { buildClientBatchEmail, buildLeadBatchEmail, type BatchGrant } from "@/lib/alerts/compose-batch";
 import { MAX_BATCH_GRANTS, sortByDeadline } from "@/lib/alerts/batch-shared";
+import { isUnconvertedLead } from "@/lib/leads/stage";
+import { senderFirstName } from "@/lib/alerts/sender";
 import type { Client, Grant } from "@/types/database";
 
 // Client aggregate (multi-select) send: prepare drafts, then send the selected
@@ -169,14 +171,22 @@ export async function sendClientBatch(
 
   const { data: client } = await db
     .from("clients")
-    .select("id, primary_contact_email")
+    .select("id, name, primary_contact_email, pipeline_stage")
     .eq("id", opts.clientId)
-    .single<Pick<Client, "id" | "primary_contact_email">>();
+    .single<Pick<Client, "id" | "name" | "primary_contact_email" | "pipeline_stage">>();
   if (!client) return { result: { sent: false, error: "Client not found" }, status: 404 };
   // Recipient: an admin-typed override (parity with single-send's editable "To"),
   // else the client's contact email. The override does NOT bypass the send gate --
   // isDeliverableEmail + canSendOutreach below run on whatever address resolves here.
   const recipient = (opts.to?.trim() || client.primary_contact_email || "").trim();
+
+  // A LEAD client (Tara-build manual prospect) takes the COLD batch path: gate-first,
+  // NO decisions, cold composer, finalizeLeadSent. Everything BELOW this early-return
+  // is the UNCHANGED warm-client sequence. The batch is homogeneous by construction --
+  // one client row -> one treatment. (Mirrors the single-send 3-way fork on isLead.)
+  if (isUnconvertedLead(client.pipeline_stage)) {
+    return sendLeadBatch(opts, { cards: loaded.cards, recipient, clientName: client.name });
+  }
 
   // Drop already-sent cards (batch form of Guard 1) BEFORE anything else.
   const sentMap = await getSentAlertsByCards(opts.cardIds);
@@ -290,6 +300,117 @@ export async function sendClientBatch(
       // already excluded from any re-send; a failed finalize leaves only a missing
       // review_cards stamp (cosmetic). Loud log + report; never abort the rest.
       console.error(`[send-batch] finalize failed for card ${c.id} (email already delivered; draft is 'sent'):`, err);
+      finalizeFailed.push({ id: c.id, error: errMsg(err) });
+    }
+  }
+  return { result: { sent: true, to: result.to, count: claimed.length, finalized, finalizeFailed }, status: 200 };
+}
+
+// Send the selected LEAD matches as ONE merged-PDF COLD pitch. Mirrors sendClientBatch
+// but for a Tara-build manual prospect: gate-first (no state change on preview/blocked),
+// NO decisions recorded, the cold buildLeadBatchEmail body, and finalizeLeadSent per
+// card (mark sent + grant_alert_sent event -- no decision, no convert; it's already a
+// lead). The merged PDF already carries a /go booking link per page (minted at prepare
+// time). Reuses the same leaf primitives as the client path; kept separate so that path
+// stays byte-for-byte unchanged (the single-send 3-way fork pattern).
+async function sendLeadBatch(
+  opts: { clientId: string; cardIds: string[]; subject?: string; body?: string; userId: string },
+  ctx: { cards: BatchCard[]; recipient: string; clientName: string | null },
+): Promise<{ result: SendBatchResult; status: number }> {
+  const db = createServiceClient();
+  const { recipient } = ctx;
+
+  // Drop already-sent + require prepared drafts (same as the client path).
+  const sentMap = await getSentAlertsByCards(opts.cardIds);
+  let candidates = ctx.cards.filter((c) => !sentMap.has(c.id));
+  const drafts = new Map<string, GrantAlertRow>();
+  const missing: string[] = [];
+  for (const c of candidates) {
+    const d = await getDraftAlert(c.id);
+    if (d) drafts.set(c.id, d);
+    else missing.push(c.id);
+  }
+  if (missing.length) {
+    return { result: { sent: false, error: "Drafts not prepared for all selected grants", missing }, status: 409 };
+  }
+  candidates = sortByDeadline(candidates);
+  if (candidates.length === 0) {
+    return { result: { sent: false, alreadySent: true, send_status: "All selected grants were already sent." }, status: 200 };
+  }
+
+  // Gate FIRST -- a lead never records a decision, so nothing persists on a block.
+  if (!isDeliverableEmail(recipient)) {
+    return { result: { sent: false, reason: "no deliverable email on file", send_status: "not sent — no deliverable email on file" }, status: 200 };
+  }
+  const gate = canSendOutreach(recipient);
+  if (!gate.ok) {
+    return { result: { sent: false, reason: gate.reason, send_status: `not sent (${gate.reason})` }, status: 200 };
+  }
+
+  // Claim-all -> the final set (order preserved from the deadline sort).
+  const claimResults = await Promise.all(
+    candidates.map(async (c) => ({ c, ok: await claimAlertForSend(drafts.get(c.id)!.id, recipient) })),
+  );
+  const claimed = claimResults.filter((r) => r.ok).map((r) => r.c);
+  if (claimed.length === 0) {
+    return { result: { sent: false, alreadySent: true, send_status: "Already sent — a concurrent send delivered these alerts." }, status: 200 };
+  }
+
+  // Merge the claimed set's saved PDFs (each carries its /go booking link).
+  let merged: Buffer;
+  try {
+    const pdfs = await Promise.all(claimed.map((c) => loadAlertPdf(drafts.get(c.id)!)));
+    merged = await mergeAlertPdfs(pdfs);
+  } catch (err) {
+    await Promise.all(claimed.map((c) => releaseAlertClaim(drafts.get(c.id)!.id)));
+    return { result: { sent: false, error: `Merge failed: ${errMsg(err)}`, send_status: `not sent: ${errMsg(err)}` }, status: 502 };
+  }
+
+  // Cold subject/body over the CLAIMED set: request-provided (the modal composed it)
+  // wins; else compose a default, resolving the sender's name from their profile.
+  const reqSubject = opts.subject?.trim() || "";
+  const reqBody = opts.body?.trim() || "";
+  let sendSubject = reqSubject;
+  let sendBody = reqBody;
+  if (!sendSubject || !sendBody) {
+    let sender: { full_name: string | null; email: string | null } | null = null;
+    if (opts.userId) {
+      const { data } = await db.from("profiles").select("full_name, email").eq("id", opts.userId).maybeSingle();
+      sender = data ?? null;
+    }
+    const composed = buildLeadBatchEmail(claimed.map((c) => c.grant), senderFirstName(sender));
+    sendSubject = sendSubject || composed.subject;
+    sendBody = sendBody || composed.body;
+  }
+
+  // Send ONCE.
+  let result: Awaited<ReturnType<typeof sendGrantAlertEmail>>;
+  try {
+    result = await sendGrantAlertEmail({ to: recipient, subject: sendSubject, body: sendBody, pdf: merged });
+  } catch (err) {
+    await Promise.all(claimed.map((c) => releaseAlertClaim(drafts.get(c.id)!.id)));
+    return { result: { sent: false, error: `Send failed: ${errMsg(err)}`, send_status: `not sent: ${errMsg(err)}` }, status: 502 };
+  }
+
+  // Finalize each best-effort: mark sent + grant_alert_sent event. NO decision.
+  const finalized: string[] = [];
+  const finalizeFailed: { id: string; error: string }[] = [];
+  for (const c of claimed) {
+    try {
+      await finalizeLeadSent(db, {
+        alertId: drafts.get(c.id)!.id,
+        sentTo: result.to,
+        subject: sendSubject,
+        emailBody: sendBody,
+        clientId: opts.clientId,
+        grantId: c.grant.id,
+        clientName: ctx.clientName,
+      });
+      finalized.push(c.id);
+    } catch (err) {
+      // The claim already flipped this draft to 'sent' (pre-email) -> no double-send;
+      // a failed finalize leaves only a missing pipeline event (cosmetic). Log + report.
+      console.error(`[send-batch:lead] finalize failed for card ${c.id} (email delivered; draft is 'sent'):`, err);
       finalizeFailed.push({ id: c.id, error: errMsg(err) });
     }
   }
