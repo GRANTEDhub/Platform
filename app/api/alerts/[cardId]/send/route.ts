@@ -18,6 +18,7 @@ import {
   prospectConvertForSend,
   finalizeProspectSent,
   finalizeLeadSent,
+  type ReOutreach,
 } from "@/lib/alerts/send-core";
 import { buildProspectEmailBody } from "@/lib/alerts/data";
 import { senderFirstName } from "@/lib/alerts/sender";
@@ -64,8 +65,19 @@ export async function POST(req: NextRequest, { params }: { params: { cardId: str
     });
   }
 
-  const input = (await req.json().catch(() => ({}))) as { to?: string; subject?: string; body?: string };
+  const input = (await req.json().catch(() => ({}))) as {
+    to?: string;
+    subject?: string;
+    body?: string;
+    reOutreach?: string;
+  };
   const origin = appBaseUrl(req);
+  // A cold re-contact's chosen variant (recorded on the grant_alert_sent event so the
+  // sales workflow can see re-contact frequency + path). Only the two known values;
+  // anything else -> undefined (a first-contact send writes no metadata key). Never
+  // applies to a warm client send (clientSend takes no reOutreach).
+  const reOutreach: ReOutreach | undefined =
+    input.reOutreach === "acknowledged" || input.reOutreach === "follow_up" ? input.reOutreach : undefined;
 
   let alert: GrantAlertRow;
   try {
@@ -104,10 +116,10 @@ export async function POST(req: NextRequest, { params }: { params: { cardId: str
   // order; a card is never both -- a prospect card has no client row). A lead is an
   // unconverted client row (Tara-build manual prospect): cold pitch, no decision.
   if (ctx.card.card_type === "prospect") {
-    return prospectSend({ ctx, alert, recipient, subject, emailBody, userId: user.id });
+    return prospectSend({ ctx, alert, recipient, subject, emailBody, userId: user.id, reOutreach });
   }
   if (ctx.isLead) {
-    return leadSend({ ctx, alert, recipient, subject, emailBody });
+    return leadSend({ ctx, alert, recipient, subject, emailBody, reOutreach });
   }
   return clientSend({ supabase, ctx, alert, recipient, subject, emailBody, userId: user.id, cardId: params.cardId });
 }
@@ -120,8 +132,9 @@ async function prospectSend(a: {
   subject: string;
   emailBody: string;
   userId: string;
+  reOutreach?: ReOutreach;
 }) {
-  const { ctx, alert, recipient, subject, emailBody, userId } = a;
+  const { ctx, alert, recipient, subject, emailBody, userId, reOutreach } = a;
 
   // Gate FIRST: no conversion, no send, no state change on preview / blocked.
   if (!isDeliverableEmail(recipient)) {
@@ -190,6 +203,7 @@ async function prospectSend(a: {
       conv,
       prospect,
       grantId: ctx.grant.id,
+      reOutreach,
     });
     return NextResponse.json({ sent: true, to: result.to, outcome: conv.outcome, leadName: conv.name });
   } catch (err) {
@@ -214,8 +228,9 @@ async function leadSend(a: {
   recipient: string;
   subject: string;
   emailBody: string;
+  reOutreach?: ReOutreach;
 }) {
-  const { ctx, alert, recipient, subject, emailBody } = a;
+  const { ctx, alert, recipient, subject, emailBody, reOutreach } = a;
   if (!ctx.client) return NextResponse.json({ error: "Lead client not found" }, { status: 404 });
 
   // Gate FIRST: no state change on preview / blocked.
@@ -247,6 +262,7 @@ async function leadSend(a: {
       clientId: ctx.client.id,
       grantId: ctx.grant.id,
       clientName: ctx.client.name,
+      reOutreach,
     });
     return NextResponse.json({ sent: true, to: result.to });
   } catch (err) {

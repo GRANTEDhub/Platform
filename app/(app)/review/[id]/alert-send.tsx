@@ -3,8 +3,10 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { PriorEmailGate } from "@/components/alerts/prior-email-gate";
 import { DecisionConfirmation } from "./decision-confirmation";
 import type { GrantSummary } from "@/app/api/review/[id]/route";
+import type { ReOutreach } from "@/lib/alerts/send-core";
 
 // Grant-alert send: the SINGLE send path for a client card. The draft (short
 // editable text body + the one-page PDF) is generated once and SAVED; preview and
@@ -37,6 +39,15 @@ export function AlertSend({
   const [schedulingLink, setSchedulingLink] = useState(false); // prospect/lead: PDF carries a booking link
   const [priorEmailedAt, setPriorEmailedAt] = useState<string | null>(null); // soft "emailed this address before" flag
   const [summary, setSummary] = useState<GrantSummary | null>(null);
+  // Cold re-contact gate: on a COLD send (prospect/lead) to an address we've emailed
+  // before, Send is locked until the sender picks a path. "acknowledged" keeps the
+  // cold body; "follow_up" swaps to the follow-up variant (composed server-side at
+  // draft time). Warm client sends leave these null/false -> no gate, unchanged.
+  const [isColdSend, setIsColdSend] = useState(false);
+  const [priorCardId, setPriorCardId] = useState<string | null>(null);
+  const [coldBody, setColdBody] = useState(""); // the first-contact body (default)
+  const [followUpBody, setFollowUpBody] = useState<string | null>(null); // the follow-up swap
+  const [reoutreach, setReoutreach] = useState<ReOutreach | null>(null);
 
   async function openModal() {
     setError(null);
@@ -50,6 +61,11 @@ export function AlertSend({
       setTo(d.to || "");
       setSubject(d.subject || "");
       setBody(d.body || "");
+      setColdBody(d.body || "");
+      setFollowUpBody(d.followUpBody ?? null);
+      setIsColdSend(!!d.isColdSend);
+      setPriorCardId(d.priorCardId ?? null);
+      setReoutreach(null);
       setSchedulingLink(!!d.schedulingLink);
       setPriorEmailedAt(d.priorEmailedAt ?? null);
     } catch (e) {
@@ -57,6 +73,14 @@ export function AlertSend({
     } finally {
       setLoading(false);
     }
+  }
+
+  // The gate's choice both unlocks Send and picks which body goes out: the cold
+  // first-contact body, or the follow-up variant (drops the intro + credential).
+  // A no-op if followUpBody is missing (warm send -> gate never renders anyway).
+  function chooseReoutreach(v: ReOutreach) {
+    setReoutreach(v);
+    setBody(v === "follow_up" && followUpBody != null ? followUpBody : coldBody);
   }
 
   async function regenerate() {
@@ -70,6 +94,11 @@ export function AlertSend({
       setTo(d.to || "");
       setSubject(d.subject || "");
       setBody(d.body || "");
+      setColdBody(d.body || "");
+      setFollowUpBody(d.followUpBody ?? null);
+      setIsColdSend(!!d.isColdSend);
+      setPriorCardId(d.priorCardId ?? null);
+      setReoutreach(null); // fresh cold body -> re-choose before sending
       setPriorEmailedAt(d.priorEmailedAt ?? null);
       setRev((r) => r + 1); // force the preview link to fetch the new saved PDF
     } catch (e) {
@@ -87,7 +116,7 @@ export function AlertSend({
       const res = await fetch(`/api/alerts/${cardId}/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to, subject, body }),
+        body: JSON.stringify({ to, subject, body, reOutreach: reoutreach ?? undefined }),
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || "Failed to send");
@@ -125,6 +154,8 @@ export function AlertSend({
   // clean delivery, so it must not paint the sent state.
   const alerted = !!(sentTo && sentTo.trim());
   const sentDate = alerted && sentAt ? new Date(sentAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : null;
+  // A cold re-contact must resolve the gate (pick a path) before Send unlocks.
+  const coldReContact = isColdSend && !!priorEmailedAt;
 
   // Rendered inline inside the DecisionPanel (as its primary action, above
   // Reject) -- no outer card of its own.
@@ -179,12 +210,25 @@ export function AlertSend({
                   <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">To</span>
                   <input type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder="name@org.org"
                     className="flex h-9 w-full rounded-md border border-input bg-card px-3 text-sm" />
-                  {priorEmailedAt && (
+                  {/* Warm client: passive note. Cold (prospect/lead): the gate below
+                      carries its own "emailed before" line + the required choice. */}
+                  {priorEmailedAt && !isColdSend && (
                     <span className="text-[11px] text-amber-700">
                       You’ve emailed this address before {new Date(priorEmailedAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}.
                     </span>
                   )}
                 </label>
+                {/* Cold re-contact gate: renders only when this is a cold send AND the
+                    address was emailed before (the component returns null otherwise).
+                    Locks Send until a choice is made and swaps the body accordingly. */}
+                {isColdSend && (
+                  <PriorEmailGate
+                    priorEmailedAt={priorEmailedAt}
+                    priorCardId={priorCardId}
+                    value={reoutreach}
+                    onChange={chooseReoutreach}
+                  />
+                )}
                 <label className="block space-y-1">
                   <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Subject</span>
                   <input value={subject} onChange={(e) => setSubject(e.target.value)}
@@ -233,7 +277,11 @@ export function AlertSend({
 
             <div className="mt-4 flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setOpen(false)} disabled={busy || regenBusy}>Cancel</Button>
-              <Button onClick={send} disabled={busy || loading || regenBusy || alerted || !to.trim() || !body.trim()} title={alerted ? "Already sent — cannot re-send" : undefined}>
+              <Button
+                onClick={send}
+                disabled={busy || loading || regenBusy || alerted || !to.trim() || !body.trim() || (coldReContact && !reoutreach)}
+                title={alerted ? "Already sent — cannot re-send" : coldReContact && !reoutreach ? "Choose how to proceed with this re-contact first" : undefined}
+              >
                 {busy ? "Sending…" : "Send alert"}
               </Button>
             </div>
