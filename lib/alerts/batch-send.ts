@@ -12,7 +12,7 @@ import {
   type GrantAlertRow,
 } from "@/lib/alerts/store";
 import { getSentAlertsByCards } from "@/lib/alerts/sent-status";
-import { recordClientDecision, finalizeClientCardSent, finalizeLeadSent } from "@/lib/alerts/send-core";
+import { recordClientDecision, finalizeClientCardSent, finalizeLeadSent, type ReOutreach } from "@/lib/alerts/send-core";
 import { mergeAlertPdfs } from "@/lib/alerts/merge-pdf";
 import { buildClientBatchEmail, buildLeadBatchEmail, type BatchGrant } from "@/lib/alerts/compose-batch";
 import { MAX_BATCH_GRANTS, sortByDeadline } from "@/lib/alerts/batch-shared";
@@ -161,7 +161,7 @@ export type SendBatchResult =
 //      finalize failure can never cause a double-send -- worst case a missing stamp)
 export async function sendClientBatch(
   userClient: UserDB,
-  opts: { clientId: string; cardIds: string[]; subject?: string; body?: string; to?: string; userId: string },
+  opts: { clientId: string; cardIds: string[]; subject?: string; body?: string; to?: string; userId: string; reOutreach?: ReOutreach },
 ): Promise<{ result: SendBatchResult; status: number }> {
   const db = createServiceClient();
 
@@ -185,7 +185,7 @@ export async function sendClientBatch(
   // is the UNCHANGED warm-client sequence. The batch is homogeneous by construction --
   // one client row -> one treatment. (Mirrors the single-send 3-way fork on isLead.)
   if (isUnconvertedLead(client.pipeline_stage)) {
-    return sendLeadBatch(opts, { cards: loaded.cards, recipient, clientName: client.name });
+    return sendLeadBatch(opts, { cards: loaded.cards, recipient, clientName: client.name, reOutreach: opts.reOutreach });
   }
 
   // Drop already-sent cards (batch form of Guard 1) BEFORE anything else.
@@ -315,7 +315,7 @@ export async function sendClientBatch(
 // stays byte-for-byte unchanged (the single-send 3-way fork pattern).
 async function sendLeadBatch(
   opts: { clientId: string; cardIds: string[]; subject?: string; body?: string; userId: string },
-  ctx: { cards: BatchCard[]; recipient: string; clientName: string | null },
+  ctx: { cards: BatchCard[]; recipient: string; clientName: string | null; reOutreach?: ReOutreach },
 ): Promise<{ result: SendBatchResult; status: number }> {
   const db = createServiceClient();
   const { recipient } = ctx;
@@ -405,6 +405,7 @@ async function sendLeadBatch(
         clientId: opts.clientId,
         grantId: c.grant.id,
         clientName: ctx.clientName,
+        reOutreach: ctx.reOutreach,
       });
       finalized.push(c.id);
     } catch (err) {
