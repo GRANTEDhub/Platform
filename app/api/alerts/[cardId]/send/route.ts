@@ -17,6 +17,7 @@ import {
   finalizeClientCardSent,
   prospectConvertForSend,
   finalizeProspectSent,
+  finalizeLeadSent,
 } from "@/lib/alerts/send-core";
 import { buildProspectEmailBody } from "@/lib/alerts/data";
 import { senderFirstName } from "@/lib/alerts/sender";
@@ -80,14 +81,14 @@ export async function POST(req: NextRequest, { params }: { params: { cardId: str
   const subject = (input.subject ?? "").trim() || alert.subject || `GRANTED Alert: ${ctx.grant.title || "New grant opportunity"}`;
   let emailBody = (input.body ?? "").trim() || alert.email_body || "";
 
-  // Re-resolve the prospect intro's sender name when a DIFFERENT admin is sending
-  // than the one who drafted it. The saved body carries the draft creator's name,
-  // and the modal posts that saved body back verbatim on an as-is send -- so only
-  // rebuild when the posted body is UNEDITED (== the saved body), to never clobber
-  // a hand-edited note. Prospect-only; the PDF has no sender name, so it and the
-  // baked scheduling link are untouched.
+  // Re-resolve the cold intro's sender name when a DIFFERENT admin is sending than
+  // the one who drafted it. The saved body carries the draft creator's name, and the
+  // modal posts that saved body back verbatim on an as-is send -- so only rebuild
+  // when the posted body is UNEDITED (== the saved body), to never clobber a
+  // hand-edited note. Cold-body cards only (a discovery prospect OR a lead); the PDF
+  // has no sender name, so it and the baked scheduling link are untouched.
   if (
-    ctx.card.card_type === "prospect" &&
+    (ctx.card.card_type === "prospect" || ctx.isLead) &&
     alert.created_by !== user.id &&
     emailBody === (alert.email_body ?? "").trim()
   ) {
@@ -99,8 +100,14 @@ export async function POST(req: NextRequest, { params }: { params: { cardId: str
     );
   }
 
+  // Three-way send fork, keyed on card_type FIRST then lead-status (deliberate
+  // order; a card is never both -- a prospect card has no client row). A lead is an
+  // unconverted client row (Tara-build manual prospect): cold pitch, no decision.
   if (ctx.card.card_type === "prospect") {
     return prospectSend({ ctx, alert, recipient, subject, emailBody, userId: user.id });
+  }
+  if (ctx.isLead) {
+    return leadSend({ ctx, alert, recipient, subject, emailBody });
   }
   return clientSend({ supabase, ctx, alert, recipient, subject, emailBody, userId: user.id, cardId: params.cardId });
 }
@@ -188,6 +195,63 @@ async function prospectSend(a: {
   } catch (err) {
     // Claimed but the email threw -> roll the draft back so it isn't stuck "sent"
     // with nothing delivered; the lead promotion is idempotent on retry.
+    await releaseAlertClaim(alert.id);
+    return NextResponse.json(
+      { sent: false, error: `Send failed: ${err instanceof Error ? err.message : String(err)}` },
+      { status: 502 },
+    );
+  }
+}
+
+// ── Lead (Tara-build manual prospect): cold pitch; gate-first, NO decision ──
+// A lead is an un-converted client row matched against the full pool like a client,
+// but sent COLD (booking link in the PDF, sender-named intro). It never records a
+// decision (not a serviced client) and never converts (already a lead). Gate-first
+// like a prospect: nothing happens on preview / blocked.
+async function leadSend(a: {
+  ctx: AlertContext;
+  alert: GrantAlertRow;
+  recipient: string;
+  subject: string;
+  emailBody: string;
+}) {
+  const { ctx, alert, recipient, subject, emailBody } = a;
+  if (!ctx.client) return NextResponse.json({ error: "Lead client not found" }, { status: 404 });
+
+  // Gate FIRST: no state change on preview / blocked.
+  if (!isDeliverableEmail(recipient)) {
+    return NextResponse.json({ sent: false, reason: "no deliverable email on file" });
+  }
+  const gate = canSendOutreach(recipient);
+  if (!gate.ok) return NextResponse.json({ sent: false, reason: gate.reason });
+
+  // Guard 2 -- atomic claim BEFORE the email.
+  const claimed = await claimAlertForSend(alert.id, recipient);
+  if (!claimed) {
+    return NextResponse.json({
+      sent: false,
+      alreadySent: true,
+      send_status: "Already sent — a concurrent send delivered this alert.",
+    });
+  }
+
+  const db = createServiceClient();
+  try {
+    const pdf = await loadAlertPdf(alert);
+    const result = await sendGrantAlertEmail({ to: recipient, subject, body: emailBody, pdf });
+    await finalizeLeadSent(db, {
+      alertId: alert.id,
+      sentTo: result.to,
+      subject,
+      emailBody,
+      clientId: ctx.client.id,
+      grantId: ctx.grant.id,
+      clientName: ctx.client.name,
+    });
+    return NextResponse.json({ sent: true, to: result.to });
+  } catch (err) {
+    // Claimed but the email threw -> roll the draft back so it isn't stuck "sent"
+    // with nothing delivered; retry re-sends. No decision to preserve.
     await releaseAlertClaim(alert.id);
     return NextResponse.json(
       { sent: false, error: `Send failed: ${err instanceof Error ? err.message : String(err)}` },

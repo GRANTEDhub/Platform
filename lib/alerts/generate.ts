@@ -1,5 +1,6 @@
 import "server-only";
 import { createServiceClient } from "@/lib/supabase/server";
+import { isUnconvertedLead } from "@/lib/leads/stage";
 import type { Grant, ReviewCard, Client, Prospect } from "@/types/database";
 
 // Server-side context loader for the grant alert, shared by the alert routes.
@@ -8,7 +9,7 @@ import type { Grant, ReviewCard, Client, Prospect } from "@/types/database";
 // client card (client_id set) or a prospect card (prospect_id set); the recipient
 // is resolved from whichever applies.
 
-type AlertClient = Pick<Client, "id" | "name" | "primary_contact_email" | "primary_contact_name">;
+type AlertClient = Pick<Client, "id" | "name" | "primary_contact_email" | "primary_contact_name" | "pipeline_stage">;
 type AlertProspect = Pick<Prospect, "id" | "name" | "primary_contact_email" | "primary_contact_name">;
 
 export type AlertContext = {
@@ -16,6 +17,12 @@ export type AlertContext = {
   grant: Grant;
   client: AlertClient | null;
   prospect: AlertProspect | null;
+  // A client card whose client row is an UN-CONVERTED lead (a Tara-build manual
+  // prospect): matched against the full pool like a client, but sent as a COLD pitch
+  // (booking link, no decision) rather than the warm client alert. Keys the send/
+  // draft fork on lead-status, NOT card_type (see the 3-way fork in the send route).
+  // Always false for a prospect card (client_id null -> no client row to read).
+  isLead: boolean;
 };
 
 // The send recipient (email + greeting name + org), from the client or prospect.
@@ -49,7 +56,7 @@ export async function loadAlertContext(cardId: string): Promise<AlertContext | n
     ? (
         await db
           .from("clients")
-          .select("id, name, primary_contact_email, primary_contact_name")
+          .select("id, name, primary_contact_email, primary_contact_name, pipeline_stage")
           .eq("id", card.client_id)
           .single<AlertClient>()
       ).data
@@ -64,5 +71,5 @@ export async function loadAlertContext(cardId: string): Promise<AlertContext | n
       ).data
     : null;
 
-  return { card, grant, client, prospect };
+  return { card, grant, client, prospect, isLead: isUnconvertedLead(client?.pipeline_stage) };
 }

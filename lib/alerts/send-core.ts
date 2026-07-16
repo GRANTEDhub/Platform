@@ -124,3 +124,25 @@ export async function finalizeProspectSent(
     metadata: { to: sentTo },
   });
 }
+
+// ── Lead (Tara-build manual prospect), post-email: finalize the delivered alert ──
+// A lead is an unconverted CLIENT row matched against the full pool like a client,
+// but pitched COLD. Post-email: mark the draft sent and record the pipeline event
+// (feeds the lead's scheduling panel -- how we track whether the pitch converts).
+// NO decision is written (a lead isn't a serviced client, so it must not pollute
+// client-decision data) and NO convert (it's already a lead). The grant_alerts row
+// already carries client_id from draft time, so markAlertSent needs no clientId.
+export async function finalizeLeadSent(
+  db: ReturnType<typeof createServiceClient>,
+  opts: { alertId: string; sentTo: string; subject: string; emailBody: string; clientId: string; grantId: string; clientName: string | null },
+): Promise<void> {
+  const { alertId, sentTo, subject, emailBody, clientId, grantId, clientName } = opts;
+  await markAlertSent(alertId, { sentTo, subject, emailBody });
+  await db.from("pipeline_events").insert({
+    event_type: "grant_alert_sent",
+    client_id: clientId,
+    grant_id: grantId,
+    subject_snapshot: { name: clientName },
+    metadata: { to: sentTo },
+  });
+}

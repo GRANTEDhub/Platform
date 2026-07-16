@@ -38,3 +38,32 @@ export async function getSentAlertsByCards(cardIds: string[]): Promise<Map<strin
 export async function getSentAlertForCard(cardId: string): Promise<SentAlert | null> {
   return (await getSentAlertsByCards([cardId])).get(cardId) ?? null;
 }
+
+// Has this recipient EMAIL been sent an alert before (on ANY card)? Soft-flags the
+// To: field so we don't re-send a cold intro to the same individual we've already
+// emailed -- the email is the exact unit of "same person" (org-name matching across
+// two prospect tables is unreliable). Global across clients/prospects/leads;
+// excludes the current card (re-opening isn't "before"). Small single-table lookup;
+// ilike wildcards are escaped so an underscore in the local part is a literal, and a
+// lowercased JS check backstops the exact match.
+export async function getPriorAlertForEmail(
+  email: string | null | undefined,
+  excludeCardId?: string,
+): Promise<{ sentAt: string } | null> {
+  const to = (email ?? "").trim();
+  if (!to) return null;
+  const db = createServiceClient();
+  const escaped = to.replace(/[%_\\]/g, (m) => `\\${m}`); // literal, not a LIKE pattern
+  const { data } = await db
+    .from("grant_alerts")
+    .select("card_id, sent_at, sent_to")
+    .eq("status", "sent")
+    .not("sent_to", "is", null)
+    .ilike("sent_to", escaped)
+    .order("sent_at", { ascending: false })
+    .limit(5);
+  const row = (data ?? []).find(
+    (r) => r.card_id !== excludeCardId && r.sent_at && (r.sent_to ?? "").trim().toLowerCase() === to.toLowerCase(),
+  );
+  return row ? { sentAt: row.sent_at as string } : null;
+}

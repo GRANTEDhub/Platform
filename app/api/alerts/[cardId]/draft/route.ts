@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { appBaseUrl } from "@/lib/site-url";
 import { loadAlertContext, alertRecipient } from "@/lib/alerts/generate";
 import { getOrCreateDraftAlert, generateDraftAlert } from "@/lib/alerts/store";
+import { getPriorAlertForEmail } from "@/lib/alerts/sent-status";
 
 // The alert draft is a PERSISTED artifact (grant_alerts): generate once, reuse
 // for preview AND send so the previewed PDF is byte-for-byte what goes out.
@@ -24,15 +25,19 @@ async function adminCtx(cardId: string) {
   return { user, ctx };
 }
 
-function draftPayload(ctx: NonNullable<Awaited<ReturnType<typeof loadAlertContext>>>, alert: { id: string; subject: string | null; email_body: string | null }) {
+async function draftPayload(ctx: NonNullable<Awaited<ReturnType<typeof loadAlertContext>>>, alert: { id: string; subject: string | null; email_body: string | null }) {
+  const recipient = alertRecipient(ctx);
   return {
     alertId: alert.id,
-    to: alertRecipient(ctx).email,
+    to: recipient.email,
     subject: alert.subject ?? `GRANTED Alert: ${ctx.grant.title || "New grant opportunity"}`,
     body: alert.email_body ?? "",
-    // Prospect PDFs carry a clickable booking link (baked in at render) -- the
-    // modal shows a hint pointing the admin to it in the attached PDF.
-    schedulingLink: alertRecipient(ctx).kind === "prospect",
+    // Cold-outreach PDFs (a discovery prospect OR a lead / Tara-build prospect) carry
+    // a clickable booking link (baked in at render) -- the modal hints the admin to it.
+    schedulingLink: recipient.kind === "prospect" || ctx.isLead,
+    // Soft "you've emailed this address before" flag for the To: field, computed for
+    // the default recipient (re-hitting the same individual is what we want to catch).
+    priorEmailedAt: (await getPriorAlertForEmail(recipient.email, ctx.card.id))?.sentAt ?? null,
   };
 }
 
@@ -41,7 +46,7 @@ export async function GET(req: Request, { params }: { params: { cardId: string }
   if ("error" in c) return c.error;
   try {
     const alert = await getOrCreateDraftAlert(c.ctx, c.user.id, appBaseUrl(req));
-    return NextResponse.json(draftPayload(c.ctx, alert));
+    return NextResponse.json(await draftPayload(c.ctx, alert));
   } catch (err) {
     return NextResponse.json(
       { error: `Draft generation failed: ${err instanceof Error ? err.message : String(err)}` },
@@ -55,7 +60,7 @@ export async function POST(req: Request, { params }: { params: { cardId: string 
   if ("error" in c) return c.error;
   try {
     const alert = await generateDraftAlert(c.ctx, c.user.id, appBaseUrl(req));
-    return NextResponse.json(draftPayload(c.ctx, alert));
+    return NextResponse.json(await draftPayload(c.ctx, alert));
   } catch (err) {
     return NextResponse.json(
       { error: `Regeneration failed: ${err instanceof Error ? err.message : String(err)}` },
