@@ -10,7 +10,11 @@ import { prepareClientBatch } from "@/lib/alerts/batch-send";
 // generate-report continuation pattern; kept under Cloudflare's ~100s origin cap.
 export const runtime = "nodejs";
 export const maxDuration = 300;
-const PREPARE_BUDGET_MS = 75_000;
+// Short round so the dashboard's "Preparing X of N" count visibly increments per
+// round (each round renders a draft or two sequentially, then returns and the client
+// re-POSTs). A long round would render several under one static count -- reading like
+// a hang. Well under Cloudflare's ~100s origin cap; the client loops to completion.
+const PREPARE_BUDGET_MS = 25_000;
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const supabase = createClient();
