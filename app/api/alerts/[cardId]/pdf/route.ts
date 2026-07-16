@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { appBaseUrl } from "@/lib/site-url";
 import { loadAlertContext } from "@/lib/alerts/generate";
-import { getOrCreateDraftAlert, loadAlertPdf } from "@/lib/alerts/store";
+import { getOrCreateDraftAlert, assembleOutwardAlertPdf } from "@/lib/alerts/store";
 
 // Preview the SAVED draft PDF (opened in a new tab from the send modal). Streams
 // the stored artifact from the private bucket -- no re-render -- so the preview is
@@ -23,8 +23,10 @@ export async function GET(req: Request, { params }: { params: { cardId: string }
   if (!ctx) return NextResponse.json({ error: "Card or grant not found" }, { status: 404 });
 
   try {
-    const alert = await getOrCreateDraftAlert(ctx, user.id, appBaseUrl(req));
-    const pdf = await loadAlertPdf(alert);
+    // withHorizon: single-send preview -> compute/freeze + concatenate the forecast
+    // horizon page so the previewed PDF is byte-for-byte what the single send attaches.
+    const alert = await getOrCreateDraftAlert(ctx, user.id, appBaseUrl(req), { withHorizon: true });
+    const pdf = await assembleOutwardAlertPdf(alert);
     return new NextResponse(new Uint8Array(pdf), {
       status: 200,
       headers: {

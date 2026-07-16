@@ -6,9 +6,12 @@ import { mintAccessToken } from "@/lib/tokens";
 import { enrichAlert } from "./enrich";
 import { buildAlertData, buildAlertEmailBody, buildProspectEmailBody } from "./data";
 import { senderFirstName } from "./sender";
-import { renderAlertPdf } from "./render";
+import { renderAlertPdf, renderHorizonPdf } from "./render";
+import { mergeAlertPdfs } from "./merge-pdf";
+import { getForecastHorizon } from "@/lib/grants/forecast-relevance";
 import type { AlertContext } from "./generate";
 import type { AlertData, AlertEnrichment } from "./types";
+import type { Client } from "@/types/database";
 
 // Persistence for the grant alert: generate ONCE, save the exact AlertData +
 // enrichment + rendered PDF, and reuse that saved version for both preview and
@@ -58,12 +61,16 @@ export async function generateDraftAlert(
   ctx: AlertContext,
   userId: string | null,
   origin: string,
+  opts?: { withHorizon?: boolean },
 ): Promise<GrantAlertRow> {
   const db = createServiceClient();
 
   const prior = await getDraftAlert(ctx.card.id);
   if (prior) {
-    await removeObjects(prior.storage_bucket, [prior.storage_path]);
+    // Remove the prior draft's PDF AND its horizon page (if any) so a regenerate is a
+    // clean swap and never orphans a stale horizon object.
+    const priorHorizon = (prior.alert_data as AlertData)?.horizonStoragePath;
+    await removeObjects(prior.storage_bucket, [prior.storage_path, ...(priorHorizon ? [priorHorizon] : [])]);
     await db.from("grant_alerts").delete().eq("id", prior.id);
   }
 
@@ -135,13 +142,82 @@ export async function generateDraftAlert(
   };
   const { data, error } = await db.from("grant_alerts").insert(insert).select().single<GrantAlertRow>();
   if (error) throw new Error(`Failed to save alert draft: ${error.message}`);
-  return data;
+  // Single-send drafts get the forecasted horizon computed + frozen now; batch prepare
+  // passes no opts (withHorizon falsy) so it never pays for a horizon it won't render.
+  return opts?.withHorizon ? ensureHorizon(ctx, data) : data;
 }
 
 // Reuse the existing draft if present; otherwise generate one. `origin` is the
 // stable base URL for the baked-in booking link (only used when generating).
-export async function getOrCreateDraftAlert(ctx: AlertContext, userId: string | null, origin: string): Promise<GrantAlertRow> {
-  return (await getDraftAlert(ctx.card.id)) ?? generateDraftAlert(ctx, userId, origin);
+// `withHorizon` (single-send paths only) computes + freezes the forecasted horizon,
+// backfilling an existing draft that lacks one (e.g. a batch-prepared or pre-feature
+// draft) so single-send always carries it; batch prepare omits it (no horizon).
+export async function getOrCreateDraftAlert(
+  ctx: AlertContext,
+  userId: string | null,
+  origin: string,
+  opts?: { withHorizon?: boolean },
+): Promise<GrantAlertRow> {
+  const existing = await getDraftAlert(ctx.card.id);
+  if (existing) return opts?.withHorizon ? ensureHorizon(ctx, existing) : existing;
+  return generateDraftAlert(ctx, userId, origin, opts);
+}
+
+// Compute the forecasted "on the horizon" set for a client/lead draft and FREEZE it
+// in alert_data (preview == sent). Idempotent + cheap to call on every single-send
+// view: presence of `forecastHorizon` (even []) means already computed. Renders the
+// horizon page to a SEPARATE object (never the shared per-card PDF, so the batch merge
+// stays horizon-free). Discovery-prospect drafts (no client row) get nothing. Any
+// failure is swallowed -- the page-1 alert is the essential artifact, so a missing
+// horizon is a soft omission, never a send blocker (retried on the next view).
+async function ensureHorizon(ctx: AlertContext, alert: GrantAlertRow): Promise<GrantAlertRow> {
+  if (!ctx.client) return alert;
+  const data = (alert.alert_data ?? {}) as AlertData;
+  if (data.forecastHorizon !== undefined) return alert; // computed + frozen already
+  const db = createServiceClient();
+  try {
+    const { data: fullClient } = await db.from("clients").select("*").eq("id", ctx.client.id).single<Client>();
+    if (!fullClient) return alert;
+    const horizon = await getForecastHorizon(db, fullClient);
+    const patch: Partial<AlertData> = { forecastHorizon: horizon };
+    if (horizon.length > 0) {
+      const horizonPath = `${ctx.card.id}/${alert.id}-horizon.pdf`;
+      const pdf = await renderHorizonPdf(
+        horizon.map((h) => ({ title: h.title, funder: h.funder, rationale: h.rationale })),
+      );
+      await uploadPdf(alert.storage_bucket, horizonPath, pdf);
+      patch.horizonStoragePath = horizonPath;
+    }
+    const newData = { ...data, ...patch };
+    const { data: updated } = await db
+      .from("grant_alerts")
+      .update({ alert_data: newData })
+      .eq("id", alert.id)
+      .select()
+      .single<GrantAlertRow>();
+    return updated ?? { ...alert, alert_data: newData };
+  } catch (err) {
+    console.error(`[horizon] compute/render failed for alert ${alert.id}; proceeding without horizon:`, err);
+    return alert;
+  }
+}
+
+// Assemble the OUTWARD single-send PDF: the saved page-1 alert, with the forecasted
+// horizon page concatenated when the draft has one. Used by the single-send preview
+// (pdf route) AND the single-send path, so preview == sent. The batch path never calls
+// this (it loads + merges base PDFs directly), so a horizon never appears in a batch
+// send. A horizon-download/merge failure degrades to the base alert, never blocks send.
+export async function assembleOutwardAlertPdf(alert: GrantAlertRow): Promise<Buffer> {
+  const base = await loadAlertPdf(alert);
+  const horizonPath = (alert.alert_data as AlertData)?.horizonStoragePath;
+  if (!horizonPath) return base;
+  try {
+    const horizon = await downloadPdf(alert.storage_bucket, horizonPath);
+    return await mergeAlertPdfs([base, horizon]);
+  } catch (err) {
+    console.error(`[assemble] horizon concat failed for alert ${alert.id}; sending base only:`, err);
+    return base;
+  }
 }
 
 // The saved PDF bytes for an alert (from the bucket -- no re-render).

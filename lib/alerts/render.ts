@@ -128,3 +128,81 @@ export async function renderAlertPdf(data: AlertData): Promise<Buffer> {
     await browser.close();
   }
 }
+
+// ── Forecasted "On the horizon" page (single-send v1) ────────────────────────
+// A standalone, brand-styled ONE-page PDF listing the forecasted opportunities on
+// the horizon for the recipient org, concatenated onto the alert at single-send
+// assembly (store.ts). Deliberately its OWN document: the page-1 alert stays byte-
+// locked (renderAlertPdf, pageRanges "1"), and this never enters the shared per-card
+// PDF, so the batch merge is untouched. Authored from scratch -- no deadlineLong, no
+// "was published": forecasted grants have neither, and we assert no firm date.
+function escHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+export type HorizonRenderItem = { title: string; funder: string | null; rationale: string };
+
+function horizonHtml(items: HorizonRenderItem[], fontCss: string, logo: string): string {
+  const rows = items
+    .map(
+      (it) => `<li class="item">
+      <div class="title">${escHtml(it.title || "Forecasted opportunity")}</div>
+      ${it.funder ? `<div class="funder">${escHtml(it.funder)}</div>` : ""}
+      <div class="rationale">${escHtml(it.rationale)}</div>
+    </li>`,
+    )
+    .join("");
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+    ${fontCss}
+    @page { size: letter; margin: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 8.5in; min-height: 11in; }
+    body { font-family: 'Inter Tight', Arial, sans-serif; color: #0B1E3A; background: #faf7f2; }
+    .header { background: #0B1E3A; color: #fff; padding: 40px 56px 30px; }
+    .header img { height: 24px; margin-bottom: 18px; display: block; }
+    .eyebrow { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: #E4761F; font-weight: 600; }
+    h1 { font-family: 'Source Serif 4', Georgia, serif; font-size: 29px; font-weight: 600; margin-top: 6px; }
+    .sub { font-size: 12.5px; color: #cdd6e2; margin-top: 11px; max-width: 6in; line-height: 1.55; }
+    .body { padding: 28px 56px 20px; }
+    .lede { font-size: 12.5px; color: #3a4a63; line-height: 1.55; margin-bottom: 18px; }
+    ul { list-style: none; }
+    .item { padding: 12px 0; border-top: 1px solid #e6ded2; }
+    .item:first-child { border-top: none; }
+    .title { font-family: 'Source Serif 4', Georgia, serif; font-size: 14px; font-weight: 600; color: #0B1E3A; line-height: 1.3; }
+    .funder { font-size: 10.5px; color: #8a7a66; margin-top: 3px; }
+    .rationale { font-size: 11.5px; color: #3a4a63; line-height: 1.5; margin-top: 5px; }
+    .foot { padding: 8px 56px 32px; font-size: 10px; color: #8a7a66; line-height: 1.45; }
+  </style></head><body>
+    <div class="header">
+      <img src="${logo}" alt="GRANTED" />
+      <div class="eyebrow">On the horizon</div>
+      <h1>Anticipated postings</h1>
+      <div class="sub">These federal opportunities have not opened for applications yet. We are flagging them so your organization can prepare early. Dates and details firm up when each one posts.</div>
+    </div>
+    <div class="body">
+      <div class="lede">Worth watching for your organization, most relevant first:</div>
+      <ul>${rows}</ul>
+    </div>
+    <div class="foot">Forecasted opportunities are estimates and not yet open for application. GRANTED verifies eligibility and timing against the official notice once each one posts.</div>
+  </body></html>`;
+}
+
+export async function renderHorizonPdf(items: HorizonRenderItem[]): Promise<Buffer> {
+  const [assets, fontCss] = await Promise.all([loadAssets(), loadFontCss()]);
+  const html = horizonHtml(items, fontCss, assets.white);
+  const browser = await launch();
+  try {
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: "load", timeout: 30_000 });
+    try {
+      await page.evaluate(() => (document as unknown as { fonts?: { ready?: Promise<unknown> } }).fonts?.ready);
+    } catch {
+      /* proceed with whatever loaded */
+    }
+    // One page: the cap of 8 items fits comfortably. pageRanges "1" backstops overflow.
+    const pdf = await page.pdf({ format: "letter", printBackground: true, preferCSSPageSize: true, pageRanges: "1" });
+    return Buffer.from(pdf);
+  } finally {
+    await browser.close();
+  }
+}

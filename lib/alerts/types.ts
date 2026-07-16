@@ -3,6 +3,8 @@
 // filled deterministically from the grant/review schema; NARRATIVE fields come
 // from the LLM enrichment (AlertEnrichment) and are shape-validated.
 
+import type { ForecastHorizonItem } from "@/lib/grants/forecast-relevance";
+
 export type AlertStat = { value: string; label: string; highlight?: boolean };
 export type AlertRiskCallout = { label: string; points?: string; headline: string; body: string };
 export type AlertEligibilityNote = { label: string; body: string };
@@ -47,4 +49,13 @@ export interface AlertData {
   // block as a clickable link. Minted at draft-render time (see store.ts) so the
   // saved PDF carries it (preview == sent). Absent on client alerts.
   schedulingUrl?: string | null;
+  // Forecasted "On the horizon" section (single-send v1). Computed for client/lead
+  // drafts and FROZEN here on first single-send view (preview == sent). Present ==
+  // computed; `forecastHorizon: []` means nothing plausibly connected (no page 2).
+  // `horizonStoragePath`, when set, points at the separately-rendered horizon page in
+  // the same bucket -- concatenated onto the alert ONLY at single-send assembly, never
+  // baked into the per-card PDF, so the batch merge is unaffected. Absent on discovery-
+  // prospect drafts (no client row) and batch-prepared drafts (horizon is single-only).
+  forecastHorizon?: ForecastHorizonItem[];
+  horizonStoragePath?: string | null;
 }

@@ -154,9 +154,24 @@ It is correct to return FEWER than the maximum, or an EMPTY list, when little or
 For each returned item, provide grant_id (copied EXACTLY from the provided list -- never invent one) and a rationale that is HONEST ABOUT THE STRENGTH OF FIT -- one plain sentence that neither undersells nor OVERSELLS:
 - Direct fit: state it plainly.
 - Adjacent or partial fit: say so explicitly and name the actual gap, e.g. "Housing-rehab program; adjacent to the county's community-improvement priorities but not a direct infrastructure or roads fit."
-NEVER claim a fit dimension the grant does not have (do not describe a housing-rehab grant as "infrastructure and hazard mitigation"). Do not dress a stretch as a strong match. No em dashes. Domestic U.S. only.
+NEVER claim a fit dimension the grant does not have (do not describe a housing-rehab grant as "infrastructure and hazard mitigation"). Do not dress a stretch as a strong match. Keep the rationale to ONE complete sentence, roughly 35 words maximum, so it never trails off. No em dashes. Domestic U.S. only.
 
 Return via the submit_relevant tool.`;
+
+// Clamp a rationale for a client-facing document WITHOUT cutting mid-word. The old
+// hard slice(0, 240) truncated to "...not a direct programmat" -- broken in a PDF.
+// The prompt already asks for one ~35-word sentence, so this rarely fires; when it
+// does it ends at a full sentence (preferred) or a word boundary + ellipsis, never
+// mid-word. Generous bound (360) leaves an honest adjacency rationale room to finish.
+function clampRationale(s: string, max = 360): string {
+  const t = s.trim();
+  if (t.length <= max) return t;
+  const slice = t.slice(0, max);
+  const sentenceEnd = Math.max(slice.lastIndexOf(". "), slice.lastIndexOf("! "), slice.lastIndexOf("? "));
+  if (sentenceEnd >= max * 0.5) return slice.slice(0, sentenceEnd + 1); // end on a full sentence
+  const lastSpace = slice.lastIndexOf(" ");
+  return (lastSpace > 0 ? slice.slice(0, lastSpace) : slice).replace(/[,;:]+$/, "") + "…";
+}
 
 // Rank the candidates for one org. Cheap model, one call, structured tool output.
 // Guards (structural, not prompt-trust): every returned grant_id must be in the
@@ -230,7 +245,7 @@ export async function rankForecastRelevance(
       seen.add(id);
       const rationale =
         typeof r.rationale === "string" && r.rationale.trim()
-          ? r.rationale.trim().slice(0, 240)
+          ? clampRationale(r.rationale)
           : cand.title ?? "Forecasted opportunity";
       items.push({ grantId: id, title: cand.title ?? "Forecasted opportunity", funder: cand.funder, rationale });
       if (items.length >= cap) break;

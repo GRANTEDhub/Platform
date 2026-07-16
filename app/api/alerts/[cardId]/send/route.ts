@@ -6,7 +6,7 @@ import { sendGrantAlertEmail, isDeliverableEmail } from "@/lib/email/send";
 import { loadAlertContext, alertRecipient, type AlertContext } from "@/lib/alerts/generate";
 import {
   getOrCreateDraftAlert,
-  loadAlertPdf,
+  assembleOutwardAlertPdf,
   findSentAlert,
   claimAlertForSend,
   releaseAlertClaim,
@@ -81,7 +81,9 @@ export async function POST(req: NextRequest, { params }: { params: { cardId: str
 
   let alert: GrantAlertRow;
   try {
-    alert = await getOrCreateDraftAlert(ctx, user.id, origin);
+    // withHorizon: single-send -> compute/freeze the forecast horizon so it can be
+    // concatenated onto the outward PDF (assembleOutwardAlertPdf). Batch never does this.
+    alert = await getOrCreateDraftAlert(ctx, user.id, origin, { withHorizon: true });
   } catch (err) {
     return NextResponse.json(
       { error: `Draft not ready: ${err instanceof Error ? err.message : String(err)}` },
@@ -193,7 +195,7 @@ async function prospectSend(a: {
   // The booking link lives in the attached PDF (baked at draft time), so the
   // email body is sent as-is -- no appended URL line.
   try {
-    const pdf = await loadAlertPdf(alert);
+    const pdf = await assembleOutwardAlertPdf(alert);
     const result = await sendGrantAlertEmail({ to: recipient, subject, body: emailBody, pdf });
     await finalizeProspectSent(db, {
       alertId: alert.id,
@@ -252,7 +254,7 @@ async function leadSend(a: {
 
   const db = createServiceClient();
   try {
-    const pdf = await loadAlertPdf(alert);
+    const pdf = await assembleOutwardAlertPdf(alert);
     const result = await sendGrantAlertEmail({ to: recipient, subject, body: emailBody, pdf });
     await finalizeLeadSent(db, {
       alertId: alert.id,
@@ -325,7 +327,7 @@ async function clientSend(a: {
         });
       }
       try {
-        const pdf = await loadAlertPdf(alert);
+        const pdf = await assembleOutwardAlertPdf(alert);
         const result = await sendGrantAlertEmail({ to: recipient, subject, body: emailBody, pdf });
         await finalizeClientCardSent(supabase, cardId, alert.id, result.to, subject, emailBody);
         sent = true;
