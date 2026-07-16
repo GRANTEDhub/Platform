@@ -138,7 +138,9 @@ export function buildRelevanceProfile(client: ProfileClient): RelevanceProfile {
     client.service_area?.length ? `Service area: ${client.service_area.join("; ")}` : "",
     mission ? `Mission: ${mission}` : "",
     programs.length ? `Programs: ${programs.join("; ")}` : "",
-    client.primary_funding_needs?.length ? `Funding priorities: ${client.primary_funding_needs.join("; ")}` : "",
+    client.primary_funding_needs?.length
+      ? `Stated funding priorities (what they have told us they want): ${client.primary_funding_needs.join("; ")}`
+      : "",
   ].filter(Boolean);
   return { name: client.name, text: parts.join("\n") };
 }
@@ -147,13 +149,19 @@ const SYSTEM = `You decide which FORECASTED (not-yet-open, no application publis
 
 You are given the organization's profile and a numbered list of forecasted opportunities (title, funder, focus areas, geographic eligibility, short description).
 
-Return, MOST-RELEVANT-FIRST, the opportunities worth putting in front of THIS organization for a HUMAN to judge. Surface BOTH (a) direct programmatic, mission, or sector fits, AND (b) plausibly-adjacent opportunities the org might reasonably consider. We would rather surface a borderline-but-plausible grant and let a person decide than silently drop it, so do NOT exclude something merely because the fit is partial. Exclude ONLY genuine non-fits with no realistic connection to the org's work. This is a RELEVANCE judgment, NOT an eligibility or fit SCORE: do NOT assign prime/partner roles, do NOT score, do NOT assess seats.
+The organization's STATED funding priorities are the PRIMARY relevance signal -- weight them above everything else. Read them as the org's DIRECTION and intent, not as keywords: a grant that advances what they are clearly trying to do is relevant even if it uses different words, and a grant that merely shares a broad sector is not. Eligibility is NOT relevance -- that an org's TYPE could technically apply is never, on its own, a reason to surface a grant. "A county is eligible for housing counseling" is true but irrelevant unless that county is actually pursuing housing.
 
-It is correct to return FEWER than the maximum, or an EMPTY list, when little or nothing plausibly connects.
+Surface a forecast, most-relevant-first, only when EITHER:
+  (a) it advances one of the org's stated priorities or the direction they clearly imply; OR
+  (b) it meets a near-universal need of the org's CORE MANDATE that essentially any organization of this kind pursues even if unstated -- a NARROW backstop, not a general "in their wheelhouse" test. Examples: for a county government, lead-hazard remediation or community policing; for a school or college, basic student safety. When in doubt about (b), do NOT surface it.
+Otherwise DROP it. Broad sector overlap plus eligibility is a REACH, not adjacency: for a county whose stated priorities are roads, public safety, and flood mitigation, a housing-production, home-modification, or specialized-health grant is a reach to drop, while a lead-hazard or policing grant is a genuine core-mandate keep.
 
-For each returned item, provide grant_id (copied EXACTLY from the provided list -- never invent one) and a rationale that is HONEST ABOUT THE STRENGTH OF FIT -- one plain sentence that neither undersells nor OVERSELLS:
-- Direct fit: state it plainly.
-- Adjacent or partial fit: say so explicitly and name the actual gap, e.g. "Housing-rehab program; adjacent to the county's community-improvement priorities but not a direct infrastructure or roads fit."
+Stay BROAD BUT HONEST -- keep genuinely relevant broad fits, drop eligibility-only reaches. When the stated priorities are sparse or generic, still use the org's type, mission, and mandate to judge direction; do not under-surface a genuinely relevant grant just because it does not echo a thin priority list. Returning FEWER, or an honest near-empty list, is correct when little genuinely connects -- NEVER pad to a count. This is a RELEVANCE judgment, NOT an eligibility or fit SCORE: no prime/partner roles, no score, no seats.
+
+For each returned item, provide grant_id (copied EXACTLY from the provided list -- never invent one) and a rationale that is HONEST ABOUT THE STRENGTH OF FIT -- one plain sentence that neither undersells nor oversells:
+- A stated-priority fit: name the priority it advances.
+- A core-mandate (b) fit that is NOT a stated priority: say so plainly, e.g. "broad fit for any county's public-safety mandate, though not among this county's stated priorities."
+- An adjacent or partial fit: say so and name the actual gap.
 NEVER claim a fit dimension the grant does not have (do not describe a housing-rehab grant as "infrastructure and hazard mitigation"). Do not dress a stretch as a strong match. Keep the rationale to ONE complete sentence, roughly 35 words maximum, so it never trails off. No em dashes. Domestic U.S. only.
 
 Return via the submit_relevant tool.`;
