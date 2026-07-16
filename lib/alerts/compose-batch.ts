@@ -72,29 +72,26 @@ export function buildClientBatchEmail(grants: BatchGrant[]): { subject: string; 
 export function buildLeadBatchEmail(
   grants: BatchGrant[],
   senderFirstName: string | null,
+  followUp = false,
 ): { subject: string; body: string } {
   const n = grants.length;
   const name = senderFirstName?.trim();
-  const intro = name
-    ? `I'm ${name} with GRANTED. A few grants look like strong fits for your organization and I wanted to flag them.`
-    : `I'm reaching out from GRANTED. A few grants look like strong fits for your organization and I wanted to flag them.`;
+  // Cold = first-contact intro + firm credential. FOLLOW-UP (we've emailed this person
+  // before) drops both -- a continuation, not a re-introduction (mirrors the single-
+  // send cold body). Keeps the grant list + booking CTA. See buildProspectEmailBody.
+  const intro = followUp
+    ? n === 1
+      ? "Following up with another opportunity that looks like a strong fit for your organization."
+      : "Following up with a few more opportunities that look like strong fits for your organization."
+    : name
+      ? `I'm ${name} with GRANTED. A few grants look like strong fits for your organization and I wanted to flag them.`
+      : `I'm reaching out from GRANTED. A few grants look like strong fits for your organization and I wanted to flag them.`;
   const pdfLine =
     n === 1
       ? "The full alert, including a link to schedule a call, is attached as a one-page PDF."
       : `The full alerts, including a link to schedule a call, are attached as a ${n}-page PDF, one page per grant.`;
-  const body = [
-    "Hello,",
-    "",
-    intro,
-    "",
-    ...grants.map(grantLine),
-    "",
-    PROSPECT_CREDENTIAL,
-    "",
-    pdfLine,
-    "",
-    "Best,",
-    "GRANTED",
-  ].join("\n");
-  return { subject: batchAlertSubject(grants), body };
+  const lines = ["Hello,", "", intro, "", ...grants.map(grantLine), ""];
+  if (!followUp) lines.push(PROSPECT_CREDENTIAL, ""); // first-contact credential; dropped on a follow-up
+  lines.push(pdfLine, "", "Best,", "GRANTED");
+  return { subject: batchAlertSubject(grants), body: lines.join("\n") };
 }

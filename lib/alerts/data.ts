@@ -221,26 +221,24 @@ export function buildProspectEmailBody(
   card: ReviewCard,
   senderFirstName: string | null,
   hasSchedulingLink: boolean,
+  followUp = false,
 ): string {
   const name = senderFirstName?.trim();
-  const intro = name
-    ? `I'm ${name} with GRANTED. I came across a grant that looks like a strong fit for your organization and wanted to flag it.`
-    : `I'm reaching out from GRANTED. I came across a grant that looks like a strong fit for your organization and wanted to flag it.`;
+  // Cold = first-contact intro naming the sender + the firm credential block below.
+  // FOLLOW-UP (we've emailed this person before) drops BOTH the first-contact intro
+  // and the credential -- re-introducing the firm to a known contact is the exact
+  // "we don't track our own outreach" problem the gate exists to prevent. It reads as
+  // a continuation, keeping the grant + booking CTA. No decision either way (lead).
+  const intro = followUp
+    ? "Following up with another opportunity that looks like a strong fit for your organization."
+    : name
+      ? `I'm ${name} with GRANTED. I came across a grant that looks like a strong fit for your organization and wanted to flag it.`
+      : `I'm reaching out from GRANTED. I came across a grant that looks like a strong fit for your organization and wanted to flag it.`;
   const pdfLine = hasSchedulingLink
     ? "The full alert, including a link to schedule a call, is attached as a one-page PDF."
     : "The full alert is attached as a one-page PDF.";
-  return [
-    "Hello,",
-    "",
-    intro,
-    "",
-    grantAnnouncement(g, card),
-    "",
-    PROSPECT_CREDENTIAL,
-    "",
-    pdfLine,
-    "",
-    "Best,",
-    "GRANTED",
-  ].join("\n");
+  const lines = ["Hello,", "", intro, "", grantAnnouncement(g, card), ""];
+  if (!followUp) lines.push(PROSPECT_CREDENTIAL, ""); // first-contact credential; dropped on a follow-up
+  lines.push(pdfLine, "", "Best,", "GRANTED");
+  return lines.join("\n");
 }

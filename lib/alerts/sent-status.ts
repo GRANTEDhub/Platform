@@ -49,7 +49,7 @@ export async function getSentAlertForCard(cardId: string): Promise<SentAlert | n
 export async function getPriorAlertForEmail(
   email: string | null | undefined,
   excludeCardId?: string,
-): Promise<{ sentAt: string } | null> {
+): Promise<{ sentAt: string; cardId: string } | null> {
   const to = (email ?? "").trim();
   if (!to) return null;
   const db = createServiceClient();
@@ -65,5 +65,7 @@ export async function getPriorAlertForEmail(
   const row = (data ?? []).find(
     (r) => r.card_id !== excludeCardId && r.sent_at && (r.sent_to ?? "").trim().toLowerCase() === to.toLowerCase(),
   );
-  return row ? { sentAt: row.sent_at as string } : null;
+  // Return the prior card_id too, so the gate UI can link to the prior send
+  // (/review/<cardId>). The card_id is already fetched -- no extra query.
+  return row ? { sentAt: row.sent_at as string, cardId: row.card_id as string } : null;
 }
