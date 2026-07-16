@@ -15,6 +15,7 @@ import { getSentAlertsByCards } from "@/lib/alerts/sent-status";
 import { recordClientDecision, finalizeClientCardSent } from "@/lib/alerts/send-core";
 import { mergeAlertPdfs } from "@/lib/alerts/merge-pdf";
 import { buildClientBatchEmail, type BatchGrant } from "@/lib/alerts/compose-batch";
+import { MAX_BATCH_GRANTS, sortByDeadline } from "@/lib/alerts/batch-shared";
 import type { Client, Grant } from "@/types/database";
 
 // Client aggregate (multi-select) send: prepare drafts, then send the selected
@@ -27,11 +28,6 @@ import type { Client, Grant } from "@/types/database";
 type DB = ReturnType<typeof createServiceClient>;
 type UserDB = ReturnType<typeof createClient>;
 
-// Soft cap on a single batch: bounds render cost AND the merged PDF's page count
-// (a 20+-page attachment is unwieldy for the recipient). The UI blocks selection
-// above this; both routes reject it defensively.
-export const MAX_BATCH_GRANTS = 20;
-
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 type BatchGrantRow = Pick<Grant, "id" | "title" | "funder" | "submission_deadline" | "deadline">;
@@ -42,24 +38,6 @@ function grantOf(g: unknown): BatchGrantRow | null {
   if (!g) return null;
   const row = Array.isArray(g) ? g[0] : g;
   return (row ?? null) as BatchGrantRow | null;
-}
-
-// Sort key for deadline-ascending order: soonest first, no-deadline / rolling last.
-// Uses the parsed ISO `deadline` (null for rolling/undated) -> Infinity sorts last.
-// Exported so the ordering is unit-testable in isolation.
-export function deadlineSortKey(g: Pick<Grant, "deadline">): number {
-  const t = g.deadline ? Date.parse(g.deadline) : NaN;
-  return Number.isNaN(t) ? Infinity : t;
-}
-
-export function sortByDeadline<T extends { grant: Pick<Grant, "deadline" | "title"> }>(cards: T[]): T[] {
-  return cards
-    .slice()
-    .sort(
-      (a, b) =>
-        deadlineSortKey(a.grant) - deadlineSortKey(b.grant) ||
-        (a.grant.title ?? "").localeCompare(b.grant.title ?? ""),
-    );
 }
 
 // Load + validate the selected cards: every requested id must exist, belong to THIS
@@ -101,6 +79,9 @@ export type PrepareBatchResult = {
   done: boolean;
   prepared: number;
   remaining: number;
+  // The cards STILL without a draft after this round -- lets the UI show live
+  // "X of N" progress and, on `stuck`, compute the ready subset (selected minus these).
+  remainingIds: string[];
   failed: { id: string; error: string }[];
   // No-progress terminal signal: a round rendered nothing (prepared === 0) yet work
   // remains AND at least one card errored -> every renderable card is failing, so the
@@ -150,12 +131,13 @@ export async function prepareClientBatch(opts: {
       failed.push({ id: c.id, error: errMsg(err) });
     }
   }
-  let remaining = 0;
-  for (const c of loaded.cards) if (!(await getDraftAlert(c.id))) remaining++;
+  const remainingIds: string[] = [];
+  for (const c of loaded.cards) if (!(await getDraftAlert(c.id))) remainingIds.push(c.id);
+  const remaining = remainingIds.length;
   // No progress + work remains + something errored => every renderable card is
   // failing. STOP: report `failed` so the caller surfaces it, never spins.
   const stuck = prepared === 0 && failed.length > 0 && remaining > 0;
-  return { result: { done: remaining === 0, prepared, remaining, failed, stuck }, status: 200 };
+  return { result: { done: remaining === 0, prepared, remaining, remainingIds, failed, stuck }, status: 200 };
 }
 
 export type SendBatchResult =
@@ -177,7 +159,7 @@ export type SendBatchResult =
 //      finalize failure can never cause a double-send -- worst case a missing stamp)
 export async function sendClientBatch(
   userClient: UserDB,
-  opts: { clientId: string; cardIds: string[]; subject?: string; body?: string; userId: string },
+  opts: { clientId: string; cardIds: string[]; subject?: string; body?: string; to?: string; userId: string },
 ): Promise<{ result: SendBatchResult; status: number }> {
   const db = createServiceClient();
 
@@ -191,7 +173,10 @@ export async function sendClientBatch(
     .eq("id", opts.clientId)
     .single<Pick<Client, "id" | "primary_contact_email">>();
   if (!client) return { result: { sent: false, error: "Client not found" }, status: 404 };
-  const recipient = (client.primary_contact_email ?? "").trim();
+  // Recipient: an admin-typed override (parity with single-send's editable "To"),
+  // else the client's contact email. The override does NOT bypass the send gate --
+  // isDeliverableEmail + canSendOutreach below run on whatever address resolves here.
+  const recipient = (opts.to?.trim() || client.primary_contact_email || "").trim();
 
   // Drop already-sent cards (batch form of Guard 1) BEFORE anything else.
   const sentMap = await getSentAlertsByCards(opts.cardIds);
@@ -309,4 +294,27 @@ export async function sendClientBatch(
     }
   }
   return { result: { sent: true, to: result.to, count: claimed.length, finalized, finalizeFailed }, status: 200 };
+}
+
+// Merge the selected cards' SAVED drafts into one PDF for the preview link -- the
+// exact artifact send-batch would attach (deadline-sorted, already-sent dropped),
+// with no state change. Requires prepared drafts (the modal previews only after the
+// prepare loop reports done).
+export async function mergePreparedBatchPdf(
+  clientId: string,
+  cardIds: string[],
+): Promise<{ pdf: Buffer } | { error: string; status: number }> {
+  const db = createServiceClient();
+  const loaded = await loadBatchCards(db, clientId, cardIds);
+  if ("error" in loaded) return { error: loaded.error, status: loaded.status };
+  const sentMap = await getSentAlertsByCards(cardIds);
+  const cards = sortByDeadline(loaded.cards.filter((c) => !sentMap.has(c.id)));
+  if (cards.length === 0) return { error: "Nothing to preview (all selected already sent)", status: 409 };
+  const pdfs: Buffer[] = [];
+  for (const c of cards) {
+    const d = await getDraftAlert(c.id);
+    if (!d) return { error: "Drafts not prepared for all selected grants", status: 409 };
+    pdfs.push(await loadAlertPdf(d));
+  }
+  return { pdf: await mergeAlertPdfs(pdfs) };
 }

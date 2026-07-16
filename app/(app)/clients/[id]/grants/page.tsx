@@ -5,15 +5,22 @@ import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Stat } from "@/components/ui/stat";
-import { MatchRow } from "@/components/grants/match-row";
+import { ClientGrantsBatch, type BatchUiCard } from "@/components/clients/client-grants-batch";
+import { getSentAlertsByCards } from "@/lib/alerts/sent-status";
 import type { MatchCard } from "@/lib/grants/grouping";
-import type { Client } from "@/types/database";
+import type { Client, Grant } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
 // Surface the client's most actionable matches first: new (pending), then
 // held, then decided.
 const STATUS_ORDER: Record<string, number> = { pending: 0, hold: 1, approved: 2, passed: 3 };
+
+// Supabase types a to-one embed as object or 1-element array; normalize.
+function grantOf(g: MatchCard["grants"]): Pick<Grant, "title" | "funder" | "submission_deadline" | "deadline"> | null {
+  if (!g) return null;
+  return (Array.isArray(g) ? g[0] : g) ?? null;
+}
 
 export default async function ClientGrantsPage({
   params,
@@ -25,9 +32,9 @@ export default async function ClientGrantsPage({
 
   const { data: client } = await supabase
     .from("clients")
-    .select("id, name, org_type, engagement_tier")
+    .select("id, name, org_type, engagement_tier, primary_contact_email")
     .eq("id", params.id)
-    .single<Pick<Client, "id" | "name" | "org_type" | "engagement_tier">>();
+    .single<Pick<Client, "id" | "name" | "org_type" | "engagement_tier" | "primary_contact_email">>();
   if (!client) notFound();
 
   const { data } = await supabase
@@ -46,11 +53,29 @@ export default async function ClientGrantsPage({
 
   const count = (d: string) => cards.filter((c) => c.decision === d).length;
 
+  // "Alerted" state per card (a sent grant_alerts row with a recipient), derived in
+  // one batched query -- drives which rows show the alerted badge vs. a checkbox.
+  const alerted = await getSentAlertsByCards(cards.map((c) => c.id));
+  const alertedCardIds = [...alerted.keys()];
+
+  const uiCards: BatchUiCard[] = cards.map((c) => {
+    const g = grantOf(c.grants);
+    return {
+      id: c.id,
+      title: g?.title ?? null,
+      funder: g?.funder ?? null,
+      deadline: g?.deadline ?? null,
+      submission_deadline: g?.submission_deadline ?? null,
+      fitScore: c.fit_score,
+      decision: c.decision,
+    };
+  });
+
   return (
     <div>
       <PageHeader
         title={client.name}
-        description="Grant activity — every match for this client and where it stands."
+        description="Grant activity — every match for this client and where it stands. Select pending matches to send as one aggregate alert."
         action={
           <Link href={`/clients/${client.id}`}>
             <Button variant="outline">Client profile</Button>
@@ -64,28 +89,13 @@ export default async function ClientGrantsPage({
           <Stat label="Rejected" value={String(count("passed"))} hint="passed" />
         </div>
 
-        <div className="overflow-hidden rounded-lg border bg-card">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
-                <th className="px-4 py-3 font-medium">Opportunity</th>
-                <th className="px-4 py-3 font-medium">Fit</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium text-right">Deadline</th>
-              </tr>
-            </thead>
-            <tbody>
-              {cards.map((c) => <MatchRow key={c.id} card={c} />)}
-              {cards.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="px-4 py-12 text-center text-muted-foreground">
-                    No matches yet for this client. They appear here as grants are ingested and scored.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <ClientGrantsBatch
+          clientId={client.id}
+          clientName={client.name}
+          recipient={client.primary_contact_email ?? ""}
+          cards={uiCards}
+          alertedCardIds={alertedCardIds}
+        />
       </div>
     </div>
   );
