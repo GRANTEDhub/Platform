@@ -70,14 +70,25 @@ export async function generateDraftAlert(
   const enrichment = await enrichAlert(ctx.grant, ctx.card);
   const alertData = buildAlertData(ctx.grant, ctx.card, enrichment);
 
-  // Prospect alerts carry a clickable booking link in the PDF. Mint the /go
-  // token HERE, at render time, so it's baked into the saved PDF (preview ==
-  // sent). The lead doesn't exist yet at draft time, so it's a prospect-scoped
-  // token; /go resolves it identically for the recipient.
-  if (ctx.card.card_type === "prospect" && ctx.prospect && origin) {
+  // Cold-outreach alerts carry a clickable booking link in the PDF, minted HERE at
+  // render time so it's baked into the saved PDF (preview == sent). Two cold cases:
+  //   - a discovery PROSPECT card -> a prospect-scoped token; the lead doesn't exist
+  //     yet, and /go resolves the prospect token for the recipient.
+  //   - a LEAD client card (Tara-build manual prospect) -> a lead-scoped token
+  //     (clientId of the already-existing lead). /go handles both action types.
+  // A warm CLIENT alert (active client) gets NO booking link.
+  if (origin && ctx.card.card_type === "prospect" && ctx.prospect) {
     const minted = await mintAccessToken(db, {
       actionType: "prospect_schedule_call",
       prospectId: ctx.prospect.id,
+      grantId: ctx.grant.id,
+      createdBy: userId,
+    });
+    if (minted) alertData.schedulingUrl = `${origin}/go/${minted.rawToken}`;
+  } else if (origin && ctx.isLead && ctx.client) {
+    const minted = await mintAccessToken(db, {
+      actionType: "lead_schedule_call",
+      clientId: ctx.client.id,
       grantId: ctx.grant.id,
       createdBy: userId,
     });
@@ -86,12 +97,13 @@ export async function generateDraftAlert(
 
   const pdf = await renderAlertPdf(alertData);
 
-  // CLIENT alerts get the short facts body; PROSPECT (cold-outreach) alerts get
-  // the salutation + sender-named intro + credential block + scheduling CTA. The
-  // sender's first name is resolved from the draft creator's profile at draft time
-  // (draft creator == sender under preview == sent), null-safe to a name-less intro.
+  // Warm CLIENT alerts get the short facts body; COLD alerts (a discovery PROSPECT
+  // card OR a LEAD client card / Tara-build prospect) get the salutation +
+  // sender-named intro + credential block + scheduling CTA. The sender's first name
+  // is resolved from the draft creator's profile at draft time (draft creator ==
+  // sender under preview == sent), null-safe to a name-less intro.
   let emailBody: string;
-  if (ctx.card.card_type === "prospect") {
+  if (ctx.card.card_type === "prospect" || ctx.isLead) {
     let sender: { full_name: string | null; email: string | null } | null = null;
     if (userId) {
       const { data } = await db.from("profiles").select("full_name, email").eq("id", userId).maybeSingle();
