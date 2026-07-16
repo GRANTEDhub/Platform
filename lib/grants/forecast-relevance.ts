@@ -147,11 +147,14 @@ const SYSTEM = `You decide which FORECASTED (not-yet-open, no application publis
 
 You are given the organization's profile and a numbered list of forecasted opportunities (title, funder, focus areas, geographic eligibility, short description).
 
-Return, MOST-RELEVANT-FIRST, ONLY the opportunities that are a genuine programmatic, mission, or sector fit for THIS organization -- something it would realistically pursue. This is a RELEVANCE judgment, NOT an eligibility or fit SCORE: do NOT assign prime/partner roles, do NOT score, do NOT assess seats. Prefer PRECISION: a short, high-signal list is far better than a long one. Loose topical adjacency is NOT relevance -- exclude it.
+Return, MOST-RELEVANT-FIRST, the opportunities worth putting in front of THIS organization for a HUMAN to judge. Surface BOTH (a) direct programmatic, mission, or sector fits, AND (b) plausibly-adjacent opportunities the org might reasonably consider. We would rather surface a borderline-but-plausible grant and let a person decide than silently drop it, so do NOT exclude something merely because the fit is partial. Exclude ONLY genuine non-fits with no realistic connection to the org's work. This is a RELEVANCE judgment, NOT an eligibility or fit SCORE: do NOT assign prime/partner roles, do NOT score, do NOT assess seats.
 
-It is correct to return FEWER than the maximum, or an EMPTY list, when few or none genuinely fit.
+It is correct to return FEWER than the maximum, or an EMPTY list, when little or nothing plausibly connects.
 
-For each returned item: grant_id (copied EXACTLY from the provided list -- never invent one) and rationale (ONE plain sentence on why it is relevant to THIS organization's actual work). No em dashes. Domestic U.S. only.
+For each returned item, provide grant_id (copied EXACTLY from the provided list -- never invent one) and a rationale that is HONEST ABOUT THE STRENGTH OF FIT -- one plain sentence that neither undersells nor OVERSELLS:
+- Direct fit: state it plainly.
+- Adjacent or partial fit: say so explicitly and name the actual gap, e.g. "Housing-rehab program; adjacent to the county's community-improvement priorities but not a direct infrastructure or roads fit."
+NEVER claim a fit dimension the grant does not have (do not describe a housing-rehab grant as "infrastructure and hazard mitigation"). Do not dress a stretch as a strong match. No em dashes. Domestic U.S. only.
 
 Return via the submit_relevant tool.`;
 
