@@ -97,7 +97,18 @@ async function loadBatchCards(
   return { cards };
 }
 
-export type PrepareBatchResult = { done: boolean; prepared: number; remaining: number };
+export type PrepareBatchResult = {
+  done: boolean;
+  prepared: number;
+  remaining: number;
+  failed: { id: string; error: string }[];
+  // No-progress terminal signal: a round rendered nothing (prepared === 0) yet work
+  // remains AND at least one card errored -> every renderable card is failing, so the
+  // caller MUST stop looping and surface `failed` rather than spin forever. This is
+  // the guard for the exact failure that stalled this route (a swallowed render error
+  // turning into a silent infinite loop).
+  stuck: boolean;
+};
 
 // One budgeted round of draft preparation: render + save a draft for each selected
 // card that lacks one, SEQUENTIALLY (one Chromium at a time -- memory-safe), until
@@ -118,23 +129,33 @@ export async function prepareClientBatch(opts: {
 
   const deadlineMs = Date.now() + opts.budgetMs;
   let prepared = 0;
+  const failed: { id: string; error: string }[] = [];
   for (const c of loaded.cards) {
     if (Date.now() >= deadlineMs) break; // budget spent; caller re-POSTs for the rest
     if (await getDraftAlert(c.id)) continue; // already drafted -> reuse untouched
     try {
       const ctx = await loadAlertContext(c.id);
-      if (!ctx) continue; // validated above; skip defensively
+      if (!ctx) {
+        failed.push({ id: c.id, error: "alert context not found" });
+        continue;
+      }
       await getOrCreateDraftAlert(ctx, opts.userId, opts.origin); // enrich + render + persist
       prepared++;
     } catch (err) {
-      // A single render failure must not sink the round; it stays 'remaining' and
-      // is retried next round (monotonic). The client's round-cap is the backstop.
+      // RECORD the failure so the caller can see it. A swallowed render error that
+      // silently stalled the loop was the bug here; the round stays non-fatal (other
+      // cards proceed), but `stuck` below turns a wholly-failing round into a
+      // terminating, reported error instead of an infinite retry.
       console.error(`[prepare-batch] draft render failed for card ${c.id}:`, err);
+      failed.push({ id: c.id, error: errMsg(err) });
     }
   }
   let remaining = 0;
   for (const c of loaded.cards) if (!(await getDraftAlert(c.id))) remaining++;
-  return { result: { done: remaining === 0, prepared, remaining }, status: 200 };
+  // No progress + work remains + something errored => every renderable card is
+  // failing. STOP: report `failed` so the caller surfaces it, never spins.
+  const stuck = prepared === 0 && failed.length > 0 && remaining > 0;
+  return { result: { done: remaining === 0, prepared, remaining, failed, stuck }, status: 200 };
 }
 
 export type SendBatchResult =
