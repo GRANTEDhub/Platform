@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Stat } from "@/components/ui/stat";
 import { ClientGrantsBatch, type BatchUiCard } from "@/components/clients/client-grants-batch";
 import { getSentAlertsByCards } from "@/lib/alerts/sent-status";
+import { isUnconvertedLead } from "@/lib/leads/stage";
+import { senderFirstName } from "@/lib/alerts/sender";
 import type { MatchCard } from "@/lib/grants/grouping";
 import type { Client, Grant } from "@/types/database";
 
@@ -27,14 +29,14 @@ export default async function ClientGrantsPage({
 }: {
   params: { id: string };
 }) {
-  await requireAdmin();
+  const profile = await requireAdmin();
   const supabase = createClient();
 
   const { data: client } = await supabase
     .from("clients")
-    .select("id, name, org_type, engagement_tier, primary_contact_email")
+    .select("id, name, org_type, engagement_tier, primary_contact_email, pipeline_stage")
     .eq("id", params.id)
-    .single<Pick<Client, "id" | "name" | "org_type" | "engagement_tier" | "primary_contact_email">>();
+    .single<Pick<Client, "id" | "name" | "org_type" | "engagement_tier" | "primary_contact_email" | "pipeline_stage">>();
   if (!client) notFound();
 
   const { data } = await supabase
@@ -95,6 +97,8 @@ export default async function ClientGrantsPage({
           recipient={client.primary_contact_email ?? ""}
           cards={uiCards}
           alertedCardIds={alertedCardIds}
+          isLead={isUnconvertedLead(client.pipeline_stage)}
+          senderName={senderFirstName({ full_name: profile.full_name, email: profile.email })}
         />
       </div>
     </div>
