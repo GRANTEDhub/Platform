@@ -4,9 +4,11 @@ import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { ScoreBadge, DecisionBadge } from "@/components/grants/badges";
+import { PriorEmailGate } from "@/components/alerts/prior-email-gate";
 import { MAX_BATCH_GRANTS, deadlineSortKey } from "@/lib/alerts/batch-shared";
 import { buildClientBatchEmail, buildLeadBatchEmail } from "@/lib/alerts/compose-batch";
 import type { CardDecision } from "@/types/database";
+import type { ReOutreach } from "@/lib/alerts/send-core";
 
 // The interactive grant-activity table for a client: multi-select the pending /
 // approved-not-sent matches and send them as ONE merged-PDF aggregate alert. Wraps
@@ -33,12 +35,13 @@ function sortByDeadlineUi(cards: BatchUiCard[]): BatchUiCard[] {
     .sort((a, b) => deadlineSortKey(a) - deadlineSortKey(b) || (a.title ?? "").localeCompare(b.title ?? ""));
 }
 
-function composeFor(cards: BatchUiCard[], isLead: boolean, senderName: string | null) {
+function composeFor(cards: BatchUiCard[], isLead: boolean, senderName: string | null, followUp = false) {
   const grants = sortByDeadlineUi(cards).map((c) => ({ title: c.title, funder: c.funder, submission_deadline: c.submission_deadline }));
   // A lead (Tara-build manual prospect) gets the COLD multi-grant pitch; a client gets
   // the warm alert. Same sort/order both ways so the displayed body matches the merged
-  // PDF page order (and what the server sends).
-  return isLead ? buildLeadBatchEmail(grants, senderName) : buildClientBatchEmail(grants);
+  // PDF page order (and what the server sends). `followUp` (lead only) drops the first-
+  // contact intro + credential for a re-contact we've emailed before.
+  return isLead ? buildLeadBatchEmail(grants, senderName, followUp) : buildClientBatchEmail(grants);
 }
 
 export function ClientGrantsBatch({
@@ -49,6 +52,8 @@ export function ClientGrantsBatch({
   alertedCardIds,
   isLead,
   senderName,
+  priorEmailedAt,
+  priorCardId,
 }: {
   clientId: string;
   clientName: string;
@@ -60,6 +65,10 @@ export function ClientGrantsBatch({
   // identical to before (warm composer, "Alerted" confirmation).
   isLead: boolean;
   senderName: string | null;
+  // Cold re-contact gate: set (lead only) when we've emailed this contact before ->
+  // Send is locked until a choice. Null for a warm client batch (no gate, unchanged).
+  priorEmailedAt: string | null;
+  priorCardId: string | null;
 }) {
   const router = useRouter();
   const alerted = useMemo(() => new Set(alertedCardIds), [alertedCardIds]);
@@ -83,10 +92,22 @@ export function ClientGrantsBatch({
   const [status, setStatus] = useState<string | null>(null); // blocked / not-sent banner
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ count: number; finalizeFailed: number } | null>(null);
+  const [reoutreach, setReoutreach] = useState<ReOutreach | null>(null); // cold re-contact choice
   const loopingRef = useRef(false);
   const cancelledRef = useRef(false);
 
   const titleOf = (id: string) => cards.find((c) => c.id === id)?.title ?? "Untitled opportunity";
+  // A cold re-contact (lead batch to a known address) must pick a path before Send.
+  const coldReContact = !!priorEmailedAt;
+
+  // The gate choice unlocks Send and recomposes the body over the active set: the
+  // cold multi-grant pitch, or the follow-up variant (drops intro + credential).
+  function chooseReoutreach(v: ReOutreach) {
+    setReoutreach(v);
+    const c = composeFor(cards.filter((x) => activeIds.includes(x.id)), isLead, senderName, v === "follow_up");
+    setSubject(c.subject);
+    setBody(c.body);
+  }
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -165,6 +186,7 @@ export function ClientGrantsBatch({
     const ids = sortByDeadlineUi(cards.filter((c) => selected.has(c.id))).map((c) => c.id);
     setTo(recipient);
     setResult(null);
+    setReoutreach(null); // fresh gate choice per send
     setOpen(true);
     void prepareLoop(ids);
   }
@@ -192,7 +214,7 @@ export function ClientGrantsBatch({
       const res = await fetch(`/api/clients/${clientId}/send-batch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cardIds: activeIds, subject, body, to }),
+        body: JSON.stringify({ cardIds: activeIds, subject, body, to, reOutreach: reoutreach ?? undefined }),
       });
       const d = await res.json();
       if (!res.ok && !d.send_status) throw new Error(d.error || "Send failed");
@@ -355,6 +377,15 @@ export function ClientGrantsBatch({
                   <input type="email" value={to} onChange={(e) => setTo(e.target.value)} disabled={phase === "sending"}
                     className="flex h-9 w-full rounded-md border border-input bg-card px-3 text-sm" />
                 </label>
+                {/* Cold re-contact gate (lead batch to a known address). Self-hides for
+                    a warm client batch (priorEmailedAt null). Recomposes the body on
+                    choice; Send stays locked until one is picked. */}
+                <PriorEmailGate
+                  priorEmailedAt={priorEmailedAt}
+                  priorCardId={priorCardId}
+                  value={reoutreach}
+                  onChange={chooseReoutreach}
+                />
                 <label className="block space-y-1">
                   <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Subject</span>
                   <input value={subject} onChange={(e) => setSubject(e.target.value)} disabled={phase === "sending"}
@@ -373,7 +404,11 @@ export function ClientGrantsBatch({
                 {error && <p className="text-sm text-destructive">{error}</p>}
                 <div className="mt-2 flex justify-end gap-2">
                   <Button variant="ghost" onClick={closeModal} disabled={phase === "sending"}>Cancel</Button>
-                  <Button onClick={send} disabled={phase === "sending" || !to.trim() || !body.trim()}>
+                  <Button
+                    onClick={send}
+                    disabled={phase === "sending" || !to.trim() || !body.trim() || (coldReContact && !reoutreach)}
+                    title={coldReContact && !reoutreach ? "Choose how to proceed with this re-contact first" : undefined}
+                  >
                     {phase === "sending" ? "Sending…" : `Send to ${clientName}`}
                   </Button>
                 </div>

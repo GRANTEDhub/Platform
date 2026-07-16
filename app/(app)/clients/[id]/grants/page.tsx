@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Stat } from "@/components/ui/stat";
 import { ClientGrantsBatch, type BatchUiCard } from "@/components/clients/client-grants-batch";
-import { getSentAlertsByCards } from "@/lib/alerts/sent-status";
+import { getSentAlertsByCards, getPriorAlertForEmail } from "@/lib/alerts/sent-status";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import { senderFirstName } from "@/lib/alerts/sender";
 import type { MatchCard } from "@/lib/grants/grouping";
@@ -60,6 +60,14 @@ export default async function ClientGrantsPage({
   const alerted = await getSentAlertsByCards(cards.map((c) => c.id));
   const alertedCardIds = [...alerted.keys()];
 
+  // A lead (Tara-build manual prospect) batch is a COLD send -> gate a re-contact to
+  // an address we've emailed before (leads only; a warm client batch has no gate,
+  // unchanged). One small lookup on the client's contact email.
+  const isLead = isUnconvertedLead(client.pipeline_stage);
+  const priorAlert = isLead && client.primary_contact_email
+    ? await getPriorAlertForEmail(client.primary_contact_email)
+    : null;
+
   const uiCards: BatchUiCard[] = cards.map((c) => {
     const g = grantOf(c.grants);
     return {
@@ -97,8 +105,10 @@ export default async function ClientGrantsPage({
           recipient={client.primary_contact_email ?? ""}
           cards={uiCards}
           alertedCardIds={alertedCardIds}
-          isLead={isUnconvertedLead(client.pipeline_stage)}
+          isLead={isLead}
           senderName={senderFirstName({ full_name: profile.full_name, email: profile.email })}
+          priorEmailedAt={priorAlert?.sentAt ?? null}
+          priorCardId={priorAlert?.cardId ?? null}
         />
       </div>
     </div>

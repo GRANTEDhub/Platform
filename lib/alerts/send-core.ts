@@ -97,6 +97,11 @@ export async function prospectConvertForSend(
   });
 }
 
+// A cold re-contact's chosen variant, recorded on the grant_alert_sent event so the
+// sales workflow can see how often we re-contact and via which path. Absent (no
+// metadata key) on a first-contact send.
+export type ReOutreach = "acknowledged" | "follow_up";
+
 // ── Prospect, post-email: finalize the delivered alert ──────────────────────
 // Marks the draft sent (filling client_id with the lead the prospect was promoted
 // into) and records the pipeline event. Call only after a successful email. No
@@ -111,6 +116,7 @@ export async function finalizeProspectSent(
     conv: ConvertOutcome;
     prospect: Prospect;
     grantId: string;
+    reOutreach?: ReOutreach;
   },
 ): Promise<void> {
   const { alertId, sentTo, subject, emailBody, conv, prospect, grantId } = opts;
@@ -121,7 +127,7 @@ export async function finalizeProspectSent(
     prospect_id: prospect.id,
     grant_id: grantId,
     subject_snapshot: { name: prospect.name },
-    metadata: { to: sentTo },
+    metadata: { to: sentTo, ...(opts.reOutreach ? { reOutreach: opts.reOutreach } : {}) },
   });
 }
 
@@ -134,7 +140,7 @@ export async function finalizeProspectSent(
 // already carries client_id from draft time, so markAlertSent needs no clientId.
 export async function finalizeLeadSent(
   db: ReturnType<typeof createServiceClient>,
-  opts: { alertId: string; sentTo: string; subject: string; emailBody: string; clientId: string; grantId: string; clientName: string | null },
+  opts: { alertId: string; sentTo: string; subject: string; emailBody: string; clientId: string; grantId: string; clientName: string | null; reOutreach?: ReOutreach },
 ): Promise<void> {
   const { alertId, sentTo, subject, emailBody, clientId, grantId, clientName } = opts;
   await markAlertSent(alertId, { sentTo, subject, emailBody });
@@ -143,6 +149,6 @@ export async function finalizeLeadSent(
     client_id: clientId,
     grant_id: grantId,
     subject_snapshot: { name: clientName },
-    metadata: { to: sentTo },
+    metadata: { to: sentTo, ...(opts.reOutreach ? { reOutreach: opts.reOutreach } : {}) },
   });
 }

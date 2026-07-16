@@ -18,11 +18,21 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
   if (profile?.role !== "admin") return NextResponse.json({ error: "Admins only" }, { status: 403 });
 
-  const input = (await req.json().catch(() => ({}))) as { cardIds?: unknown; subject?: unknown; body?: unknown; to?: unknown };
+  const input = (await req.json().catch(() => ({}))) as {
+    cardIds?: unknown;
+    subject?: unknown;
+    body?: unknown;
+    to?: unknown;
+    reOutreach?: unknown;
+  };
   const cardIds = Array.isArray(input.cardIds) ? input.cardIds.filter((x): x is string => typeof x === "string") : [];
   const subject = typeof input.subject === "string" ? input.subject : undefined;
   const body = typeof input.body === "string" ? input.body : undefined;
   const to = typeof input.to === "string" ? input.to : undefined;
+  // Cold re-contact variant (lead batch only; the warm client path ignores it). Only
+  // the two known values pass through -> the grant_alert_sent event metadata.
+  const reOutreach =
+    input.reOutreach === "acknowledged" || input.reOutreach === "follow_up" ? input.reOutreach : undefined;
 
   const { result, status } = await sendClientBatch(supabase, {
     clientId: params.id,
@@ -31,6 +41,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     body,
     to,
     userId: user.id,
+    reOutreach,
   });
   return NextResponse.json(result, { status });
 }
