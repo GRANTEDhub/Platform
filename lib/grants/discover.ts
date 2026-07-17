@@ -58,7 +58,27 @@ export function normalizeOrgName(name: string | null | undefined): string {
   return s;
 }
 
+// Public entry: guard discovery so a single failure (a malformed grant, an Anthropic
+// hiccup, a bad API response) degrades to a clean { ok:false, reason } the caller renders
+// as a soft error -- never a 500 that takes down the whole request. The route already
+// maps ok:false to a surfaced message, so this needs no caller change. The per-candidate
+// scoring loop in runDiscovery is already resilient (one bad candidate returns 0, never
+// throws); this wraps the remaining pre-loop throw sources -- chiefly the extraction LLM
+// call. Logged loudly so a real underlying problem stays visible even though the user
+// just sees "no prospects / try again".
 export async function discoverProspects(grantId: string, db: DB): Promise<DiscoverResult> {
+  try {
+    return await runDiscovery(grantId, db);
+  } catch (err) {
+    console.error(`[discoverProspects] unexpected failure for grant ${grantId}:`, err);
+    return {
+      ok: false,
+      reason: `Prospect discovery hit an unexpected error: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
   const { data: grant } = await db.from("grants").select("*").eq("id", grantId).single<Grant>();
   if (!grant) return { ok: false, reason: "Grant not found" };
   if (!grant.is_domestic) return { ok: false, reason: "International grant -- excluded by policy" };
