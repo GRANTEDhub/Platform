@@ -291,6 +291,7 @@ function prospectAsClient(c: Record<string, string>): Client {
     initial_match_status: null,
     match_locked_at: null,
     needs_review: false,
+    research_opt_in: false,
     archived_reason: null,
     contract_status: null,
     contract_signed_at: null,

@@ -178,7 +178,9 @@ async function ensureHorizon(ctx: AlertContext, alert: GrantAlertRow): Promise<G
   try {
     const { data: fullClient } = await db.from("clients").select("*").eq("id", ctx.client.id).single<Client>();
     if (!fullClient) return alert;
-    const horizon = await getForecastHorizon(db, fullClient);
+    // Per-client research-grants opt-in (migration 0051): flows to
+    // isResearchExcludedFunder so NIH/research grants surface only for an opted-in org.
+    const horizon = await getForecastHorizon(db, fullClient, { researchOptIn: fullClient.research_opt_in });
     const patch: Partial<AlertData> = { forecastHorizon: horizon };
     if (horizon.length > 0) {
       const horizonPath = `${ctx.card.id}/${alert.id}-horizon.pdf`;

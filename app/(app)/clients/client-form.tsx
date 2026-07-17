@@ -76,6 +76,10 @@ export function ClientForm({
       : "client";
   const [kind, setKind] = useState<"client" | "prospect" | null>(initialKind);
   const isClient = kind === "client";
+  // Org type is controlled so the research-grants opt-in can show/hide reactively --
+  // it appears only for the org types with a plausible research-applicant case.
+  const [orgType, setOrgType] = useState(client?.org_type ?? "");
+  const showResearchOptIn = orgType === "small_business" || orgType === "higher_education";
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -149,7 +153,8 @@ export function ClientForm({
             <select
               id="org_type"
               name="org_type"
-              defaultValue={client?.org_type ?? ""}
+              value={orgType}
+              onChange={(e) => setOrgType(e.target.value)}
               className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
             >
               <option value="">—</option>
@@ -161,6 +166,31 @@ export function ClientForm({
             </select>
           </div>
         </div>
+
+        {/* Research-grants opt-in -- shown ONLY for small_business / higher_education,
+            the org types with a plausible research-applicant case. Default OFF: GRANTED
+            excludes research funders (NIH) from matching + the forecast horizon for
+            everyone; checking this overrides that for this client (flows to
+            isResearchExcludedFunder via the horizon call). An unchecked box submits
+            nothing -> parse() reads it as false. */}
+        {showResearchOptIn && (
+          <label className="flex items-start gap-2 rounded-md border border-input bg-muted/30 px-3 py-2.5 text-sm">
+            <input
+              type="checkbox"
+              name="research_opt_in"
+              value="true"
+              defaultChecked={!!client?.research_opt_in}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="font-medium">Include research grants for this client</span>
+              <span className="block text-xs text-muted-foreground">
+                Off by default. GRANTED excludes research funders (e.g. NIH) from matching and the
+                forecast horizon. Check this only if this organization pursues federal research grants.
+              </span>
+            </span>
+          </label>
+        )}
       </section>
 
       <section className="space-y-4">
