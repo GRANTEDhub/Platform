@@ -86,6 +86,9 @@ function parse(formData: FormData) {
     service_area: parseChipList(get("service_area")),
     matching_rules: get("matching_rules"),
     hard_constraints: parseConstraints(get("hard_constraints")),
+    // Research-grants opt-in (migration 0051). Checkbox shown only for small_business /
+    // higher_education; an unchecked/hidden box submits nothing -> false. Default off.
+    research_opt_in: get("research_opt_in") === "true",
   };
   return { payload, narrative, kind };
 }

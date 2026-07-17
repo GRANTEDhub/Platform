@@ -131,6 +131,11 @@ export interface Client {
   // still fresh; an expired/null lease is claimable. See lib/clients/match-queue.ts.
   match_locked_at: string | null;
   needs_review: boolean;
+  // Research-grants opt-in (migration 0051). Default false. When true, the forecasted
+  // "on the horizon" relevance pass includes research funders (NIH) for this client
+  // (isResearchExcludedFunder optIn bypass). Surfaced on the client form for
+  // small_business / higher_education org types only.
+  research_opt_in: boolean;
   archived_reason: string | null;
   contract_status: string | null;
   contract_signed_at: string | null;
