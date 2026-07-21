@@ -4,7 +4,7 @@ import { Building2, CheckCircle2, ClipboardList, CalendarClock } from "lucide-re
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
-import { Stat } from "@/components/ui/stat";
+import { StatCard } from "@/components/clients/stat-card";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -32,6 +32,15 @@ function statusVariant(status: string) {
     default:
       return "secondary" as const;
   }
+}
+
+// Monogram initials for the client avatar: first+last initial, or the first two
+// letters of a single-word name.
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "—";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 // Deadline with an urgency tell, mirroring the dashboard's DeadlineCell (≤14d is
@@ -113,29 +122,10 @@ export default async function PortfolioPage() {
 
       <div className="space-y-6 p-8">
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <Stat
-            label="Clients"
-            value={String(clients.length)}
-            icon={<Building2 className="h-4 w-4" />}
-          />
-          <Stat
-            label="Active opportunities"
-            value={String(totalActive)}
-            hint="approved matches"
-            icon={<CheckCircle2 className="h-4 w-4" />}
-          />
-          <Stat
-            label="In review"
-            value={String(totalInReview)}
-            hint="pending matches"
-            icon={<ClipboardList className="h-4 w-4" />}
-          />
-          <Stat
-            label="Deadlines ≤30d"
-            value={String(deadlineSoon)}
-            accent
-            icon={<CalendarClock className="h-4 w-4" />}
-          />
+          <StatCard icon={Building2} value={String(clients.length)} label="clients" />
+          <StatCard icon={CheckCircle2} value={String(totalActive)} label="active opportunities" />
+          <StatCard icon={ClipboardList} value={String(totalInReview)} label="in review" />
+          <StatCard icon={CalendarClock} value={String(deadlineSoon)} label="deadlines ≤30d" />
         </div>
 
         {rows.length === 0 ? (
@@ -143,30 +133,49 @@ export default async function PortfolioPage() {
             No clients yet. Add your first client to get started.
           </Card>
         ) : (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
             {rows.map(({ c, r }) => {
               const dl = deadlineDisplay(c.next_deadline);
               const avgFit = r.fitCount > 0 ? `${(r.fitSum / r.fitCount).toFixed(1)}/3` : "—";
               return (
                 <Link key={c.id} href={`/clients/${c.id}`} className="group block">
-                  <Card className="p-6 transition-shadow group-hover:shadow-lift">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <h3 className="truncate font-serif text-lg font-semibold text-brand-navy">
-                          {c.name}
-                        </h3>
-                        <p className="mt-0.5 truncate text-sm capitalize text-muted-foreground">
+                  <Card className="p-6 shadow-[0_2px_8px_rgba(11,30,58,0.06),0_14px_34px_-16px_rgba(11,30,58,0.14)] transition-all group-hover:-translate-y-0.5 group-hover:shadow-lift">
+                    <div className="flex items-start gap-4">
+                      <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-brand-navy font-serif text-base font-semibold text-white">
+                        {initials(c.name)}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-3">
+                          <h3 className="truncate font-serif text-lg font-semibold leading-tight text-brand-navy">
+                            {c.name}
+                          </h3>
+                          <Badge variant={statusVariant(c.status)} className="shrink-0 capitalize">
+                            {c.status}
+                          </Badge>
+                        </div>
+                        <p className="mt-1 truncate text-sm capitalize text-muted-foreground">
                           {c.org_type?.replace(/_/g, " ") || "—"}
                         </p>
                       </div>
-                      <Badge variant={statusVariant(c.status)}>{c.status}</Badge>
                     </div>
 
-                    <div className="mt-5 grid grid-cols-2 gap-4 border-t border-brand-navy/5 pt-4">
-                      <Metric label="Active" value={String(r.active)} />
+                    <div className="mt-5 grid grid-cols-3 gap-2 rounded-2xl bg-brand-cream p-4">
+                      <Metric label="Active" value={String(r.active)} hero />
                       <Metric label="In review" value={String(r.inReview)} />
                       <Metric label="Avg fit" value={avgFit} />
-                      <Metric label="Next deadline" value={dl.text} accent={dl.urgent} />
+                    </div>
+
+                    <div className="mt-3 flex items-center gap-2 px-1 text-sm">
+                      <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className="text-muted-foreground">Next deadline</span>
+                      <span
+                        className={cn(
+                          "ml-auto font-medium tabular-nums",
+                          dl.urgent ? "text-brand-orange" : "text-brand-navy",
+                        )}
+                      >
+                        {dl.text}
+                      </span>
                     </div>
                   </Card>
                 </Link>
@@ -179,19 +188,30 @@ export default async function PortfolioPage() {
   );
 }
 
-function Metric({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+function Metric({
+  label,
+  value,
+  hero,
+  accent,
+}: {
+  label: string;
+  value: string;
+  hero?: boolean;
+  accent?: boolean;
+}) {
   return (
-    <div>
-      <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-        {label}
-      </p>
+    <div className="text-center">
       <p
         className={cn(
-          "mt-1 font-serif text-xl font-semibold leading-none",
+          "font-serif font-semibold leading-none",
+          hero ? "text-2xl" : "text-xl",
           accent ? "text-brand-orange" : "text-brand-navy",
         )}
       >
         {value}
+      </p>
+      <p className="mt-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+        {label}
       </p>
     </div>
   );
