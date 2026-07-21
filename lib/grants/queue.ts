@@ -52,7 +52,15 @@ export type DrainResult = {
 export async function enqueueMatch(db: DB, grantId: string): Promise<void> {
   await db
     .from("grants")
-    .update({ status: "queued", match_retry_count: 0, error_detail: null })
+    .update({
+      status: "queued",
+      match_retry_count: 0,
+      error_detail: null,
+      // Move 2: enqueue begins a FRESH matching episode -- stamp the marker so
+      // runMatching's cursor-free resume diffs match_attempts against this episode
+      // (a re-queue via enqueueMatch re-scores the whole roster, not zero clients).
+      match_episode_started_at: new Date().toISOString(),
+    })
     .eq("id", grantId);
 }
 
@@ -138,13 +146,17 @@ export async function drainMatchQueue(
         // 'forecasted' hint -> runPipeline shreds the summary, keeps it Forecasted,
         // and SKIPS matching (no NOFO yet). Posted / flip rows carry no marker;
         // undefined lets runPipeline read the status from the shred (== 'posted').
+        // Move 2: thread the drain's wall-clock deadline so a big roster chunks under
+        // the SAME budget (shred + match together stay under the cap; the remainder
+        // re-queues and resumes next cycle).
+        const deadlineMs = startedAt + budgetMs;
         const opts =
           candidate.grant_status === "Forecasted"
-            ? { opportunityStatus: "forecasted" }
-            : undefined;
+            ? { opportunityStatus: "forecasted", deadlineMs }
+            : { deadlineMs };
         await runPipeline(candidate.id, candidate.source_url ?? undefined, undefined, db, opts);
       } else {
-        await runMatching(candidate.id, db);
+        await runMatching(candidate.id, db, { deadlineMs: startedAt + budgetMs });
       }
       processed.push(candidate.id);
     } catch (err) {

@@ -23,6 +23,13 @@ import { NON_LEAD_OR_FILTER } from "@/lib/leads/stage";
 
 type DB = ReturnType<typeof createServiceClient>;
 
+// Move 2: wall-clock budget for ONE matching chunk, well under the 300s function cap.
+// runMatching scores the roster until this deadline, then re-queues the remainder for
+// the next drain cycle (resumable). Mirrors the client drain's DEFAULT_BUDGET_MS. The
+// drain passes its own deadline in; this is the fallback for non-drain callers (the
+// rematch route, and runPipeline when no deadline is threaded through).
+const MATCH_BUDGET_MS = 240_000;
+
 // The review-card fields derived from an engine match. Single source of truth so
 // an engine-surfaced card (runMatching) and a manual "Add to Client" card score
 // to a provably-identical shape -- a manual match is indistinguishable downstream.
@@ -63,8 +70,11 @@ export async function runPipeline(
   // Optional hint from the caller (the cron passes the Simpler opportunity_status
   // from the search). Used to mark forecasted grants authoritatively rather than
   // relying on the extraction to infer status. Absent for manual ingest.
-  opts?: { opportunityStatus?: string },
+  // deadlineMs (Move 2): the drain threads its wall-clock deadline so the post-shred
+  // match chunks under the SAME budget; absent -> runMatching defaults from here.
+  opts?: { opportunityStatus?: string; deadlineMs?: number },
 ) {
+  const pipelineStartedAt = Date.now();
   let extracted;
   let rawTextForStorage = rawText || "";
   let shredDepth: "full" | "summary" = "summary";
@@ -208,6 +218,12 @@ export async function runPipeline(
       skip_reason: skipReason,
       ideal_applicant_profile: idealProfile,
       ideal_profile_error: idealProfileError,
+      // Move 2: a fresh shred begins a fresh matching episode. Stamping it here (and
+      // in enqueueMatch / the rematch route) is what lets runMatching's cursor-free
+      // resume diff match_attempts against THIS episode rather than all time -- so a
+      // re-shred/flip re-scores the whole roster instead of seeing everyone as done.
+      // Harmless on the grant-level-skip path below (a skipped grant never matches).
+      match_episode_started_at: new Date().toISOString(),
     })
     .eq("id", grantId);
 
@@ -221,7 +237,9 @@ export async function runPipeline(
     return;
   }
 
-  await runMatching(grantId, db);
+  await runMatching(grantId, db, {
+    deadlineMs: opts?.deadlineMs ?? pipelineStartedAt + MATCH_BUDGET_MS,
+  });
 }
 
 // Observability: persist one row per (grant, client) scoring attempt -- the
@@ -358,14 +376,49 @@ export async function scoreGrantClientPair(grantRow: Grant, client: Client, db: 
   }
 }
 
+// Move 2: clients already scored in THIS episode -- derived from match_attempts
+// (every scoring outcome writes a row, so this is exact), bounded to attempts at/after
+// the episode marker. Mirrors the client drain's scoredGrantIds; throws loudly on a
+// query error rather than silently treating it as "nothing scored" (same posture as
+// the #174 drain hardening) -- a swallowed error here would falsely re-score or falsely
+// complete.
+async function scoredClientIdsSince(db: DB, grantId: string, sinceIso: string): Promise<Set<string>> {
+  const { data, error } = await db
+    .from("match_attempts")
+    .select("client_id")
+    .eq("grant_id", grantId)
+    .gte("created_at", sinceIso);
+  if (error) {
+    throw new Error(`[runMatching] attempts lookup failed (code=${error.code ?? "?"}): ${error.message}`);
+  }
+  return new Set((data ?? []).map((r) => r.client_id as string).filter(Boolean));
+}
+
 /**
- * Scores a grant against the full client roster. Re-runnable (e.g. an admin
- * "Re-match"): every client is re-scored each run and every attempt is logged
- * to match_attempts. A qualifying score keeps ONE card per (grant, client) --
- * refreshing the engine output on an un-acted card, never overwriting a card an
- * admin has already decided. Uniqueness is enforced by a DB constraint.
+ * Scores a grant against the client roster, CHUNKED across drain cycles (Move 2) so a
+ * large roster can never hit the 300s cap. Each invocation scores as many still-
+ * unscored clients as fit a wall-clock deadline, then either COMPLETES the grant (the
+ * whole roster is scored-or-decided) or RE-QUEUES the remainder for the next cycle.
+ *
+ * Resume is cursor-free: "already scored this episode" is derived from match_attempts
+ * (every outcome writes a row), bounded to grants.match_episode_started_at. A fresh
+ * episode (re-shred / enqueueMatch / re-match) stamps a new marker so the whole roster
+ * is re-scored; a chunk re-queue PRESERVES it so resume continues the same episode.
+ *
+ * SEAT-STABILITY: chunking only decides WHICH clients a given invocation scores. Every
+ * pair still runs scoreGrantClientPair(grantRow, client, db) with byte-identical inputs
+ * and no cross-client state, so a client's seat/score is invariant to the chunk
+ * boundary. On a fresh episode `remaining` is the whole non-decided roster -- identical
+ * to the old single-pass run.
+ *
+ * A qualifying score keeps ONE card per (grant, client) -- refreshing an un-acted card,
+ * never overwriting a decided one. Uniqueness is enforced by a DB constraint.
  */
-export async function runMatching(grantId: string, db: DB) {
+export async function runMatching(
+  grantId: string,
+  db: DB,
+  opts?: { deadlineMs?: number },
+) {
   const { data: grantRow } = await db
     .from("grants")
     .select("*")
@@ -381,6 +434,19 @@ export async function runMatching(grantId: string, db: DB) {
     return;
   }
 
+  // Wall-clock deadline for THIS chunk. The drain threads its own deadline in; a direct
+  // caller (the rematch route) falls back to a fresh budget from now.
+  const deadlineMs = opts?.deadlineMs ?? Date.now() + MATCH_BUDGET_MS;
+
+  // The matching episode this run belongs to. Fresh-episode triggers stamp the marker;
+  // a null marker (legacy row / manual `status='queued'` SQL enqueue) is treated as a
+  // fresh episode and stamped now. This function NEVER resets it -- it only resumes.
+  let episodeStart = (grantRow as { match_episode_started_at: string | null }).match_episode_started_at;
+  if (!episodeStart) {
+    episodeStart = new Date().toISOString();
+    await db.from("grants").update({ match_episode_started_at: episodeStart }).eq("id", grantId);
+  }
+
   // EXCLUDE leads. This runs under the service role and BYPASSES RLS, so the
   // admin-only clients RLS does not protect it -- without this filter the matcher
   // would score grants against un-converted lead rows and mint cards for them.
@@ -392,21 +458,10 @@ export async function runMatching(grantId: string, db: DB) {
     return;
   }
 
-  // Re-score the entire roster every run; the per-card dedup below keeps one.
-  const toScore = clients;
-
-  // Past-performance context is read from each client's STORED usaspending_summary
-  // (cached at intake + the monthly sweep) -- no live USASpending call on the
-  // matching hot path. A verified client is authoritative (federal_grant_history
-  // wins), and a client with no cache yet scores as "unknown" rather than
-  // triggering a fetch.
-
-  // Skip human-DECIDED (grant, client) cards: the card upsert below leaves a
-  // non-pending card untouched regardless of any new score, so re-scoring those
-  // clients is pure wasted LLM spend. One query, up front. Pending / no-card
-  // clients are NOT in this set (they still get scored); a fresh grant has no
-  // cards, so the set is empty and nothing is skipped. (Prospect cards have a null
-  // client_id and never match a client here.)
+  // Skip human-DECIDED (grant, client) cards: the card upsert leaves a non-pending
+  // card untouched regardless of any new score, so re-scoring those clients is pure
+  // wasted LLM spend. One query, up front. (Prospect cards have a null client_id and
+  // never match a client here.)
   const { data: existingCardsForGrant } = await db
     .from("review_cards")
     .select("client_id, decision")
@@ -417,43 +472,53 @@ export async function runMatching(grantId: string, db: DB) {
       .map((c) => c.client_id as string),
   );
 
-  // Score with a ROLLING concurrency pool (Move 1): CONCURRENCY workers each pull
-  // the next client the instant they finish -- no wave barrier idling while a
-  // batch's slowest call runs. Same peak concurrency, better use of the 300s
-  // budget. Conservative at 8 (each match is a token-heavy Sonnet call; the SDK
-  // retries 429s, but retries cost wall-clock under the cap). STILL 300s-capped --
-  // Move 2 (chunking + splitting matching off ingest) is the structural fix.
+  // Cursor-free resume: clients already scored THIS episode. On a fresh episode this is
+  // empty, so `remaining` is the whole non-decided roster (identical to the old single-
+  // pass run); on a resume it excludes what earlier chunks already scored.
+  const scoredThisEpisode = await scoredClientIdsSince(db, grantId, episodeStart);
+  const remaining = clients.filter(
+    (c) => !decidedClientIds.has(c.id) && !scoredThisEpisode.has(c.id),
+  );
+
+  // Score `remaining` with a ROLLING concurrency pool under the DEADLINE: each worker
+  // stops claiming new clients once the deadline passes (mirrors the client drain's
+  // scorePairsWithinBudget). Past-performance context is read from each client's STORED
+  // usaspending_summary (no live call on the hot path). scoreGrantClientPair is called
+  // EXACTLY as before -- one grant + one client -- so the per-pair seat/score path is
+  // untouched; chunking only changes WHICH clients this invocation scores.
   const CONCURRENCY = 8;
-
-  async function scoreClient(client: (typeof toScore)[number]) {
-    // Skip human-DECIDED cards up front to save the LLM call (scoreGrantClientPair
-    // would leave them untouched anyway, but only after paying for the match).
-    if (decidedClientIds.has(client.id)) return;
-    await scoreGrantClientPair(grantRow, client, db);
-  }
-
   const matchStartMs = Date.now();
   let nextIdx = 0;
   async function worker() {
-    while (true) {
+    while (Date.now() < deadlineMs) {
       const i = nextIdx++;
-      if (i >= toScore.length) return;
-      await scoreClient(toScore[i]);
+      if (i >= remaining.length) return;
+      await scoreGrantClientPair(grantRow, remaining[i], db);
     }
   }
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, toScore.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, remaining.length) }, worker));
 
-  // Ceiling tripwire (Move 2): one grant's full-roster match runs inside a single
-  // 300s function. Log wall-clock vs roster size EVERY run so a rising roster
-  // gives us lead time to add within-grant chunking BEFORE a match ever nears the
-  // cap -- rather than discovering the ceiling by hitting it. WARN past a soft
-  // threshold well under 300s.
+  // Re-derive completion from attempts (a worker may have stopped at the deadline mid-
+  // `remaining`). 'complete' ONLY when the WHOLE roster is scored-or-decided -- never a
+  // silent partial.
+  const doneNow = await scoredClientIdsSince(db, grantId, episodeStart);
+  const stillRemaining = clients.filter(
+    (c) => !decidedClientIds.has(c.id) && !doneNow.has(c.id),
+  ).length;
+
   const matchMs = Date.now() - matchStartMs;
-  const timing = `[match-timing] grant ${grantId}: roster=${toScore.length} decided-skipped=${decidedClientIds.size} wallMs=${matchMs}`;
-  if (matchMs > 180_000) {
-    console.warn(`${timing} -- APPROACHING 300s CAP; plan within-grant chunking`);
-  } else {
-    console.log(timing);
+  console.log(
+    `[match-timing] grant ${grantId}: roster=${clients.length} decided-skipped=${decidedClientIds.size} ` +
+      `scoredThisChunk=${doneNow.size - scoredThisEpisode.size} remaining=${stillRemaining} wallMs=${matchMs}`,
+  );
+
+  if (stillRemaining > 0) {
+    // Planned continuation -- NOT a retry. Re-enqueue for the next drain cycle,
+    // PRESERVING match_episode_started_at (resume continues the same episode) and
+    // WITHOUT touching match_retry_count (only the watchdog bumps that, for killed
+    // runs). status='queued' returns it to the drain's pick loop.
+    await db.from("grants").update({ status: "queued" }).eq("id", grantId);
+    return;
   }
 
   await db.from("grants").update({ status: "complete" }).eq("id", grantId);
