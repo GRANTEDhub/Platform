@@ -23,7 +23,6 @@ export async function GET(req: NextRequest) {
 
   const db = createServiceClient();
   const result = await drainMatchQueue(db);
-  console.log("[match-drain]", JSON.stringify(result));
 
   return NextResponse.json({
     drained: result.processed.length,

@@ -25,7 +25,6 @@ export async function GET(req: NextRequest) {
 
   const db = createServiceClient();
   const result = await drainClientMatchQueue(db);
-  console.log("[client-match-drain]", JSON.stringify(result));
 
   return NextResponse.json({
     advanced: result.advanced.length,
