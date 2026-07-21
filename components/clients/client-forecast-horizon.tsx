@@ -15,8 +15,30 @@ import { Button } from "@/components/ui/button";
 // full page load. Undo is the reverse. A11y: reject/active state is conveyed by a text
 // label + icon, NEVER color alone (Shannon is colorblind).
 
-type HorizonItem = { grantId: string; title: string; funder: string | null; rationale: string };
-type RejectedItem = { grantId: string; title: string; funder: string | null };
+type HorizonItem = { grantId: string; title: string; funder: string | null; rationale: string; sourceUrl: string | null };
+type RejectedItem = { grantId: string; title: string; funder: string | null; sourceUrl: string | null };
+
+// Forecasted rows have no in-app detail page (no NOFO yet), so link out to the live
+// Simpler.gov opportunity page. Render ONLY for a real http(s) URL -- this drops null
+// and the 'manual-paste' sentinel, so a row without a usable source shows no link
+// rather than a broken one.
+function sourceHref(url: string | null): string | null {
+  return url && /^https?:\/\//i.test(url) ? url : null;
+}
+
+function SourceLink({ href }: { href: string | null }) {
+  if (!href) return null;
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-0.5 text-xs font-medium text-brand-orange underline-offset-2 hover:underline"
+    >
+      View on Simpler <span aria-hidden="true">↗</span>
+    </a>
+  );
+}
 
 export function ClientForecastHorizon({
   clientId,
@@ -60,7 +82,12 @@ export function ClientForecastHorizon({
     setError(null);
     setBusyFor(item.grantId, true);
     setLocallyRejected((prev) =>
-      new Map(prev).set(item.grantId, { grantId: item.grantId, title: item.title, funder: item.funder }),
+      new Map(prev).set(item.grantId, {
+        grantId: item.grantId,
+        title: item.title,
+        funder: item.funder,
+        sourceUrl: item.sourceUrl,
+      }),
     );
     setLocallyRestored((prev) => {
       const n = new Set(prev);
@@ -149,6 +176,11 @@ export function ClientForecastHorizon({
                   <p className="truncate font-medium">{item.title}</p>
                   {item.funder && <p className="truncate text-xs text-muted-foreground">{item.funder}</p>}
                   <p className="mt-1 text-xs text-muted-foreground">{item.rationale}</p>
+                  {sourceHref(item.sourceUrl) && (
+                    <p className="mt-1">
+                      <SourceLink href={sourceHref(item.sourceUrl)} />
+                    </p>
+                  )}
                 </div>
                 <Button
                   variant="outline"
@@ -193,6 +225,11 @@ export function ClientForecastHorizon({
                       <span className="truncate line-through decoration-1">{item.title}</span>
                     </p>
                     {item.funder && <p className="truncate pl-1 text-xs text-muted-foreground">{item.funder}</p>}
+                    {sourceHref(item.sourceUrl) && (
+                      <p className="pl-1">
+                        <SourceLink href={sourceHref(item.sourceUrl)} />
+                      </p>
+                    )}
                   </div>
                   <Button
                     variant="ghost"
