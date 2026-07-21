@@ -81,7 +81,7 @@ export async function drainMatchQueue(
     // Pick the oldest queued grant. ingested_at orders the queue; a forecast->posted
     // flip carries an old ingested_at, so a freshly-live grant is processed
     // promptly -- matching the discovery cron's existing "flips first" intent.
-    const { data: candidate } = await db
+    const { data: candidate, error: candidateErr } = await db
       .from("grants")
       .select("id, source_url, shred_depth, grant_status, raw_text")
       .eq("status", "queued")
@@ -94,6 +94,16 @@ export async function drainMatchQueue(
         grant_status: string | null;
         raw_text: string | null;
       }>();
+    // A query ERROR is NOT an empty queue. Swallowing it -- reading !candidate as
+    // queueEmpty -- is exactly what silently no-op'd the drain for weeks while 372
+    // grants sat queued (incident 2026-07-21). Throw a loud, greppable message (with
+    // the PostgREST code, like claimPair) so the cron run visibly 500s and shows in
+    // logs, and NEVER report queueEmpty on an error.
+    if (candidateErr) {
+      throw new Error(
+        `[drainMatchQueue] candidate query failed (code=${candidateErr.code ?? "?"}): ${candidateErr.message}`,
+      );
+    }
     if (!candidate) {
       queueEmpty = true;
       break;

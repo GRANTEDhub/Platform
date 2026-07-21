@@ -82,11 +82,14 @@ export async function runWatchdogSweep(db: DB): Promise<WatchdogResult> {
   // 3) Queue-backlog visibility. A 'queued' grant is waiting, not stuck -- never
   //    error it -- but an aging queue means the drain is behind or down, which
   //    must be visible rather than silent.
-  const { data: queued } = await db
+  const { data: queued, error: queuedErr } = await db
     .from("grants")
     .select("id, ingested_at")
     .eq("status", "queued")
     .order("ingested_at", { ascending: true });
+  // Surface a query error loudly -- a swallowed error here reads as "no backlog"
+  // (queuedCount stays 0), the exact silent-stall blind spot we are closing.
+  if (queuedErr) throw new Error(`Watchdog queued-backlog query failed: ${queuedErr.message}`);
   let queuedCount = 0;
   let oldestQueuedMinutes = 0;
   if (queued && queued.length > 0) {
@@ -114,12 +117,13 @@ export async function runWatchdogSweep(db: DB): Promise<WatchdogResult> {
   //    every resume makes monotonic progress to 'complete', so requeue can't loop
   //    forever burning calls the way an unmatchable grant could. Bulk + returning,
   //    guarded on status='running' so a drain that just finished isn't clobbered.
-  const { data: stuckClientMatch } = await db
+  const { data: stuckClientMatch, error: clientMatchErr } = await db
     .from("clients")
     .update({ initial_match_status: "queued", match_locked_at: null })
     .eq("initial_match_status", "running")
     .lt("updated_at", cutoff)
     .select("id");
+  if (clientMatchErr) throw new Error(`Watchdog client-match sweep failed: ${clientMatchErr.message}`);
   const clientMatchRequeued = (stuckClientMatch ?? []).map((c) => c.id as string);
 
   const sweptProcessingIds = (sweptProcessing ?? []).map((g) => g.id);

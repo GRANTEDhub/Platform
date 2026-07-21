@@ -307,7 +307,7 @@ export async function drainClientMatchQueue(
     // invocation resuming. The lease filter excludes a client another drain is
     // actively scoring (fresh lease), so we never pick one that's already in flight;
     // a client with an expired/null lease is fair game (resume or dead-drain recovery).
-    const { data: candidate } = await db
+    const { data: candidate, error: candidateErr } = await db
       .from("clients")
       .select("*")
       .in("initial_match_status", ["queued", "running"])
@@ -315,6 +315,15 @@ export async function drainClientMatchQueue(
       .order("created_at", { ascending: true })
       .limit(1)
       .maybeSingle<Client>();
+    // A query ERROR is NOT an empty queue -- do not mislabel it as queueEmpty (the
+    // silent-stall shape from incident 2026-07-21). Throw a loud, greppable message
+    // (with the PostgREST code, like claimPair) so /api/cron/client-match visibly 500s
+    // and shows in logs, mirroring the grant drain.
+    if (candidateErr) {
+      throw new Error(
+        `[drainClientMatchQueue] candidate query failed (code=${candidateErr.code ?? "?"}): ${candidateErr.message}`,
+      );
+    }
     if (!candidate) {
       // Nothing claimable: either the queue is empty, or every waiting client is
       // currently leased by another live drain. Either way this invocation is done.
