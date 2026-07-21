@@ -55,7 +55,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     );
   }
 
-  await db.from("grants").update({ status: "processing", processing_started_at: new Date().toISOString() }).eq("id", params.id);
+  // Move 2: reset the matching episode so a re-match re-scores the WHOLE roster
+  // (runMatching's resume diffs match_attempts since this marker; without a reset it
+  // would see every client as already-done and score nothing). Inline stamp keeps the
+  // immediate 202 "kick now" behavior. For reshred, runPipeline re-stamps a fresh
+  // episode anyway -- harmless to set both.
+  await db
+    .from("grants")
+    .update({
+      status: "processing",
+      processing_started_at: new Date().toISOString(),
+      match_episode_started_at: new Date().toISOString(),
+    })
+    .eq("id", params.id);
 
   const work = reshred
     ? runPipeline(params.id, grant.source_url ?? undefined, undefined, db)
