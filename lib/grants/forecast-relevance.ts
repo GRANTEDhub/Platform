@@ -82,7 +82,7 @@ export function isResearchExcludedFunder(
 // a future opt-in org. Reads only these six columns; no profile, no rubric.
 export async function loadForecastCandidates(
   db: DB,
-  opts?: { researchOptIn?: boolean },
+  opts?: { researchOptIn?: boolean; clientId?: string },
 ): Promise<ForecastCandidate[]> {
   const { data, error } = await db
     .from("grants")
@@ -91,9 +91,31 @@ export async function loadForecastCandidates(
     .eq("is_domestic", true)
     .not("description", "is", null);
   if (error) throw new Error(`Forecast candidate load failed: ${error.message}`);
-  return ((data ?? []) as ForecastCandidate[])
+  let candidates = ((data ?? []) as ForecastCandidate[])
     .filter((g) => (g.description ?? "").trim().length > 20)
     .filter((g) => !isResearchExcludedFunder(g, { optIn: opts?.researchOptIn }));
+
+  // Horizon Reject gate (migration 0053). Drop the grants THIS client has rejected
+  // for the horizon -- applied to the CANDIDATE SET, i.e. BEFORE rankForecastRelevance
+  // ranks and caps to HORIZON_CAP. That ordering is load-bearing: rejecting the
+  // visible #1 lets the next-best candidate (#9) refill into the top-N, so the client
+  // always sees up to the cap of non-rejected forecasts rather than the list shrinking.
+  // Read ONLY here (the shared forecasted render path -- web view AND emailed PDF),
+  // NEVER as a review_cards decision: a forecast->posted flip nulls grant_status, so
+  // the grant drops out of the query above and this reject is simply never consulted
+  // for it -> fresh-look-on-flip with zero coupling to the flip handler.
+  if (opts?.clientId) {
+    const { data: rejects, error: rErr } = await db
+      .from("forecast_rejections")
+      .select("grant_id")
+      .eq("client_id", opts.clientId);
+    if (rErr) throw new Error(`Forecast reject load failed: ${rErr.message}`);
+    if (rejects && rejects.length > 0) {
+      const rejected = new Set((rejects as { grant_id: string }[]).map((r) => r.grant_id));
+      candidates = candidates.filter((g) => !rejected.has(g.id));
+    }
+  }
+  return candidates;
 }
 
 // The org's relevance profile -- what the judge matches against. Assembled from the
@@ -105,6 +127,7 @@ export type RelevanceProfile = { name: string; text: string };
 
 type ProfileClient = Pick<
   Client,
+  | "id"
   | "name"
   | "org_type"
   | "location_state"
@@ -274,7 +297,10 @@ export async function getForecastHorizon(
   opts?: { cap?: number; researchOptIn?: boolean },
 ): Promise<ForecastHorizonItem[]> {
   const cap = opts?.cap ?? HORIZON_CAP;
-  const candidates = await loadForecastCandidates(db, { researchOptIn: opts?.researchOptIn });
+  const candidates = await loadForecastCandidates(db, {
+    researchOptIn: opts?.researchOptIn,
+    clientId: client.id, // apply this client's Horizon Reject gate before rank/cap
+  });
   return rankForecastRelevance(buildRelevanceProfile(client), candidates, cap);
 }
 
