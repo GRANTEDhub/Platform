@@ -431,6 +431,21 @@ export interface MatchFeedback {
   created_at: string;
 }
 
+// Horizon Reject gate (migration 0053). One row per (client, grant) forecast the
+// client has rejected for the "On the horizon" shortlist. Read ONLY by the forecasted
+// render path (loadForecastCandidates) to hide the row BEFORE ranking/capping -- never
+// a review_cards decision, so a forecast->posted flip gives the grant a fresh look as
+// an active match. `fon` is a forensic backstop; the filter matches on grant_id.
+export interface ForecastRejection {
+  id: string;
+  client_id: string;
+  grant_id: string;
+  fon: string | null;
+  reason: string | null;
+  rejected_by: string | null;
+  rejected_at: string;
+}
+
 export interface ClientOverview {
   id: string;
   name: string;

@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Stat } from "@/components/ui/stat";
 import { ClientGrantsBatch, type BatchUiCard } from "@/components/clients/client-grants-batch";
+import { ClientForecastHorizon } from "@/components/clients/client-forecast-horizon";
+import { getForecastHorizon, type ForecastHorizonItem } from "@/lib/grants/forecast-relevance";
 import { getSentAlertsByCards, getPriorAlertForEmail } from "@/lib/alerts/sent-status";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import { senderFirstName } from "@/lib/alerts/sender";
@@ -81,6 +83,41 @@ export default async function ClientGrantsPage({
     };
   });
 
+  // Forecasted "On the horizon" for this client (Horizon Reject gate). Computed live —
+  // no caching, per decision — and reject-filtered inside getForecastHorizon (the
+  // service client bypasses RLS, matching how the alert path computes it in store.ts).
+  // Guarded so a horizon/LLM failure degrades to an empty section, never 500s the page.
+  const svc = createServiceClient();
+  let horizon: ForecastHorizonItem[] = [];
+  try {
+    const { data: fullClient } = await svc.from("clients").select("*").eq("id", params.id).single<Client>();
+    if (fullClient) {
+      horizon = await getForecastHorizon(svc, fullClient, { researchOptIn: fullClient.research_opt_in });
+    }
+  } catch (e) {
+    console.error(`[horizon] client grants page compute failed for ${params.id}:`, e);
+  }
+
+  // The client's current forecast rejects, for the collapsible Undo group. Scoped to
+  // STILL-forecasted grants (join on grant_status) so a flipped (now-active) grant's
+  // inert reject never shows — it re-surfaces in the Matches table above instead.
+  const { data: rejData } = await svc
+    .from("forecast_rejections")
+    .select("grant_id, grants(title, funder, grant_status)")
+    .eq("client_id", params.id);
+  type RejRow = { grant_id: string; grants: Pick<Grant, "title" | "funder" | "grant_status"> | Pick<Grant, "title" | "funder" | "grant_status">[] | null };
+  const rejectedForecasts = ((rejData ?? []) as RejRow[])
+    .map((r) => ({ grantId: r.grant_id, g: Array.isArray(r.grants) ? r.grants[0] : r.grants }))
+    .filter((r): r is { grantId: string; g: Pick<Grant, "title" | "funder" | "grant_status"> } => !!r.g && r.g.grant_status === "Forecasted")
+    .map((r) => ({ grantId: r.grantId, title: r.g.title ?? "Forecasted opportunity", funder: r.g.funder ?? null }));
+
+  const horizonActive = horizon.map((h) => ({
+    grantId: h.grantId,
+    title: h.title,
+    funder: h.funder,
+    rationale: h.rationale,
+  }));
+
   return (
     <div>
       <PageHeader
@@ -109,6 +146,12 @@ export default async function ClientGrantsPage({
           senderName={senderFirstName({ full_name: profile.full_name, email: profile.email })}
           priorEmailedAt={priorAlert?.sentAt ?? null}
           priorCardId={priorAlert?.cardId ?? null}
+        />
+
+        <ClientForecastHorizon
+          clientId={client.id}
+          active={horizonActive}
+          rejected={rejectedForecasts}
         />
       </div>
     </div>
