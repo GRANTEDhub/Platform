@@ -15,6 +15,7 @@ import { interTight, sourceSerif } from "@/lib/fonts";
 // Grant Intel (Track 2, prospects / BizDev -- stub until the prospect engine).
 const ADMIN_NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: "dashboard" },
+  { href: "/portfolio", label: "Portfolio", icon: "portfolio" },
   { href: "/grants", label: "Ledger", icon: "grants" },
   { href: "/matches", label: "Matches", icon: "matching" },
   { href: "/intel", label: "Prospecting", icon: "intel" },
