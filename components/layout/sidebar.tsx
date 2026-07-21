@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
+  LayoutGrid,
   Target,
   Radar,
   FileSearch,
@@ -26,6 +27,7 @@ export interface NavItem {
 
 const ICONS: Record<string, LucideIcon> = {
   dashboard: LayoutDashboard,
+  portfolio: LayoutGrid,
   matching: Target,
   intel: Radar,
   grants: FileSearch,
