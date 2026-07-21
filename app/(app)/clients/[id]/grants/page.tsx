@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
@@ -83,56 +84,6 @@ export default async function ClientGrantsPage({
     };
   });
 
-  // Forecasted "On the horizon" for this client (Horizon Reject gate). Computed live —
-  // no caching, per decision — and reject-filtered inside getForecastHorizon (the
-  // service client bypasses RLS, matching how the alert path computes it in store.ts).
-  // Guarded so a horizon/LLM failure degrades to an empty section, never 500s the page.
-  const svc = createServiceClient();
-  let horizon: ForecastHorizonItem[] = [];
-  try {
-    const { data: fullClient } = await svc.from("clients").select("*").eq("id", params.id).single<Client>();
-    if (fullClient) {
-      horizon = await getForecastHorizon(svc, fullClient, { researchOptIn: fullClient.research_opt_in });
-    }
-  } catch (e) {
-    console.error(`[horizon] client grants page compute failed for ${params.id}:`, e);
-  }
-
-  // The client's current forecast rejects, for the collapsible Undo group. Scoped to
-  // STILL-forecasted grants (join on grant_status) so a flipped (now-active) grant's
-  // inert reject never shows — it re-surfaces in the Matches table above instead.
-  const { data: rejData } = await svc
-    .from("forecast_rejections")
-    .select("grant_id, grants(title, funder, grant_status, source_url)")
-    .eq("client_id", params.id);
-  type RejGrant = Pick<Grant, "title" | "funder" | "grant_status" | "source_url">;
-  type RejRow = { grant_id: string; grants: RejGrant | RejGrant[] | null };
-  const rejectedForecasts = ((rejData ?? []) as RejRow[])
-    .map((r) => ({ grantId: r.grant_id, g: Array.isArray(r.grants) ? r.grants[0] : r.grants }))
-    .filter((r): r is { grantId: string; g: RejGrant } => !!r.g && r.g.grant_status === "Forecasted")
-    .map((r) => ({ grantId: r.grantId, title: r.g.title ?? "Forecasted opportunity", funder: r.g.funder ?? null, sourceUrl: r.g.source_url ?? null }));
-
-  // Simpler.gov opportunity URLs for the active horizon rows ("View on Simpler"). For
-  // cron-ingested rows source_url is the full https://simpler.grants.gov/opportunity/
-  // <uuid>; null or the 'manual-paste' sentinel otherwise -> the component hides the
-  // link unless it's a real http(s) URL.
-  const horizonIds = horizon.map((h) => h.grantId);
-  const srcById = new Map<string, string | null>();
-  if (horizonIds.length > 0) {
-    const { data: srcRows } = await svc.from("grants").select("id, source_url").in("id", horizonIds);
-    for (const row of (srcRows ?? []) as { id: string; source_url: string | null }[]) {
-      srcById.set(row.id, row.source_url);
-    }
-  }
-
-  const horizonActive = horizon.map((h) => ({
-    grantId: h.grantId,
-    title: h.title,
-    funder: h.funder,
-    rationale: h.rationale,
-    sourceUrl: srcById.get(h.grantId) ?? null,
-  }));
-
   return (
     <div>
       <PageHeader
@@ -163,12 +114,93 @@ export default async function ClientGrantsPage({
           priorCardId={priorAlert?.cardId ?? null}
         />
 
-        <ClientForecastHorizon
-          clientId={client.id}
-          active={horizonActive}
-          rejected={rejectedForecasts}
-        />
+        {/* Horizon ranking runs an LLM call (~seconds); stream it in a Suspense
+            boundary so everything above paints immediately and only this section
+            shows a loading state until the rank resolves. */}
+        <Suspense fallback={<HorizonLoading />}>
+          <HorizonSection clientId={client.id} />
+        </Suspense>
       </div>
     </div>
+  );
+}
+
+// The forecasted "On the horizon" section, isolated in its own async server component
+// so its LLM ranking call streams via Suspense INSTEAD of blocking the whole page
+// render. The rest of the page (client info, matches, action bar) paints immediately;
+// this fills in when the rank resolves. Same shared getForecastHorizon call, so the
+// reject filter and source-url threading are unchanged.
+async function HorizonSection({ clientId }: { clientId: string }) {
+  // Computed live — no caching — and reject-filtered inside getForecastHorizon (the
+  // service client bypasses RLS, matching how the alert path computes it in store.ts).
+  // Guarded so a horizon/LLM failure degrades to an empty section, never breaks the page.
+  const svc = createServiceClient();
+  let horizon: ForecastHorizonItem[] = [];
+  try {
+    const { data: fullClient } = await svc.from("clients").select("*").eq("id", clientId).single<Client>();
+    if (fullClient) {
+      horizon = await getForecastHorizon(svc, fullClient, { researchOptIn: fullClient.research_opt_in });
+    }
+  } catch (e) {
+    console.error(`[horizon] client grants page compute failed for ${clientId}:`, e);
+  }
+
+  // The client's current forecast rejects, for the collapsible Undo group. Scoped to
+  // STILL-forecasted grants (join on grant_status) so a flipped (now-active) grant's
+  // inert reject never shows — it re-surfaces in the Matches table above instead.
+  const { data: rejData } = await svc
+    .from("forecast_rejections")
+    .select("grant_id, grants(title, funder, grant_status, source_url)")
+    .eq("client_id", clientId);
+  type RejGrant = Pick<Grant, "title" | "funder" | "grant_status" | "source_url">;
+  type RejRow = { grant_id: string; grants: RejGrant | RejGrant[] | null };
+  const rejectedForecasts = ((rejData ?? []) as RejRow[])
+    .map((r) => ({ grantId: r.grant_id, g: Array.isArray(r.grants) ? r.grants[0] : r.grants }))
+    .filter((r): r is { grantId: string; g: RejGrant } => !!r.g && r.g.grant_status === "Forecasted")
+    .map((r) => ({ grantId: r.grantId, title: r.g.title ?? "Forecasted opportunity", funder: r.g.funder ?? null, sourceUrl: r.g.source_url ?? null }));
+
+  // Simpler.gov opportunity URLs for the active horizon rows ("View on Simpler"). For
+  // cron-ingested rows source_url is the full https://simpler.grants.gov/opportunity/
+  // <uuid>; null or the 'manual-paste' sentinel otherwise -> the component hides the
+  // link unless it's a real http(s) URL.
+  const horizonIds = horizon.map((h) => h.grantId);
+  const srcById = new Map<string, string | null>();
+  if (horizonIds.length > 0) {
+    const { data: srcRows } = await svc.from("grants").select("id, source_url").in("id", horizonIds);
+    for (const row of (srcRows ?? []) as { id: string; source_url: string | null }[]) {
+      srcById.set(row.id, row.source_url);
+    }
+  }
+
+  const horizonActive = horizon.map((h) => ({
+    grantId: h.grantId,
+    title: h.title,
+    funder: h.funder,
+    rationale: h.rationale,
+    sourceUrl: srcById.get(h.grantId) ?? null,
+  }));
+
+  return <ClientForecastHorizon clientId={clientId} active={horizonActive} rejected={rejectedForecasts} />;
+}
+
+// Streaming fallback for HorizonSection: mirrors the section heading so the layout
+// doesn't jump, with a plain-text "Loading horizon…" line (colorblind-safe, not a
+// color-only cue). Shown while the ranking call runs; replaced when it resolves.
+function HorizonLoading() {
+  return (
+    <section className="space-y-3">
+      <div>
+        <h2 className="font-serif text-lg font-semibold text-brand-navy">On the horizon · forecasted</h2>
+        <p className="text-xs text-muted-foreground">
+          Anticipated postings relevant to this client (relevance-ranked, no fit score yet).
+        </p>
+      </div>
+      <div
+        className="rounded-lg border bg-card px-4 py-10 text-center text-sm text-muted-foreground"
+        aria-live="polite"
+      >
+        Loading horizon…
+      </div>
+    </section>
   );
 }
