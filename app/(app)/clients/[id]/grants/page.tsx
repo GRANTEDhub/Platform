@@ -103,19 +103,34 @@ export default async function ClientGrantsPage({
   // inert reject never shows — it re-surfaces in the Matches table above instead.
   const { data: rejData } = await svc
     .from("forecast_rejections")
-    .select("grant_id, grants(title, funder, grant_status)")
+    .select("grant_id, grants(title, funder, grant_status, source_url)")
     .eq("client_id", params.id);
-  type RejRow = { grant_id: string; grants: Pick<Grant, "title" | "funder" | "grant_status"> | Pick<Grant, "title" | "funder" | "grant_status">[] | null };
+  type RejGrant = Pick<Grant, "title" | "funder" | "grant_status" | "source_url">;
+  type RejRow = { grant_id: string; grants: RejGrant | RejGrant[] | null };
   const rejectedForecasts = ((rejData ?? []) as RejRow[])
     .map((r) => ({ grantId: r.grant_id, g: Array.isArray(r.grants) ? r.grants[0] : r.grants }))
-    .filter((r): r is { grantId: string; g: Pick<Grant, "title" | "funder" | "grant_status"> } => !!r.g && r.g.grant_status === "Forecasted")
-    .map((r) => ({ grantId: r.grantId, title: r.g.title ?? "Forecasted opportunity", funder: r.g.funder ?? null }));
+    .filter((r): r is { grantId: string; g: RejGrant } => !!r.g && r.g.grant_status === "Forecasted")
+    .map((r) => ({ grantId: r.grantId, title: r.g.title ?? "Forecasted opportunity", funder: r.g.funder ?? null, sourceUrl: r.g.source_url ?? null }));
+
+  // Simpler.gov opportunity URLs for the active horizon rows ("View on Simpler"). For
+  // cron-ingested rows source_url is the full https://simpler.grants.gov/opportunity/
+  // <uuid>; null or the 'manual-paste' sentinel otherwise -> the component hides the
+  // link unless it's a real http(s) URL.
+  const horizonIds = horizon.map((h) => h.grantId);
+  const srcById = new Map<string, string | null>();
+  if (horizonIds.length > 0) {
+    const { data: srcRows } = await svc.from("grants").select("id, source_url").in("id", horizonIds);
+    for (const row of (srcRows ?? []) as { id: string; source_url: string | null }[]) {
+      srcById.set(row.id, row.source_url);
+    }
+  }
 
   const horizonActive = horizon.map((h) => ({
     grantId: h.grantId,
     title: h.title,
     funder: h.funder,
     rationale: h.rationale,
+    sourceUrl: srcById.get(h.grantId) ?? null,
   }));
 
   return (
