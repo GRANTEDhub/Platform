@@ -54,7 +54,10 @@ export function createServiceClient() {
       // grants sat queued (a browser hit to the same deployment read the DB fresh
       // and saw 372). Route-level `force-dynamic` did not reliably propagate
       // no-store to the library fetch in this version, so pin it on the client.
-      global: { fetch: (input, init) => fetch(input, { ...init, cache: "no-store" }) },
+      global: {
+        fetch: (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
+          fetch(input, { ...init, cache: "no-store" }),
+      },
     },
   );
 }
