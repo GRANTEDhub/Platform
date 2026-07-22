@@ -1,11 +1,10 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import { SectionLabel } from "@/components/ui/section-label";
 import { DecisionBadge } from "@/components/grants/badges";
 import { WhatItFunds, WhoCanApply, type GrantDetailFields } from "@/components/grants/grant-detail";
 import { FactorBreakdown } from "./match-score";
-import { ScoreRing, Tag } from "./primitives";
+import { ScoreRing, SectionTitle, Tag } from "./primitives";
 import { DecisionBar } from "./decision-bar";
 import { FIT_BAND } from "@/lib/report/shape";
 import { formatAwardRange, formatDeadline, compactCostShare } from "@/lib/grants/format";
@@ -137,12 +136,12 @@ export function ReportDetail({
       </div>
 
       {/* purpose & overview — the grant description */}
-      <WhatItFunds grant={grant} label="Purpose & overview" />
+      <WhatItFunds grant={grant} label="Purpose & overview" headingStyle="title" />
 
       {/* why this matches you — narrative + the per-factor scoring graphic */}
       {(why.length > 0 || card.concept_synopsis || card.factor_scores) && (
         <Card className="p-6 sm:p-7">
-          <SectionLabel>Why this matches you</SectionLabel>
+          <SectionTitle>Why this matches you</SectionTitle>
           {why.length > 0 && (
             <ul className="mt-3 space-y-2">
               {why.map((w, i) => (
@@ -163,12 +162,12 @@ export function ReportDetail({
       )}
 
       {/* eligibility */}
-      <WhoCanApply grant={grant} label="Eligibility requirements" />
+      <WhoCanApply grant={grant} label="Eligibility requirements" headingStyle="title" />
 
       {/* key details & links */}
       {(match !== "None" || grant.period_of_performance || funder || cfda || showSource) && (
         <Card className="p-6 sm:p-7">
-          <SectionLabel>Key details &amp; links</SectionLabel>
+          <SectionTitle>Key details &amp; links</SectionTitle>
           <div className="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2">
             <DetailRow label="Match required" value={match} />
             {grant.period_of_performance && <DetailRow label="Period of performance" value={grant.period_of_performance} />}

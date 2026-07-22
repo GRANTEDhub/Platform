@@ -13,7 +13,7 @@ export default async function PortalLayout({
   const orgName = memberships[0]?.clientName || "Your organization";
 
   return (
-    <div className="min-h-screen bg-brand-cream">
+    <div className="flex min-h-screen flex-col">
       <header className="border-b border-brand-navy/[0.06] bg-white">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
           <img src="/granted-lockup-light.svg" alt="GRANTED" className="h-8 w-auto" />
@@ -30,7 +30,9 @@ export default async function PortalLayout({
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-5xl px-6 py-10">{children}</main>
+      {/* Each portal page provides its own HubShell backdrop (list = crisp,
+          detail/swipe = warm), mirroring the staff roadmap surfaces. */}
+      <main className="flex-1">{children}</main>
     </div>
   );
 }

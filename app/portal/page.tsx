@@ -1,6 +1,7 @@
 import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { GrantReport } from "@/components/report/grant-report";
+import { HubShell } from "@/components/layout/hub-background";
 import { toReportItems, type ReportCardRow } from "@/lib/report/shape";
 
 export const dynamic = "force-dynamic";
@@ -35,11 +36,14 @@ export default async function PortalHome() {
       : `${items.length} matched ${items.length === 1 ? "opportunity" : "opportunities"} · Ranked by fit`;
 
   return (
-    <GrantReport
-      items={items}
-      heading={`${org.clientName} · Grant Roadmap`}
-      subtitle={subtitle}
-      basePath="/portal/grants"
-    />
+    <HubShell variant="crisp" width="7xl">
+      <GrantReport
+        items={items}
+        heading={`${org.clientName} · Grant Roadmap`}
+        subtitle={subtitle}
+        basePath="/portal/grants"
+        triageHref="/portal/triage"
+      />
+    </HubShell>
   );
 }

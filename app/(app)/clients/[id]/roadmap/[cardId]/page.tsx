@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { ReportDetail, type ReportDetailCard } from "@/components/report/report-detail";
+import { HubShell } from "@/components/layout/hub-background";
 import { deciderLabel } from "@/lib/report/shape";
 import type { GrantDetailFields } from "@/components/grants/grant-detail";
 import type { Client } from "@/types/database";
@@ -54,7 +55,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   );
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8">
+    <HubShell>
       <ReportDetail
         cardId={params.cardId}
         card={card}
@@ -65,6 +66,6 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         deciderLabel={decidedBy}
         backHref={`/clients/${params.id}/roadmap`}
       />
-    </div>
+    </HubShell>
   );
 }

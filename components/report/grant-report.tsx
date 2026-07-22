@@ -31,16 +31,21 @@ export function GrantReport({
   heading,
   subtitle,
   basePath,
+  triageHref,
 }: {
   items: ReportItem[];
   heading: string;
   subtitle?: string;
   // Where a row links to, e.g. "/portal/grants". Detail is `${basePath}/${id}`.
   basePath: string;
+  // Optional link to the swipe-triage view; the launch button shows only when
+  // there are undecided (pending) matches to triage.
+  triageHref?: string;
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const stats = useMemo(() => reportStats(items), [items]);
+  const pendingCount = useMemo(() => items.filter((i) => i.decision === "pending").length, [items]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -55,8 +60,20 @@ export function GrantReport({
     <div>
       {/* header card */}
       <div className="animate-fade-up rounded-3xl bg-white p-8 shadow-soft">
-        <h1 className="font-serif text-[30px] font-semibold leading-tight tracking-tight text-brand-navy">{heading}</h1>
-        {subtitle && <p className="mt-2 text-[14px] text-muted-foreground">{subtitle}</p>}
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="font-serif text-[30px] font-semibold leading-tight tracking-tight text-brand-navy">{heading}</h1>
+            {subtitle && <p className="mt-2 text-[14px] text-muted-foreground">{subtitle}</p>}
+          </div>
+          {triageHref && pendingCount > 0 && (
+            <Link
+              href={triageHref}
+              className="shrink-0 rounded-full bg-brand-orange px-5 py-2.5 text-sm font-semibold text-white shadow-soft transition hover:brightness-105"
+            >
+              Interactive Grant Report
+            </Link>
+          )}
+        </div>
 
         <div className="mt-6 flex flex-wrap gap-x-12 gap-y-4 border-t border-brand-navy/[0.06] pt-5">
           <Stat value={String(stats.matched)} label="Matched grants" />

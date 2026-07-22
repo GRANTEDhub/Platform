@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { ReportDetail, type ReportDetailCard } from "@/components/report/report-detail";
+import { HubShell } from "@/components/layout/hub-background";
 import { deciderLabel } from "@/lib/report/shape";
 import type { GrantDetailFields } from "@/components/grants/grant-detail";
 
@@ -48,15 +49,17 @@ export default async function PortalGrantDetail({ params }: { params: { id: stri
   const decidedBy = deciderLabel(card.decision, card.decided_by, card.decided_by_actor, user?.id ?? null, org.clientName);
 
   return (
-    <ReportDetail
-      cardId={params.id}
-      card={card}
-      grant={g}
-      title={g.title || "Untitled opportunity"}
-      funder={g.funder}
-      focusAreas={(g.focus_areas ?? []).slice(0, 3)}
-      deciderLabel={decidedBy}
-      backHref="/portal"
-    />
+    <HubShell>
+      <ReportDetail
+        cardId={params.id}
+        card={card}
+        grant={g}
+        title={g.title || "Untitled opportunity"}
+        funder={g.funder}
+        focusAreas={(g.focus_areas ?? []).slice(0, 3)}
+        deciderLabel={decidedBy}
+        backHref="/portal"
+      />
+    </HubShell>
   );
 }

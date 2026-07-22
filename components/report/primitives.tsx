@@ -47,6 +47,13 @@ export function FactorMark({ mark, className }: { mark: "check" | "approx" | "da
   );
 }
 
+// Section heading for the Grant Report detail — a serif title that reads LARGER
+// than the body beneath it (the Figma treatment), distinct from the small
+// uppercase SectionLabel used elsewhere in the app.
+export function SectionTitle({ children }: { children: React.ReactNode }) {
+  return <h2 className="font-serif text-[20px] font-semibold leading-snug text-brand-navy">{children}</h2>;
+}
+
 // Small navy chip used for role / focus-area tags on a row.
 export function Tag({ children }: { children: React.ReactNode }) {
   return (
