@@ -14,13 +14,11 @@ import { interTight, sourceSerif } from "@/lib/fonts";
 // Two tracks read from one shred: Grant Matches (Track 1, active clients) and
 // Grant Intel (Track 2, prospects / BizDev -- stub until the prospect engine).
 const ADMIN_NAV: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: "dashboard" },
-  { href: "/portfolio", label: "Portfolio", icon: "portfolio" },
+  { href: "/clients", label: "Portfolio", icon: "portfolio" },
   { href: "/grants", label: "Ledger", icon: "grants" },
   { href: "/matches", label: "Matches", icon: "matching" },
   { href: "/intel", label: "Prospecting", icon: "intel" },
   { href: "/leads", label: "Pipeline", icon: "leads" },
-  { href: "/clients", label: "Clients/Prospects", icon: "clients" },
   { href: "/time", label: "Time", icon: "time" },
   { href: "/invoices", label: "Invoices", icon: "invoices" },
   { href: "/contracts", label: "Contracts", icon: "contracts" },

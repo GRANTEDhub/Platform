@@ -52,6 +52,14 @@ const nextConfig = {
       ],
     },
   },
+  async redirects() {
+    return [
+      // Consolidated: the old dashboard + portfolio pages are now the single
+      // /clients hub. Redirect old links/bookmarks so nothing dead-ends.
+      { source: "/dashboard", destination: "/clients", permanent: true },
+      { source: "/portfolio", destination: "/clients", permanent: true },
+    ];
+  },
 };
 
 export default nextConfig;
