@@ -37,14 +37,29 @@ export function HubBackground({ variant = "warm" }: { variant?: Variant }) {
   );
 }
 
-// Convenience wrapper for hub surfaces inside the staff app shell (which paints
-// its own cream): a positioned container so the backdrop scrolls with the page,
-// plus the standard max-width content column above it.
-export function HubShell({ children, variant }: { children: React.ReactNode; variant?: Variant }) {
+// Convenience wrapper for hub surfaces: a positioned container so the backdrop
+// scrolls with the page, plus a max-width content column above it. `width` widens
+// the column — the roadmap LIST uses "7xl" so the header + cards run toward the
+// page edges (per the Figma); detail keeps the narrower "5xl".
+const MAX_W: Record<"5xl" | "6xl" | "7xl", string> = {
+  "5xl": "max-w-5xl",
+  "6xl": "max-w-6xl",
+  "7xl": "max-w-7xl",
+};
+
+export function HubShell({
+  children,
+  variant,
+  width = "5xl",
+}: {
+  children: React.ReactNode;
+  variant?: Variant;
+  width?: "5xl" | "6xl" | "7xl";
+}) {
   return (
     <div className="relative min-h-full">
       <HubBackground variant={variant} />
-      <div className="relative mx-auto max-w-5xl px-6 py-8">{children}</div>
+      <div className={`relative mx-auto ${MAX_W[width]} px-6 py-8`}>{children}</div>
     </div>
   );
 }

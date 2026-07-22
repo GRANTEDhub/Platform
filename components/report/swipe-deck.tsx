@@ -53,7 +53,7 @@ export function SwipeDeck({
 
   if (!top) {
     return (
-      <div className="mx-auto max-w-lg py-16 text-center">
+      <div className="mx-auto max-w-2xl py-16 text-center">
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-brand-navy/[0.06]">
           <Check className="h-7 w-7 text-brand-orange" strokeWidth={3} />
         </div>
@@ -72,7 +72,7 @@ export function SwipeDeck({
   }
 
   return (
-    <div className="mx-auto max-w-lg">
+    <div className="mx-auto max-w-2xl">
       <div className="mb-5 flex items-center justify-between">
         <Link href={backHref} className="text-sm font-medium text-muted-foreground hover:text-brand-navy">
           ← Roadmap

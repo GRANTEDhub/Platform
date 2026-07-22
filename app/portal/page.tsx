@@ -36,7 +36,7 @@ export default async function PortalHome() {
       : `${items.length} matched ${items.length === 1 ? "opportunity" : "opportunities"} · Ranked by fit`;
 
   return (
-    <HubShell variant="crisp">
+    <HubShell variant="crisp" width="7xl">
       <GrantReport
         items={items}
         heading={`${org.clientName} · Grant Roadmap`}

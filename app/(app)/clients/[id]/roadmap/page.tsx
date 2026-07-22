@@ -42,7 +42,7 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
       : `${items.length} matched ${items.length === 1 ? "opportunity" : "opportunities"} · Ranked by fit · The client sees this exact view`;
 
   return (
-    <HubShell variant="crisp">
+    <HubShell variant="crisp" width="7xl">
       <Link
         href={`/clients/${client.id}`}
         className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-brand-navy"
