@@ -37,6 +37,12 @@ export async function PATCH(
     return NextResponse.json({ error: "Invalid decision" }, { status: 400 });
   }
 
+  // Which side is deciding? Staff have a profiles row; client portal members don't.
+  // (A client can't read profiles under RLS, so this self-lookup returns null for
+  // them, which correctly resolves to 'client'.) Stamped for actor attribution.
+  const { data: prof } = await supabase.from("profiles").select("id").eq("id", user.id).maybeSingle();
+  const actor = prof ? "staff" : "client";
+
   const isTerminal = body.decision !== "pending";
   const { data, error } = await supabase
     .from("review_cards")
@@ -45,6 +51,7 @@ export async function PATCH(
       decision_reason: body.decision === "passed" ? body.decision_reason || null : null,
       decided_by: isTerminal ? user.id : null,
       decided_at: isTerminal ? new Date().toISOString() : null,
+      decided_by_actor: isTerminal ? actor : null,
     })
     .eq("id", params.id)
     .select()

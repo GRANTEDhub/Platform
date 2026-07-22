@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { ReportDetail, type ReportDetailCard } from "@/components/report/report-detail";
+import { deciderLabel } from "@/lib/report/shape";
 import type { GrantDetailFields } from "@/components/grants/grant-detail";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +31,7 @@ export default async function PortalGrantDetail({ params }: { params: { id: stri
   const { data } = await supabase
     .from("review_cards")
     .select(
-      "fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, decision, card_type, grants(id, source_url, title, funder, focus_areas, assistance_listings, submission_deadline, period_of_performance, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, description, eligible_entity_types, geographic_eligibility, ineligible_entities, subaward_prohibited, incumbent_risk, technical_burden_flags, hard_disqualifiers, verification_flags, scoring_rubric, ideal_applicant_profile, grant_status)",
+      "fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, decision, decided_by, decided_by_actor, card_type, grants(id, source_url, title, funder, focus_areas, assistance_listings, submission_deadline, period_of_performance, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, description, eligible_entity_types, geographic_eligibility, ineligible_entities, subaward_prohibited, incumbent_risk, technical_burden_flags, hard_disqualifiers, verification_flags, scoring_rubric, ideal_applicant_profile, grant_status)",
     )
     .eq("id", params.id)
     .eq("client_id", org.clientId)
@@ -41,14 +42,20 @@ export default async function PortalGrantDetail({ params }: { params: { id: stri
   if (!card || !card.grants) notFound();
 
   const g = card.grants;
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const decidedBy = deciderLabel(card.decision, card.decided_by, card.decided_by_actor, user?.id ?? null, org.clientName);
 
   return (
     <ReportDetail
+      cardId={params.id}
       card={card}
       grant={g}
       title={g.title || "Untitled opportunity"}
       funder={g.funder}
       focusAreas={(g.focus_areas ?? []).slice(0, 3)}
+      deciderLabel={decidedBy}
       backHref="/portal"
     />
   );

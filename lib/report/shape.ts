@@ -161,6 +161,22 @@ export function toReportItems(cards: ReportCardRow[]): ReportItem[] {
   });
 }
 
+// Attribution label for a recorded decision: "you" when the viewer made it, the
+// client org name when the client side did, else "your GRANTED team". Null when
+// undecided. Pure — the page supplies viewerId + clientName.
+export function deciderLabel(
+  decision: CardDecision,
+  decidedBy: string | null,
+  decidedByActor: string | null,
+  viewerId: string | null,
+  clientName: string,
+): string | null {
+  if (decision === "pending" || !decidedBy) return null;
+  if (viewerId && decidedBy === viewerId) return "you";
+  if (decidedByActor === "client") return clientName;
+  return "your GRANTED team";
+}
+
 export interface ReportStats {
   matched: number;
   avgFit: string | null; // one-decimal string, e.g. "2.7"; null when empty

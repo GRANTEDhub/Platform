@@ -6,6 +6,7 @@ import { DecisionBadge } from "@/components/grants/badges";
 import { WhatItFunds, WhoCanApply, type GrantDetailFields } from "@/components/grants/grant-detail";
 import { FactorBreakdown } from "./match-score";
 import { ScoreRing, Tag } from "./primitives";
+import { DecisionBar } from "./decision-bar";
 import { FIT_BAND } from "@/lib/report/shape";
 import { formatAwardRange, formatDeadline, compactCostShare } from "@/lib/grants/format";
 import type { CardDecision, FactorScores } from "@/types/database";
@@ -28,6 +29,8 @@ export interface ReportDetailCard {
   concept_synopsis: string | null;
   factor_scores: FactorScores | null;
   decision: CardDecision;
+  decided_by: string | null;
+  decided_by_actor: string | null;
 }
 
 type DetailGrant = GrantDetailFields & {
@@ -62,19 +65,23 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 }
 
 export function ReportDetail({
+  cardId,
   card,
   grant,
   title,
   funder,
   focusAreas,
+  deciderLabel,
   backHref,
   backLabel = "Back to roadmap",
 }: {
+  cardId: string;
   card: ReportDetailCard;
   grant: DetailGrant;
   title: string;
   funder: string | null;
   focusAreas: string[];
+  deciderLabel: string | null;
   backHref: string;
   backLabel?: string;
 }) {
@@ -125,6 +132,8 @@ export function ReportDetail({
           <HeaderStat label="Status" value={statusText(grant.grant_status)} />
           <HeaderStat label="Expected awards" value={grant.num_awards || "—"} />
         </div>
+
+        <DecisionBar cardId={cardId} decision={card.decision} deciderLabel={deciderLabel} />
       </div>
 
       {/* purpose & overview — the grant description */}
