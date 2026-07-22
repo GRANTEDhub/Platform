@@ -145,6 +145,9 @@ export interface Client {
   intake_sent_at: string | null; // an intake form was sent (badge input)
   stripe_customer_id: string | null; // Stripe customer (migration 0033), reused across invoices
   converted_at: string | null; // when the lead converted to an active client (migration 0034)
+  // Client-portal seat limit (migration 0055): how many portal logins this client
+  // may have. Default 1; staff raise it per the pricing tier.
+  seat_limit: number;
   created_at: string;
   updated_at: string;
 }

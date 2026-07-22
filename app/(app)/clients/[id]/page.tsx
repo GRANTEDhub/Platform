@@ -16,6 +16,7 @@ import { ClientActionItems } from "@/components/clients/client-action-items";
 import { GenerateReportButton } from "@/components/clients/generate-report-button";
 import { samExpiryFlag } from "@/lib/sam/expiry";
 import { ClientRepository } from "@/components/clients/client-repository";
+import { PortalAccess, type PortalMember } from "@/components/clients/portal-access";
 import { AutoRefresh } from "@/components/ui/auto-refresh";
 import { signedUrl } from "@/lib/storage";
 import { isUnconvertedLead } from "@/lib/leads/stage";
@@ -71,7 +72,13 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
 
   if (!client) notFound();
 
-  const [{ data: overviewData }, { data: cardRows }, { data: invoices }, { data: docRows }] = await Promise.all([
+  const [
+    { data: overviewData },
+    { data: cardRows },
+    { data: invoices },
+    { data: docRows },
+    { data: memberRows },
+  ] = await Promise.all([
     supabase.from("client_overview").select("*").eq("id", params.id).single(),
     supabase
       .from("review_cards")
@@ -89,7 +96,13 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
       .select("id, kind, title, created_at, storage_bucket, storage_path")
       .eq("client_id", params.id)
       .order("created_at", { ascending: false }),
+    supabase
+      .from("client_members")
+      .select("id, email, role, activated_at")
+      .eq("client_id", params.id)
+      .order("invited_at", { ascending: true }),
   ]);
+  const members = (memberRows ?? []) as PortalMember[];
 
   // Repository: mint short-lived signed URLs for each stored document (private
   // buckets). Reusable for any doc kind, not just contracts.
@@ -355,6 +368,18 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
                 label="Hours remaining"
                 value={hoursRemaining !== null ? Number(hoursRemaining).toFixed(1) : "—"}
               />
+            </CardContent>
+          </Card>
+
+          <Card className={CARD_RAIL}>
+            <CardHeader className="flex-row items-center justify-between space-y-0">
+              <CardTitle>Portal access</CardTitle>
+              <span className="rounded-full bg-brand-navy/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-navy">
+                Internal
+              </span>
+            </CardHeader>
+            <CardContent>
+              <PortalAccess clientId={client.id} seatLimit={client.seat_limit ?? 1} members={members} />
             </CardContent>
           </Card>
 

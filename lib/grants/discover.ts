@@ -267,6 +267,7 @@ function prospectAsClient(c: Record<string, string>): Client {
     name: c.name,
     org_type: c.org_type ?? null,
     status: "prospect",
+    seat_limit: 1, // not a real client; portal seats are irrelevant to scoring
     engagement_tier: null,
     primary_contact_name: null,
     primary_contact_email: null,
