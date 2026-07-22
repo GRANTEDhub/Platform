@@ -8,9 +8,13 @@
 // the asset lands, and lights up the moment it does. Decorative only
 // (aria-hidden, pointer-events-none).
 //
-// Tuning knobs live here in one place: BLUR + the cream overlay opacity.
-const BLUR = "1.5px";
-const OVERLAY = "bg-brand-cream/55";
+// Tuning knobs live here in one place. POSITION biases the crop downward so the
+// photo's bright sun-flare rides up and out of the content zone (it reads as a
+// hot patch behind cards otherwise); BLUR + the cream WASH keep it a soft, warm
+// backdrop rather than a busy photo. Calibrated against the real image.
+const BLUR = "2.5px";
+const POSITION = "center 78%";
+const WASH = "bg-brand-cream/50";
 
 export function HubBackground() {
   return (
@@ -20,12 +24,12 @@ export function HubBackground() {
         style={{
           backgroundImage: "url('/map-bg.jpg')",
           backgroundSize: "cover",
-          backgroundPosition: "center",
+          backgroundPosition: POSITION,
           filter: `blur(${BLUR})`,
           transform: "scale(1.04)",
         }}
       />
-      <div className={`absolute inset-0 ${OVERLAY}`} />
+      <div className={`absolute inset-0 ${WASH}`} />
     </div>
   );
 }
