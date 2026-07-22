@@ -1,20 +1,29 @@
-// GRANTED brand fonts, loaded once as reusable primitives. Exposed as CSS
-// variables so a consumer can scope them to a subtree (attach `.variable` to a
-// wrapper) rather than forcing them app-wide. Applied on the client dashboard
-// this pass; app-wide adoption is later opt-in.
+// GRANTED brand fonts, loaded once as reusable primitives and applied
+// platform-wide from the root layout (app/layout.tsx). Exposed as CSS variables
+// so Tailwind's fontFamily can resolve them:
+//   --font-dm-sans          -> fontFamily.sans  (body / default: Tailwind's
+//                              preflight sets `html { font-family: sans }`, so
+//                              this becomes the base font for every page)
+//   --font-libre-baskerville -> fontFamily.serif (headings via `font-serif`)
+//
+// The pairing (Libre Baskerville headings + DM Sans body) matches the design
+// direction: relaxed, editorial serif display over a clean humanist sans.
 //
 // next/font/google fetches at BUILD time (fine on Vercel). If a build ever runs
 // air-gapped, switch to next/font/local with vendored font files.
-import { Inter_Tight, Source_Serif_4 } from "next/font/google";
+import { DM_Sans, Libre_Baskerville } from "next/font/google";
 
-export const interTight = Inter_Tight({
+export const dmSans = DM_Sans({
   subsets: ["latin"],
-  variable: "--font-inter-tight",
+  variable: "--font-dm-sans",
   display: "swap",
 });
 
-export const sourceSerif = Source_Serif_4({
+// Libre Baskerville ships only regular (400) and bold (700) — no variable axis.
+// Headings use `font-serif`; weight is chosen per-heading in the markup.
+export const libreBaskerville = Libre_Baskerville({
   subsets: ["latin"],
-  variable: "--font-source-serif",
+  weight: ["400", "700"],
+  variable: "--font-libre-baskerville",
   display: "swap",
 });

@@ -58,10 +58,15 @@ const config: Config = {
         lift: "0 26px 70px -24px rgba(11,30,58,0.30)",
       },
       fontFamily: {
-        sans: ["var(--font-sans)", "system-ui", "sans-serif"],
-        // Scoped to the dashboard via the font-var classes on its wrapper.
-        serif: ["var(--font-source-serif)", "Source Serif 4", "serif"],
-        tight: ["var(--font-inter-tight)", "system-ui", "sans-serif"],
+        // Body / default. Tailwind's preflight sets `html { font-family: sans }`,
+        // so DM Sans is the base font for every page once the CSS var is applied
+        // at the root layout.
+        sans: ["var(--font-dm-sans)", "system-ui", "sans-serif"],
+        // Headings (`font-serif`) — Libre Baskerville, editorial display serif.
+        serif: ["var(--font-libre-baskerville)", "Georgia", "serif"],
+        // Legacy alias: some wrappers still carry `font-tight`. Point it at the
+        // body font so it stays consistent with the platform default.
+        tight: ["var(--font-dm-sans)", "system-ui", "sans-serif"],
       },
     },
   },

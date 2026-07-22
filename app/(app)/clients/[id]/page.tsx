@@ -7,7 +7,6 @@ import { createClient } from "@/lib/supabase/server";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/utils";
-import { interTight, sourceSerif } from "@/lib/fonts";
 import { ClientHero } from "@/components/clients/client-snapshot-header";
 import { StatCard } from "@/components/clients/stat-card";
 import { ClientMatchChart } from "@/components/clients/client-match-chart";
@@ -195,7 +194,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   const isProspect = isUnconvertedLead(client.pipeline_stage);
 
   return (
-    <div className={`${interTight.variable} ${sourceSerif.variable} min-h-full bg-brand-cream pb-10 font-tight`}>
+    <div className="min-h-full bg-brand-cream pb-10">
       <ClientHero
         name={client.name}
         humanLine={humanLine}
@@ -310,9 +309,14 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
           <Card className={CARD_MAIN}>
             <CardHeader className="flex-row items-center justify-between space-y-0">
               <CardTitle>Grant tracking</CardTitle>
-              <Link href={`/clients/${client.id}/grants`} className="text-sm text-brand-orange hover:underline">
-                View all activity →
-              </Link>
+              <div className="flex items-center gap-4">
+                <Link href={`/clients/${client.id}/roadmap`} className="text-sm font-medium text-brand-orange hover:underline">
+                  Client roadmap →
+                </Link>
+                <Link href={`/clients/${client.id}/grants`} className="text-sm text-brand-orange hover:underline">
+                  All activity →
+                </Link>
+              </div>
             </CardHeader>
             <CardContent>
               <ClientGrantTracking grants={tracked} />

@@ -384,6 +384,10 @@ export interface ReviewCard {
   decision_reason: string | null;
   decided_by: string | null;
   decided_at: string | null;
+  // Which side recorded the decision — 'staff' or 'client' (migration 0056). The
+  // shared decision surface reads this to attribute a decision ("Pursued by the
+  // client" vs "Approved by GRANTED"). Null on undecided cards.
+  decided_by_actor: string | null;
   // Manual add-to-client override audit (migration 0040). overridden_by/at are set
   // on EVERY manual add (human-added vs engine-surfaced); override_reason is set
   // ONLY when the add was FORCED past a gate ("<severity>: <reason>") and drives

@@ -1,6 +1,5 @@
 import { requireUser } from "@/lib/auth";
 import { Sidebar, type NavItem } from "@/components/layout/sidebar";
-import { interTight, sourceSerif } from "@/lib/fonts";
 
 // Admins see the full firm. Contractors are scoped to grant work only -- no
 // clients, time, invoices, contracts, sales, or settings.
@@ -42,7 +41,7 @@ export default async function AppLayout({
   const items = profile.role === "admin" ? ADMIN_NAV : CONTRACTOR_NAV;
 
   return (
-    <div className={`${interTight.variable} ${sourceSerif.variable} flex h-screen gap-3 overflow-hidden bg-brand-cream p-3`}>
+    <div className="flex h-screen gap-3 overflow-hidden bg-brand-cream p-3">
       <Sidebar
         items={items}
         user={{
