@@ -7,7 +7,6 @@ import { createClient } from "@/lib/supabase/server";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/utils";
-import { interTight, sourceSerif } from "@/lib/fonts";
 import { ClientHero } from "@/components/clients/client-snapshot-header";
 import { StatCard } from "@/components/clients/stat-card";
 import { ClientMatchChart } from "@/components/clients/client-match-chart";
@@ -195,7 +194,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   const isProspect = isUnconvertedLead(client.pipeline_stage);
 
   return (
-    <div className={`${interTight.variable} ${sourceSerif.variable} min-h-full bg-brand-cream pb-10 font-tight`}>
+    <div className="min-h-full bg-brand-cream pb-10">
       <ClientHero
         name={client.name}
         humanLine={humanLine}

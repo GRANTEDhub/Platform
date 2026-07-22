@@ -1,5 +1,4 @@
 import { requireClient } from "@/lib/auth";
-import { interTight, sourceSerif } from "@/lib/fonts";
 
 // The client portal shell. Distinct from the staff (app) layout: no firm nav,
 // just the client's own space. requireClient() gates it — staff are sent to
@@ -14,7 +13,7 @@ export default async function PortalLayout({
   const orgName = memberships[0]?.clientName || "Your organization";
 
   return (
-    <div className={`${interTight.variable} ${sourceSerif.variable} min-h-screen bg-brand-cream font-tight`}>
+    <div className="min-h-screen bg-brand-cream">
       <header className="border-b border-brand-navy/[0.06] bg-white">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
           <img src="/granted-lockup-light.svg" alt="GRANTED" className="h-8 w-auto" />

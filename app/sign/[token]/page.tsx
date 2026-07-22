@@ -1,6 +1,5 @@
 import { createServiceClient } from "@/lib/supabase/server";
 import { resolveToken } from "@/lib/tokens";
-import { interTight, sourceSerif } from "@/lib/fonts";
 import { SignForm } from "./sign-form";
 
 export const dynamic = "force-dynamic";
@@ -14,12 +13,10 @@ const WRAP = "flex min-h-screen flex-col items-center bg-brand-cream px-6 py-12"
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className={`${interTight.variable} ${sourceSerif.variable} font-tight`}>
-      <div className={WRAP}>
-        <div className="w-full max-w-2xl rounded-2xl bg-white p-8 shadow-[0_2px_8px_rgba(11,30,58,0.06),0_16px_38px_-18px_rgba(11,30,58,0.20)]">
-          <p className="font-serif text-xl font-semibold tracking-tight text-brand-navy">GRANTED</p>
-          <div className="mt-6">{children}</div>
-        </div>
+    <div className={WRAP}>
+      <div className="w-full max-w-2xl rounded-2xl bg-white p-8 shadow-[0_2px_8px_rgba(11,30,58,0.06),0_16px_38px_-18px_rgba(11,30,58,0.20)]">
+        <p className="font-serif text-xl font-semibold tracking-tight text-brand-navy">GRANTED</p>
+        <div className="mt-6">{children}</div>
       </div>
     </div>
   );
