@@ -53,11 +53,21 @@ function LoginForm() {
       (typeof window !== "undefined" ? window.location.origin : "");
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${origin}/auth/callback?next=${redirectedFrom}` },
+      // No self-registration: only provisioned accounts (staff + invited clients)
+      // may sign in. shouldCreateUser:false means a non-existent email never gets
+      // an account created — closing the "email yourself a link → become staff" hole.
+      options: {
+        shouldCreateUser: false,
+        emailRedirectTo: `${origin}/auth/callback?next=${redirectedFrom}`,
+      },
     });
     setLoading(false);
     if (error) {
-      setError(error.message);
+      setError(
+        /signups? not allowed|not authorized|not found/i.test(error.message)
+          ? "No account found for that email. Ask your GRANTED contact to set you up."
+          : error.message,
+      );
       return;
     }
     setSent(true);
