@@ -1,0 +1,47 @@
+import { notFound } from "next/navigation";
+import { requireAdmin } from "@/lib/auth";
+import { createClient } from "@/lib/supabase/server";
+import { ReportDetail, type ReportDetailCard } from "@/components/report/report-detail";
+import type { GrantDetailFields } from "@/components/grants/grant-detail";
+
+export const dynamic = "force-dynamic";
+
+type DetailRow = ReportDetailCard & {
+  grants: (GrantDetailFields & { title: string | null; funder: string | null; focus_areas: string[] | null }) | null;
+};
+
+// Staff account-manager detail — the same read-only ReportDetail the client opens
+// from their portal, mounted here so staff review the identical surface. client_id
+// is pinned so the card must belong to the client whose roadmap this is.
+export default async function ClientRoadmapDetail({ params }: { params: { id: string; cardId: string } }) {
+  await requireAdmin();
+  const supabase = createClient();
+
+  const { data } = await supabase
+    .from("review_cards")
+    .select(
+      "fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, decision, grants(id, source_url, title, funder, focus_areas, submission_deadline, period_of_performance, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, description, eligible_entity_types, geographic_eligibility, ineligible_entities, subaward_prohibited, incumbent_risk, technical_burden_flags, hard_disqualifiers, verification_flags, scoring_rubric, ideal_applicant_profile, grant_status)",
+    )
+    .eq("id", params.cardId)
+    .eq("client_id", params.id)
+    .neq("card_type", "prospect")
+    .maybeSingle();
+
+  const card = data as DetailRow | null;
+  if (!card || !card.grants) notFound();
+
+  const g = card.grants;
+
+  return (
+    <div className="mx-auto max-w-5xl px-6 py-8">
+      <ReportDetail
+        card={card}
+        grant={g}
+        title={g.title || "Untitled opportunity"}
+        funder={g.funder}
+        focusAreas={(g.focus_areas ?? []).slice(0, 3)}
+        backHref={`/clients/${params.id}/roadmap`}
+      />
+    </div>
+  );
+}

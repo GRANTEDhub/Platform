@@ -309,9 +309,14 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
           <Card className={CARD_MAIN}>
             <CardHeader className="flex-row items-center justify-between space-y-0">
               <CardTitle>Grant tracking</CardTitle>
-              <Link href={`/clients/${client.id}/grants`} className="text-sm text-brand-orange hover:underline">
-                View all activity →
-              </Link>
+              <div className="flex items-center gap-4">
+                <Link href={`/clients/${client.id}/roadmap`} className="text-sm font-medium text-brand-orange hover:underline">
+                  Client roadmap →
+                </Link>
+                <Link href={`/clients/${client.id}/grants`} className="text-sm text-brand-orange hover:underline">
+                  All activity →
+                </Link>
+              </div>
             </CardHeader>
             <CardContent>
               <ClientGrantTracking grants={tracked} />
