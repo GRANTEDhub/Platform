@@ -175,7 +175,7 @@ export async function createClientAction(formData: FormData): Promise<ClientActi
 
   revalidatePath("/clients");
   revalidatePath(`/clients/${clientId}`);
-  revalidatePath("/dashboard");
+  revalidatePath("/clients");
   redirect(`/clients/${clientId}`);
 }
 
@@ -266,6 +266,6 @@ export async function updateClientAction(
 
   revalidatePath("/clients");
   revalidatePath(`/clients/${id}`);
-  revalidatePath("/dashboard");
+  revalidatePath("/clients");
   redirect(`/clients/${id}`);
 }

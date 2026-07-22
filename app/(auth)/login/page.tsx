@@ -19,7 +19,7 @@ export default function LoginPage() {
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirectedFrom = searchParams.get("redirectedFrom") || "/dashboard";
+  const redirectedFrom = searchParams.get("redirectedFrom") || "/clients";
 
   const [mode, setMode] = useState<Mode>("password");
   const [email, setEmail] = useState("");

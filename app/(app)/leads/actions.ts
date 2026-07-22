@@ -172,7 +172,7 @@ export async function convertLead(leadId: string): Promise<void> {
   revalidatePath("/leads");
   revalidatePath(`/leads/${leadId}`);
   revalidatePath("/clients");
-  revalidatePath("/dashboard");
+  revalidatePath("/clients");
 }
 
 // Assign / change / clear the account manager. Logs am_assigned with the name.
