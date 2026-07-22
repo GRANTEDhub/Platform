@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { GrantReport } from "@/components/report/grant-report";
+import { ClientActivity, type ClientActivityItem } from "@/components/report/client-activity";
 import { HubShell } from "@/components/layout/hub-background";
 import { toReportItems, type ReportCardRow } from "@/lib/report/shape";
 import type { Client } from "@/types/database";
@@ -36,6 +37,37 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
     .neq("decision", "passed");
 
   const items = toReportItems((data ?? []) as unknown as ReportCardRow[]);
+
+  // Client-side decisions (decided_by_actor='client') — the loop signal for the
+  // AM. Separate query since it includes passes, which the roadmap list hides.
+  const { data: activityRows } = await supabase
+    .from("review_cards")
+    .select("id, decision, decision_reason, decided_at, grants(title)")
+    .eq("client_id", params.id)
+    .eq("decided_by_actor", "client")
+    .neq("card_type", "prospect")
+    .order("decided_at", { ascending: false })
+    .limit(12);
+
+  const activity: ClientActivityItem[] = ((activityRows ?? []) as Array<{
+    id: string;
+    decision: string;
+    decision_reason: string | null;
+    decided_at: string | null;
+    grants: { title: string | null } | { title: string | null }[] | null;
+  }>)
+    .filter((r) => r.decision === "approved" || r.decision === "passed")
+    .map((r) => {
+      const g = Array.isArray(r.grants) ? r.grants[0] : r.grants;
+      return {
+        cardId: r.id,
+        title: g?.title || "Untitled opportunity",
+        decision: r.decision as "approved" | "passed",
+        reason: r.decision_reason,
+        decidedAt: r.decided_at,
+      };
+    });
+
   const subtitle =
     items.length === 0
       ? "No matched opportunities yet — they appear here as the engine surfaces them."
@@ -50,6 +82,7 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
         <ArrowLeft className="h-4 w-4" />
         {client.name}
       </Link>
+      <ClientActivity items={activity} basePath={`/clients/${client.id}/roadmap`} clientName={client.name} />
       <GrantReport
         items={items}
         heading={`${client.name} · Grant Roadmap`}
