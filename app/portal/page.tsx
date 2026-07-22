@@ -40,6 +40,7 @@ export default async function PortalHome() {
       heading={`${org.clientName} · Grant Roadmap`}
       subtitle={subtitle}
       basePath="/portal/grants"
+      triageHref="/portal/triage"
     />
   );
 }

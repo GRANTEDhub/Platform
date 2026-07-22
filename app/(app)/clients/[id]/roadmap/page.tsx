@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { GrantReport } from "@/components/report/grant-report";
+import { HubShell } from "@/components/layout/hub-background";
 import { toReportItems, type ReportCardRow } from "@/lib/report/shape";
 import type { Client } from "@/types/database";
 
@@ -41,7 +42,7 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
       : `${items.length} matched ${items.length === 1 ? "opportunity" : "opportunities"} · Ranked by fit · The client sees this exact view`;
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8">
+    <HubShell>
       <Link
         href={`/clients/${client.id}`}
         className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-brand-navy"
@@ -54,7 +55,8 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
         heading={`${client.name} · Grant Roadmap`}
         subtitle={subtitle}
         basePath={`/clients/${client.id}/roadmap`}
+        triageHref={`/clients/${client.id}/roadmap/triage`}
       />
-    </div>
+    </HubShell>
   );
 }
