@@ -1,6 +1,7 @@
 import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { SwipeDeck } from "@/components/report/swipe-deck";
+import { HubShell } from "@/components/layout/hub-background";
 import { toReportItems, type ReportCardRow } from "@/lib/report/shape";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +18,7 @@ export default async function PortalTriage() {
   const { data } = await supabase
     .from("review_cards")
     .select(
-      "id, grant_id, fit_score, proposed_role, decision, factor_scores, grants(title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate, focus_areas)",
+      "id, grant_id, fit_score, proposed_role, decision, factor_scores, concept_synopsis, grants(title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate, focus_areas, total_funding, cost_share, geographic_eligibility, eligible_entity_types, description)",
     )
     .eq("client_id", org.clientId)
     .eq("decision", "pending")
@@ -25,5 +26,9 @@ export default async function PortalTriage() {
 
   const items = toReportItems((data ?? []) as unknown as ReportCardRow[]);
 
-  return <SwipeDeck items={items} detailBasePath="/portal/grants" backHref="/portal" />;
+  return (
+    <HubShell>
+      <SwipeDeck items={items} detailBasePath="/portal/grants" backHref="/portal" />
+    </HubShell>
+  );
 }

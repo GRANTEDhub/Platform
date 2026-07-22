@@ -70,7 +70,7 @@ export function GrantReport({
               href={triageHref}
               className="shrink-0 rounded-full bg-brand-orange px-5 py-2.5 text-sm font-semibold text-white shadow-soft transition hover:brightness-105"
             >
-              Swipe through new · {pendingCount}
+              Interactive Grant Report
             </Link>
           )}
         </div>

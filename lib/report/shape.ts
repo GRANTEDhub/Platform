@@ -4,7 +4,7 @@
 // (review_cards + the joined grant). Pure + presentation-agnostic: no JSX here,
 // just the derived shape and the small honest formatters the rows/detail need.
 import type { CardDecision, FactorRating, FactorScores, Grant, ReviewCard } from "@/types/database";
-import { formatAwardRange, formatDeadlineShort } from "@/lib/grants/format";
+import { formatAwardRange, formatDeadlineShort, compactCostShare } from "@/lib/grants/format";
 
 export type FactorKey = keyof FactorScores;
 
@@ -109,19 +109,40 @@ export interface ReportItem {
   deadlineSoon: boolean; // within 30 days (and not past)
   decision: CardDecision;
   rowFactors: FactorView[];
+  // Richer fields for the swipe card (populated only when the query selects them;
+  // the list leaves them null). Kept optional so the list row shape is unaffected.
+  totalAvailable: string | null; // grants.total_funding (free text)
+  matchRequired: string; // compact cost-share, e.g. "25%" / "None"
+  purpose: string | null; // description, HTML-stripped + truncated
+  eligibleTypes: string[]; // cleaned eligible entity types (first few)
+  geography: string | null; // geographic_eligibility
+  programIdea: string | null; // concept_synopsis (client-facing narrative)
 }
 
 // The columns the list needs off each joined review_card. A fuller select is
-// structurally assignable, so callers can over-select freely.
+// structurally assignable, so callers can over-select freely — the swipe query
+// adds the description/eligibility/funding columns that populate the rich fields.
 export type ReportCardRow = Pick<
   ReviewCard,
   "id" | "grant_id" | "fit_score" | "proposed_role" | "decision" | "factor_scores"
 > & {
-  grants: Pick<
-    Grant,
-    "title" | "funder" | "submission_deadline" | "award_range_min" | "award_range_max" | "award_range_is_estimate" | "focus_areas"
-  > | null;
+  concept_synopsis?: string | null;
+  grants:
+    | (Pick<
+        Grant,
+        "title" | "funder" | "submission_deadline" | "award_range_min" | "award_range_max" | "award_range_is_estimate" | "focus_areas"
+      > &
+        Partial<Pick<Grant, "total_funding" | "cost_share" | "geographic_eligibility" | "eligible_entity_types" | "description">>)
+    | null;
 };
+
+// HTML → a plain, whitespace-collapsed, sentence-clean preview capped at `max`.
+function toPlain(html: string | null | undefined, max = 240): string | null {
+  if (!html) return null;
+  const text = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  return text.length > max ? `${text.slice(0, max).replace(/\s+\S*$/, "")}…` : text;
+}
 
 export function toReportItem(card: ReportCardRow): ReportItem {
   const g = card.grants;
@@ -143,6 +164,12 @@ export function toReportItem(card: ReportCardRow): ReportItem {
     deadlineSoon: days !== null && days >= 0 && days <= 30,
     decision: card.decision,
     rowFactors: factorViews(card.factor_scores, ROW_FACTORS),
+    totalAvailable: g?.total_funding ?? null,
+    matchRequired: compactCostShare(g?.cost_share),
+    purpose: toPlain(g?.description, 240),
+    eligibleTypes: (g?.eligible_entity_types ?? []).map((t) => t.replace(/_/g, " ")).slice(0, 4),
+    geography: g?.geographic_eligibility ?? null,
+    programIdea: toPlain(card.concept_synopsis, 220),
   };
 }
 

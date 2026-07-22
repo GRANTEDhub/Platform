@@ -16,7 +16,7 @@ export default async function ClientRoadmapTriage({ params }: { params: { id: st
   const { data } = await supabase
     .from("review_cards")
     .select(
-      "id, grant_id, fit_score, proposed_role, decision, factor_scores, grants(title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate, focus_areas)",
+      "id, grant_id, fit_score, proposed_role, decision, factor_scores, concept_synopsis, grants(title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate, focus_areas, total_funding, cost_share, geographic_eligibility, eligible_entity_types, description)",
     )
     .eq("client_id", params.id)
     .eq("decision", "pending")
