@@ -44,3 +44,27 @@
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
+
+/* Tasteful entrance motion for the Grant Report (and reusable elsewhere). A soft
+   fade + slide-up; rows stagger via an inline animation-delay. Disabled entirely
+   under prefers-reduced-motion so the content just appears. */
+@layer utilities {
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  .animate-fade-up {
+    animation: fade-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .animate-fade-up {
+      animation: none;
+    }
+  }
+}
