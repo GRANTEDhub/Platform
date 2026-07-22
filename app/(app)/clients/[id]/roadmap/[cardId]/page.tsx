@@ -7,7 +7,14 @@ import type { GrantDetailFields } from "@/components/grants/grant-detail";
 export const dynamic = "force-dynamic";
 
 type DetailRow = ReportDetailCard & {
-  grants: (GrantDetailFields & { title: string | null; funder: string | null; focus_areas: string[] | null }) | null;
+  grants:
+    | (GrantDetailFields & {
+        title: string | null;
+        funder: string | null;
+        focus_areas: string[] | null;
+        assistance_listings: { number: string; program_title: string }[] | null;
+      })
+    | null;
 };
 
 // Staff account-manager detail — the same read-only ReportDetail the client opens
@@ -20,7 +27,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   const { data } = await supabase
     .from("review_cards")
     .select(
-      "fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, decision, grants(id, source_url, title, funder, focus_areas, submission_deadline, period_of_performance, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, description, eligible_entity_types, geographic_eligibility, ineligible_entities, subaward_prohibited, incumbent_risk, technical_burden_flags, hard_disqualifiers, verification_flags, scoring_rubric, ideal_applicant_profile, grant_status)",
+      "fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, decision, grants(id, source_url, title, funder, focus_areas, assistance_listings, submission_deadline, period_of_performance, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, description, eligible_entity_types, geographic_eligibility, ineligible_entities, subaward_prohibited, incumbent_risk, technical_burden_flags, hard_disqualifiers, verification_flags, scoring_rubric, ideal_applicant_profile, grant_status)",
     )
     .eq("id", params.cardId)
     .eq("client_id", params.id)

@@ -139,7 +139,7 @@ export function GrantStatusPill({ status }: { status: string | null | undefined 
   );
 }
 
-export function WhatItFunds({ grant }: { grant: GrantDetailFields }) {
+export function WhatItFunds({ grant, label = "What it funds" }: { grant: GrantDetailFields; label?: string }) {
   // Description may carry HTML markup -> sanitize (whitelist) then inject. Long
   // descriptions are truncated (sentence-clean) with a Show more expander.
   const descClean = grant.description ? sanitizeRichText(collapseDuplicatedBlock(grant.description)) : "";
@@ -147,7 +147,7 @@ export function WhatItFunds({ grant }: { grant: GrantDetailFields }) {
   const descClass = "mt-3 text-sm leading-relaxed text-foreground [&_li]:ml-4 [&_li]:list-disc [&_ol]:mt-2 [&_ol]:list-decimal [&_p]:mt-2 [&_ul]:mt-2";
   return (
     <Card className="p-6 sm:p-7">
-      <SectionLabel>What it funds</SectionLabel>
+      <SectionLabel>{label}</SectionLabel>
       {!grant.description ? (
         <p className="mt-3 text-sm leading-relaxed text-foreground">—</p>
       ) : descPreview.truncated ? (
@@ -163,11 +163,11 @@ export function WhatItFunds({ grant }: { grant: GrantDetailFields }) {
 // subaward note. Split out of the old WhatItFundsAndEligibility so the review page
 // can float it in its narrow right rail (`dense`); the prospects grant body still
 // renders it inline (wide, two-column geo/ineligible) via GrantBody.
-export function WhoCanApply({ grant, dense = false }: { grant: GrantDetailFields; dense?: boolean }) {
+export function WhoCanApply({ grant, dense = false, label = "Who can apply" }: { grant: GrantDetailFields; dense?: boolean; label?: string }) {
   const eligibleTypes = (grant.eligible_entity_types ?? []).map((t) => t.replace(/_/g, " "));
   return (
     <Card className={dense ? "p-5" : "p-6 sm:p-7"}>
-      <SectionLabel>Who can apply</SectionLabel>
+      <SectionLabel>{label}</SectionLabel>
       {eligibleTypes.length > 0 ? (
         // dense (rail): stack one chip per row so nothing sits two-across; the wide
         // prospects-body variant keeps wrapping.
