@@ -57,34 +57,53 @@ export function ClientDashboard({
   const scheduleHref = bookingUrl || `mailto:${SUPPORT}?subject=Schedule%20a%20strategy%20call`;
   return (
     <div className="mx-auto max-w-7xl px-8 py-8">
-      {/* header — client name kept up top */}
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="min-w-0">
-          <h1 className="font-serif text-[32px] font-semibold leading-tight tracking-tight text-brand-navy">{name}</h1>
-          {subLine && <p className="mt-1 text-[14px] text-muted-foreground">{subLine}</p>}
-        </div>
-        {isStaff && (editHref || refresh) && (
-          <div className="flex items-center gap-3">
-            {editHref && (
-              <Link
-                href={editHref}
-                className="rounded-full border border-brand-navy/20 px-4 py-2 text-sm font-medium text-brand-navy transition hover:bg-brand-navy/5"
-              >
-                Edit profile
-              </Link>
+      {/* map-backed navy hero band: name + staff actions + stats. The map sits
+          behind a navy wash so it reads as texture, not a competing photo. */}
+      <div className="relative overflow-hidden rounded-3xl shadow-lift">
+        <div
+          aria-hidden
+          className="absolute inset-0"
+          style={{
+            backgroundImage: "url('/map-bg.jpg')",
+            backgroundSize: "cover",
+            backgroundPosition: "center 78%",
+            filter: "grayscale(0.35) blur(1px)",
+            transform: "scale(1.04)",
+          }}
+        />
+        <div aria-hidden className="absolute inset-0" style={{ background: "linear-gradient(120deg, rgba(8,22,39,0.94), rgba(11,30,58,0.80))" }} />
+        <div className="relative px-8 py-7 text-white">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h1 className="font-serif text-[32px] font-semibold leading-tight tracking-tight">{name}</h1>
+              {subLine && <p className="mt-1 text-[14px] text-white/70">{subLine}</p>}
+            </div>
+            {isStaff && (editHref || refresh) && (
+              <div className="flex items-center gap-3">
+                {editHref && (
+                  <Link
+                    href={editHref}
+                    className="rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
+                  >
+                    Edit profile
+                  </Link>
+                )}
+                {refresh}
+              </div>
             )}
-            {refresh}
           </div>
-        )}
+          <div className="mt-6 grid grid-cols-2 gap-y-5 border-t border-white/[0.14] pt-5 sm:grid-cols-4">
+            {stats.map((s, i) => (
+              <div key={s.label} className={i > 0 ? "sm:border-l sm:border-white/[0.14] sm:pl-6" : ""}>
+                <p className={`text-[26px] font-semibold leading-none ${s.accent ? "text-brand-orange" : "text-white"}`}>{s.value}</p>
+                <p className="mt-1.5 text-[11px] font-semibold uppercase tracking-[0.1em] text-white/60">{s.label}</p>
+                {s.sub && <p className="mt-0.5 text-[12px] text-white/50">{s.sub}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
       {isStaff && matchNote}
-
-      {/* stat row — free on the background, no per-tile boxes */}
-      <div className="mt-8 flex flex-wrap gap-x-12 gap-y-6">
-        {stats.map((s) => (
-          <Stat key={s.label} {...s} />
-        ))}
-      </div>
 
       {/* main grid: action items (wide) + grant activity */}
       <div className="mt-8 grid gap-6 lg:grid-cols-3">
@@ -121,21 +140,6 @@ export function ClientDashboard({
         <QuickAction external href={scheduleHref} icon={CalendarPlus} title="Schedule with an advisor" sub="Book a grant strategy call" />
         <QuickAction external href={`mailto:${SUPPORT}?subject=Question%20for%20my%20GRANTED%20team`} icon={MessageSquare} title="Message your team" sub="In-app messaging — coming soon" />
         <QuickAction external href={`mailto:${SUPPORT}?subject=Help`} icon={LifeBuoy} title="Help" sub="FAQ & support" />
-      </div>
-    </div>
-  );
-}
-
-function Stat({ label, value, sub, icon: Icon, accent }: DashStat) {
-  return (
-    <div className="flex items-center gap-3">
-      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-navy/[0.06]">
-        <Icon className={`h-5 w-5 ${accent ? "text-brand-orange" : "text-brand-navy"}`} />
-      </span>
-      <div className="min-w-0">
-        <p className={`text-[26px] font-semibold leading-none ${accent ? "text-brand-orange" : "text-brand-navy"}`}>{value}</p>
-        <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">{label}</p>
-        {sub && <p className="mt-0.5 text-[12px] text-muted-foreground">{sub}</p>}
       </div>
     </div>
   );

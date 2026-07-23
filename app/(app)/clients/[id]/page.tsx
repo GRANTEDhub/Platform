@@ -117,6 +117,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
             inProgress={matchInProgress}
             confirmRerun={confirmRerun}
             idleLabel="Refresh matches"
+            tone="dark"
           />
         }
         matchNote={matchNote}
