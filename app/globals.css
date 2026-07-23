@@ -67,4 +67,29 @@
       animation: none;
     }
   }
+
+  /* Near-imperceptible drift for the page backdrop texture -- a 2-minute loop
+     moving background-position by a few percent so the ambient map texture
+     feels quietly alive rather than a static image. Deliberately slow enough
+     that no single glance registers it as "moving." */
+  @keyframes bg-drift {
+    0% {
+      background-position: 50% 48%;
+    }
+    50% {
+      background-position: 52% 52%;
+    }
+    100% {
+      background-position: 50% 48%;
+    }
+  }
+  .animate-bg-drift {
+    animation: bg-drift 120s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .animate-bg-drift {
+      animation: none;
+      background-position: center;
+    }
+  }
 }
