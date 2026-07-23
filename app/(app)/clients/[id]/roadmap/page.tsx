@@ -74,7 +74,7 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
       : `${items.length} matched ${items.length === 1 ? "opportunity" : "opportunities"} · Ranked by fit · The client sees this exact view`;
 
   return (
-    <HubShell variant="crisp" width="7xl">
+    <HubShell variant="texture" width="7xl">
       <Link
         href={`/clients/${client.id}`}
         className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-brand-navy"
@@ -85,7 +85,7 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
       <ClientActivity items={activity} basePath={`/clients/${client.id}/roadmap`} clientName={client.name} />
       <GrantReport
         items={items}
-        heading={`${client.name} · Grant Roadmap`}
+        heading={`${client.name} · Grant Report`}
         subtitle={subtitle}
         basePath={`/clients/${client.id}/roadmap`}
         triageHref={`/clients/${client.id}/roadmap/triage`}

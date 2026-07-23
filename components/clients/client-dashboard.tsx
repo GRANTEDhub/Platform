@@ -2,6 +2,7 @@ import Link from "next/link";
 import { CalendarPlus, Flag, LifeBuoy, MessageSquare, Target, type LucideIcon } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ClientMatchChart } from "@/components/clients/client-match-chart";
+import { HeroBand } from "@/components/layout/hero-band";
 import { BRAND } from "@/lib/brand";
 
 // The shared, actor-aware client dashboard — the per-client hub. Staff open it via
@@ -57,38 +58,31 @@ export function ClientDashboard({
   const scheduleHref = bookingUrl || `mailto:${SUPPORT}?subject=Schedule%20a%20strategy%20call`;
   return (
     <div className="mx-auto max-w-7xl px-8 py-8">
-      {/* header — client name kept up top */}
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="min-w-0">
-          <h1 className="font-serif text-[32px] font-semibold leading-tight tracking-tight text-brand-navy">{name}</h1>
-          {subLine && <p className="mt-1 text-[14px] text-muted-foreground">{subLine}</p>}
-        </div>
-        {isStaff && (editHref || refresh) && (
-          <div className="flex items-center gap-3">
-            {editHref && (
-              <Link
-                href={editHref}
-                className="rounded-full border border-brand-navy/20 px-4 py-2 text-sm font-medium text-brand-navy transition hover:bg-brand-navy/5"
-              >
-                Edit profile
-              </Link>
-            )}
-            {refresh}
-          </div>
-        )}
-      </div>
+      <HeroBand
+        title={name}
+        subtitle={subLine ?? undefined}
+        right={
+          isStaff && (editHref || refresh) ? (
+            <div className="flex items-center gap-3">
+              {editHref && (
+                <Link
+                  href={editHref}
+                  className="rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
+                >
+                  Edit profile
+                </Link>
+              )}
+              {refresh}
+            </div>
+          ) : undefined
+        }
+        stats={stats.map((s) => ({ value: s.value, label: s.label, sub: s.sub, accent: s.accent }))}
+      />
       {isStaff && matchNote}
-
-      {/* stat row — free on the background, no per-tile boxes */}
-      <div className="mt-8 flex flex-wrap gap-x-12 gap-y-6">
-        {stats.map((s) => (
-          <Stat key={s.label} {...s} />
-        ))}
-      </div>
 
       {/* main grid: action items (wide) + grant activity */}
       <div className="mt-8 grid gap-6 lg:grid-cols-3">
-        <Card className="p-6 sm:p-7 lg:col-span-2">
+        <Card className="p-6 shadow-grounded sm:p-7 lg:col-span-2">
           <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Action items</h2>
           {actionItems.length === 0 ? (
             <p className="mt-4 text-sm text-muted-foreground">Nothing needs your attention right now.</p>
@@ -101,7 +95,7 @@ export function ClientDashboard({
           )}
         </Card>
 
-        <Card className="p-6 sm:p-7">
+        <Card className="p-6 shadow-grounded sm:p-7">
           <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Grant activity</h2>
           <div className="mt-4">
             <ClientMatchChart
@@ -121,21 +115,6 @@ export function ClientDashboard({
         <QuickAction external href={scheduleHref} icon={CalendarPlus} title="Schedule with an advisor" sub="Book a grant strategy call" />
         <QuickAction external href={`mailto:${SUPPORT}?subject=Question%20for%20my%20GRANTED%20team`} icon={MessageSquare} title="Message your team" sub="In-app messaging — coming soon" />
         <QuickAction external href={`mailto:${SUPPORT}?subject=Help`} icon={LifeBuoy} title="Help" sub="FAQ & support" />
-      </div>
-    </div>
-  );
-}
-
-function Stat({ label, value, sub, icon: Icon, accent }: DashStat) {
-  return (
-    <div className="flex items-center gap-3">
-      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-navy/[0.06]">
-        <Icon className={`h-5 w-5 ${accent ? "text-brand-orange" : "text-brand-navy"}`} />
-      </span>
-      <div className="min-w-0">
-        <p className={`text-[26px] font-semibold leading-none ${accent ? "text-brand-orange" : "text-brand-navy"}`}>{value}</p>
-        <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">{label}</p>
-        {sub && <p className="mt-0.5 text-[12px] text-muted-foreground">{sub}</p>}
       </div>
     </div>
   );
@@ -181,7 +160,7 @@ function QuickAction({
   featured?: boolean;
   external?: boolean;
 }) {
-  const cls = `flex flex-col gap-2 rounded-2xl p-5 shadow-soft transition ${
+  const cls = `flex flex-col gap-2 rounded-2xl p-5 shadow-grounded transition ${
     featured ? "bg-brand-navy text-white" : "border border-brand-navy/[0.08] bg-white text-brand-navy hover:border-brand-navy/20"
   }`;
   const inner = (

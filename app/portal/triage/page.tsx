@@ -27,7 +27,7 @@ export default async function PortalTriage() {
   const items = toReportItems((data ?? []) as unknown as ReportCardRow[]);
 
   return (
-    <HubShell>
+    <HubShell variant="texture">
       <SwipeDeck items={items} detailBasePath="/portal/grants" backHref="/portal" />
     </HubShell>
   );

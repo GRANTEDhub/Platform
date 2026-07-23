@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Search } from "lucide-react";
 import { DecisionBadge } from "@/components/grants/badges";
+import { HeroBand } from "@/components/layout/hero-band";
 import { ScoreRing, FactorMark, Tag } from "./primitives";
 import { factorDisplay, reportStats, type ReportItem } from "@/lib/report/shape";
 
@@ -58,28 +59,35 @@ export function GrantReport({
 
   return (
     <div>
-      {/* header card */}
-      <div className="animate-fade-up rounded-3xl bg-white p-8 shadow-soft">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h1 className="font-serif text-[30px] font-semibold leading-tight tracking-tight text-brand-navy">{heading}</h1>
-            {subtitle && <p className="mt-2 text-[14px] text-muted-foreground">{subtitle}</p>}
-          </div>
-          {triageHref && pendingCount > 0 && (
-            <Link
-              href={triageHref}
-              className="shrink-0 rounded-full bg-brand-orange px-5 py-2.5 text-sm font-semibold text-white shadow-soft transition hover:brightness-105"
-            >
-              Interactive Grant Report
-            </Link>
-          )}
-        </div>
-
-        <div className="mt-6 flex flex-wrap gap-x-12 gap-y-4 border-t border-brand-navy/[0.06] pt-5">
-          <Stat value={String(stats.matched)} label="Matched grants" />
-          <Stat value={stats.avgFit ?? "—"} suffix={stats.avgFit ? "/3" : undefined} label="Avg fit" />
-          <Stat value={String(stats.dueSoon)} label="Due in 30 days" accent />
-        </div>
+      {/* header — map-backed navy hero band (matches the dashboard) */}
+      <div className="animate-fade-up">
+        <HeroBand
+          title={heading}
+          subtitle={subtitle}
+          right={
+            triageHref && pendingCount > 0 ? (
+              <Link
+                href={triageHref}
+                className="shrink-0 rounded-full bg-brand-orange px-5 py-2.5 text-sm font-semibold text-white shadow-soft transition hover:brightness-105"
+              >
+                Interactive Grant Report
+              </Link>
+            ) : undefined
+          }
+          stats={[
+            { value: String(stats.matched), label: "Matched grants" },
+            {
+              value: (
+                <>
+                  {stats.avgFit ?? "—"}
+                  {stats.avgFit && <span className="text-base font-normal text-white/50">/3</span>}
+                </>
+              ),
+              label: "Avg fit",
+            },
+            { value: String(stats.dueSoon), label: "Due in 30 days", accent: true },
+          ]}
+        />
       </div>
 
       {/* search + filters */}
@@ -113,7 +121,7 @@ export function GrantReport({
 
       {/* rows */}
       {visible.length === 0 ? (
-        <div className="rounded-2xl border border-brand-navy/[0.05] bg-white py-16 text-center text-sm text-muted-foreground shadow-soft">
+        <div className="rounded-2xl border border-brand-navy/[0.05] bg-white py-16 text-center text-sm text-muted-foreground shadow-card">
           {items.length === 0
             ? "No matched opportunities yet. New matches appear here as your GRANTED team surfaces them."
             : "No grants match this view. Clear the search or filter to see the full roadmap."}
@@ -129,24 +137,12 @@ export function GrantReport({
   );
 }
 
-function Stat({ value, suffix, label, accent }: { value: string; suffix?: string; label: string; accent?: boolean }) {
-  return (
-    <div>
-      <p className={`text-[24px] font-semibold leading-none ${accent ? "text-brand-orange" : "text-brand-navy"}`}>
-        {value}
-        {suffix && <span className="text-base font-normal text-muted-foreground">{suffix}</span>}
-      </p>
-      <p className="mt-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
-    </div>
-  );
-}
-
 function Row({ item, href, index }: { item: ReportItem; href: string; index: number }) {
   return (
     <Link
       href={href}
       style={{ animationDelay: `${Math.min(index, 8) * 45}ms` }}
-      className="animate-fade-up block rounded-2xl border border-brand-navy/[0.05] bg-white p-6 shadow-soft transition duration-200 hover:-translate-y-0.5 hover:shadow-lift"
+      className="animate-fade-up block rounded-2xl border border-brand-navy/[0.05] bg-white p-6 shadow-card transition duration-200 hover:-translate-y-0.5 hover:shadow-lift"
     >
       <div className="flex items-center gap-6">
         <ScoreRing fitScore={item.fitScore} band={item.band} />

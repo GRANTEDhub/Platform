@@ -144,10 +144,12 @@ export function WhatItFunds({
   grant,
   label = "What it funds",
   headingStyle = "label",
+  elevation = "soft",
 }: {
   grant: GrantDetailFields;
   label?: string;
   headingStyle?: "label" | "title";
+  elevation?: "soft" | "grounded";
 }) {
   // Description may carry HTML markup -> sanitize (whitelist) then inject. Long
   // descriptions are truncated (sentence-clean) with a Show more expander.
@@ -155,7 +157,7 @@ export function WhatItFunds({
   const descPreview = previewHtml(descClean);
   const descClass = "mt-3 text-sm leading-relaxed text-foreground [&_li]:ml-4 [&_li]:list-disc [&_ol]:mt-2 [&_ol]:list-decimal [&_p]:mt-2 [&_ul]:mt-2";
   return (
-    <Card className="p-6 sm:p-7">
+    <Card elevation={elevation} className="p-6 sm:p-7">
       {headingStyle === "title" ? <SectionTitle>{label}</SectionTitle> : <SectionLabel>{label}</SectionLabel>}
       {!grant.description ? (
         <p className="mt-3 text-sm leading-relaxed text-foreground">—</p>
@@ -177,15 +179,17 @@ export function WhoCanApply({
   dense = false,
   label = "Who can apply",
   headingStyle = "label",
+  elevation = "soft",
 }: {
   grant: GrantDetailFields;
   dense?: boolean;
   label?: string;
   headingStyle?: "label" | "title";
+  elevation?: "soft" | "grounded";
 }) {
   const eligibleTypes = (grant.eligible_entity_types ?? []).map((t) => t.replace(/_/g, " "));
   return (
-    <Card className={dense ? "p-5" : "p-6 sm:p-7"}>
+    <Card elevation={elevation} className={dense ? "p-5" : "p-6 sm:p-7"}>
       {headingStyle === "title" ? <SectionTitle>{label}</SectionTitle> : <SectionLabel>{label}</SectionLabel>}
       {eligibleTypes.length > 0 ? (
         // dense (rail): stack one chip per row so nothing sits two-across; the wide

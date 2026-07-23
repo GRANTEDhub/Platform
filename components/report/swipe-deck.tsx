@@ -65,7 +65,7 @@ export function SwipeDeck({
           href={backHref}
           className="mt-6 inline-block rounded-full bg-brand-navy px-6 py-2.5 text-sm font-semibold text-white"
         >
-          Back to roadmap
+          Back to Grant Report
         </Link>
       </div>
     );
@@ -75,7 +75,7 @@ export function SwipeDeck({
     <div className="mx-auto max-w-2xl">
       <div className="mb-5 flex items-center justify-between">
         <Link href={backHref} className="text-sm font-medium text-muted-foreground hover:text-brand-navy">
-          ← Roadmap
+          ← Grant Report
         </Link>
         <span className="text-sm text-muted-foreground">{queue.length} to review</span>
       </div>

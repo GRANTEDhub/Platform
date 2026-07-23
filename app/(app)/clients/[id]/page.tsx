@@ -4,6 +4,7 @@ import { Loader2, TrendingUp, Eye, Target, CalendarClock } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { AutoRefresh } from "@/components/ui/auto-refresh";
+import { PageBackdrop } from "@/components/layout/page-backdrop";
 import { GenerateReportButton } from "@/components/clients/generate-report-button";
 import {
   ClientDashboard,
@@ -100,8 +101,10 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   ) : null;
 
   return (
-    <div className="min-h-full bg-brand-cream">
-      <ClientDashboard
+    <div className="relative min-h-full">
+      <PageBackdrop />
+      <div className="relative">
+        <ClientDashboard
         name={client.name}
         subLine={subLine}
         isStaff
@@ -117,10 +120,12 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
             inProgress={matchInProgress}
             confirmRerun={confirmRerun}
             idleLabel="Refresh matches"
+            tone="dark"
           />
         }
         matchNote={matchNote}
-      />
+        />
+      </div>
     </div>
   );
 }

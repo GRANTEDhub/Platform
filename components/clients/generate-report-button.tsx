@@ -29,6 +29,7 @@ export function GenerateReportButton({
   inProgress,
   confirmRerun,
   idleLabel = "Generate report",
+  tone = "light",
 }: {
   clientId: string;
   inProgress: boolean;
@@ -36,6 +37,8 @@ export function GenerateReportButton({
   // Idle-state label. The client dashboard passes "Refresh matches" (a staff-only
   // control); prospecting keeps the default "Generate report".
   idleLabel?: string;
+  // "dark" restyles the button to read on a navy surface (the dashboard hero band).
+  tone?: "light" | "dark";
 }) {
   const router = useRouter();
   const [phase, setPhase] = useState<"idle" | "running" | "error">("idle");
@@ -124,11 +127,17 @@ export function GenerateReportButton({
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <Button variant="outline" size="sm" onClick={onClick} disabled={busy}>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onClick}
+        disabled={busy}
+        className={tone === "dark" ? "border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white" : undefined}
+      >
         <RefreshCw className={`h-3.5 w-3.5 ${busy ? "animate-spin" : ""}`} />
         {label}
       </Button>
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && <p className={`text-xs ${tone === "dark" ? "text-orange-200" : "text-destructive"}`}>{error}</p>}
     </div>
   );
 }
