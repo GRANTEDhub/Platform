@@ -17,7 +17,7 @@ export function PageBackdrop() {
         }}
       />
       {/* warm cream wash so the texture stays faint/ambient, not a competing map */}
-      <div className="absolute inset-0 bg-brand-creamWarm/30" />
+      <div className="absolute inset-0 bg-brand-creamWarm/45" />
     </div>
   );
 }

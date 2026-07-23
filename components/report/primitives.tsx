@@ -11,7 +11,8 @@ const RING_TONE: Record<FitBand["tone"], { border: string; word: string }> = {
   fair: { border: "border-brand-navy/12", word: "text-muted-foreground" },
 };
 
-// The circular fit badge: score over 3 with the band word beneath. `lg` is the
+// The circular fit badge: bare score + "Fit" inside the ring, the band word
+// (Strong fit / Conditional / Weak) beneath it, outside the circle. `lg` is the
 // detail hero; the default is the list row.
 export function ScoreRing({
   fitScore,
@@ -24,15 +25,16 @@ export function ScoreRing({
 }) {
   const tone = RING_TONE[band.tone];
   const box = size === "lg" ? "h-[92px] w-[92px]" : "h-[68px] w-[68px]";
-  const num = size === "lg" ? "text-[30px]" : "text-[22px]";
+  const num = size === "lg" ? "text-[34px]" : "text-[24px]";
   const word = size === "lg" ? "text-[10px]" : "text-[9px]";
+  const bandWord = size === "lg" ? "text-[12px]" : "text-[11px]";
   return (
-    <div className={`flex ${box} shrink-0 flex-col items-center justify-center rounded-full border-2 ${tone.border}`}>
-      <span className={`${num} font-semibold leading-none text-brand-navy`}>
-        {fitScore}
-        <span className="text-xs font-normal text-muted-foreground">/3</span>
-      </span>
-      <span className={`mt-0.5 ${word} font-semibold uppercase tracking-wide ${tone.word}`}>{band.label}</span>
+    <div className="flex shrink-0 flex-col items-center">
+      <div className={`flex ${box} flex-col items-center justify-center rounded-full border-2 ${tone.border}`}>
+        <span className={`${num} font-semibold leading-none text-brand-navy`}>{fitScore}</span>
+        <span className={`mt-0.5 ${word} font-semibold uppercase tracking-wide text-muted-foreground`}>Fit</span>
+      </div>
+      <span className={`mt-1.5 ${bandWord} font-semibold uppercase tracking-wide ${tone.word}`}>{band.label}</span>
     </div>
   );
 }
