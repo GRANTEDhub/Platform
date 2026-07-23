@@ -73,22 +73,15 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   ];
 
   const base = `/clients/${client.id}/roadmap`;
-  // Action items beyond the "catch up on alerts" row (the dashboard derives that
-  // from the pending count): the client's next step + deadline to-dos for grants
-  // they're actively PURSUING (approved) — grantwriting work, not review.
+  // Action items: ONE row for the review queue (replaces naming each grant
+  // individually) + the client's next step. Grantwriting/message items join here
+  // once those features exist.
   const actionItems: DashActionItem[] = [];
+  if (counts.pending > 0) {
+    actionItems.push({ id: "catch-up", title: `Catch up on grant alerts · ${counts.pending} new`, href: base });
+  }
   if (client.next_step) {
     actionItems.push({ id: "next-step", title: client.next_step, tag: "From your team", priority: "high" });
-  }
-  for (const x of upcoming.filter((u) => u.c.decision === "approved").slice(0, 4)) {
-    actionItems.push({
-      id: x.c.id,
-      title: `Prepare ${x.c.grant?.title || "grant"}`,
-      tag: x.c.grant?.funder || null,
-      date: format(parseISO(x.date), "MMM d, yyyy"),
-      priority: x.days <= 14 ? "high" : "medium",
-      href: `${base}/${x.c.id}`,
-    });
   }
 
   const matchStatus = client.initial_match_status;

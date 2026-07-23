@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, Bell, CalendarPlus, Flag, LifeBuoy, MessageSquare, Target, type LucideIcon } from "lucide-react";
+import { CalendarPlus, Flag, LifeBuoy, MessageSquare, Target, type LucideIcon } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ClientMatchChart } from "@/components/clients/client-match-chart";
 import { BRAND } from "@/lib/brand";
@@ -79,73 +79,56 @@ export function ClientDashboard({
       </div>
       {isStaff && matchNote}
 
-      {/* stat row */}
-      <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+      {/* stat row — free on the background, no per-tile boxes */}
+      <div className="mt-8 flex flex-wrap gap-x-12 gap-y-6">
         {stats.map((s) => (
-          <StatTile key={s.label} {...s} />
+          <Stat key={s.label} {...s} />
         ))}
       </div>
 
-      {/* main grid: content left, shortcuts right */}
-      <div className="mt-6 grid gap-6 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
-          <Card className="p-6 sm:p-7">
-            <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Action items</h2>
+      {/* main grid: action items (wide) + grant activity */}
+      <div className="mt-8 grid gap-6 lg:grid-cols-3">
+        <Card className="p-6 sm:p-7 lg:col-span-2">
+          <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Action items</h2>
+          {actionItems.length === 0 ? (
+            <p className="mt-4 text-sm text-muted-foreground">Nothing needs your attention right now.</p>
+          ) : (
             <ul className="mt-4 divide-y divide-brand-navy/[0.06]">
-              {activity.pending > 0 && (
-                <li>
-                  <Link
-                    href={roadmapHref}
-                    className="flex items-center justify-between gap-4 rounded-xl bg-brand-orange/[0.07] px-4 py-3 transition hover:bg-brand-orange/[0.12]"
-                  >
-                    <span className="flex items-center gap-3">
-                      <Bell className="h-5 w-5 shrink-0 text-brand-orange" />
-                      <span className="text-sm font-semibold text-brand-navy">
-                        Catch up on grant alerts · {activity.pending} new
-                      </span>
-                    </span>
-                    <ArrowRight className="h-4 w-4 shrink-0 text-brand-orange" />
-                  </Link>
-                </li>
-              )}
               {actionItems.map((it) => (
                 <ActionRow key={it.id} item={it} />
               ))}
-              {activity.pending === 0 && actionItems.length === 0 && (
-                <li className="py-3 text-sm text-muted-foreground">Nothing needs your attention right now.</li>
-              )}
             </ul>
-          </Card>
+          )}
+        </Card>
 
-          <Card className="p-6 sm:p-7">
-            <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Grant activity</h2>
-            <div className="mt-4">
-              <ClientMatchChart
-                data={[
-                  { label: "In review", count: activity.pending, color: BRAND.slate },
-                  { label: "Pursuing", count: activity.approved, color: BRAND.orange },
-                  { label: "Passed", count: activity.passed, color: BRAND.taupe },
-                ]}
-              />
-            </div>
-          </Card>
-        </div>
+        <Card className="p-6 sm:p-7">
+          <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Grant activity</h2>
+          <div className="mt-4">
+            <ClientMatchChart
+              data={[
+                { label: "In review", count: activity.pending, color: BRAND.slate },
+                { label: "Pursuing", count: activity.approved, color: BRAND.orange },
+                { label: "Passed", count: activity.passed, color: BRAND.taupe },
+              ]}
+            />
+          </div>
+        </Card>
+      </div>
 
-        {/* shortcuts (moved into the space the roadmap card vacated) */}
-        <div className="space-y-4">
-          <QuickAction featured href={roadmapHref} icon={Target} title="Grant Report" sub="Review your matched opportunities" />
-          <QuickAction external href={scheduleHref} icon={CalendarPlus} title="Schedule with an advisor" sub="Book a grant strategy call" />
-          <QuickAction external href={`mailto:${SUPPORT}?subject=Question%20for%20my%20GRANTED%20team`} icon={MessageSquare} title="Message your team" sub="In-app messaging — coming soon" />
-          <QuickAction external href={`mailto:${SUPPORT}?subject=Help`} icon={LifeBuoy} title="Help" sub="FAQ & support" />
-        </div>
+      {/* shortcuts — square tiles, bottom row */}
+      <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <QuickAction featured href={roadmapHref} icon={Target} title="Grant Report" sub="Review your matched opportunities" />
+        <QuickAction external href={scheduleHref} icon={CalendarPlus} title="Schedule with an advisor" sub="Book a grant strategy call" />
+        <QuickAction external href={`mailto:${SUPPORT}?subject=Question%20for%20my%20GRANTED%20team`} icon={MessageSquare} title="Message your team" sub="In-app messaging — coming soon" />
+        <QuickAction external href={`mailto:${SUPPORT}?subject=Help`} icon={LifeBuoy} title="Help" sub="FAQ & support" />
       </div>
     </div>
   );
 }
 
-function StatTile({ label, value, sub, icon: Icon, accent }: DashStat) {
+function Stat({ label, value, sub, icon: Icon, accent }: DashStat) {
   return (
-    <Card className="flex items-center gap-4 p-5">
+    <div className="flex items-center gap-3">
       <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-navy/[0.06]">
         <Icon className={`h-5 w-5 ${accent ? "text-brand-orange" : "text-brand-navy"}`} />
       </span>
@@ -154,7 +137,7 @@ function StatTile({ label, value, sub, icon: Icon, accent }: DashStat) {
         <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">{label}</p>
         {sub && <p className="mt-0.5 text-[12px] text-muted-foreground">{sub}</p>}
       </div>
-    </Card>
+    </div>
   );
 }
 
@@ -198,18 +181,14 @@ function QuickAction({
   featured?: boolean;
   external?: boolean;
 }) {
-  const cls = `flex items-center gap-3 rounded-2xl p-4 shadow-soft transition ${
+  const cls = `flex flex-col gap-2 rounded-2xl p-5 shadow-soft transition ${
     featured ? "bg-brand-navy text-white" : "border border-brand-navy/[0.08] bg-white text-brand-navy hover:border-brand-navy/20"
   }`;
   const inner = (
     <>
-      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${featured ? "bg-white/10" : "bg-brand-navy/[0.06]"}`}>
-        <Icon className={`h-5 w-5 ${featured ? "text-brand-orange" : "text-brand-navy"}`} />
-      </span>
-      <span className="min-w-0">
-        <span className="block text-[15px] font-semibold">{title}</span>
-        <span className={`block text-[12px] ${featured ? "text-white/70" : "text-muted-foreground"}`}>{sub}</span>
-      </span>
+      <Icon className={`h-6 w-6 ${featured ? "text-brand-orange" : "text-brand-navy"}`} />
+      <span className="mt-1 text-[15px] font-semibold">{title}</span>
+      <span className={`text-[12.5px] ${featured ? "text-white/70" : "text-muted-foreground"}`}>{sub}</span>
     </>
   );
   return external ? (
