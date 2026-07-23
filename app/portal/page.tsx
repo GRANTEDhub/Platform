@@ -36,10 +36,10 @@ export default async function PortalHome() {
       : `${items.length} matched ${items.length === 1 ? "opportunity" : "opportunities"} · Ranked by fit`;
 
   return (
-    <HubShell variant="crisp" width="7xl">
+    <HubShell variant="texture" width="7xl">
       <GrantReport
         items={items}
-        heading={`${org.clientName} · Grant Roadmap`}
+        heading={`${org.clientName} · Grant Report`}
         subtitle={subtitle}
         basePath="/portal/grants"
         triageHref="/portal/triage"

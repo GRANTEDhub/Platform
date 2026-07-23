@@ -11,6 +11,8 @@
 // References /public/map-bg.jpg; the cream base shows through if the asset is
 // missing. Decorative only (aria-hidden, pointer-events-none). The crop is biased
 // down (center 78%) so the photo's sun-flare rides up and out of the content zone.
+import { PageBackdrop } from "./page-backdrop";
+
 type Variant = "warm" | "crisp";
 
 const VARIANTS: Record<Variant, { filter: string; wash: string }> = {
@@ -53,12 +55,14 @@ export function HubShell({
   width = "5xl",
 }: {
   children: React.ReactNode;
-  variant?: Variant;
+  // "warm"/"crisp" = the map backdrop; "texture" = the warm-cream + contour
+  // backdrop (the de-staled body treatment shared with the dashboard).
+  variant?: Variant | "texture";
   width?: "5xl" | "6xl" | "7xl";
 }) {
   return (
     <div className="relative min-h-full">
-      <HubBackground variant={variant} />
+      {variant === "texture" ? <PageBackdrop /> : <HubBackground variant={variant} />}
       <div className={`relative mx-auto ${MAX_W[width]} px-6 py-8`}>{children}</div>
     </div>
   );

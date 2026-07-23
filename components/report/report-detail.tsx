@@ -72,7 +72,7 @@ export function ReportDetail({
   focusAreas,
   deciderLabel,
   backHref,
-  backLabel = "Back to roadmap",
+  backLabel = "Back to Grant Report",
 }: {
   cardId: string;
   card: ReportDetailCard;

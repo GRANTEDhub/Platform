@@ -14,6 +14,7 @@ export const BRAND = {
   navyDeep: "#081627",  // darker navy for gradient ends
   orange: "#E4761F",    // accent / action
   cream: "#faf7f2",     // background / surface
+  creamWarm: "#f4ecdf", // warmer cream — hub page backdrop (dashboard / report)
   ink: "#1a1a1a",       // near-black body ink (print)
   muted: "#5b6472",     // grey — secondary text
   slate: "#334867",     // grey-navy — secondary accent (e.g. charts)

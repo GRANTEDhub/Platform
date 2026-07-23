@@ -107,7 +107,7 @@ export function ClientDashboard({
 
       {/* main grid: action items (wide) + grant activity */}
       <div className="mt-8 grid gap-6 lg:grid-cols-3">
-        <Card className="p-6 sm:p-7 lg:col-span-2">
+        <Card className="p-6 shadow-card sm:p-7 lg:col-span-2">
           <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Action items</h2>
           {actionItems.length === 0 ? (
             <p className="mt-4 text-sm text-muted-foreground">Nothing needs your attention right now.</p>
@@ -120,7 +120,7 @@ export function ClientDashboard({
           )}
         </Card>
 
-        <Card className="p-6 sm:p-7">
+        <Card className="p-6 shadow-card sm:p-7">
           <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Grant activity</h2>
           <div className="mt-4">
             <ClientMatchChart
@@ -185,7 +185,7 @@ function QuickAction({
   featured?: boolean;
   external?: boolean;
 }) {
-  const cls = `flex flex-col gap-2 rounded-2xl p-5 shadow-soft transition ${
+  const cls = `flex flex-col gap-2 rounded-2xl p-5 shadow-card transition ${
     featured ? "bg-brand-navy text-white" : "border border-brand-navy/[0.08] bg-white text-brand-navy hover:border-brand-navy/20"
   }`;
   const inner = (

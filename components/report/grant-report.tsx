@@ -59,7 +59,7 @@ export function GrantReport({
   return (
     <div>
       {/* header card */}
-      <div className="animate-fade-up rounded-3xl bg-white p-8 shadow-soft">
+      <div className="animate-fade-up rounded-3xl bg-white p-8 shadow-card">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h1 className="font-serif text-[30px] font-semibold leading-tight tracking-tight text-brand-navy">{heading}</h1>
@@ -113,7 +113,7 @@ export function GrantReport({
 
       {/* rows */}
       {visible.length === 0 ? (
-        <div className="rounded-2xl border border-brand-navy/[0.05] bg-white py-16 text-center text-sm text-muted-foreground shadow-soft">
+        <div className="rounded-2xl border border-brand-navy/[0.05] bg-white py-16 text-center text-sm text-muted-foreground shadow-card">
           {items.length === 0
             ? "No matched opportunities yet. New matches appear here as your GRANTED team surfaces them."
             : "No grants match this view. Clear the search or filter to see the full roadmap."}
@@ -146,7 +146,7 @@ function Row({ item, href, index }: { item: ReportItem; href: string; index: num
     <Link
       href={href}
       style={{ animationDelay: `${Math.min(index, 8) * 45}ms` }}
-      className="animate-fade-up block rounded-2xl border border-brand-navy/[0.05] bg-white p-6 shadow-soft transition duration-200 hover:-translate-y-0.5 hover:shadow-lift"
+      className="animate-fade-up block rounded-2xl border border-brand-navy/[0.05] bg-white p-6 shadow-card transition duration-200 hover:-translate-y-0.5 hover:shadow-lift"
     >
       <div className="flex items-center gap-6">
         <ScoreRing fitScore={item.fitScore} band={item.band} />
