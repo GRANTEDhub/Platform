@@ -49,7 +49,7 @@ export default async function PortalGrantDetail({ params }: { params: { id: stri
   const decidedBy = deciderLabel(card.decision, card.decided_by, card.decided_by_actor, user?.id ?? null, org.clientName);
 
   return (
-    <HubShell variant="texture">
+    <HubShell variant="map">
       <ReportDetail
         cardId={params.id}
         card={card}

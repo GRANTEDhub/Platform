@@ -55,7 +55,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   );
 
   return (
-    <HubShell variant="texture">
+    <HubShell variant="map">
       <ReportDetail
         cardId={params.cardId}
         card={card}
