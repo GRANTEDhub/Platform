@@ -29,9 +29,9 @@ export function HeroBand({
         style={{
           backgroundImage: "url('/map-bg.jpg')",
           backgroundSize: "cover",
-          backgroundPosition: "center 78%",
+          backgroundPosition: "center",
           filter: "grayscale(0.35) blur(1px)",
-          transform: "scale(1.04)",
+          transform: "scale(1.02)",
         }}
       />
       <div aria-hidden className="absolute inset-0" style={{ background: "linear-gradient(120deg, rgba(8,22,39,0.94), rgba(11,30,58,0.80))" }} />
