@@ -21,10 +21,10 @@ function MapBackdrop() {
           backgroundAttachment: "fixed",
         }}
       />
-      {/* the asset itself is tinted GRANTED-navy (sharp .tint, not a CSS filter —
-          background-attachment:fixed can't take a live one), so the blue comes from
-          the bake; this is just a light cream lift to keep text legible over it */}
-      <div className="absolute inset-0 bg-brand-cream/10" />
+      {/* cream + orange wash over the desaturated bake — reads as a warm
+          terracotta map tone rather than flat gray or a straight blue tint */}
+      <div className="absolute inset-0 bg-brand-cream/[0.12]" />
+      <div className="absolute inset-0 bg-brand-orange/[0.22]" />
     </div>
   );
 }
