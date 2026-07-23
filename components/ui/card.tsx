@@ -8,6 +8,9 @@ const ELEVATION = {
   soft: "rounded-2xl bg-white shadow-soft",
   flat: "rounded-2xl border border-brand-navy/10 bg-white",
   lift: "rounded-2xl bg-white shadow-lift",
+  // A defined drop (not a diffuse halo) so cards sit clearly on a busy backdrop
+  // (the grant detail's photo backdrop) instead of blending into it.
+  card: "rounded-2xl border border-brand-navy/[0.05] bg-white shadow-card",
 } as const;
 
 export function Card({

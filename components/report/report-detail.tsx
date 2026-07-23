@@ -103,7 +103,7 @@ export function ReportDetail({
       </Link>
 
       {/* header — facts + honest fit ring */}
-      <div className="rounded-3xl bg-white p-8 shadow-soft">
+      <div className="rounded-3xl border border-brand-navy/[0.05] bg-white p-8 shadow-card">
         <div className="flex items-start justify-between gap-6">
           <div className="min-w-0">
             <h1 className="font-serif text-[28px] font-semibold leading-tight tracking-tight text-brand-navy">{title}</h1>
@@ -136,11 +136,11 @@ export function ReportDetail({
       </div>
 
       {/* purpose & overview — the grant description */}
-      <WhatItFunds grant={grant} label="Purpose & overview" headingStyle="title" />
+      <WhatItFunds grant={grant} label="Purpose & overview" headingStyle="title" elevation="card" />
 
       {/* why this matches you — narrative + the per-factor scoring graphic */}
       {(why.length > 0 || card.concept_synopsis || card.factor_scores) && (
-        <Card className="p-6 sm:p-7">
+        <Card elevation="card" className="p-6 sm:p-7">
           <SectionTitle>Why this matches you</SectionTitle>
           {why.length > 0 && (
             <ul className="mt-3 space-y-2">
@@ -162,11 +162,11 @@ export function ReportDetail({
       )}
 
       {/* eligibility */}
-      <WhoCanApply grant={grant} label="Eligibility requirements" headingStyle="title" />
+      <WhoCanApply grant={grant} label="Eligibility requirements" headingStyle="title" elevation="card" />
 
       {/* key details & links */}
       {(match !== "None" || grant.period_of_performance || funder || cfda || showSource) && (
-        <Card className="p-6 sm:p-7">
+        <Card elevation="card" className="p-6 sm:p-7">
           <SectionTitle>Key details &amp; links</SectionTitle>
           <div className="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2">
             <DetailRow label="Match required" value={match} />
