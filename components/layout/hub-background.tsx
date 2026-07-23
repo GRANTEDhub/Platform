@@ -7,11 +7,17 @@
 //             as the page scrolls. Used on the grant detail. Uses a pre-softened
 //             asset (map-bg-soft.jpg) because background-attachment:fixed can't take
 //             a live CSS filter.
+//
+// Both variants are `fixed inset-0 -z-10`, not `absolute` — the app shell boxes
+// page content in with its own padding/gutter (see AppLayout's p-3/gap-3), so an
+// absolutely-positioned backdrop only ever filled that inset content box. Fixed
+// positioning sizes to the true viewport instead, so the backdrop reaches every
+// screen edge and sits behind the sidebar too.
 import { PageBackdrop } from "./page-backdrop";
 
 function MapBackdrop() {
   return (
-    <div aria-hidden className="pointer-events-none absolute inset-0 bg-brand-cream">
+    <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 bg-brand-cream">
       <div
         className="absolute inset-0"
         style={{

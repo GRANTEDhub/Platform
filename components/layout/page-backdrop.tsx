@@ -1,12 +1,15 @@
 import { BRAND } from "@/lib/brand";
 
 // Warm-cream page backdrop with faint topographic contour lines — de-stales the
-// hub body surfaces (dashboard, grant report) without a competing photo. Sits
-// behind the content (absolute inset-0); decorative only. The map photo stays an
-// accent in hero bands / cards; this is the ambient texture for the page itself.
+// hub body surfaces (dashboard, grant report) without a competing photo. Fixed to
+// the viewport (not the page's scrollable/padded content box) so it spans true
+// edge-to-edge — behind the sidebar and out to every screen edge — rather than
+// being boxed in by the app shell's own padding. Decorative only, negative
+// z-index. The map photo stays an accent in hero bands / cards; this is the
+// ambient texture for the page itself.
 export function PageBackdrop() {
   return (
-    <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden bg-brand-creamWarm">
+    <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden bg-brand-creamWarm">
       <svg
         className="absolute inset-0 h-full w-full"
         viewBox="0 0 1440 1200"
