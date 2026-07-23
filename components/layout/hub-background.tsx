@@ -21,8 +21,9 @@ function MapBackdrop() {
           backgroundAttachment: "fixed",
         }}
       />
-      {/* a light lift for legibility, then a gentle GRANTED-navy hue over the map */}
-      <div className="absolute inset-0 bg-brand-cream/25" />
+      {/* lighter lift (less opaque) + a gentle GRANTED-navy hue over the now-
+          grayscale map, so it reads as a clean blue-tinted monochrome backdrop */}
+      <div className="absolute inset-0 bg-brand-cream/15" />
       <div className="absolute inset-0 bg-brand-navy/[0.12]" />
     </div>
   );
