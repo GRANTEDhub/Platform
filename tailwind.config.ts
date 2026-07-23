@@ -57,9 +57,9 @@ const config: Config = {
         soft: "0 10px 40px -14px rgba(11,30,58,0.16)",
         softer: "0 6px 22px -12px rgba(11,30,58,0.13)",
         lift: "0 26px 70px -24px rgba(11,30,58,0.30)",
-        // Lifted card: a close contact shadow + a soft far drop, so cards read as
-        // floating off the warmer hub backdrop (dashboard / report).
-        card: "0 4px 12px -2px rgba(11,30,58,0.08), 0 24px 60px -20px rgba(11,30,58,0.26)",
+        // Lifted card: a defined drop (not a diffuse halo) so cards sit clearly on
+        // the warmer hub backdrop (dashboard / report).
+        card: "0 2px 4px -1px rgba(11,30,58,0.14), 0 10px 26px -8px rgba(11,30,58,0.30)",
       },
       fontFamily: {
         // Body / default. Tailwind's preflight sets `html { font-family: sans }`,

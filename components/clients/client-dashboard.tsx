@@ -2,6 +2,7 @@ import Link from "next/link";
 import { CalendarPlus, Flag, LifeBuoy, MessageSquare, Target, type LucideIcon } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ClientMatchChart } from "@/components/clients/client-match-chart";
+import { HeroBand } from "@/components/layout/hero-band";
 import { BRAND } from "@/lib/brand";
 
 // The shared, actor-aware client dashboard — the per-client hub. Staff open it via
@@ -57,52 +58,26 @@ export function ClientDashboard({
   const scheduleHref = bookingUrl || `mailto:${SUPPORT}?subject=Schedule%20a%20strategy%20call`;
   return (
     <div className="mx-auto max-w-7xl px-8 py-8">
-      {/* map-backed navy hero band: name + staff actions + stats. The map sits
-          behind a navy wash so it reads as texture, not a competing photo. */}
-      <div className="relative overflow-hidden rounded-3xl shadow-lift">
-        <div
-          aria-hidden
-          className="absolute inset-0"
-          style={{
-            backgroundImage: "url('/map-bg.jpg')",
-            backgroundSize: "cover",
-            backgroundPosition: "center 78%",
-            filter: "grayscale(0.35) blur(1px)",
-            transform: "scale(1.04)",
-          }}
-        />
-        <div aria-hidden className="absolute inset-0" style={{ background: "linear-gradient(120deg, rgba(8,22,39,0.94), rgba(11,30,58,0.80))" }} />
-        <div className="relative px-8 py-7 text-white">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="min-w-0">
-              <h1 className="font-serif text-[32px] font-semibold leading-tight tracking-tight">{name}</h1>
-              {subLine && <p className="mt-1 text-[14px] text-white/70">{subLine}</p>}
+      <HeroBand
+        title={name}
+        subtitle={subLine ?? undefined}
+        right={
+          isStaff && (editHref || refresh) ? (
+            <div className="flex items-center gap-3">
+              {editHref && (
+                <Link
+                  href={editHref}
+                  className="rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
+                >
+                  Edit profile
+                </Link>
+              )}
+              {refresh}
             </div>
-            {isStaff && (editHref || refresh) && (
-              <div className="flex items-center gap-3">
-                {editHref && (
-                  <Link
-                    href={editHref}
-                    className="rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
-                  >
-                    Edit profile
-                  </Link>
-                )}
-                {refresh}
-              </div>
-            )}
-          </div>
-          <div className="mt-6 grid grid-cols-2 gap-y-5 border-t border-white/[0.14] pt-5 sm:grid-cols-4">
-            {stats.map((s, i) => (
-              <div key={s.label} className={i > 0 ? "sm:border-l sm:border-white/[0.14] sm:pl-6" : ""}>
-                <p className={`text-[26px] font-semibold leading-none ${s.accent ? "text-brand-orange" : "text-white"}`}>{s.value}</p>
-                <p className="mt-1.5 text-[11px] font-semibold uppercase tracking-[0.1em] text-white/60">{s.label}</p>
-                {s.sub && <p className="mt-0.5 text-[12px] text-white/50">{s.sub}</p>}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+          ) : undefined
+        }
+        stats={stats.map((s) => ({ value: s.value, label: s.label, sub: s.sub, accent: s.accent }))}
+      />
       {isStaff && matchNote}
 
       {/* main grid: action items (wide) + grant activity */}
