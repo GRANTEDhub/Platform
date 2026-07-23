@@ -50,7 +50,16 @@ create index if not exists review_cards_interested_idx
 -- nothing already-visible should vanish once the Grant Report query starts
 -- requiring interested_at. Going forward, only newly-created matches start out
 -- ungated (interested_at null) and must pass through Grant Alerts first.
+--
+-- review_cards_guard_approval fires on this UPDATE like any other -- and a raw
+-- migration session has no authenticated user (auth.uid() is null), so
+-- guard_card_approval() reads it as an unauthenticated, unauthorized caller and
+-- blocks it. Disable the trigger for this one bulk backfill, then restore it --
+-- the trigger's actual logic isn't being bypassed for real writes, just this
+-- one-time administrative statement.
+alter table review_cards disable trigger review_cards_guard_approval;
 update review_cards set interested_at = coalesce(decided_at, created_at) where interested_at is null;
+alter table review_cards enable trigger review_cards_guard_approval;
 
 -- guard_card_approval: extend the client column-lock to also allow the interest
 -- fields. Same shape as 0056 -- staff branch (the admin-approve gate) untouched.
