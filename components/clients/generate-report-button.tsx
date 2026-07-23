@@ -28,10 +28,14 @@ export function GenerateReportButton({
   clientId,
   inProgress,
   confirmRerun,
+  idleLabel = "Generate report",
 }: {
   clientId: string;
   inProgress: boolean;
   confirmRerun: boolean;
+  // Idle-state label. The client dashboard passes "Refresh matches" (a staff-only
+  // control); prospecting keeps the default "Generate report".
+  idleLabel?: string;
 }) {
   const router = useRouter();
   const [phase, setPhase] = useState<"idle" | "running" | "error">("idle");
@@ -116,7 +120,7 @@ export function GenerateReportButton({
     ? "Matching…"
     : phase === "error" || inProgress
       ? "Resume matching"
-      : "Generate report";
+      : idleLabel;
 
   return (
     <div className="flex flex-col items-end gap-1">
