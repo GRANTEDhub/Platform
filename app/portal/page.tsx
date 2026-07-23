@@ -23,6 +23,7 @@ type CardRow = {
   id: string;
   fit_score: 1 | 2 | 3;
   decision: CardDecision;
+  interested_at: string | null;
   grants:
     | Pick<Grant, "id" | "title" | "funder" | "submission_deadline">
     | Pick<Grant, "id" | "title" | "funder" | "submission_deadline">[]
@@ -43,16 +44,20 @@ export default async function PortalHome() {
 
   const { data: cardRows } = await supabase
     .from("review_cards")
-    .select("id, fit_score, decision, grants(id, title, funder, submission_deadline)")
+    .select("id, fit_score, decision, interested_at, grants(id, title, funder, submission_deadline)")
     .eq("client_id", org.clientId)
     .neq("card_type", "prospect");
 
   const cards = ((cardRows ?? []) as CardRow[]).map((r) => ({ ...r, grant: grantOf(r.grants) }));
+  // "In review" now means interested-but-undecided (sitting in the Grant Report,
+  // past the Grant Alerts gate) -- not-yet-triaged cards are a separate bucket
+  // (newAlerts, below), not part of this count. See migration 0057.
   const counts = {
-    pending: cards.filter((c) => c.decision === "pending").length,
+    pending: cards.filter((c) => c.interested_at !== null && c.decision === "pending").length,
     approved: cards.filter((c) => c.decision === "approved").length,
     passed: cards.filter((c) => c.decision === "passed").length,
   };
+  const newAlerts = cards.filter((c) => c.interested_at === null && c.decision !== "passed").length;
   const nonPassed = cards.filter((c) => c.decision !== "passed");
 
   // Upcoming deadlines (real) among live matches -- drives the deadline stat + the
@@ -72,9 +77,13 @@ export default async function PortalHome() {
   ];
 
   const base = "/portal/grants";
+  const alertsHref = "/portal/triage";
   const actionItems: DashActionItem[] = [];
+  if (newAlerts > 0) {
+    actionItems.push({ id: "grant-alerts", title: `You have ${newAlerts} grant${newAlerts === 1 ? "" : "s"} to review`, href: alertsHref });
+  }
   if (counts.pending > 0) {
-    actionItems.push({ id: "catch-up", title: `Catch up on grant alerts · ${counts.pending} new`, href: base });
+    actionItems.push({ id: "grant-report-pending", title: `${counts.pending} grant${counts.pending === 1 ? "" : "s"} awaiting a decision`, href: base });
   }
   if (client?.next_step) {
     actionItems.push({ id: "next-step", title: client.next_step, tag: "From your team", priority: "high" });

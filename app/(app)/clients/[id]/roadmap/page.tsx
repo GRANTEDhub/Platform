@@ -34,7 +34,8 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
     )
     .eq("client_id", params.id)
     .neq("card_type", "prospect")
-    .neq("decision", "passed");
+    .neq("decision", "passed")
+    .not("interested_at", "is", null); // Grant Alerts gate (0057) -- promoted-only
 
   const items = toReportItems((data ?? []) as unknown as ReportCardRow[]);
 
@@ -88,7 +89,6 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
         heading={`${client.name} · Grant Report`}
         subtitle={subtitle}
         basePath={`/clients/${client.id}/roadmap`}
-        triageHref={`/clients/${client.id}/roadmap/triage`}
       />
     </HubShell>
   );

@@ -388,6 +388,14 @@ export interface ReviewCard {
   // shared decision surface reads this to attribute a decision ("Pursued by the
   // client" vs "Approved by GRANTED"). Null on undecided cards.
   decided_by_actor: string | null;
+  // Grant Alerts gate (migration 0057): set when the card is marked "interested"
+  // (right-swipe) -- promotes it into the Grant Report. Deliberately separate
+  // from decision -- a low-stakes "worth a closer look" signal, not a commitment.
+  // Null means the card hasn't been triaged yet (lives in Grant Alerts, not the
+  // Grant Report).
+  interested_at: string | null;
+  interested_by: string | null;
+  interested_by_actor: string | null;
   // Manual add-to-client override audit (migration 0040). overridden_by/at are set
   // on EVERY manual add (human-added vs engine-surfaced); override_reason is set
   // ONLY when the add was FORCED past a gate ("<severity>: <reason>") and drives

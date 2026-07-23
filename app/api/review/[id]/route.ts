@@ -8,11 +8,12 @@ import type { CardDecision } from "@/types/database";
 // shared helper, which the grant-alert send path also uses.
 export type { GrantSummary, DecidedResult } from "@/lib/review/summary";
 
-// Record a review-card decision. Pure decision recorder now: Reject ('passed')
-// and Reset ('pending') come through here; client approval + the actual send are
-// owned by the grant-alert route (POST /api/alerts/[cardId]/send), which also
-// stamps 'approved'. RLS + the guard_card_approval trigger still enforce that
-// only admins can set 'approved'.
+// Record a review-card decision, OR mark it "interested" (Grant Alerts' gate ahead
+// of the Grant Report -- a separate, lower-stakes signal from decision; see
+// migration 0057). Reject ('passed') and Reset ('pending') come through here;
+// client approval + the actual send are owned by the grant-alert route (POST
+// /api/alerts/[cardId]/send), which also stamps 'approved'. RLS + the
+// guard_card_approval trigger still enforce that only admins can set 'approved'.
 export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } },
@@ -25,23 +26,37 @@ export async function PATCH(
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  let body: { decision: CardDecision; decision_reason?: string };
+  let body: { decision?: CardDecision; decision_reason?: string; interested?: boolean };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const valid: CardDecision[] = ["pending", "approved", "passed"];
-  if (!valid.includes(body.decision)) {
-    return NextResponse.json({ error: "Invalid decision" }, { status: 400 });
-  }
-
-  // Which side is deciding? Staff have a profiles row; client portal members don't.
+  // Which side is acting? Staff have a profiles row; client portal members don't.
   // (A client can't read profiles under RLS, so this self-lookup returns null for
   // them, which correctly resolves to 'client'.) Stamped for actor attribution.
   const { data: prof } = await supabase.from("profiles").select("id").eq("id", user.id).maybeSingle();
   const actor = prof ? "staff" : "client";
+
+  // Interest-only write (Grant Alerts right-swipe): does not touch decision at all.
+  if (body.interested && !body.decision) {
+    const { data, error } = await supabase
+      .from("review_cards")
+      .update({ interested_at: new Date().toISOString(), interested_by: user.id, interested_by_actor: actor })
+      .eq("id", params.id)
+      .select()
+      .single();
+    if (error) {
+      return NextResponse.json({ error: "Failed to update card" }, { status: 500 });
+    }
+    return NextResponse.json({ card: data, grant_summary: null });
+  }
+
+  const valid: CardDecision[] = ["pending", "approved", "passed"];
+  if (!body.decision || !valid.includes(body.decision)) {
+    return NextResponse.json({ error: "Invalid decision" }, { status: 400 });
+  }
 
   const isTerminal = body.decision !== "pending";
   const { data, error } = await supabase

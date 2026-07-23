@@ -14,6 +14,10 @@ export const dynamic = "force-dynamic";
 // We show pending + approved client cards (passed are hidden). review_cards only
 // ever holds engine-qualifying matches, so every row is a vetted opportunity —
 // "Pursuing" (approved) carries its badge; the rest await a decision.
+//
+// Grant Alerts gate (0057): a card only lands here once it's been marked
+// interested in Grant Alerts -- brand-new, not-yet-triaged matches live there
+// instead, not here.
 export default async function PortalGrantReport() {
   const { memberships } = await requireClient();
   const org = memberships[0];
@@ -26,7 +30,8 @@ export default async function PortalGrantReport() {
     )
     .eq("client_id", org.clientId)
     .neq("card_type", "prospect")
-    .neq("decision", "passed");
+    .neq("decision", "passed")
+    .not("interested_at", "is", null);
 
   const items = toReportItems((data ?? []) as unknown as ReportCardRow[]);
   const subtitle =
@@ -41,7 +46,6 @@ export default async function PortalGrantReport() {
         heading={`${org.clientName} · Grant Report`}
         subtitle={subtitle}
         basePath="/portal/grants"
-        triageHref="/portal/triage"
       />
     </HubShell>
   );

@@ -32,21 +32,16 @@ export function GrantReport({
   heading,
   subtitle,
   basePath,
-  triageHref,
 }: {
   items: ReportItem[];
   heading: string;
   subtitle?: string;
   // Where a row links to, e.g. "/portal/grants". Detail is `${basePath}/${id}`.
   basePath: string;
-  // Optional link to the swipe-triage view; the launch button shows only when
-  // there are undecided (pending) matches to triage.
-  triageHref?: string;
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const stats = useMemo(() => reportStats(items), [items]);
-  const pendingCount = useMemo(() => items.filter((i) => i.decision === "pending").length, [items]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -64,16 +59,6 @@ export function GrantReport({
         <HeroBand
           title={heading}
           subtitle={subtitle}
-          right={
-            triageHref && pendingCount > 0 ? (
-              <Link
-                href={triageHref}
-                className="shrink-0 rounded-full bg-brand-orange px-5 py-2.5 text-sm font-semibold text-white shadow-soft transition hover:brightness-105"
-              >
-                Interactive Grant Report
-              </Link>
-            ) : undefined
-          }
           stats={[
             { value: String(stats.matched), label: "Matched grants" },
             {
