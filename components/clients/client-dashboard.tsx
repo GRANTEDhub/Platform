@@ -1,17 +1,14 @@
 import Link from "next/link";
-import { ArrowRight, CalendarClock, CalendarPlus, Eye, Flag, LifeBuoy, MessageSquare, Target, TrendingUp, type LucideIcon } from "lucide-react";
+import { ArrowRight, Bell, CalendarPlus, Flag, LifeBuoy, MessageSquare, Target, type LucideIcon } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ClientMatchChart } from "@/components/clients/client-match-chart";
-import { ScoreRing } from "@/components/report/primitives";
-import { FIT_BAND } from "@/lib/report/shape";
 import { BRAND } from "@/lib/brand";
 
 // The shared, actor-aware client dashboard — the per-client hub. Staff open it via
 // Portfolio → client; the client lands here on login (Phase 2). One surface: the
 // body is identical for both, and staff-only controls (Edit profile, Refresh
 // matches) render only when isStaff. Format mirrors the client Figma; content is
-// GRANTED's real data. Staff-internal detail (contact, engagement, billing, portal
-// access, repository, notes) lives on Edit profile, not here.
+// GRANTED's real data. Staff-internal detail lives on Edit profile, not here.
 
 const SUPPORT = "support@grantedco.com";
 
@@ -32,12 +29,6 @@ export interface DashActionItem {
   href?: string | null;
 }
 
-export interface DashRoadmapPick {
-  cardId: string;
-  title: string;
-  fitScore: 1 | 2 | 3;
-}
-
 export function ClientDashboard({
   name,
   subLine,
@@ -46,8 +37,7 @@ export function ClientDashboard({
   stats,
   actionItems,
   activity,
-  roadmapPicks,
-  matchedCount,
+  bookingUrl,
   editHref,
   refresh,
   matchNote,
@@ -59,12 +49,12 @@ export function ClientDashboard({
   stats: DashStat[];
   actionItems: DashActionItem[];
   activity: { pending: number; approved: number; passed: number };
-  roadmapPicks: DashRoadmapPick[];
-  matchedCount: number;
+  bookingUrl: string | null;
   editHref?: string | null;
   refresh?: React.ReactNode; // staff-only refresh control
   matchNote?: React.ReactNode; // staff-only in-progress indicator
 }) {
+  const scheduleHref = bookingUrl || `mailto:${SUPPORT}?subject=Schedule%20a%20strategy%20call`;
   return (
     <div className="mx-auto max-w-7xl px-8 py-8">
       {/* header — client name kept up top */}
@@ -96,31 +86,37 @@ export function ClientDashboard({
         ))}
       </div>
 
-      {/* main grid */}
+      {/* main grid: content left, shortcuts right */}
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
-          {/* action items */}
           <Card className="p-6 sm:p-7">
-            <div className="flex items-center justify-between">
-              <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Action items</h2>
-              {actionItems.length > 0 && (
-                <Link href={roadmapHref} className="text-sm font-medium text-brand-orange hover:underline">
-                  View roadmap →
-                </Link>
+            <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Action items</h2>
+            <ul className="mt-4 divide-y divide-brand-navy/[0.06]">
+              {activity.pending > 0 && (
+                <li>
+                  <Link
+                    href={roadmapHref}
+                    className="flex items-center justify-between gap-4 rounded-xl bg-brand-orange/[0.07] px-4 py-3 transition hover:bg-brand-orange/[0.12]"
+                  >
+                    <span className="flex items-center gap-3">
+                      <Bell className="h-5 w-5 shrink-0 text-brand-orange" />
+                      <span className="text-sm font-semibold text-brand-navy">
+                        Catch up on grant alerts · {activity.pending} new
+                      </span>
+                    </span>
+                    <ArrowRight className="h-4 w-4 shrink-0 text-brand-orange" />
+                  </Link>
+                </li>
               )}
-            </div>
-            {actionItems.length === 0 ? (
-              <p className="mt-4 text-sm text-muted-foreground">Nothing needs your attention right now.</p>
-            ) : (
-              <ul className="mt-4 divide-y divide-brand-navy/[0.06]">
-                {actionItems.map((it) => (
-                  <ActionRow key={it.id} item={it} />
-                ))}
-              </ul>
-            )}
+              {actionItems.map((it) => (
+                <ActionRow key={it.id} item={it} />
+              ))}
+              {activity.pending === 0 && actionItems.length === 0 && (
+                <li className="py-3 text-sm text-muted-foreground">Nothing needs your attention right now.</li>
+              )}
+            </ul>
           </Card>
 
-          {/* grant activity chart */}
           <Card className="p-6 sm:p-7">
             <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Grant activity</h2>
             <div className="mt-4">
@@ -135,58 +131,13 @@ export function ClientDashboard({
           </Card>
         </div>
 
-        {/* roadmap summary */}
-        <Card className="h-fit p-6 sm:p-7">
-          <div className="flex items-center justify-between">
-            <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Your roadmap</h2>
-            <span className="rounded-full bg-brand-navy/[0.06] px-3 py-1 text-xs font-semibold text-brand-navy">
-              {matchedCount} matched
-            </span>
-          </div>
-          {roadmapPicks.length === 0 ? (
-            <p className="mt-4 text-sm text-muted-foreground">Matches will appear here as your team surfaces them.</p>
-          ) : (
-            <>
-              <p className="mt-1 text-[13px] text-muted-foreground">Top opportunities by fit</p>
-              <ul className="mt-4 space-y-4">
-                {roadmapPicks.map((p) => (
-                  <li key={p.cardId}>
-                    <Link href={`${roadmapHref}/${p.cardId}`} className="flex items-center gap-3 group">
-                      <ScoreRing fitScore={p.fitScore} band={FIT_BAND[p.fitScore] ?? FIT_BAND[1]} />
-                      <span className="min-w-0 flex-1 text-sm font-medium text-brand-navy group-hover:underline">
-                        {p.title}
-                      </span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          <Link
-            href={roadmapHref}
-            className="mt-6 flex items-center justify-center gap-1.5 rounded-full bg-brand-navy px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-navyDeep"
-          >
-            View full roadmap <ArrowRight className="h-4 w-4" />
-          </Link>
-        </Card>
-      </div>
-
-      {/* quick actions */}
-      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <QuickAction featured href={roadmapHref} icon={Target} title="View grant roadmap" sub="Review your matched opportunities" />
-        <QuickAction
-          href={`mailto:${SUPPORT}?subject=Schedule%20a%20strategy%20call`}
-          icon={CalendarPlus}
-          title="Schedule with an advisor"
-          sub="Book a grant strategy call"
-        />
-        <QuickAction
-          href={`mailto:${SUPPORT}?subject=Question%20for%20my%20GRANTED%20team`}
-          icon={MessageSquare}
-          title="Message your team"
-          sub="Ask a question"
-        />
-        <QuickAction href={`mailto:${SUPPORT}?subject=Help`} icon={LifeBuoy} title="Help" sub="Get support" />
+        {/* shortcuts (moved into the space the roadmap card vacated) */}
+        <div className="space-y-4">
+          <QuickAction featured href={roadmapHref} icon={Target} title="Grant Report" sub="Review your matched opportunities" />
+          <QuickAction external href={scheduleHref} icon={CalendarPlus} title="Schedule with an advisor" sub="Book a grant strategy call" />
+          <QuickAction external href={`mailto:${SUPPORT}?subject=Question%20for%20my%20GRANTED%20team`} icon={MessageSquare} title="Message your team" sub="In-app messaging — coming soon" />
+          <QuickAction external href={`mailto:${SUPPORT}?subject=Help`} icon={LifeBuoy} title="Help" sub="FAQ & support" />
+        </div>
       </div>
     </div>
   );
@@ -212,7 +163,11 @@ function ActionRow({ item }: { item: DashActionItem }) {
     <div className="flex items-center justify-between gap-4 py-3">
       <div className="min-w-0">
         <p className="truncate text-sm font-medium text-brand-navy">{item.title}</p>
-        {item.tag && <span className="mt-1 inline-block rounded-full bg-brand-navy/[0.06] px-2.5 py-0.5 text-[11px] font-medium text-brand-navy">{item.tag}</span>}
+        {item.tag && (
+          <span className="mt-1 inline-block rounded-full bg-brand-navy/[0.06] px-2.5 py-0.5 text-[11px] font-medium text-brand-navy">
+            {item.tag}
+          </span>
+        )}
       </div>
       <div className="flex shrink-0 flex-col items-end gap-0.5 text-right">
         {item.date && <span className="text-xs text-muted-foreground">{item.date}</span>}
@@ -234,21 +189,36 @@ function QuickAction({
   title,
   sub,
   featured,
+  external,
 }: {
   href: string;
   icon: LucideIcon;
   title: string;
   sub: string;
   featured?: boolean;
+  external?: boolean;
 }) {
-  const cls = featured
-    ? "bg-brand-navy text-white"
-    : "border border-brand-navy/[0.08] bg-white text-brand-navy hover:border-brand-navy/20";
-  return (
-    <Link href={href} className={`flex flex-col gap-2 rounded-2xl p-5 shadow-soft transition ${cls}`}>
-      <Icon className={`h-6 w-6 ${featured ? "text-brand-orange" : "text-brand-navy"}`} />
-      <span className="mt-1 text-[15px] font-semibold">{title}</span>
-      <span className={`text-[12.5px] ${featured ? "text-white/70" : "text-muted-foreground"}`}>{sub}</span>
+  const cls = `flex items-center gap-3 rounded-2xl p-4 shadow-soft transition ${
+    featured ? "bg-brand-navy text-white" : "border border-brand-navy/[0.08] bg-white text-brand-navy hover:border-brand-navy/20"
+  }`;
+  const inner = (
+    <>
+      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${featured ? "bg-white/10" : "bg-brand-navy/[0.06]"}`}>
+        <Icon className={`h-5 w-5 ${featured ? "text-brand-orange" : "text-brand-navy"}`} />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-[15px] font-semibold">{title}</span>
+        <span className={`block text-[12px] ${featured ? "text-white/70" : "text-muted-foreground"}`}>{sub}</span>
+      </span>
+    </>
+  );
+  return external ? (
+    <a href={href} target="_blank" rel="noopener noreferrer" className={cls}>
+      {inner}
+    </a>
+  ) : (
+    <Link href={href} className={cls}>
+      {inner}
     </Link>
   );
 }

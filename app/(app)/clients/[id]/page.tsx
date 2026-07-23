@@ -8,7 +8,6 @@ import { GenerateReportButton } from "@/components/clients/generate-report-butto
 import {
   ClientDashboard,
   type DashActionItem,
-  type DashRoadmapPick,
   type DashStat,
 } from "@/components/clients/client-dashboard";
 import { deadlineDaysLeft } from "@/lib/report/shape";
@@ -74,11 +73,14 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   ];
 
   const base = `/clients/${client.id}/roadmap`;
+  // Action items beyond the "catch up on alerts" row (the dashboard derives that
+  // from the pending count): the client's next step + deadline to-dos for grants
+  // they're actively PURSUING (approved) — grantwriting work, not review.
   const actionItems: DashActionItem[] = [];
   if (client.next_step) {
     actionItems.push({ id: "next-step", title: client.next_step, tag: "From your team", priority: "high" });
   }
-  for (const x of upcoming.slice(0, 5)) {
+  for (const x of upcoming.filter((u) => u.c.decision === "approved").slice(0, 4)) {
     actionItems.push({
       id: x.c.id,
       title: `Prepare ${x.c.grant?.title || "grant"}`,
@@ -88,11 +90,6 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
       href: `${base}/${x.c.id}`,
     });
   }
-
-  const roadmapPicks: DashRoadmapPick[] = [...nonPassed]
-    .sort((a, b) => b.fit_score - a.fit_score)
-    .slice(0, 3)
-    .map((c) => ({ cardId: c.id, title: c.grant?.title || "Untitled opportunity", fitScore: c.fit_score }));
 
   const matchStatus = client.initial_match_status;
   const matchInProgress = matchStatus === "queued" || matchStatus === "running";
@@ -119,8 +116,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         stats={stats}
         actionItems={actionItems}
         activity={counts}
-        roadmapPicks={roadmapPicks}
-        matchedCount={nonPassed.length}
+        bookingUrl={process.env.NEXT_PUBLIC_BOOKING_URL ?? null}
         editHref={`/clients/${client.id}/edit`}
         refresh={
           <GenerateReportButton
