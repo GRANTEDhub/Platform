@@ -149,7 +149,7 @@ export function WhatItFunds({
   grant: GrantDetailFields;
   label?: string;
   headingStyle?: "label" | "title";
-  elevation?: "soft" | "card";
+  elevation?: "soft" | "grounded";
 }) {
   // Description may carry HTML markup -> sanitize (whitelist) then inject. Long
   // descriptions are truncated (sentence-clean) with a Show more expander.
@@ -185,7 +185,7 @@ export function WhoCanApply({
   dense?: boolean;
   label?: string;
   headingStyle?: "label" | "title";
-  elevation?: "soft" | "card";
+  elevation?: "soft" | "grounded";
 }) {
   const eligibleTypes = (grant.eligible_entity_types ?? []).map((t) => t.replace(/_/g, " "));
   return (

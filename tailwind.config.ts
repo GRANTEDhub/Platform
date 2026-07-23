@@ -60,6 +60,9 @@ const config: Config = {
         // Lifted card: a defined drop (not a diffuse halo) so cards sit clearly on
         // the warmer hub backdrop (dashboard / report).
         card: "0 2px 4px -1px rgba(11,30,58,0.14), 0 10px 26px -8px rgba(11,30,58,0.30)",
+        // Darker/denser navy drop for cards over the busy detail-page photo
+        // backdrop, where `card` read too faint (a pale border ring, not a shadow).
+        grounded: "0 4px 10px -2px rgba(8,20,45,0.35), 0 16px 36px -12px rgba(8,20,45,0.45)",
       },
       fontFamily: {
         // Body / default. Tailwind's preflight sets `html { font-family: sans }`,
