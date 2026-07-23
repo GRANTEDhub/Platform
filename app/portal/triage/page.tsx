@@ -28,7 +28,7 @@ export default async function PortalTriage() {
 
   return (
     <HubShell variant="texture">
-      <SwipeDeck items={items} detailBasePath="/portal/grants" backHref="/portal" />
+      <SwipeDeck items={items} detailBasePath="/portal/grants" backHref="/portal/grants" />
     </HubShell>
   );
 }

@@ -58,7 +58,7 @@ export default async function PortalGrantDetail({ params }: { params: { id: stri
         funder={g.funder}
         focusAreas={(g.focus_areas ?? []).slice(0, 3)}
         deciderLabel={decidedBy}
-        backHref="/portal"
+        backHref="/portal/grants"
       />
     </HubShell>
   );
