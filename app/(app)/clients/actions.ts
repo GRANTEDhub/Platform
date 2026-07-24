@@ -89,6 +89,9 @@ function parse(formData: FormData) {
     // Research-grants opt-in (migration 0051). Checkbox shown only for small_business /
     // higher_education; an unchecked/hidden box submits nothing -> false. Default off.
     research_opt_in: get("research_opt_in") === "true",
+    // Premium tier gate (migration 0059): an account manager reviews + releases each
+    // match before the client sees it. Prospects can't be account-managed.
+    account_managed: isProspect ? false : get("account_managed") === "true",
   };
   return { payload, narrative, kind };
 }

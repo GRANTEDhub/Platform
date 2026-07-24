@@ -11,30 +11,45 @@ import type { Client } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
-// Staff account-manager view of a client's Grant Roadmap. Renders the EXACT same
-// GrantReport the client sees in their portal — one shared surface, the actor is
-// just whoever's signed in (staff here, the client there). Read-only in Slice 1;
-// actor-aware decisions + score feedback arrive in Slice 2, at which point this
-// begins to supplant the per-client /matches + /review flow.
+// Staff account-manager view of a client's Grant Roadmap. For a STANDARD client,
+// renders the EXACT same GrantReport the client sees in their portal -- one
+// shared surface, the actor is just whoever's signed in. For an ACCOUNT-MANAGED
+// client (0059), this is instead staff's OWN queue: every card staff has marked
+// interested (their own Grant Alerts pass), both still awaiting release AND
+// already released -- staff keep read-only visibility into released cards here
+// (the "can I still see it as admin" question) rather than needing to sign in
+// as the client. The per-row "Released to client" badge (lib/report/shape.ts's
+// smeReleased) is what tells the two states apart; released cards are no longer
+// actionable here (the client's own Grant Report owns the pursue decision now).
 export default async function ClientRoadmapPage({ params }: { params: { id: string } }) {
   await requireAdmin();
   const supabase = createClient();
 
   const { data: client } = await supabase
     .from("clients")
-    .select("id, name")
+    .select("id, name, account_managed")
     .eq("id", params.id)
-    .single<Pick<Client, "id" | "name">>();
+    .single<Pick<Client, "id" | "name" | "account_managed">>();
   if (!client) notFound();
+  const managed = !!client.account_managed;
 
-  const { data } = await supabase
+  // Typed `any`: the two branches chain a different shape of filters (two calls
+  // vs one), which sends the Supabase query builder's generic into a "type
+  // instantiation is excessively deep" error if left inferred.
+  let query: any = supabase
     .from("review_cards")
     .select(
-      "id, grant_id, fit_score, proposed_role, decision, factor_scores, grants(title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate, focus_areas)",
+      "id, grant_id, fit_score, proposed_role, decision, factor_scores, sme_released_at, grants(title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate, focus_areas)",
     )
     .eq("client_id", params.id)
     .neq("card_type", "prospect")
     .neq("decision", "passed");
+  // Managed: staff's whole queue -- both awaiting release AND already released
+  // (read-only past that point; the client's own Grant Report owns the decision).
+  query = managed
+    ? query.not("sme_interested_at", "is", null)
+    : query.not("interested_at", "is", null); // Grant Alerts gate (0057) -- promoted-only
+  const { data } = await query;
 
   const items = toReportItems((data ?? []) as unknown as ReportCardRow[]);
 
@@ -68,8 +83,14 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
       };
     });
 
-  const subtitle =
-    items.length === 0
+  const awaitingCount = items.filter((i) => !i.smeReleased).length;
+  const subtitle = managed
+    ? items.length === 0
+      ? "Nothing in your queue right now."
+      : awaitingCount === 0
+        ? `${items.length} ${items.length === 1 ? "grant" : "grants"} released to the client — showing read-only`
+        : `${awaitingCount} awaiting your release · ${items.length - awaitingCount} already released to the client`
+    : items.length === 0
       ? "No matched opportunities yet — they appear here as the engine surfaces them."
       : `${items.length} matched ${items.length === 1 ? "opportunity" : "opportunities"} · Ranked by fit · The client sees this exact view`;
 
@@ -85,10 +106,9 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
       <ClientActivity items={activity} basePath={`/clients/${client.id}/roadmap`} clientName={client.name} />
       <GrantReport
         items={items}
-        heading={`${client.name} · Grant Report`}
+        heading={managed ? `${client.name} · Your review queue` : `${client.name} · Grant Report`}
         subtitle={subtitle}
         basePath={`/clients/${client.id}/roadmap`}
-        triageHref={`/clients/${client.id}/roadmap/triage`}
       />
     </HubShell>
   );

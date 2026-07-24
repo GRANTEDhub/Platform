@@ -32,21 +32,16 @@ export function GrantReport({
   heading,
   subtitle,
   basePath,
-  triageHref,
 }: {
   items: ReportItem[];
   heading: string;
   subtitle?: string;
   // Where a row links to, e.g. "/portal/grants". Detail is `${basePath}/${id}`.
   basePath: string;
-  // Optional link to the swipe-triage view; the launch button shows only when
-  // there are undecided (pending) matches to triage.
-  triageHref?: string;
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const stats = useMemo(() => reportStats(items), [items]);
-  const pendingCount = useMemo(() => items.filter((i) => i.decision === "pending").length, [items]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -64,16 +59,6 @@ export function GrantReport({
         <HeroBand
           title={heading}
           subtitle={subtitle}
-          right={
-            triageHref && pendingCount > 0 ? (
-              <Link
-                href={triageHref}
-                className="shrink-0 rounded-full bg-brand-orange px-5 py-2.5 text-sm font-semibold text-white shadow-soft transition hover:brightness-105"
-              >
-                Interactive Grant Report
-              </Link>
-            ) : undefined
-          }
           stats={[
             { value: String(stats.matched), label: "Matched grants" },
             {
@@ -174,6 +159,11 @@ function Row({ item, href, index }: { item: ReportItem; href: string; index: num
         </div>
 
         <div className="flex shrink-0 flex-col items-end gap-1.5 text-right">
+          {item.smeReleased && (
+            <span className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
+              Released to client
+            </span>
+          )}
           {item.decision !== "pending" && <DecisionBadge decision={item.decision} />}
           <p className="text-[15px] font-semibold text-brand-navy">
             {item.awardRange}

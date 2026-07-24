@@ -8,12 +8,15 @@ import { Archive, ArrowUpRight, Check } from "lucide-react";
 import { ScoreRing, Tag } from "./primitives";
 import type { ReportItem } from "@/lib/report/shape";
 
-// Card-stack triage for undecided matches — the interactive half of the shared
-// decision surface (Slice 3). Swipe/tap right = Interested (approved), left =
-// Archive (passed); a binary call, no middle option. Fly-off physics via `motion`.
-// Each decision writes through the same PATCH /api/review/[id] as the detail gate
-// (actor-tracked, no email). The card body scrolls; horizontal drag is initiated
-// from the banner (a drag handle) so reading the detail doesn't fight the gesture.
+// Card-stack triage for brand-new matches — Grant Alerts, the first gate ahead of
+// the Grant Report (see migration 0057). Swipe/tap right = Interested (sets
+// interested_at, NOT decision -- a low-stakes "worth a closer look" flag that
+// promotes the card into the Grant Report), left = Archive (decision='passed',
+// same as a reject anywhere else). A binary call, no middle option. Fly-off
+// physics via `motion`. Writes go through the same PATCH /api/review/[id] as the
+// detail gate (actor-tracked, no email). The card body scrolls; horizontal drag is
+// initiated from the banner (a drag handle) so reading the detail doesn't fight
+// the gesture.
 
 const THRESHOLD = 110;
 const ROAD_BG = "/login-bg.jpg";
@@ -22,29 +25,41 @@ export function SwipeDeck({
   items,
   detailBasePath,
   backHref,
+  interestMode = "client",
 }: {
   items: ReportItem[];
   detailBasePath: string; // detail = `${detailBasePath}/${id}`
   backHref: string;
+  // "client" (default): right-swipe sets interested_at (the client's own gate,
+  // 0057). "sme": right-swipe sets sme_interested_at instead -- staff's OWN,
+  // separate first pass for an account-managed client (0059). Reject is
+  // identical either way (decision='passed').
+  interestMode?: "client" | "sme";
 }) {
   const [queue, setQueue] = useState(items);
   const done = items.length - queue.length;
 
-  async function persist(id: string, decision: "approved" | "passed") {
+  async function persist(id: string, action: "interested" | "passed") {
     try {
+      const body =
+        action === "passed"
+          ? { decision: "passed" }
+          : interestMode === "sme"
+            ? { sme_interested: true }
+            : { interested: true };
       await fetch(`/api/review/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ decision }),
+        body: JSON.stringify(body),
       });
     } catch {
-      // Optimistic: the card already flew off. A failed write surfaces on the
-      // roadmap (the card reappears as pending on refresh) rather than blocking.
+      // Optimistic: the card already flew off. A failed write surfaces back in
+      // Grant Alerts (the card reappears on refresh) rather than blocking.
     }
   }
 
-  function settle(item: ReportItem, decision: "approved" | "passed") {
-    persist(item.id, decision);
+  function settle(item: ReportItem, action: "interested" | "passed") {
+    persist(item.id, action);
     setQueue((q) => q.filter((i) => i.id !== item.id));
   }
 
@@ -54,6 +69,11 @@ export function SwipeDeck({
   if (!top) {
     return (
       <div className="mx-auto max-w-2xl py-16 text-center">
+        {interestMode === "sme" && (
+          <div className="mb-6 rounded-xl bg-brand-navy px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-white">
+            Account manager review — the client does not see this pass
+          </div>
+        )}
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-brand-navy/[0.06]">
           <Check className="h-7 w-7 text-brand-orange" strokeWidth={3} />
         </div>
@@ -73,6 +93,11 @@ export function SwipeDeck({
 
   return (
     <div className="mx-auto max-w-2xl">
+      {interestMode === "sme" && (
+        <div className="mb-4 rounded-xl bg-brand-navy px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-white">
+          Account manager review — the client does not see this pass
+        </div>
+      )}
       <div className="mb-5 flex items-center justify-between">
         <Link href={backHref} className="text-sm font-medium text-muted-foreground hover:text-brand-navy">
           ← Grant Report
@@ -99,7 +124,7 @@ function SwipeCard({
 }: {
   item: ReportItem;
   detailBasePath: string;
-  onSettle: (item: ReportItem, decision: "approved" | "passed") => void;
+  onSettle: (item: ReportItem, action: "interested" | "passed") => void;
 }) {
   const x = useMotionValue(0);
   const rotate = useTransform(x, [-260, 260], [-11, 11]);
@@ -107,12 +132,12 @@ function SwipeCard({
   const archiveOpacity = useTransform(x, [-130, -30], [1, 0]);
   const dragControls = useDragControls();
 
-  function flyOff(dir: 1 | -1, decision: "approved" | "passed") {
+  function flyOff(dir: 1 | -1, action: "interested" | "passed") {
     animate(x, dir * 760, {
       type: "spring",
       stiffness: 320,
       damping: 38,
-      onComplete: () => onSettle(item, decision),
+      onComplete: () => onSettle(item, action),
     });
   }
 
@@ -126,7 +151,7 @@ function SwipeCard({
       dragElastic={0.6}
       dragConstraints={{ left: 0, right: 0 }}
       onDragEnd={(_, info) => {
-        if (info.offset.x > THRESHOLD) flyOff(1, "approved");
+        if (info.offset.x > THRESHOLD) flyOff(1, "interested");
         else if (info.offset.x < -THRESHOLD) flyOff(-1, "passed");
         else animate(x, 0, { type: "spring", stiffness: 400, damping: 34 });
       }}
@@ -137,7 +162,7 @@ function SwipeCard({
         interestOpacity={interestOpacity}
         archiveOpacity={archiveOpacity}
         onArchive={() => flyOff(-1, "passed")}
-        onInterested={() => flyOff(1, "approved")}
+        onInterested={() => flyOff(1, "interested")}
         onHandlePointerDown={(e) => dragControls.start(e)}
         detailHref={`${detailBasePath}/${item.id}`}
       />
@@ -159,6 +184,83 @@ function Section({ label, children }: { label: string; children: React.ReactNode
     <div>
       <p className="text-[10px] font-semibold uppercase tracking-widest text-brand-orange">{label}</p>
       <p className="mt-1 text-[13px] leading-relaxed text-foreground">{children}</p>
+    </div>
+  );
+}
+
+// Compact agree/flag score feedback, ported from DecisionBar for the swipe card.
+// Same write path (POST /api/feedback), fresh per card (unmounts on swipe).
+function ScoreFeedback({ cardId }: { cardId: string }) {
+  const [busy, setBusy] = useState(false);
+  const [fb, setFb] = useState<"idle" | "agreed" | "flagged">("idle");
+  const [showFlag, setShowFlag] = useState(false);
+  const [flagReason, setFlagReason] = useState("");
+
+  async function send(agree: boolean, reason?: string) {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ review_card_id: cardId, agree, reason: agree ? undefined : reason }),
+      });
+      if (res.ok) {
+        setFb(agree ? "agreed" : "flagged");
+        setShowFlag(false);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (fb !== "idle") {
+    return (
+      <p className="mt-3 text-[12px] text-muted-foreground">
+        {fb === "agreed" ? "Thanks — logged." : "Flagged — logged, we'll factor it into your matches."}
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Agree with the fit score?
+        </span>
+        <button
+          disabled={busy}
+          onClick={() => send(true)}
+          className="rounded-full border border-brand-navy/20 px-2.5 py-1 text-xs font-medium text-brand-navy transition hover:bg-brand-navy/5 disabled:opacity-50"
+        >
+          👍 Agree
+        </button>
+        <button
+          disabled={busy}
+          onClick={() => setShowFlag((v) => !v)}
+          className="rounded-full border border-brand-navy/20 px-2.5 py-1 text-xs font-medium text-brand-navy transition hover:bg-brand-navy/5 disabled:opacity-50"
+        >
+          👎 Flag
+        </button>
+      </div>
+      {showFlag && (
+        <div className="mt-2 space-y-2 rounded-xl border border-brand-navy/10 bg-brand-cream/50 p-3">
+          <textarea
+            value={flagReason}
+            onChange={(e) => setFlagReason(e.target.value)}
+            rows={2}
+            autoFocus
+            placeholder="What's off — eligibility, fit, role, geography?"
+            className="w-full rounded-lg border border-input bg-white px-3 py-2 text-xs outline-none focus:border-brand-navy/35"
+          />
+          <button
+            disabled={busy || !flagReason.trim()}
+            onClick={() => send(false, flagReason)}
+            className="rounded-full bg-brand-navy px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+          >
+            Submit
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -231,6 +333,8 @@ function CardFace({
             ))}
           </div>
         )}
+
+        {interactive && <ScoreFeedback cardId={item.id} />}
 
         {/* stat grid */}
         <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 rounded-2xl bg-brand-cream/70 p-4">

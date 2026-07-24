@@ -136,6 +136,11 @@ export interface Client {
   // (isResearchExcludedFunder optIn bypass). Surfaced on the client form for
   // small_business / higher_education org types only.
   research_opt_in: boolean;
+  // Premium tier gate (migration 0059). When true, an account manager reviews and
+  // releases each match (their own Grant Alerts, then Grant Report pass) BEFORE
+  // it ever reaches the client's own Grant Alerts. Default false -- the client
+  // goes straight to their own two-gate flow, no staff pass in front of it.
+  account_managed: boolean;
   archived_reason: string | null;
   contract_status: string | null;
   contract_signed_at: string | null;
@@ -388,6 +393,14 @@ export interface ReviewCard {
   // shared decision surface reads this to attribute a decision ("Pursued by the
   // client" vs "Approved by GRANTED"). Null on undecided cards.
   decided_by_actor: string | null;
+  // Grant Alerts gate (migration 0057): set when the card is marked "interested"
+  // (right-swipe) -- promotes it into the Grant Report. Deliberately separate
+  // from decision -- a low-stakes "worth a closer look" signal, not a commitment.
+  // Null means the card hasn't been triaged yet (lives in Grant Alerts, not the
+  // Grant Report).
+  interested_at: string | null;
+  interested_by: string | null;
+  interested_by_actor: string | null;
   // Manual add-to-client override audit (migration 0040). overridden_by/at are set
   // on EVERY manual add (human-added vs engine-surfaced); override_reason is set
   // ONLY when the add was FORCED past a gate ("<severity>: <reason>") and drives
