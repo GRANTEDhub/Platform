@@ -56,14 +56,19 @@ export default function IntellEngineScopeClient() {
   const [notes, setNotes] = useState("");
   const [files, setFiles] = useState<string[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [partnerNote, setPartnerNote] = useState<string | null>(null);
 
   const scopeWordCount = scope.trim().length ? scope.trim().split(/\s+/).length : 0;
   const overLimit = scopeWordCount > SCOPE_WORD_LIMIT;
 
   function addPartner() {
-    if (!draftPartner.role.trim() && !draftPartner.description.trim()) return;
+    if (!draftPartner.role.trim() && !draftPartner.description.trim()) {
+      setPartnerNote("Add a role or description before adding this partner.");
+      return;
+    }
     setPartners([...partners, { ...draftPartner, name: draftPartner.name.trim() }]);
     setDraftPartner({ name: "", role: "", description: "" });
+    setPartnerNote(null);
   }
 
   function startEdit(i: number) {
@@ -256,6 +261,7 @@ export default function IntellEngineScopeClient() {
               <Plus className="h-4 w-4" />
               Add partner
             </button>
+            {partnerNote && <p className="text-[12px] text-muted-foreground sm:col-span-2">{partnerNote}</p>}
           </div>
         </div>
 
