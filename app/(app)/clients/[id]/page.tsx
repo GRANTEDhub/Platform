@@ -26,6 +26,8 @@ type CardRow = {
   fit_score: 1 | 2 | 3;
   decision: CardDecision;
   interested_at: string | null;
+  sme_interested_at: string | null;
+  sme_released_at: string | null;
   grants:
     | Pick<Grant, "id" | "title" | "funder" | "submission_deadline">
     | Pick<Grant, "id" | "title" | "funder" | "submission_deadline">[]
@@ -44,9 +46,11 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   const { data: client } = await supabase.from("clients").select("*").eq("id", params.id).single<Client>();
   if (!client) notFound();
 
+  const managed = !!client.account_managed;
+
   const { data: cardRows } = await supabase
     .from("review_cards")
-    .select("id, fit_score, decision, interested_at, grants(id, title, funder, submission_deadline)")
+    .select("id, fit_score, decision, interested_at, sme_interested_at, sme_released_at, grants(id, title, funder, submission_deadline)")
     .eq("client_id", params.id)
     .neq("card_type", "prospect");
 
@@ -59,7 +63,15 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
     approved: cards.filter((c) => c.decision === "approved").length,
     passed: cards.filter((c) => c.decision === "passed").length,
   };
-  const newAlerts = cards.filter((c) => c.interested_at === null && c.decision !== "passed").length;
+  // For an account-managed client (0059), staff's OWN queues are keyed on the
+  // separate sme_* track, not the client-facing interested_at -- otherwise "grants
+  // to review" would count the client's signal, not staff's own unreviewed queue.
+  const newAlerts = managed
+    ? cards.filter((c) => c.sme_interested_at === null && c.decision !== "passed").length
+    : cards.filter((c) => c.interested_at === null && c.decision !== "passed").length;
+  const awaitingRelease = managed
+    ? cards.filter((c) => c.sme_interested_at !== null && c.sme_released_at === null && c.decision !== "passed").length
+    : 0;
   const nonPassed = cards.filter((c) => c.decision !== "passed");
 
   // Upcoming deadlines (real) among live matches — drives the deadline stat + the
@@ -83,13 +95,29 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   // Action items: one row for brand-new matches awaiting the Grant Alerts triage,
   // one for matches already promoted to the Grant Report but still undecided, +
   // the client's next step. Grantwriting/message items join here once those
-  // features exist.
+  // features exist. For an account-managed client, "to review"/"awaiting release"
+  // are staff's OWN queue (this dashboard IS staff's, after all); the client's own
+  // decision status is a separate, clearly-labeled read-only line so it's never
+  // confused with staff's to-dos (the "whose turn is it" gap from earlier).
   const actionItems: DashActionItem[] = [];
   if (newAlerts > 0) {
     actionItems.push({ id: "grant-alerts", title: `You have ${newAlerts} grant${newAlerts === 1 ? "" : "s"} to review`, href: alertsHref });
   }
+  if (managed && awaitingRelease > 0) {
+    actionItems.push({ id: "sme-release", title: `${awaitingRelease} grant${awaitingRelease === 1 ? "" : "s"} awaiting your release to the client`, href: base });
+  }
   if (counts.pending > 0) {
-    actionItems.push({ id: "grant-report-pending", title: `${counts.pending} grant${counts.pending === 1 ? "" : "s"} awaiting a decision`, href: base });
+    actionItems.push({
+      id: "grant-report-pending",
+      title: managed
+        ? `${counts.pending} grant${counts.pending === 1 ? "" : "s"} awaiting the client's decision`
+        : `${counts.pending} grant${counts.pending === 1 ? "" : "s"} awaiting a decision`,
+      // Managed: informational only -- there's no staff-side page for "the
+      // client's own decision status" to link to; the decision itself happens on
+      // the client's own Grant Report. Standard: unchanged, links to staff's
+      // mirror of the client's Grant Report (base already shows exactly that).
+      href: managed ? null : base,
+    });
   }
   if (client.next_step) {
     actionItems.push({ id: "next-step", title: client.next_step, tag: "From your team", priority: "high" });
