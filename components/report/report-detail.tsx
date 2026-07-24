@@ -73,6 +73,7 @@ export function ReportDetail({
   deciderLabel,
   backHref,
   backLabel = "Back to Grant Report",
+  decisionBar,
 }: {
   cardId: string;
   card: ReportDetailCard;
@@ -83,6 +84,10 @@ export function ReportDetail({
   deciderLabel: string | null;
   backHref: string;
   backLabel?: string;
+  // Override the default Pursue/Save/Pass + score-feedback cluster -- used by the
+  // staff SME Gate-2 view (account-managed clients, 0059), where the relevant
+  // action is "release to client", not a pursue decision the client should make.
+  decisionBar?: React.ReactNode;
 }) {
   const band = FIT_BAND[card.fit_score] ?? FIT_BAND[1];
   const why = (card.why_this_org ?? []).filter(Boolean);
@@ -132,7 +137,7 @@ export function ReportDetail({
           <HeaderStat label="Expected awards" value={grant.num_awards || "—"} />
         </div>
 
-        <DecisionBar cardId={cardId} decision={card.decision} deciderLabel={deciderLabel} />
+        {decisionBar ?? <DecisionBar cardId={cardId} decision={card.decision} deciderLabel={deciderLabel} />}
       </div>
 
       {/* purpose & overview — the grant description */}

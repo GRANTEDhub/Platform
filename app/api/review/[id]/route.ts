@@ -10,8 +10,10 @@ export type { GrantSummary, DecidedResult } from "@/lib/review/summary";
 
 // Record a review-card decision, OR mark it "interested" (Grant Alerts' gate ahead
 // of the Grant Report -- a separate, lower-stakes signal from decision; see
-// migration 0057). Reject ('passed') and Reset ('pending') come through here;
-// client approval + the actual send are owned by the grant-alert route (POST
+// migration 0057), OR (account-managed clients only) record the SEPARATE,
+// staff-only SME pass (sme_interested / sme_release -- see migration 0059).
+// Reject ('passed') and Reset ('pending') come through here; client approval +
+// the actual send are owned by the grant-alert route (POST
 // /api/alerts/[cardId]/send), which also stamps 'approved'. RLS + the
 // guard_card_approval trigger still enforce that only admins can set 'approved'.
 export async function PATCH(
@@ -26,7 +28,13 @@ export async function PATCH(
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  let body: { decision?: CardDecision; decision_reason?: string; interested?: boolean };
+  let body: {
+    decision?: CardDecision;
+    decision_reason?: string;
+    interested?: boolean;
+    sme_interested?: boolean;
+    sme_release?: boolean;
+  };
   try {
     body = await req.json();
   } catch {
@@ -38,6 +46,29 @@ export async function PATCH(
   // them, which correctly resolves to 'client'.) Stamped for actor attribution.
   const { data: prof } = await supabase.from("profiles").select("id").eq("id", user.id).maybeSingle();
   const actor = prof ? "staff" : "client";
+
+  // SME-only writes (account-managed clients' own staff pass). Staff-only by
+  // construction -- a client sending either of these is rejected outright; the
+  // guard trigger would also fail-closed-block it, but reject explicitly here so
+  // the error is clear rather than a generic 500.
+  if (body.sme_interested || body.sme_release) {
+    if (actor !== "staff") {
+      return NextResponse.json({ error: "Staff only" }, { status: 403 });
+    }
+    const update = body.sme_release
+      ? { sme_released_at: new Date().toISOString(), sme_released_by: user.id }
+      : { sme_interested_at: new Date().toISOString(), sme_interested_by: user.id };
+    const { data, error } = await supabase
+      .from("review_cards")
+      .update(update)
+      .eq("id", params.id)
+      .select()
+      .single();
+    if (error) {
+      return NextResponse.json({ error: "Failed to update card" }, { status: 500 });
+    }
+    return NextResponse.json({ card: data, grant_summary: null });
+  }
 
   // Interest-only write (Grant Alerts right-swipe): does not touch decision at all.
   if (body.interested && !body.decision) {

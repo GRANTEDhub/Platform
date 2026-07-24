@@ -313,6 +313,7 @@ function prospectAsClient(c: Record<string, string>): Client {
     match_locked_at: null,
     needs_review: false,
     research_opt_in: false,
+    account_managed: false, // not a real client; the SME gate is irrelevant to scoring
     archived_reason: null,
     contract_status: null,
     contract_signed_at: null,

@@ -25,20 +25,32 @@ export function SwipeDeck({
   items,
   detailBasePath,
   backHref,
+  interestMode = "client",
 }: {
   items: ReportItem[];
   detailBasePath: string; // detail = `${detailBasePath}/${id}`
   backHref: string;
+  // "client" (default): right-swipe sets interested_at (the client's own gate,
+  // 0057). "sme": right-swipe sets sme_interested_at instead -- staff's OWN,
+  // separate first pass for an account-managed client (0059). Reject is
+  // identical either way (decision='passed').
+  interestMode?: "client" | "sme";
 }) {
   const [queue, setQueue] = useState(items);
   const done = items.length - queue.length;
 
   async function persist(id: string, action: "interested" | "passed") {
     try {
+      const body =
+        action === "passed"
+          ? { decision: "passed" }
+          : interestMode === "sme"
+            ? { sme_interested: true }
+            : { interested: true };
       await fetch(`/api/review/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(action === "interested" ? { interested: true } : { decision: "passed" }),
+        body: JSON.stringify(body),
       });
     } catch {
       // Optimistic: the card already flew off. A failed write surfaces back in

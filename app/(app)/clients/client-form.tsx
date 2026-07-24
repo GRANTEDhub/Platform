@@ -276,6 +276,26 @@ export function ClientForm({
             <Field label="Contract start" name="contract_start" type="date" defaultValue={client?.contract_start} />
             <Field label="Contract end" name="contract_end" type="date" defaultValue={client?.contract_end} />
           </div>
+          {/* Account-managed (migration 0059): premium tier gate. When checked, an
+              account manager reviews + releases each match (Grant Alerts, then Grant
+              Report) BEFORE the client ever sees it. Unchecked (default): the client
+              goes straight to their own Grant Alerts/Report, no staff pass. */}
+          <label className="flex items-start gap-2 rounded-md border border-input bg-muted/30 px-3 py-2.5 text-sm">
+            <input
+              type="checkbox"
+              name="account_managed"
+              value="true"
+              defaultChecked={!!client?.account_managed}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="font-medium">Account-managed (premium)</span>
+              <span className="block text-xs text-muted-foreground">
+                An account manager reviews and releases each match before the client sees it. Off by
+                default — the client goes straight to their own Grant Alerts / Grant Report.
+              </span>
+            </span>
+          </label>
         </section>
       )}
 

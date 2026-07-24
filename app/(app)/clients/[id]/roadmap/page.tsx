@@ -11,31 +11,40 @@ import type { Client } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
-// Staff account-manager view of a client's Grant Roadmap. Renders the EXACT same
-// GrantReport the client sees in their portal — one shared surface, the actor is
-// just whoever's signed in (staff here, the client there). Read-only in Slice 1;
-// actor-aware decisions + score feedback arrive in Slice 2, at which point this
-// begins to supplant the per-client /matches + /review flow.
+// Staff account-manager view of a client's Grant Roadmap. For a STANDARD client,
+// renders the EXACT same GrantReport the client sees in their portal -- one
+// shared surface, the actor is just whoever's signed in. For an ACCOUNT-MANAGED
+// client (0059), this is instead staff's OWN Gate-2 queue: cards staff have
+// marked interested (their own Grant Alerts pass) but not yet released to the
+// client -- the client's own Grant Report only picks up a card once staff
+// releases it (see the roadmap detail page's ReleaseToClientBar).
 export default async function ClientRoadmapPage({ params }: { params: { id: string } }) {
   await requireAdmin();
   const supabase = createClient();
 
   const { data: client } = await supabase
     .from("clients")
-    .select("id, name")
+    .select("id, name, account_managed")
     .eq("id", params.id)
-    .single<Pick<Client, "id" | "name">>();
+    .single<Pick<Client, "id" | "name" | "account_managed">>();
   if (!client) notFound();
+  const managed = !!client.account_managed;
 
-  const { data } = await supabase
+  // Typed `any`: the two branches chain a different shape of filters (two calls
+  // vs one), which sends the Supabase query builder's generic into a "type
+  // instantiation is excessively deep" error if left inferred.
+  let query: any = supabase
     .from("review_cards")
     .select(
       "id, grant_id, fit_score, proposed_role, decision, factor_scores, grants(title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate, focus_areas)",
     )
     .eq("client_id", params.id)
     .neq("card_type", "prospect")
-    .neq("decision", "passed")
-    .not("interested_at", "is", null); // Grant Alerts gate (0057) -- promoted-only
+    .neq("decision", "passed");
+  query = managed
+    ? query.not("sme_interested_at", "is", null).is("sme_released_at", null)
+    : query.not("interested_at", "is", null); // Grant Alerts gate (0057) -- promoted-only
+  const { data } = await query;
 
   const items = toReportItems((data ?? []) as unknown as ReportCardRow[]);
 
@@ -69,8 +78,11 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
       };
     });
 
-  const subtitle =
-    items.length === 0
+  const subtitle = managed
+    ? items.length === 0
+      ? "Nothing awaiting your release right now."
+      : `${items.length} ${items.length === 1 ? "grant" : "grants"} awaiting your release to the client`
+    : items.length === 0
       ? "No matched opportunities yet — they appear here as the engine surfaces them."
       : `${items.length} matched ${items.length === 1 ? "opportunity" : "opportunities"} · Ranked by fit · The client sees this exact view`;
 
@@ -86,7 +98,7 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
       <ClientActivity items={activity} basePath={`/clients/${client.id}/roadmap`} clientName={client.name} />
       <GrantReport
         items={items}
-        heading={`${client.name} · Grant Report`}
+        heading={managed ? `${client.name} · Awaiting your release` : `${client.name} · Grant Report`}
         subtitle={subtitle}
         basePath={`/clients/${client.id}/roadmap`}
       />
