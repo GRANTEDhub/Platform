@@ -69,6 +69,15 @@ export default function IntellEngineScopeClient() {
     setEditingIndex(null);
   }
 
+  // Cancels any open edit before mutating the list -- editingIndex is a plain
+  // array index, so removing a partner above the one being edited would leave
+  // it pointing at the wrong row (or silently vanish/reappear on the wrong
+  // partner as the list changes size).
+  function removePartner(i: number) {
+    setPartners(partners.filter((_, idx) => idx !== i));
+    setEditingIndex(null);
+  }
+
   return (
     <HubShell variant="texture" width="6xl">
       <Link
@@ -195,7 +204,7 @@ export default function IntellEngineScopeClient() {
                         <Pencil className="h-4 w-4" />
                       </button>
                       <button
-                        onClick={() => setPartners(partners.filter((_, idx) => idx !== i))}
+                        onClick={() => removePartner(i)}
                         aria-label={`Remove ${p.name || "unnamed partner"}`}
                         className="text-muted-foreground hover:text-destructive"
                       >
