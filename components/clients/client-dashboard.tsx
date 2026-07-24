@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CalendarPlus, Flag, History, LifeBuoy, MessageSquare, Target, type LucideIcon } from "lucide-react";
+import { CalendarPlus, Flag, History, LifeBuoy, MessageSquare, Sparkles, Target, type LucideIcon } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ClientMatchChart } from "@/components/clients/client-match-chart";
 import { HeroBand } from "@/components/layout/hero-band";
@@ -36,6 +36,7 @@ export function ClientDashboard({
   isStaff,
   roadmapHref,
   ledgerHref,
+  intellEngineHref,
   stats,
   actionItems,
   activity,
@@ -53,6 +54,10 @@ export function ClientDashboard({
   // renders a 5th shortcut tile only when provided (client portal passes it;
   // the staff dashboard doesn't).
   ledgerHref?: string;
+  // Client-only: entry point into the self-serve AI proposal-drafting flow
+  // (IntellEngine). Same tile-only pattern as ledgerHref -- no persistent nav
+  // yet, that's a separate, later redesign.
+  intellEngineHref?: string;
   stats: DashStat[];
   actionItems: DashActionItem[];
   activity: { pending: number; approved: number; passed: number };
@@ -120,6 +125,9 @@ export function ClientDashboard({
         <QuickAction featured href={roadmapHref} icon={Target} title="Grant Report" sub="Review your matched opportunities" />
         {ledgerHref && (
           <QuickAction href={ledgerHref} icon={History} title="Grant Ledger" sub="Every grant we've surfaced, and what came of it" />
+        )}
+        {intellEngineHref && (
+          <QuickAction href={intellEngineHref} icon={Sparkles} title="IntellEngine" sub="Draft a proposal with AI assistance" />
         )}
         <QuickAction external href={scheduleHref} icon={CalendarPlus} title="Schedule with an advisor" sub="Book a grant strategy call" />
         <QuickAction external href={`mailto:${SUPPORT}?subject=Question%20for%20my%20GRANTED%20team`} icon={MessageSquare} title="Message your team" sub="In-app messaging — coming soon" />
