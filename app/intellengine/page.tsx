@@ -31,11 +31,11 @@ export default async function IntellEngineLanding() {
           Ready to draft your next proposal?
         </h1>
         <p className="mt-4 text-sm text-muted-foreground">
-          Pay per proposal with IntellEngine Proposal Drafting. You will be billed on your next
-          monthly cycle based on credit use.
+          IntellEngine is in preview — try it free while we build out proposal drafting. No
+          charges yet.
         </p>
         <Link
-          href="/portal/intellengine/scope"
+          href="/intellengine/scope"
           className="mt-8 rounded-full bg-brand-navy px-8 py-3 text-sm font-semibold text-white shadow-soft transition hover:bg-brand-navyDeep"
         >
           Get Started

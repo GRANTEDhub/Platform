@@ -108,7 +108,7 @@ export default function IntellEngineBuildClient() {
   return (
     <HubShell variant="texture" width="6xl">
       <Link
-        href="/portal/intellengine/compliance"
+        href="/intellengine/compliance"
         className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-brand-navy"
       >
         <ArrowLeft className="h-4 w-4" />

@@ -38,7 +38,7 @@ export default function IntellEngineComplianceClient() {
   return (
     <HubShell variant="texture">
       <Link
-        href="/portal/intellengine/scope"
+        href="/intellengine/scope"
         className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-brand-navy"
       >
         <ArrowLeft className="h-4 w-4" />
@@ -91,7 +91,7 @@ export default function IntellEngineComplianceClient() {
 
         <div className="flex justify-end">
           <Link
-            href="/portal/intellengine/build"
+            href="/intellengine/build"
             className="rounded-full bg-brand-navy px-8 py-3 text-sm font-semibold text-white shadow-soft transition hover:bg-brand-navyDeep"
           >
             Continue to proposal builder
