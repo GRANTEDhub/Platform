@@ -121,13 +121,21 @@ function DocCard({ doc, onVerify }: { doc: Doc; onVerify: () => void }) {
           </div>
         </div>
         {needsUpdate ? (
-          <button
-            onClick={() => fileRef.current?.click()}
-            className="flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-200"
-          >
-            <AlertTriangle className="h-3 w-3" />
-            Update Required
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              onClick={onVerify}
+              className="rounded-full border border-amber-300 px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100"
+            >
+              Confirm current
+            </button>
+            <button
+              onClick={() => fileRef.current?.click()}
+              className="flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-200"
+            >
+              <AlertTriangle className="h-3 w-3" />
+              Update Required
+            </button>
+          </div>
         ) : (
           <span className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-800">
             <CheckCircle2 className="h-3 w-3" />

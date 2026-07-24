@@ -9,7 +9,7 @@ export function IntellEngineProgress({ percent, label }: { percent: number; labe
       </div>
       <div className="mt-1.5 h-2 rounded-full bg-brand-navy/[0.08]">
         <div
-          className="h-2 rounded-full bg-brand-intellEngine transition-all"
+          className="h-2 rounded-full bg-brand-orange transition-all"
           style={{ width: `${Math.min(100, Math.max(0, percent))}%` }}
         />
       </div>
