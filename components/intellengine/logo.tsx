@@ -13,8 +13,8 @@ export function IntellEngineLogo({ size = "md" }: { size?: "sm" | "md" | "lg" })
     <div className="inline-flex items-end">
       <span className="relative inline-block -mr-2.5" style={{ width: px, height: px }}>
         <span
-          className="absolute left-1/2 -translate-x-1/2 rounded-full bg-brand-navy"
-          style={{ top: -dot * 1.6, width: dot, height: dot }}
+          className="absolute -translate-x-1/2 rounded-full bg-brand-navy"
+          style={{ top: -dot * 1.6, left: "64%", width: dot, height: dot }}
         />
         <img src="/granted-mark-light.svg" alt="I" style={{ width: px, height: px }} className="-rotate-90" />
       </span>
