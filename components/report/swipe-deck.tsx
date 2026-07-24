@@ -164,7 +164,7 @@ function SwipeCard({
         onArchive={() => flyOff(-1, "passed")}
         onInterested={() => flyOff(1, "interested")}
         onHandlePointerDown={(e) => dragControls.start(e)}
-        detailHref={`${detailBasePath}/${item.id}`}
+        detailHref={`${detailBasePath}/${item.id}?from=alerts`}
       />
     </motion.div>
   );

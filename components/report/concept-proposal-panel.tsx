@@ -3,22 +3,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Loader2, Pencil, RefreshCw, Sparkles } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import { SectionTitle, Tag } from "./primitives";
+import { SectionTitle } from "./primitives";
 import { ConceptProposalEditor } from "./concept-proposal-editor";
-import type { ConceptProposal, ConceptProposalPartner, ConceptProposalRow } from "@/types/database";
+import { ConceptProposalView } from "./concept-proposal-view";
+import type { ConceptProposalRow } from "@/types/database";
 
 // Staff-only display of the auto-generated concept proposal (migration 0060),
 // mounted on the account-manager grant detail view. Read-only in this pass -- the
 // editable slide-over pane is a follow-up. While a proposal is generating it polls
 // until the background job flips it ready/error; an error offers a retry. Never
 // rendered on the client portal (the parent gates it to account-managed clients).
-
-const SOURCE_TAG: Record<ConceptProposalPartner["source"], { label: string; suggested: boolean }> = {
-  client_cited: { label: "From client", suggested: false },
-  prospect: { label: "GRANTED network", suggested: false },
-  suggested: { label: "Suggested — verify", suggested: true },
-  manual: { label: "Added by you", suggested: false },
-};
 
 function optimisticGeneratingRow(cardId: string): ConceptProposalRow {
   return {
@@ -129,7 +123,7 @@ export function ConceptProposalPanel({
         {!row && <EmptyState busy={busy} onGenerate={generate} />}
         {status === "generating" && <GeneratingState />}
         {status === "error" && <ErrorState error={row?.error ?? null} busy={busy} onRetry={generate} />}
-        {status === "ready" && proposal && <ProposalBody proposal={proposal} />}
+        {status === "ready" && proposal && <ConceptProposalView proposal={proposal} />}
         {status === "ready" && !proposal && (
           <ErrorState error="The proposal generated but came back empty." busy={busy} onRetry={generate} />
         )}
@@ -202,73 +196,3 @@ function ErrorState({ error, busy, onRetry }: { error: string | null; busy: bool
   );
 }
 
-function Amount({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{label}</p>
-      <p className="mt-1 text-sm font-semibold text-brand-navy">{value}</p>
-    </div>
-  );
-}
-
-function ProposalBody({ proposal }: { proposal: ConceptProposal }) {
-  const roleLabel = proposal.role === "prime" ? "Prime applicant" : "Partner / sub";
-  return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center gap-2">
-        <Tag>{roleLabel}</Tag>
-      </div>
-
-      {proposal.scope && (
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Project scope</p>
-          <p className="mt-1.5 whitespace-pre-line text-sm leading-relaxed text-foreground">{proposal.scope}</p>
-        </div>
-      )}
-
-      <div className="grid gap-x-8 gap-y-4 border-t border-brand-navy/[0.06] pt-4 sm:grid-cols-3">
-        {proposal.total_project_amount && (
-          <Amount label="Total project (est.)" value={proposal.total_project_amount} />
-        )}
-        <Amount label="Estimated match" value={proposal.estimated_match ?? "None required"} />
-        {proposal.project_term && <Amount label="Project term" value={proposal.project_term} />}
-      </div>
-
-      {proposal.partners.length > 0 && (
-        <div className="border-t border-brand-navy/[0.06] pt-4">
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-            Recommended partners
-          </p>
-          <ul className="mt-3 space-y-3">
-            {proposal.partners.map((p, i) => (
-              <PartnerRow key={i} partner={p} />
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function PartnerRow({ partner }: { partner: ConceptProposalPartner }) {
-  const identity = partner.name || partner.org_type_label || "Partner";
-  const tag = SOURCE_TAG[partner.source];
-  return (
-    <li className="rounded-xl border border-brand-navy/[0.06] bg-white p-3.5">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-semibold text-brand-navy">{identity}</span>
-        {partner.role && <span className="text-[12.5px] text-muted-foreground">&middot; {partner.role}</span>}
-        <span
-          className={`ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-            tag.suggested ? "bg-amber-100 text-amber-800" : "bg-brand-navy/[0.06] text-brand-navy"
-          }`}
-        >
-          {tag.label}
-        </span>
-      </div>
-      {partner.description && (
-        <p className="mt-1.5 text-[13px] leading-relaxed text-foreground">{partner.description}</p>
-      )}
-    </li>
-  );
-}
