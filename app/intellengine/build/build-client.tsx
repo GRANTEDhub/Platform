@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Sparkles, RotateCcw, LifeBuoy, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, RotateCcw, LifeBuoy, CheckCircle2 } from "lucide-react";
 import { HubShell } from "@/components/layout/hub-background";
 import { IntellEngineLogo } from "@/components/intellengine/logo";
 import { IntellEngineProgress } from "@/components/intellengine/progress-bar";
@@ -133,7 +133,8 @@ export default function IntellEngineBuildClient() {
             </button>
           </div>
           <p className="mt-1 text-[13px] text-muted-foreground">
-            Complete each section of your project scope. All fields have AI assistance available.
+            Complete each section of your project scope. AI assistance is coming soon — for now,
+            each field below is a template you can edit directly.
           </p>
           {templateNote && <p className="mt-1 text-[12px] text-muted-foreground">{templateNote}</p>}
           <div className="mt-4 flex items-center justify-between text-xs font-medium text-muted-foreground">
@@ -204,9 +205,7 @@ function SectionCard({ section, onChange }: { section: Section; onChange: (value
 
       {note && <p className="mt-2 text-[12px] text-muted-foreground">{note}</p>}
 
-      <p className="mt-2.5 flex items-center gap-1 text-[11px] text-muted-foreground">
-        <Sparkles className="h-3 w-3" />
-        AI-generated content (you can edit this)
+      <p className="mt-2.5 text-[11px] text-muted-foreground">Template draft — edit freely
       </p>
     </div>
   );

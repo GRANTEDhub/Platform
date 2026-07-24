@@ -100,7 +100,8 @@ export async function requireClient(): Promise<ClientSession> {
     .from("client_members")
     .select("client_id, role, clients(name)")
     .eq("user_id", user.id)
-    .not("activated_at", "is", null);
+    .not("activated_at", "is", null)
+    .order("invited_at", { ascending: true });
 
   const memberships: ClientMembership[] = ((rows ?? []) as MembershipRow[]).map((r) => ({
     clientId: r.client_id,

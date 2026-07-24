@@ -19,11 +19,16 @@ export default async function IntellEngineLayout({ children }: { children: React
 
   let orgName: string | null = null;
   if (user) {
+    // Same predicate + order as requireClient()'s own lookup (lib/auth.ts) --
+    // without a matching order, a user with 2+ active memberships could see a
+    // different org name here than on the regular portal header, since a
+    // .limit(1) query isn't guaranteed to plan the same as an unlimited one.
     const { data } = await supabase
       .from("client_members")
       .select("clients(name)")
       .eq("user_id", user.id)
       .not("activated_at", "is", null)
+      .order("invited_at", { ascending: true })
       .limit(1)
       .maybeSingle<MembershipRow>();
     const clients = data?.clients;
