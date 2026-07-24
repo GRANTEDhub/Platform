@@ -14,7 +14,7 @@ export function IntellEngineLogo({ size = "md" }: { size?: "sm" | "md" | "lg" })
       <span className="relative inline-block -mr-2.5" style={{ width: px, height: px }}>
         <span
           className="absolute -translate-x-1/2 rounded-full bg-brand-navy"
-          style={{ top: 0, left: "18%", width: dot, height: dot }}
+          style={{ top: 0, left: "22%", width: dot, height: dot }}
         />
         <img src="/granted-mark-light.svg" alt="I" style={{ width: px, height: px }} className="-rotate-90" />
       </span>
