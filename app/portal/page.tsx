@@ -109,6 +109,7 @@ export default async function PortalHome() {
           subLine={subLine}
           isStaff={false}
           roadmapHref={base}
+          ledgerHref="/portal/ledger"
           stats={stats}
           actionItems={actionItems}
           activity={counts}
