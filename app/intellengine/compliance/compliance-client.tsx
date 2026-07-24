@@ -55,8 +55,8 @@ export default function IntellEngineComplianceClient() {
         <div className="rounded-2xl bg-white p-6 shadow-grounded">
           <h2 className="font-serif text-[19px] font-semibold text-brand-navy">Organization Profile</h2>
           <p className="mt-1.5 text-sm text-muted-foreground">
-            We&apos;ve checked this grant&apos;s required documents against your organization profile. Review
-            each item and confirm it&apos;s up to date or upload a new version.
+            IntellEngine is in preview, so this is an example of the documents a grant like this
+            typically requires — not yet a real check against your organization&apos;s actual profile.
           </p>
           <div className="mt-4 flex items-center gap-5 text-sm">
             <span className="flex items-center gap-1.5 font-medium text-emerald-700">
