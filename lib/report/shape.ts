@@ -10,6 +10,7 @@ import type {
   FactorRating,
   FactorScores,
   Grant,
+  PursuitPath,
   ReviewCard,
 } from "@/types/database";
 import { formatAwardRange, formatDeadlineShort, compactCostShare } from "@/lib/grants/format";
@@ -130,6 +131,9 @@ export interface ReportItem {
   // selected sme_released_at (the staff roadmap list); false/absent everywhere
   // else, including the client's own portal.
   smeReleased: boolean;
+  // How the client chose to pursue (migration 0061). null = pending a pursuit
+  // decision (the Grant Report's default view); set = routed (in progress).
+  pursuitPath: PursuitPath | null;
   // Concept-proposal reveal state for the client-facing list surfaces. Populated
   // by the page (via withConcept) AFTER shaping, since it comes from a separate
   // admin-only table -- toReportItem leaves it undefined, so staff surfaces that
@@ -171,6 +175,7 @@ export type ReportCardRow = Pick<
 > & {
   concept_synopsis?: string | null;
   sme_released_at?: string | null;
+  pursuit_path?: PursuitPath | null;
   grants:
     | (Pick<
         Grant,
@@ -215,6 +220,7 @@ export function toReportItem(card: ReportCardRow): ReportItem {
     geography: g?.geographic_eligibility ?? null,
     programIdea: toPlain(card.concept_synopsis, 220),
     smeReleased: !!card.sme_released_at,
+    pursuitPath: card.pursuit_path ?? null,
   };
 }
 

@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import type { CardDecision } from "@/types/database";
+import { PursuitChooser } from "./pursuit-chooser";
+import type { CardDecision, PursuitPath } from "@/types/database";
 
 // The shared decision gate + score feedback on the Grant Report detail. Used by
 // BOTH the client portal and the staff account-manager view — the write path
@@ -14,12 +15,19 @@ export function DecisionBar({
   cardId,
   decision,
   deciderLabel,
+  tier,
+  pursuitPath = null,
 }: {
   cardId: string;
   decision: CardDecision;
   // "you" / "your GRANTED team" / the client org name — resolved server-side from
   // decided_by_actor. Null when undecided.
   deciderLabel: string | null;
+  // Set on the CLIENT portal only: swaps the generic "Pursue" button for the
+  // pursuit chooser (IntellEngine / SME / in-house, migration 0061). Save-for-later
+  // and Pass are unchanged. Absent on the staff view, which keeps plain Pursue.
+  tier?: "premium" | "base";
+  pursuitPath?: PursuitPath | null;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -80,17 +88,21 @@ export function DecisionBar({
         {/* decision */}
         <div>
           <div className="flex flex-wrap items-center gap-3">
-            <button
-              disabled={busy}
-              onClick={() => decide("approved")}
-              className={`rounded-full px-6 py-2.5 text-sm font-semibold transition disabled:opacity-50 ${
-                pursuing
-                  ? "bg-brand-navy text-white shadow-soft"
-                  : "border border-brand-navy/25 text-brand-navy hover:bg-brand-navy/5"
-              }`}
-            >
-              {pursuing ? "✓ Pursuing" : "Pursue this grant"}
-            </button>
+            {tier ? (
+              <PursuitChooser cardId={cardId} pursuitPath={pursuitPath} tier={tier} variant="detail" />
+            ) : (
+              <button
+                disabled={busy}
+                onClick={() => decide("approved")}
+                className={`rounded-full px-6 py-2.5 text-sm font-semibold transition disabled:opacity-50 ${
+                  pursuing
+                    ? "bg-brand-navy text-white shadow-soft"
+                    : "border border-brand-navy/25 text-brand-navy hover:bg-brand-navy/5"
+                }`}
+              >
+                {pursuing ? "✓ Pursuing" : "Pursue this grant"}
+              </button>
+            )}
             <button
               disabled={busy}
               onClick={() => decide("pending")}

@@ -3,6 +3,14 @@ import { format, parseISO } from "date-fns";
 import { Check, Archive } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { SectionTitle } from "./primitives";
+import type { PursuitPath } from "@/types/database";
+
+// How the client's pursuit choice reads in the activity feed.
+const PATH_PHRASE: Record<PursuitPath, string> = {
+  intellengine: "with IntellEngine",
+  sme: "with an SME",
+  in_house: "in-house",
+};
 
 // Closes the decision loop for the account manager: what the CLIENT decided on
 // the shared surface (decided_by_actor = 'client'). Interested = the client's
@@ -16,6 +24,9 @@ export interface ClientActivityItem {
   decision: "approved" | "passed";
   reason: string | null;
   decidedAt: string | null;
+  // How they chose to pursue (0061); null = pursued without a recorded path
+  // (legacy) or passed. Only meaningful on approved rows.
+  pursuitPath?: PursuitPath | null;
 }
 
 function shortDate(iso: string | null): string | null {
@@ -60,10 +71,13 @@ export function ClientActivity({
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm text-foreground">
-                  {interested ? "Interested in " : "Passed on "}
+                  {interested ? (it.pursuitPath ? "Pursuing " : "Interested in ") : "Passed on "}
                   <Link href={`${basePath}/${it.cardId}`} className="font-semibold text-brand-navy hover:underline">
                     {it.title}
                   </Link>
+                  {interested && it.pursuitPath && (
+                    <span className="text-muted-foreground"> {PATH_PHRASE[it.pursuitPath]}</span>
+                  )}
                   {d && <span className="text-muted-foreground"> · {d}</span>}
                 </p>
                 {!interested && it.reason && (

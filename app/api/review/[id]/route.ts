@@ -3,7 +3,7 @@ import { waitUntil } from "@vercel/functions";
 import { createClient } from "@/lib/supabase/server";
 import { computeGrantSummary } from "@/lib/review/summary";
 import { ensureConceptProposalPlaceholder, runConceptProposalGeneration } from "@/lib/concept/store";
-import type { CardDecision } from "@/types/database";
+import type { CardDecision, PursuitPath } from "@/types/database";
 
 // Re-exported so existing importers (DecisionPanel, DecisionConfirmation) keep
 // their `@/app/api/review/[id]/route` type import; the source of truth is the
@@ -36,6 +36,7 @@ export async function PATCH(
     interested?: boolean;
     sme_interested?: boolean;
     sme_release?: boolean;
+    pursuit_path?: PursuitPath | null;
   };
   try {
     body = await req.json();
@@ -102,6 +103,39 @@ export async function PATCH(
     return NextResponse.json({ card: data, grant_summary: null });
   }
 
+  // Pursuit-path write (the client picks HOW to pursue from the Grant Report:
+  // IntellEngine / SME / in-house). Records the card as pursued (approved) AND
+  // the chosen path in one update -- the 0061 client column-lock permits both.
+  // Re-routable (a new pick overwrites); null clears back to a pending decision.
+  if (body.pursuit_path !== undefined && !body.decision) {
+    const validPaths: PursuitPath[] = ["intellengine", "sme", "in_house"];
+    const path = body.pursuit_path;
+    if (path !== null && !validPaths.includes(path)) {
+      return NextResponse.json({ error: "Invalid pursuit path" }, { status: 400 });
+    }
+    const pursuing = path !== null;
+    const { data, error } = await supabase
+      .from("review_cards")
+      .update({
+        pursuit_path: path,
+        decision: pursuing ? "approved" : "pending",
+        decided_by: pursuing ? user.id : null,
+        decided_at: pursuing ? new Date().toISOString() : null,
+        decided_by_actor: pursuing ? actor : null,
+      })
+      .eq("id", params.id)
+      .select()
+      .single();
+    if (error) {
+      const isApprovalBlock = error.message?.toLowerCase().includes("approve");
+      return NextResponse.json(
+        { error: isApprovalBlock ? "Only admins can approve a match for client delivery" : "Failed to update card" },
+        { status: isApprovalBlock ? 403 : 500 },
+      );
+    }
+    return NextResponse.json({ card: data, grant_summary: null });
+  }
+
   const valid: CardDecision[] = ["pending", "approved", "passed"];
   if (!body.decision || !valid.includes(body.decision)) {
     return NextResponse.json({ error: "Invalid decision" }, { status: 400 });
@@ -116,6 +150,9 @@ export async function PATCH(
       decided_by: isTerminal ? user.id : null,
       decided_at: isTerminal ? new Date().toISOString() : null,
       decided_by_actor: isTerminal ? actor : null,
+      // Save-for-later / Pass means "no longer pursuing via any path" -- clear it.
+      // A generic 'approved' (staff/alert path) leaves the path untouched.
+      pursuit_path: body.decision === "approved" ? undefined : null,
     })
     .eq("id", params.id)
     .select()

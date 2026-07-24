@@ -33,7 +33,7 @@ export default async function PortalGrantReport() {
   const { data } = await supabase
     .from("review_cards")
     .select(
-      "id, grant_id, fit_score, proposed_role, decision, factor_scores, grants(title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate, focus_areas)",
+      "id, grant_id, fit_score, proposed_role, decision, factor_scores, pursuit_path, grants(title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate, focus_areas)",
     )
     .eq("client_id", org.clientId)
     .neq("card_type", "prospect")
@@ -64,6 +64,7 @@ export default async function PortalGrantReport() {
         subtitle={subtitle}
         basePath="/portal/grants"
         clientName={org.clientName}
+        tier={tier}
       />
     </HubShell>
   );

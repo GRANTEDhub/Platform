@@ -330,6 +330,11 @@ export interface Grant {
 
 export type CardDecision = "pending" | "approved" | "passed";
 
+// How a client chose to pursue a grant they're interested in (migration 0061).
+// null = they haven't decided how yet (the Grant Report's default "pending
+// decision" view). Picking one also records decision='approved'. Re-routable.
+export type PursuitPath = "intellengine" | "sme" | "in_house";
+
 // Per-factor match sub-scores (#105). Ordinal, never a percentage; a factor whose
 // underlying client data is blank reads "insufficient_data" (never a guess).
 export type FactorRating = "strong" | "moderate" | "weak" | "insufficient_data";
@@ -401,6 +406,10 @@ export interface ReviewCard {
   interested_at: string | null;
   interested_by: string | null;
   interested_by_actor: string | null;
+  // How the client chose to pursue this grant (migration 0061). Null until they
+  // decide; set alongside decision='approved'. Client-writable (column-lock
+  // extended in 0061). Re-routable — a new pick overwrites.
+  pursuit_path: PursuitPath | null;
   // Manual add-to-client override audit (migration 0040). overridden_by/at are set
   // on EVERY manual add (human-added vs engine-surfaced); override_reason is set
   // ONLY when the add was FORCED past a gate ("<severity>: <reason>") and drives

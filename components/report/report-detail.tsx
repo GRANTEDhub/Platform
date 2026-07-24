@@ -8,7 +8,7 @@ import { ScoreRing, SectionTitle, Tag } from "./primitives";
 import { DecisionBar } from "./decision-bar";
 import { FIT_BAND } from "@/lib/report/shape";
 import { formatAwardRange, formatDeadline, compactCostShare } from "@/lib/grants/format";
-import type { CardDecision, FactorScores } from "@/types/database";
+import type { CardDecision, FactorScores, PursuitPath } from "@/types/database";
 
 // Read-only Grant Report detail — the shared decision surface's display half.
 // Structured to mirror the client-facing Figma: header (facts + honest fit ring)
@@ -30,6 +30,9 @@ export interface ReportDetailCard {
   decision: CardDecision;
   decided_by: string | null;
   decided_by_actor: string | null;
+  // Optional — selected only on the client portal detail, where the pursuit
+  // chooser (0061) needs it. Staff detail pages that don't select it read null.
+  pursuit_path?: PursuitPath | null;
 }
 
 type DetailGrant = GrantDetailFields & {
@@ -73,6 +76,7 @@ export function ReportDetail({
   deciderLabel,
   backHref,
   backLabel = "Back to Grant Report",
+  tier,
   decisionBar,
   afterContent,
 }: {
@@ -85,6 +89,9 @@ export function ReportDetail({
   deciderLabel: string | null;
   backHref: string;
   backLabel?: string;
+  // Set on the CLIENT portal detail only: turns the default decision bar's
+  // "Pursue" into the pursuit chooser (0061). Absent on staff views.
+  tier?: "premium" | "base";
   // Override the default Pursue/Save/Pass + score-feedback cluster -- used by the
   // staff SME Gate-2 view (account-managed clients, 0059), where the relevant
   // action is "release to client", not a pursue decision the client should make.
@@ -142,7 +149,15 @@ export function ReportDetail({
           <HeaderStat label="Expected awards" value={grant.num_awards || "—"} />
         </div>
 
-        {decisionBar ?? <DecisionBar cardId={cardId} decision={card.decision} deciderLabel={deciderLabel} />}
+        {decisionBar ?? (
+          <DecisionBar
+            cardId={cardId}
+            decision={card.decision}
+            deciderLabel={deciderLabel}
+            tier={tier}
+            pursuitPath={card.pursuit_path ?? null}
+          />
+        )}
       </div>
 
       {/* purpose & overview — the grant description */}
