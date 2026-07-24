@@ -466,6 +466,52 @@ export interface ForecastRejection {
   rejected_at: string;
 }
 
+// Concept proposal (migration 0060). One per review card (client × grant): the
+// internal, AM-facing "practical application" snapshot of how the client would
+// pursue the grant, generated on the SME interested pass (0059) and editable by
+// staff. Its output shape aligns with the IntellEngine /scope editor so it can
+// later prefill that client-facing surface. NOT the multi-API IntellEngine
+// proposal developer. See lib/concept/.
+export interface ConceptProposalPartner {
+  // Exactly one of name / org_type_label carries the identity: a specific org
+  // when the fit is obvious enough to name, otherwise an org-type label.
+  name: string | null;
+  org_type_label: string | null; // e.g. "workforce partner", "fiscal sponsor"
+  role: string; // prime / co-applicant / subrecipient / private-industry / ...
+  description: string; // <=50 words: what this partner would do
+  // Provenance: "client_cited" = from the client's own partners; "prospect" =
+  // from a GRANTED-tracked ecosystem org (has a verified source_url); "suggested"
+  // = named from the model's own knowledge -- UNVERIFIED, flagged for the AM.
+  source: "client_cited" | "prospect" | "suggested";
+}
+
+export interface ConceptProposal {
+  scope: string; // <=500 words, compliance-mapped practical application
+  role: "prime" | "partner"; // two-way for now (matches the /scope editor enum)
+  total_project_amount: string; // labeled an estimate
+  estimated_match: string | null; // estimate from the NOFO cost-share; null = none required
+  project_term: string | null; // from period_of_performance; null if the NOFO is silent
+  partners: ConceptProposalPartner[];
+}
+
+export type ConceptProposalStatus = "generating" | "ready" | "error";
+
+export interface ConceptProposalRow {
+  id: string;
+  card_id: string;
+  grant_id: string | null;
+  client_id: string | null;
+  status: ConceptProposalStatus;
+  proposal_data: ConceptProposal | null; // null until status='ready'
+  model: string | null;
+  error: string | null;
+  generated_at: string | null;
+  generated_by: string | null;
+  edited_at: string | null;
+  edited_by: string | null;
+  created_at: string;
+}
+
 export interface ClientOverview {
   id: string;
   name: string;

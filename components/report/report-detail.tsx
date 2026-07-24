@@ -74,6 +74,7 @@ export function ReportDetail({
   backHref,
   backLabel = "Back to Grant Report",
   decisionBar,
+  afterContent,
 }: {
   cardId: string;
   card: ReportDetailCard;
@@ -88,6 +89,9 @@ export function ReportDetail({
   // staff SME Gate-2 view (account-managed clients, 0059), where the relevant
   // action is "release to client", not a pursue decision the client should make.
   decisionBar?: React.ReactNode;
+  // Staff-only content appended below the report (e.g. the concept-proposal panel).
+  // The client portal pages never pass this, so it stays internal.
+  afterContent?: React.ReactNode;
 }) {
   const band = FIT_BAND[card.fit_score] ?? FIT_BAND[1];
   const why = (card.why_this_org ?? []).filter(Boolean);
@@ -191,6 +195,8 @@ export function ReportDetail({
           )}
         </Card>
       )}
+
+      {afterContent}
     </div>
   );
 }
