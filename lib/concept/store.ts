@@ -2,7 +2,7 @@ import "server-only";
 import { createServiceClient } from "@/lib/supabase/server";
 import { generateConceptProposal, CONCEPT_MODEL } from "./generate";
 import type { ConceptCardSignals } from "./schema";
-import type { Client, Grant, Prospect, ConceptProposalRow } from "@/types/database";
+import type { Client, Grant, Prospect, ConceptProposal, ConceptProposalRow } from "@/types/database";
 
 // Persistence + orchestration for the concept proposal. One row per review card
 // (concept_proposals_one_per_card). All writes are service-role: the table is
@@ -68,6 +68,28 @@ export async function markConceptProposalGenerating(
   const { error } = await db
     .from("concept_proposals")
     .update({ status: "generating", error: null, generated_by: userId })
+    .eq("card_id", cardId);
+  return { error: error?.message ?? null };
+}
+
+// Save an account manager's manual edits to the generated proposal. Stamps
+// edited_at/by so a later Regenerate can warn before overwriting, and keeps
+// status='ready'. Returns the DB error (if any) so the endpoint can surface it.
+export async function saveConceptProposalEdits(
+  cardId: string,
+  proposal: ConceptProposal,
+  userId: string | null,
+): Promise<{ error: string | null }> {
+  const db = createServiceClient();
+  const { error } = await db
+    .from("concept_proposals")
+    .update({
+      proposal_data: proposal,
+      status: "ready",
+      error: null,
+      edited_at: new Date().toISOString(),
+      edited_by: userId,
+    })
     .eq("card_id", cardId);
   return { error: error?.message ?? null };
 }

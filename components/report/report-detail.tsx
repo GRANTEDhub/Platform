@@ -89,8 +89,9 @@ export function ReportDetail({
   // staff SME Gate-2 view (account-managed clients, 0059), where the relevant
   // action is "release to client", not a pursue decision the client should make.
   decisionBar?: React.ReactNode;
-  // Staff-only content appended below the report (e.g. the concept-proposal panel).
-  // The client portal pages never pass this, so it stays internal.
+  // Content appended below the report. Used by the staff view for the concept-
+  // proposal panel, and by the client portal for the base-tier upsell -- each
+  // caller decides what (if anything) to append.
   afterContent?: React.ReactNode;
 }) {
   const band = FIT_BAND[card.fit_score] ?? FIT_BAND[1];

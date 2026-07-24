@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Loader2, RefreshCw, Sparkles } from "lucide-react";
+import { AlertTriangle, Loader2, Pencil, RefreshCw, Sparkles } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { SectionTitle, Tag } from "./primitives";
+import { ConceptProposalEditor } from "./concept-proposal-editor";
 import type { ConceptProposal, ConceptProposalPartner, ConceptProposalRow } from "@/types/database";
 
 // Staff-only display of the auto-generated concept proposal (migration 0060),
@@ -16,6 +17,7 @@ const SOURCE_TAG: Record<ConceptProposalPartner["source"], { label: string; sugg
   client_cited: { label: "From client", suggested: false },
   prospect: { label: "GRANTED network", suggested: false },
   suggested: { label: "Suggested — verify", suggested: true },
+  manual: { label: "Added by you", suggested: false },
 };
 
 function optimisticGeneratingRow(cardId: string): ConceptProposalRow {
@@ -46,6 +48,7 @@ export function ConceptProposalPanel({
   const [row, setRow] = useState<ConceptProposalRow | null>(initial);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
 
   const refresh = useCallback(async () => {
     const res = await fetch(`/api/concept/${cardId}`, { cache: "no-store" });
@@ -63,6 +66,11 @@ export function ConceptProposalPanel({
   }, [row?.status, refresh]);
 
   const generate = useCallback(async () => {
+    // A fresh AI draft would discard manual edits -- confirm first when the
+    // proposal has been hand-edited (edited_at set).
+    if (row?.edited_at && !window.confirm("This replaces your manual edits with a fresh AI draft. Continue?")) {
+      return;
+    }
     setBusy(true);
     setActionError(null);
     // Immediate feedback: flip to the generating state before the round-trip so
@@ -83,7 +91,7 @@ export function ConceptProposalPanel({
     } finally {
       setBusy(false);
     }
-  }, [cardId, refresh]);
+  }, [cardId, refresh, row?.edited_at]);
 
   const status = row?.status;
   const proposal = row?.proposal_data ?? null;
@@ -92,19 +100,29 @@ export function ConceptProposalPanel({
     <Card elevation="grounded" className="p-6 sm:p-7">
       <div className="flex items-center justify-between gap-3">
         <SectionTitle>Concept proposal</SectionTitle>
-        {status === "ready" && (
-          <button
-            onClick={generate}
-            disabled={busy}
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-brand-orange hover:underline disabled:opacity-50"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${busy ? "animate-spin" : ""}`} />
-            Regenerate
-          </button>
+        {status === "ready" && proposal && (
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setEditing(true)}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-brand-navy hover:underline"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              Edit
+            </button>
+            <button
+              onClick={generate}
+              disabled={busy}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-brand-orange hover:underline disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${busy ? "animate-spin" : ""}`} />
+              Regenerate
+            </button>
+          </div>
         )}
       </div>
       <p className="mt-1 text-[12.5px] text-muted-foreground">
-        Internal draft of how this client would pursue the grant. Review before releasing to the client.
+        Internal draft of how this client would pursue the grant. Review
+        {row?.edited_at ? " (edited by your team)" : ""} before releasing to the client.
       </p>
 
       <div className="mt-4">
@@ -119,6 +137,18 @@ export function ConceptProposalPanel({
           <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">{actionError}</p>
         )}
       </div>
+
+      {editing && proposal && (
+        <ConceptProposalEditor
+          cardId={cardId}
+          initial={proposal}
+          onClose={() => setEditing(false)}
+          onSaved={(r) => {
+            setRow(r);
+            setEditing(false);
+          }}
+        />
+      )}
     </Card>
   );
 }

@@ -481,8 +481,9 @@ export interface ConceptProposalPartner {
   description: string; // <=50 words: what this partner would do
   // Provenance: "client_cited" = from the client's own partners; "prospect" =
   // from a GRANTED-tracked ecosystem org (has a verified source_url); "suggested"
-  // = named from the model's own knowledge -- UNVERIFIED, flagged for the AM.
-  source: "client_cited" | "prospect" | "suggested";
+  // = named from the model's own knowledge (UNVERIFIED, flagged for the AM);
+  // "manual" = added/named by the account manager in the editor (staff-vetted).
+  source: "client_cited" | "prospect" | "suggested" | "manual";
 }
 
 export interface ConceptProposal {
