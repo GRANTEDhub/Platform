@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Check, Loader2, Pencil, Plus, X } from "lucide-react";
 import type { ConceptProposal, ConceptProposalPartner, ConceptProposalRow } from "@/types/database";
 
@@ -64,9 +65,14 @@ export function ConceptProposalEditor({
 
   useEffect(() => {
     setOpen(true); // trigger the slide-in after mount
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden"; // lock the background while the pane is open
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener("keydown", onKey);
+    };
   }, [onClose]);
 
   const wordCount = scope.trim() ? scope.trim().split(/\s+/).length : 0;
@@ -134,7 +140,13 @@ export function ConceptProposalEditor({
     setTimeout(onClose, 200); // let the slide-out play
   }
 
-  return (
+  // Portal to <body> so the fixed overlay anchors to the viewport, not the
+  // transformed HubShell ancestor (a fixed element inside a transformed ancestor
+  // is positioned relative to THAT ancestor, which made the pane render as a tall
+  // in-page column instead of a viewport drawer).
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <div className="fixed inset-0 z-50">
       <div
         className={`absolute inset-0 bg-brand-navy/30 transition-opacity ${open ? "opacity-100" : "opacity-0"}`}
@@ -274,7 +286,8 @@ export function ConceptProposalEditor({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
