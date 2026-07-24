@@ -3,6 +3,8 @@ import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { ReportDetail, type ReportDetailCard } from "@/components/report/report-detail";
 import { ReleaseToClientBar } from "@/components/report/release-bar";
+import { ConceptProposalPanel } from "@/components/report/concept-proposal-panel";
+import { getConceptProposal } from "@/lib/concept/store";
 import { HubShell } from "@/components/layout/hub-background";
 import { deciderLabel } from "@/lib/report/shape";
 import type { GrantDetailFields } from "@/components/grants/grant-detail";
@@ -59,6 +61,11 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
     client?.name || "the client",
   );
 
+  // Concept proposal is a premium (account-managed) artifact for internal AM
+  // review only -- fetched + rendered here, never on the client's own copy of
+  // this surface. Generated on the SME interested pass (0059 / migration 0060).
+  const conceptProposal = client?.account_managed ? await getConceptProposal(params.cardId) : null;
+
   return (
     <HubShell variant="map">
       <ReportDetail
@@ -77,6 +84,11 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
               released={!!card.sme_released_at}
               backHref={`/clients/${params.id}/roadmap`}
             />
+          ) : undefined
+        }
+        afterContent={
+          client?.account_managed ? (
+            <ConceptProposalPanel cardId={params.cardId} initial={conceptProposal} />
           ) : undefined
         }
       />
