@@ -117,6 +117,11 @@ export interface ReportItem {
   eligibleTypes: string[]; // cleaned eligible entity types (first few)
   geography: string | null; // geographic_eligibility
   programIdea: string | null; // concept_synopsis (client-facing narrative)
+  // Staff-only read visibility into the account-manager gate (0059) -- true once
+  // staff has released this card to the client. Only meaningful when the query
+  // selected sme_released_at (the staff roadmap list); false/absent everywhere
+  // else, including the client's own portal.
+  smeReleased: boolean;
 }
 
 // The columns the list needs off each joined review_card. A fuller select is
@@ -127,6 +132,7 @@ export type ReportCardRow = Pick<
   "id" | "grant_id" | "fit_score" | "proposed_role" | "decision" | "factor_scores"
 > & {
   concept_synopsis?: string | null;
+  sme_released_at?: string | null;
   grants:
     | (Pick<
         Grant,
@@ -170,6 +176,7 @@ export function toReportItem(card: ReportCardRow): ReportItem {
     eligibleTypes: (g?.eligible_entity_types ?? []).map((t) => t.replace(/_/g, " ")).slice(0, 4),
     geography: g?.geographic_eligibility ?? null,
     programIdea: toPlain(card.concept_synopsis, 220),
+    smeReleased: !!card.sme_released_at,
   };
 }
 

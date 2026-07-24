@@ -159,6 +159,11 @@ function Row({ item, href, index }: { item: ReportItem; href: string; index: num
         </div>
 
         <div className="flex shrink-0 flex-col items-end gap-1.5 text-right">
+          {item.smeReleased && (
+            <span className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
+              Released to client
+            </span>
+          )}
           {item.decision !== "pending" && <DecisionBadge decision={item.decision} />}
           <p className="text-[15px] font-semibold text-brand-navy">
             {item.awardRange}

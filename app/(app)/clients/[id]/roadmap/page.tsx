@@ -14,10 +14,13 @@ export const dynamic = "force-dynamic";
 // Staff account-manager view of a client's Grant Roadmap. For a STANDARD client,
 // renders the EXACT same GrantReport the client sees in their portal -- one
 // shared surface, the actor is just whoever's signed in. For an ACCOUNT-MANAGED
-// client (0059), this is instead staff's OWN Gate-2 queue: cards staff have
-// marked interested (their own Grant Alerts pass) but not yet released to the
-// client -- the client's own Grant Report only picks up a card once staff
-// releases it (see the roadmap detail page's ReleaseToClientBar).
+// client (0059), this is instead staff's OWN queue: every card staff has marked
+// interested (their own Grant Alerts pass), both still awaiting release AND
+// already released -- staff keep read-only visibility into released cards here
+// (the "can I still see it as admin" question) rather than needing to sign in
+// as the client. The per-row "Released to client" badge (lib/report/shape.ts's
+// smeReleased) is what tells the two states apart; released cards are no longer
+// actionable here (the client's own Grant Report owns the pursue decision now).
 export default async function ClientRoadmapPage({ params }: { params: { id: string } }) {
   await requireAdmin();
   const supabase = createClient();
@@ -36,13 +39,15 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
   let query: any = supabase
     .from("review_cards")
     .select(
-      "id, grant_id, fit_score, proposed_role, decision, factor_scores, grants(title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate, focus_areas)",
+      "id, grant_id, fit_score, proposed_role, decision, factor_scores, sme_released_at, grants(title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate, focus_areas)",
     )
     .eq("client_id", params.id)
     .neq("card_type", "prospect")
     .neq("decision", "passed");
+  // Managed: staff's whole queue -- both awaiting release AND already released
+  // (read-only past that point; the client's own Grant Report owns the decision).
   query = managed
-    ? query.not("sme_interested_at", "is", null).is("sme_released_at", null)
+    ? query.not("sme_interested_at", "is", null)
     : query.not("interested_at", "is", null); // Grant Alerts gate (0057) -- promoted-only
   const { data } = await query;
 
@@ -78,10 +83,13 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
       };
     });
 
+  const awaitingCount = items.filter((i) => !i.smeReleased).length;
   const subtitle = managed
     ? items.length === 0
-      ? "Nothing awaiting your release right now."
-      : `${items.length} ${items.length === 1 ? "grant" : "grants"} awaiting your release to the client`
+      ? "Nothing in your queue right now."
+      : awaitingCount === 0
+        ? `${items.length} ${items.length === 1 ? "grant" : "grants"} released to the client — showing read-only`
+        : `${awaitingCount} awaiting your release · ${items.length - awaitingCount} already released to the client`
     : items.length === 0
       ? "No matched opportunities yet — they appear here as the engine surfaces them."
       : `${items.length} matched ${items.length === 1 ? "opportunity" : "opportunities"} · Ranked by fit · The client sees this exact view`;
@@ -98,7 +106,7 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
       <ClientActivity items={activity} basePath={`/clients/${client.id}/roadmap`} clientName={client.name} />
       <GrantReport
         items={items}
-        heading={managed ? `${client.name} · Awaiting your release` : `${client.name} · Grant Report`}
+        heading={managed ? `${client.name} · Your review queue` : `${client.name} · Grant Report`}
         subtitle={subtitle}
         basePath={`/clients/${client.id}/roadmap`}
       />

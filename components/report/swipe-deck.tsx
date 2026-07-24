@@ -69,6 +69,11 @@ export function SwipeDeck({
   if (!top) {
     return (
       <div className="mx-auto max-w-2xl py-16 text-center">
+        {interestMode === "sme" && (
+          <div className="mb-6 rounded-xl bg-brand-navy px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-white">
+            Account manager review — the client does not see this pass
+          </div>
+        )}
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-brand-navy/[0.06]">
           <Check className="h-7 w-7 text-brand-orange" strokeWidth={3} />
         </div>
@@ -88,6 +93,11 @@ export function SwipeDeck({
 
   return (
     <div className="mx-auto max-w-2xl">
+      {interestMode === "sme" && (
+        <div className="mb-4 rounded-xl bg-brand-navy px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-white">
+          Account manager review — the client does not see this pass
+        </div>
+      )}
       <div className="mb-5 flex items-center justify-between">
         <Link href={backHref} className="text-sm font-medium text-muted-foreground hover:text-brand-navy">
           ← Grant Report

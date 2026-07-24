@@ -72,7 +72,11 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         backHref={`/clients/${params.id}/roadmap`}
         decisionBar={
           client?.account_managed ? (
-            <ReleaseToClientBar cardId={params.cardId} released={!!card.sme_released_at} />
+            <ReleaseToClientBar
+              cardId={params.cardId}
+              released={!!card.sme_released_at}
+              backHref={`/clients/${params.id}/roadmap`}
+            />
           ) : undefined
         }
       />

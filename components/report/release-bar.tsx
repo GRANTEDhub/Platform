@@ -9,7 +9,18 @@ import { useRouter } from "next/navigation";
 // not built yet), not a pursue decision. The client makes the actual pursue
 // call later, on their own copy of this same page. Reject is terminal
 // (decision='passed'), identical in effect to a client-side Pass.
-export function ReleaseToClientBar({ cardId, released }: { cardId: string; released: boolean }) {
+export function ReleaseToClientBar({
+  cardId,
+  released,
+  backHref,
+}: {
+  cardId: string;
+  released: boolean;
+  // Where to land after a release/reject -- the card leaves this queue either
+  // way, so staying on the now-stale detail page isn't useful (the redirect
+  // gap flagged in live testing).
+  backHref: string;
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,6 +36,7 @@ export function ReleaseToClientBar({ cardId, released }: { cardId: string; relea
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Couldn't save that");
+      router.push(backHref);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't save that");
