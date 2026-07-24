@@ -2,7 +2,7 @@ import "server-only";
 import { createServiceClient } from "@/lib/supabase/server";
 import { generateConceptProposal, CONCEPT_MODEL } from "./generate";
 import type { ConceptCardSignals } from "./schema";
-import type { Client, Grant, Prospect, ConceptProposal, ConceptProposalRow } from "@/types/database";
+import type { Client, Grant, Prospect, ConceptProposal, ConceptProposalRow, ConceptProposalStatus } from "@/types/database";
 
 // Persistence + orchestration for the concept proposal. One row per review card
 // (concept_proposals_one_per_card). All writes are service-role: the table is
@@ -17,6 +17,31 @@ export async function getConceptProposal(cardId: string): Promise<ConceptProposa
     .eq("card_id", cardId)
     .maybeSingle<ConceptProposalRow>();
   return data ?? null;
+}
+
+// Batch read for the list surfaces (Grant Alerts + Grant Report): status +
+// proposal_data keyed by card id, in one service-role query (the table is
+// admin-only RLS, so the portal's own RLS client can't see it). Cards with no
+// proposal simply don't appear in the map -- the caller treats absent as "none".
+export async function getConceptProposalsByCardIds(
+  cardIds: string[],
+): Promise<Map<string, { status: ConceptProposalStatus; proposal: ConceptProposal | null }>> {
+  const map = new Map<string, { status: ConceptProposalStatus; proposal: ConceptProposal | null }>();
+  const ids = Array.from(new Set(cardIds.filter(Boolean)));
+  if (!ids.length) return map;
+  const db = createServiceClient();
+  const { data } = await db
+    .from("concept_proposals")
+    .select("card_id, status, proposal_data")
+    .in("card_id", ids);
+  for (const row of (data ?? []) as {
+    card_id: string;
+    status: ConceptProposalStatus;
+    proposal_data: ConceptProposal | null;
+  }[]) {
+    map.set(row.card_id, { status: row.status, proposal: row.proposal_data });
+  }
+  return map;
 }
 
 // Insert a 'generating' placeholder ONLY if the card has none. `created` is true
