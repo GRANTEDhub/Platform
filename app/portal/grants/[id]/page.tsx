@@ -3,6 +3,8 @@ import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { ReportDetail, type ReportDetailCard } from "@/components/report/report-detail";
 import { ConceptProposalUpsell } from "@/components/report/concept-upsell";
+import { ClientConceptProposal } from "@/components/report/client-concept-proposal";
+import { getConceptProposal } from "@/lib/concept/store";
 import { HubShell } from "@/components/layout/hub-background";
 import { deciderLabel } from "@/lib/report/shape";
 import type { GrantDetailFields } from "@/components/grants/grant-detail";
@@ -25,7 +27,13 @@ type DetailRow = ReportDetailCard & {
 // fetched as the logged-in client, and we additionally pin client_id so a member
 // can only open their own org's match. Renders the shared ReportDetail — the same
 // surface the staff account-manager view will mount in a later slice.
-export default async function PortalGrantDetail({ params }: { params: { id: string } }) {
+export default async function PortalGrantDetail({
+  params,
+  searchParams,
+}: {
+  params: { id: string };
+  searchParams: { from?: string };
+}) {
   const { memberships } = await requireClient();
   const org = memberships[0];
   const supabase = createClient();
@@ -62,6 +70,18 @@ export default async function PortalGrantDetail({ params }: { params: { id: stri
   } = await supabase.auth.getUser();
   const decidedBy = deciderLabel(card.decision, card.decided_by, card.decided_by_actor, user?.id ?? null, org.clientName);
 
+  // Premium (account-managed) clients see their team's finalized concept proposal
+  // here, read-only. Fetched service-role (concept_proposals is admin-only RLS);
+  // the card query above already pinned it to this client + the release gate.
+  const conceptRow = client?.account_managed ? await getConceptProposal(params.id) : null;
+
+  // Back target reflects where the client came from: this detail is reachable from
+  // Grant Alerts (?from=alerts, before the grant is in the Report) as well as from
+  // the Report itself, so a hardcoded "back to Report" strands the Alerts path.
+  const fromAlerts = searchParams?.from === "alerts";
+  const backHref = fromAlerts ? "/portal/triage" : "/portal/grants";
+  const backLabel = fromAlerts ? "Back to Grant Alerts" : "Back to Grant Report";
+
   return (
     <HubShell variant="map">
       <ReportDetail
@@ -72,8 +92,15 @@ export default async function PortalGrantDetail({ params }: { params: { id: stri
         funder={g.funder}
         focusAreas={(g.focus_areas ?? []).slice(0, 3)}
         deciderLabel={decidedBy}
-        backHref="/portal/grants"
-        afterContent={client && !client.account_managed ? <ConceptProposalUpsell clientName={org.clientName} /> : undefined}
+        backHref={backHref}
+        backLabel={backLabel}
+        afterContent={
+          client?.account_managed ? (
+            <ClientConceptProposal row={conceptRow} />
+          ) : (
+            <ConceptProposalUpsell clientName={org.clientName} />
+          )
+        }
       />
     </HubShell>
   );
