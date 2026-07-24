@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Check, Pencil, Plus, X } from "lucide-react";
+import { ArrowLeft, Check, Paperclip, Pencil, Plus, Upload, X } from "lucide-react";
 import { HubShell } from "@/components/layout/hub-background";
 import { IntellEngineLogo } from "@/components/intellengine/logo";
 import { IntellEngineProgress } from "@/components/intellengine/progress-bar";
@@ -32,12 +32,17 @@ const INITIAL_PARTNERS: Partner[] = [
 // persists yet, since there's no backend to save it to in this shell pass.
 //
 // FUTURE WIRING (not built yet -- tracked here per Shannon's note): this
-// page's four fields are exactly the four fields the concept-proposal
-// generator will eventually produce for a client -- scope of work (<500
-// words), estimated budget, the client's role, and partners (named or
-// unnamed) with a role + 1-2 sentence description each. Once that generator
-// exists, this page should auto-populate from its output instead of the
-// hardcoded defaults below, while staying exactly as editable as it is now.
+// page's fields are exactly what the concept-proposal generator will
+// eventually produce/consume for a client -- scope of work (<500 words),
+// estimated budget, the client's role, partners (named or unnamed) with a
+// role + 1-2 sentence description each, plus free-form notes and supporting
+// files as additional generation input. Once that generator exists, this
+// page should auto-populate from its output instead of the hardcoded
+// defaults below, while staying exactly as editable as it is now.
+//
+// Uploaded files are NOT actually stored anywhere -- there's no backend at
+// all in this shell pass. Only the filename is kept (to make the
+// interaction feel real), never implying the file has been received/saved.
 export default function IntellEngineScopeClient() {
   const [scope, setScope] = useState(
     "Establish a mobile health clinic that visits underserved neighborhoods three times weekly, providing preventive care, health screenings, and chronic disease management.",
@@ -48,6 +53,9 @@ export default function IntellEngineScopeClient() {
   const [draftPartner, setDraftPartner] = useState({ name: "", role: "", description: "" });
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState<Partner>({ name: "", role: "", description: "" });
+  const [notes, setNotes] = useState("");
+  const [files, setFiles] = useState<string[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const scopeWordCount = scope.trim().length ? scope.trim().split(/\s+/).length : 0;
   const overLimit = scopeWordCount > SCOPE_WORD_LIMIT;
@@ -76,6 +84,11 @@ export default function IntellEngineScopeClient() {
   function removePartner(i: number) {
     setPartners(partners.filter((_, idx) => idx !== i));
     setEditingIndex(null);
+  }
+
+  function addFiles(selected: FileList | null) {
+    if (!selected) return;
+    setFiles([...files, ...Array.from(selected).map((f) => f.name)]);
   }
 
   return (
@@ -244,6 +257,62 @@ export default function IntellEngineScopeClient() {
               Add partner
             </button>
           </div>
+        </div>
+
+        <div className="rounded-2xl bg-white p-6 shadow-grounded">
+          <h2 className="font-serif text-[19px] font-semibold text-brand-navy">Additional notes</h2>
+          <p className="mt-1 text-[13px] text-muted-foreground">
+            Anything else IntellEngine should factor in — context, constraints, prior conversations with
+            your GRANTED team, whatever doesn&apos;t fit above.
+          </p>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={4}
+            placeholder="Optional"
+            className="mt-4 w-full rounded-xl border border-brand-navy/15 bg-white px-3.5 py-3 text-sm outline-none focus:border-brand-navy/35 focus:ring-2 focus:ring-brand-navy/10"
+          />
+        </div>
+
+        <div className="rounded-2xl bg-white p-6 shadow-grounded">
+          <h2 className="font-serif text-[19px] font-semibold text-brand-navy">Supporting files</h2>
+          <p className="mt-1 text-[13px] text-muted-foreground">
+            Budgets, prior proposals, letters of support — anything IntellEngine should draw from.
+          </p>
+
+          {files.length > 0 && (
+            <div className="mt-4 space-y-2">
+              {files.map((name, i) => (
+                <div
+                  key={`${name}-${i}`}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-brand-navy/10 bg-brand-cream/50 px-4 py-2.5"
+                >
+                  <span className="flex min-w-0 items-center gap-2 text-sm text-brand-navy">
+                    <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate">{name}</span>
+                  </span>
+                  <button
+                    onClick={() => setFiles(files.filter((_, idx) => idx !== i))}
+                    aria-label={`Remove ${name}`}
+                    className="shrink-0 text-muted-foreground hover:text-destructive"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <button
+            onClick={() => fileRef.current?.click()}
+            className="mt-4 flex items-center gap-1.5 rounded-lg border border-dashed border-brand-navy/25 px-4 py-2.5 text-sm font-medium text-brand-navy hover:border-brand-navy/40"
+          >
+            <Upload className="h-4 w-4" />
+            Upload files
+          </button>
+          {/* Not wired to real storage yet -- only the filename is kept, matching
+              the shell scope of this pass (same pattern as the compliance page). */}
+          <input ref={fileRef} type="file" multiple className="hidden" onChange={(e) => addFiles(e.target.files)} />
         </div>
 
         <div className="flex justify-end">
