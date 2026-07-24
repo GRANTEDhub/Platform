@@ -11,6 +11,32 @@ type CookieToSet = { name: string; value: string; options: CookieOptions };
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
 
+  const { pathname } = request.nextUrl;
+  // Public (unauthenticated) surfaces: the auth callback, the tokenized
+  // outbound-door landing (/go/[token]) and the public intake form (/intake).
+  // Without /go here, tokenized scheduling links sent to logged-out prospects
+  // would be redirected to /login. These pages do their own service-role work
+  // and expose no admin data.
+  //
+  // Computed BEFORE touching Supabase at all -- not just before the redirect
+  // check below. getUser() silently attempts a session refresh using whatever
+  // cookies are present; if a stale/invalid refresh-token cookie is sitting in
+  // the browser (leftover from an earlier session), that refresh fails and the
+  // client library clears the auth cookies in response -- which also sweeps up
+  // the PKCE code-verifier cookie a fresh /auth/callback exchange needs (same
+  // name prefix). That silently broke every magic-link sign-in whenever an
+  // unrelated stale cookie existed: the code exchange never got a chance to
+  // run because its verifier was gone before the route handler even started.
+  // /auth/callback has no use for an existing session anyway -- it's in the
+  // business of creating a new one -- so it must never touch Supabase here.
+  const isPublicAsset =
+    pathname.startsWith("/auth") ||
+    pathname.startsWith("/go") ||
+    pathname.startsWith("/intake") ||
+    pathname.startsWith("/sign") ||
+    pathname === "/favicon.ico";
+  if (isPublicAsset) return response;
+
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -45,21 +71,9 @@ export async function updateSession(request: NextRequest) {
       data: { user },
     } = await supabase.auth.getUser();
 
-    const { pathname } = request.nextUrl;
     const isAuthRoute = pathname.startsWith("/login");
-    // Public (unauthenticated) surfaces: the auth callback, the tokenized
-    // outbound-door landing (/go/[token]) and the public intake form (/intake).
-    // Without /go here, tokenized scheduling links sent to logged-out prospects
-    // would be redirected to /login. These pages do their own service-role work
-    // and expose no admin data.
-    const isPublicAsset =
-      pathname.startsWith("/auth") ||
-      pathname.startsWith("/go") ||
-      pathname.startsWith("/intake") ||
-      pathname.startsWith("/sign") ||
-      pathname === "/favicon.ico";
 
-    if (!user && !isAuthRoute && !isPublicAsset) {
+    if (!user && !isAuthRoute) {
       const url = request.nextUrl.clone();
       url.pathname = "/login";
       url.searchParams.set("redirectedFrom", pathname);

@@ -25,7 +25,12 @@ function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Surfaces /auth/callback's ?error=auth fallback -- previously that redirect
+  // landed here with no visible sign anything failed (a silent blank sign-in
+  // page for a magic link that didn't complete).
+  const [error, setError] = useState<string | null>(
+    searchParams.get("error") ? "That sign-in link didn't work — it may have expired. Try sending a new one." : null,
+  );
   const [sent, setSent] = useState(false);
 
   async function handlePassword(e: React.FormEvent) {
