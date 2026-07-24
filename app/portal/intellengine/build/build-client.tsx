@@ -158,7 +158,9 @@ function SectionCard({ section, onChange }: { section: Section; onChange: (value
     <div className="rounded-2xl bg-white p-6 shadow-grounded">
       <div className="flex items-center justify-between gap-3">
         <h3 className="font-serif text-[17px] font-semibold text-brand-navy">{section.title}</h3>
-        <CheckCircle2 className="h-4.5 w-4.5 shrink-0 text-emerald-500" />
+        {section.draft.trim().length > 0 && (
+          <CheckCircle2 className="h-[18px] w-[18px] shrink-0 text-emerald-500" />
+        )}
       </div>
       <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted-foreground">{section.instructions}</p>
 
