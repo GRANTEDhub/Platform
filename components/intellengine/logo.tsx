@@ -1,0 +1,26 @@
+// IntellEngine's own wordmark. GRANTED's own colors, not a separate palette:
+// "intell" in brand navy, "Engine" in brand orange. The icon is GRANTED's own
+// "G" mark, rotated, standing in for the "I" itself (not sitting beside the
+// word as a separate icon) -- granted-mark-light.svg (navy fill, for light
+// backgrounds; -dark.svg is the white variant meant for dark surfaces like
+// the sidebar, wrong here). No trademark symbol: legal flagged this
+// specifically (Intel-name collision risk), it must never appear here.
+export function IntellEngineLogo({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
+  const px = { sm: 24, md: 34, lg: 44 }[size];
+  const dot = { sm: 4, md: 5, lg: 6 }[size];
+  const text = { sm: "text-lg", md: "text-2xl", lg: "text-4xl" }[size];
+  return (
+    <div className="inline-flex items-end">
+      <span className="relative inline-block -mr-2.5" style={{ width: px, height: px }}>
+        <span
+          className="absolute -translate-x-1/2 rounded-full bg-brand-navy"
+          style={{ top: 0, left: "22%", width: dot, height: dot }}
+        />
+        <img src="/granted-mark-light.svg" alt="I" style={{ width: px, height: px }} className="-rotate-90" />
+      </span>
+      <span className={`font-serif ${text} font-semibold text-brand-navy`}>
+        ntell<span className="font-normal italic text-brand-orange">Engine</span>
+      </span>
+    </div>
+  );
+}

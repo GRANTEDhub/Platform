@@ -100,7 +100,8 @@ export async function requireClient(): Promise<ClientSession> {
     .from("client_members")
     .select("client_id, role, clients(name)")
     .eq("user_id", user.id)
-    .not("activated_at", "is", null);
+    .not("activated_at", "is", null)
+    .order("invited_at", { ascending: true });
 
   const memberships: ClientMembership[] = ((rows ?? []) as MembershipRow[]).map((r) => ({
     clientId: r.client_id,
@@ -110,4 +111,39 @@ export async function requireClient(): Promise<ClientSession> {
 
   if (memberships.length === 0) redirect("/");
   return { userId: user.id, email: user.email ?? "", memberships };
+}
+
+/**
+ * Require EITHER a signed-in client portal member OR a staff admin.
+ * Unauthenticated -> /login. Staff who aren't admin -> /review.
+ *
+ * Scoped narrowly to IntellEngine's shell pages, which currently render
+ * fully generic/mocked content with no per-client data at all -- so there's
+ * no privacy reason to keep staff out, and letting them in via their normal
+ * (password) login sidesteps the client portal's magic-link-only friction
+ * entirely for previewing a build. Once IntellEngine is wired to real
+ * per-client data, this should be revisited in favor of a proper
+ * requireAdmin()-gated staff mirror (the same pattern Grant Report/Roadmap
+ * already use), not a shared client route.
+ */
+export async function requireClientOrAdmin(): Promise<void> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
+  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
+  if (profile) {
+    if (profile.role !== "admin") redirect("/review");
+    return;
+  }
+
+  const { data: rows } = await supabase
+    .from("client_members")
+    .select("id")
+    .eq("user_id", user.id)
+    .not("activated_at", "is", null)
+    .limit(1);
+  if (!rows || rows.length === 0) redirect("/");
 }
