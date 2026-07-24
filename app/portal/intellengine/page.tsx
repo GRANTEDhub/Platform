@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { requireClient } from "@/lib/auth";
+import { requireClientOrAdmin } from "@/lib/auth";
 import { HubShell } from "@/components/layout/hub-background";
 import { IntellEngineLogo } from "@/components/intellengine/logo";
 
@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 // profile grounding) is a separate, not-yet-scoped piece -- this just builds
 // the surface it'll eventually plug into, matching the source Figma design.
 export default async function IntellEngineLanding() {
-  await requireClient();
+  await requireClientOrAdmin();
 
   return (
     <HubShell variant="texture">
