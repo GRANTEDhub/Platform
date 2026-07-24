@@ -3,7 +3,15 @@
 // manager view, so the two render identically off the same decision data
 // (review_cards + the joined grant). Pure + presentation-agnostic: no JSX here,
 // just the derived shape and the small honest formatters the rows/detail need.
-import type { CardDecision, FactorRating, FactorScores, Grant, ReviewCard } from "@/types/database";
+import type {
+  CardDecision,
+  ConceptProposal,
+  ConceptProposalStatus,
+  FactorRating,
+  FactorScores,
+  Grant,
+  ReviewCard,
+} from "@/types/database";
 import { formatAwardRange, formatDeadlineShort, compactCostShare } from "@/lib/grants/format";
 
 export type FactorKey = keyof FactorScores;
@@ -122,6 +130,36 @@ export interface ReportItem {
   // selected sme_released_at (the staff roadmap list); false/absent everywhere
   // else, including the client's own portal.
   smeReleased: boolean;
+  // Concept-proposal reveal state for the client-facing list surfaces. Populated
+  // by the page (via withConcept) AFTER shaping, since it comes from a separate
+  // admin-only table -- toReportItem leaves it undefined, so staff surfaces that
+  // don't stamp it render no reveal.
+  concept?: ConceptReveal;
+}
+
+// What the client-facing "concept proposal" button needs to decide what to show:
+// premium clients get the real read-only proposal (once ready); base clients get
+// an upsell teaser. Carried per-item so the swipe card and report row render off
+// one field.
+export interface ConceptReveal {
+  tier: "premium" | "base";
+  status: ConceptProposalStatus | null; // premium only; null = no proposal yet
+  proposal: ConceptProposal | null; // premium + ready only
+}
+
+// Stamp concept-reveal state onto already-shaped items. Base tier carries no
+// proposal data (it's a Premium deliverable) -- the teaser is pure UI. Premium
+// looks each card up in the batch map; absent = no proposal yet.
+export function withConcept(
+  items: ReportItem[],
+  tier: "premium" | "base",
+  byCard: Map<string, { status: ConceptProposalStatus; proposal: ConceptProposal | null }>,
+): ReportItem[] {
+  return items.map((it) => {
+    if (tier === "base") return { ...it, concept: { tier: "base", status: null, proposal: null } };
+    const c = byCard.get(it.id);
+    return { ...it, concept: { tier: "premium", status: c?.status ?? null, proposal: c?.proposal ?? null } };
+  });
 }
 
 // The columns the list needs off each joined review_card. A fuller select is

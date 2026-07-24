@@ -4,8 +4,9 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, useMotionValue, useTransform, useDragControls, animate, type MotionValue } from "motion/react";
-import { Archive, ArrowUpRight, Check } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUpRight, Check, X } from "lucide-react";
 import { ScoreRing, Tag } from "./primitives";
+import { ConceptProposalReveal } from "./concept-proposal-reveal";
 import type { ReportItem } from "@/lib/report/shape";
 
 // Card-stack triage for brand-new matches — Grant Alerts, the first gate ahead of
@@ -26,10 +27,14 @@ export function SwipeDeck({
   detailBasePath,
   backHref,
   interestMode = "client",
+  clientName,
 }: {
   items: ReportItem[];
   detailBasePath: string; // detail = `${detailBasePath}/${id}`
   backHref: string;
+  // Client org name — only threaded on the client portal, for the concept-proposal
+  // reveal / base-tier upsell mailto. Absent on staff surfaces (no reveal there).
+  clientName?: string;
   // "client" (default): right-swipe sets interested_at (the client's own gate,
   // 0057). "sme": right-swipe sets sme_interested_at instead -- staff's OWN,
   // separate first pass for an account-managed client (0059). Reject is
@@ -111,7 +116,7 @@ export function SwipeDeck({
             <CardFace item={peek} interactive={false} />
           </div>
         )}
-        <SwipeCard key={top.id} item={top} detailBasePath={detailBasePath} onSettle={settle} />
+        <SwipeCard key={top.id} item={top} detailBasePath={detailBasePath} onSettle={settle} clientName={clientName} />
       </div>
     </div>
   );
@@ -121,10 +126,12 @@ function SwipeCard({
   item,
   detailBasePath,
   onSettle,
+  clientName,
 }: {
   item: ReportItem;
   detailBasePath: string;
   onSettle: (item: ReportItem, action: "interested" | "passed") => void;
+  clientName?: string;
 }) {
   const x = useMotionValue(0);
   const rotate = useTransform(x, [-260, 260], [-11, 11]);
@@ -165,6 +172,7 @@ function SwipeCard({
         onInterested={() => flyOff(1, "interested")}
         onHandlePointerDown={(e) => dragControls.start(e)}
         detailHref={`${detailBasePath}/${item.id}?from=alerts`}
+        clientName={clientName}
       />
     </motion.div>
   );
@@ -274,6 +282,7 @@ function CardFace({
   onInterested,
   onHandlePointerDown,
   detailHref,
+  clientName,
 }: {
   item: ReportItem;
   interactive: boolean;
@@ -283,6 +292,7 @@ function CardFace({
   onInterested?: () => void;
   onHandlePointerDown?: (e: React.PointerEvent) => void;
   detailHref?: string;
+  clientName?: string;
 }) {
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-3xl border border-brand-navy/[0.06] bg-white shadow-lift">
@@ -298,17 +308,18 @@ function CardFace({
         <div className="absolute inset-0 bg-brand-navy/40" />
         {interactive && (
           <>
-            <motion.span
-              style={{ opacity: interestOpacity }}
-              className="absolute left-4 top-4 rounded-lg border-2 border-emerald-400 px-3 py-1 text-sm font-bold uppercase tracking-wider text-emerald-300"
-            >
-              Interested
-            </motion.span>
+            {/* Stamps sit on the side you're dragging toward: left = Pass, right = Interested. */}
             <motion.span
               style={{ opacity: archiveOpacity }}
-              className="absolute right-4 top-4 rounded-lg border-2 border-white/70 px-3 py-1 text-sm font-bold uppercase tracking-wider text-white"
+              className="absolute left-4 top-4 rounded-lg border-2 border-white/70 px-3 py-1 text-sm font-bold uppercase tracking-wider text-white"
             >
-              Archive
+              Pass
+            </motion.span>
+            <motion.span
+              style={{ opacity: interestOpacity }}
+              className="absolute right-4 top-4 rounded-lg border-2 border-emerald-400 px-3 py-1 text-sm font-bold uppercase tracking-wider text-emerald-300"
+            >
+              Interested
             </motion.span>
           </>
         )}
@@ -331,6 +342,14 @@ function CardFace({
             {item.focusAreas.map((f, i) => (
               <Tag key={i}>{f}</Tag>
             ))}
+          </div>
+        )}
+
+        {/* Concept proposal, right out the gate — read-only for premium, upsell teaser
+            for base. Only on the live top card (the peek behind isn't interactive). */}
+        {interactive && item.concept && (
+          <div className="mt-4">
+            <ConceptProposalReveal concept={item.concept} clientName={clientName} variant="card" />
           </div>
         )}
 
@@ -369,19 +388,21 @@ function CardFace({
               onClick={onArchive}
               className="flex items-center gap-2 rounded-full border border-brand-navy/20 bg-white px-5 py-2.5 text-sm font-semibold text-muted-foreground shadow-soft transition hover:border-brand-navy/35 hover:text-brand-navy"
             >
-              <Archive className="h-5 w-5" />
-              Archive
+              <ArrowLeft className="h-4 w-4" />
+              <X className="h-5 w-5" />
+              Pass
             </button>
             <button
               onClick={onInterested}
               className="flex items-center gap-2 rounded-full bg-brand-navy px-6 py-2.5 text-sm font-semibold text-white shadow-lift transition hover:bg-brand-navyDeep"
             >
-              <Check className="h-5 w-5" strokeWidth={3} />
               Interested
+              <Check className="h-5 w-5" strokeWidth={3} />
+              <ArrowRight className="h-4 w-4" />
             </button>
           </div>
           <p className="mt-2.5 text-center text-[11px] text-muted-foreground">
-            Drag the card or tap · left to archive · right for interested
+            Drag or tap · ← Pass · Interested →
           </p>
         </div>
       )}

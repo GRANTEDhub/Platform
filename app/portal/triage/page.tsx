@@ -2,7 +2,8 @@ import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { SwipeDeck } from "@/components/report/swipe-deck";
 import { HubShell } from "@/components/layout/hub-background";
-import { toReportItems, type ReportCardRow } from "@/lib/report/shape";
+import { toReportItems, withConcept, type ReportCardRow } from "@/lib/report/shape";
+import { getConceptProposalsByCardIds } from "@/lib/concept/store";
 
 export const dynamic = "force-dynamic";
 
@@ -37,11 +38,22 @@ export default async function PortalTriage() {
   if (client?.account_managed) query = query.not("sme_released_at", "is", null);
   const { data } = await query;
 
-  const items = toReportItems((data ?? []) as unknown as ReportCardRow[]);
+  const baseItems = toReportItems((data ?? []) as unknown as ReportCardRow[]);
+
+  // Premium (account-managed) clients see their team's finalized concept proposal
+  // right on the alert card, read-only; base clients get the upsell teaser. The
+  // proposals live in an admin-only table, so fetch them service-role and stamp
+  // onto the items (base tier needs no fetch -- the teaser is pure UI).
+  const tier = client?.account_managed ? "premium" : "base";
+  const byCard =
+    tier === "premium"
+      ? await getConceptProposalsByCardIds(baseItems.map((i) => i.id))
+      : new Map();
+  const items = withConcept(baseItems, tier, byCard);
 
   return (
     <HubShell variant="texture">
-      <SwipeDeck items={items} detailBasePath="/portal/grants" backHref="/portal/grants" />
+      <SwipeDeck items={items} detailBasePath="/portal/grants" backHref="/portal/grants" clientName={org.clientName} />
     </HubShell>
   );
 }

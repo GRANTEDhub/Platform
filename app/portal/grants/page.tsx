@@ -2,7 +2,8 @@ import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { GrantReport } from "@/components/report/grant-report";
 import { HubShell } from "@/components/layout/hub-background";
-import { toReportItems, type ReportCardRow } from "@/lib/report/shape";
+import { toReportItems, withConcept, type ReportCardRow } from "@/lib/report/shape";
+import { getConceptProposalsByCardIds } from "@/lib/concept/store";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +24,12 @@ export default async function PortalGrantReport() {
   const org = memberships[0];
   const supabase = createClient();
 
+  const { data: client } = await supabase
+    .from("clients")
+    .select("account_managed")
+    .eq("id", org.clientId)
+    .single<{ account_managed: boolean }>();
+
   const { data } = await supabase
     .from("review_cards")
     .select(
@@ -33,7 +40,17 @@ export default async function PortalGrantReport() {
     .neq("decision", "passed")
     .not("interested_at", "is", null);
 
-  const items = toReportItems((data ?? []) as unknown as ReportCardRow[]);
+  const baseItems = toReportItems((data ?? []) as unknown as ReportCardRow[]);
+
+  // Same concept-proposal reveal as Grant Alerts, now that the grant is in the
+  // Report: premium clients see the read-only proposal, base clients the upsell
+  // teaser. Fetched service-role (admin-only table) and stamped onto the items.
+  const tier = client?.account_managed ? "premium" : "base";
+  const byCard =
+    tier === "premium"
+      ? await getConceptProposalsByCardIds(baseItems.map((i) => i.id))
+      : new Map();
+  const items = withConcept(baseItems, tier, byCard);
   const subtitle =
     items.length === 0
       ? "Your matched opportunities will appear here, ranked by fit."
@@ -46,6 +63,7 @@ export default async function PortalGrantReport() {
         heading={`${org.clientName} · Grant Report`}
         subtitle={subtitle}
         basePath="/portal/grants"
+        clientName={org.clientName}
       />
     </HubShell>
   );

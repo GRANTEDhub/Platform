@@ -6,6 +6,7 @@ import { Search } from "lucide-react";
 import { DecisionBadge } from "@/components/grants/badges";
 import { HeroBand } from "@/components/layout/hero-band";
 import { ScoreRing, FactorMark, Tag } from "./primitives";
+import { ConceptProposalReveal } from "./concept-proposal-reveal";
 import { factorDisplay, reportStats, type ReportItem } from "@/lib/report/shape";
 
 type Filter = "all" | "strong" | "soon" | "pursuing";
@@ -32,12 +33,16 @@ export function GrantReport({
   heading,
   subtitle,
   basePath,
+  clientName,
 }: {
   items: ReportItem[];
   heading: string;
   subtitle?: string;
   // Where a row links to, e.g. "/portal/grants". Detail is `${basePath}/${id}`.
   basePath: string;
+  // Client org name — threaded on the client portal for the concept-proposal reveal
+  // / base-tier upsell mailto. Absent on staff surfaces (items carry no concept there).
+  clientName?: string;
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
@@ -114,7 +119,7 @@ export function GrantReport({
       ) : (
         <div className="space-y-4">
           {visible.map((item, i) => (
-            <Row key={item.id} item={item} href={`${basePath}/${item.id}`} index={i} />
+            <Row key={item.id} item={item} href={`${basePath}/${item.id}`} index={i} clientName={clientName} />
           ))}
         </div>
       )}
@@ -122,13 +127,26 @@ export function GrantReport({
   );
 }
 
-function Row({ item, href, index }: { item: ReportItem; href: string; index: number }) {
+function Row({
+  item,
+  href,
+  index,
+  clientName,
+}: {
+  item: ReportItem;
+  href: string;
+  index: number;
+  clientName?: string;
+}) {
   return (
-    <Link
-      href={href}
+    // Stretched-link pattern: the whole card navigates via an absolute overlay
+    // anchor, so the concept-proposal button can live above it (z-2) as a real,
+    // separately-clickable control without nesting a <button> inside an <a>.
+    <div
       style={{ animationDelay: `${Math.min(index, 8) * 45}ms` }}
-      className="animate-fade-up block rounded-2xl border border-brand-navy/[0.05] bg-white p-6 shadow-card transition duration-200 hover:-translate-y-0.5 hover:shadow-lift"
+      className="animate-fade-up relative rounded-2xl border border-brand-navy/[0.05] bg-white p-6 shadow-card transition duration-200 hover:-translate-y-0.5 hover:shadow-lift"
     >
+      <Link href={href} aria-label={`View ${item.title}`} className="absolute inset-0 z-[1] rounded-2xl" />
       <div className="flex items-center gap-6">
         <ScoreRing fitScore={item.fitScore} band={item.band} />
 
@@ -175,9 +193,16 @@ function Row({ item, href, index }: { item: ReportItem; href: string; index: num
               <span className="ml-1 font-medium text-brand-orange">· {item.deadlineDaysLeft}d left</span>
             )}
           </p>
-          <span className="mt-1 rounded-full bg-brand-navy px-5 py-1.5 text-xs font-semibold text-white">View</span>
+          <div className="mt-1 flex items-center gap-2">
+            {item.concept && (
+              <div className="relative z-[2]">
+                <ConceptProposalReveal concept={item.concept} clientName={clientName} variant="row" />
+              </div>
+            )}
+            <span className="rounded-full bg-brand-navy px-5 py-1.5 text-xs font-semibold text-white">View</span>
+          </div>
         </div>
       </div>
-    </Link>
+    </div>
   );
 }
