@@ -29,9 +29,13 @@ export default function IntellEngineComplianceClient() {
   const [docs, setDocs] = useState(INITIAL_DOCS);
   const needsUpdate = docs.filter((d) => d.status === "needs_update").length;
 
-  function markVerified(name: string) {
+  // bumpDate distinguishes the two ways a doc gets cleared: uploading a new
+  // version really did just change (lastUpdated -> "Just now"), but confirming
+  // an existing doc as still current asserts the OPPOSITE -- nothing changed,
+  // so the original date must be preserved, not overwritten.
+  function markVerified(name: string, bumpDate: boolean) {
     setDocs((prev) =>
-      prev.map((d) => (d.name === name ? { ...d, status: "verified", lastUpdated: "Just now" } : d)),
+      prev.map((d) => (d.name === name ? { ...d, status: "verified", lastUpdated: bumpDate ? "Just now" : d.lastUpdated } : d)),
     );
   }
 
@@ -85,7 +89,7 @@ export default function IntellEngineComplianceClient() {
 
         <div className="grid gap-4 sm:grid-cols-2">
           {docs.map((d) => (
-            <DocCard key={d.name} doc={d} onVerify={() => markVerified(d.name)} />
+            <DocCard key={d.name} doc={d} onVerify={(bumpDate) => markVerified(d.name, bumpDate)} />
           ))}
         </div>
 
@@ -102,7 +106,7 @@ export default function IntellEngineComplianceClient() {
   );
 }
 
-function DocCard({ doc, onVerify }: { doc: Doc; onVerify: () => void }) {
+function DocCard({ doc, onVerify }: { doc: Doc; onVerify: (bumpDate: boolean) => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const needsUpdate = doc.status === "needs_update";
 
@@ -123,7 +127,7 @@ function DocCard({ doc, onVerify }: { doc: Doc; onVerify: () => void }) {
         {needsUpdate ? (
           <div className="flex shrink-0 items-center gap-2">
             <button
-              onClick={onVerify}
+              onClick={() => onVerify(false)}
               className="rounded-full border border-amber-300 px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100"
             >
               Confirm current
@@ -145,7 +149,7 @@ function DocCard({ doc, onVerify }: { doc: Doc; onVerify: () => void }) {
       </div>
       {/* Not wired to real storage yet -- selecting a file just simulates the
           document being re-verified, matching the shell scope of this pass. */}
-      <input ref={fileRef} type="file" className="hidden" onChange={() => onVerify()} />
+      <input ref={fileRef} type="file" className="hidden" onChange={() => onVerify(true)} />
     </div>
   );
 }
