@@ -14,7 +14,7 @@ export function IntellEngineLogo({ size = "md" }: { size?: "sm" | "md" | "lg" })
         src="/granted-mark-light.svg"
         alt="I"
         style={{ width: px, height: px }}
-        className="-mr-0.5 -rotate-90"
+        className="-mr-1.5 -rotate-90"
       />
       <span className={`font-serif ${text} font-semibold text-brand-navy`}>
         ntell<span className="font-normal italic text-brand-orange">Engine</span>
