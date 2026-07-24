@@ -43,6 +43,8 @@ const config: Config = {
           orange: BRAND.orange,
           cream: BRAND.cream,
           creamWarm: BRAND.creamWarm,
+          intellEngine: BRAND.intellEngine,
+          intellEngineLight: BRAND.intellEngineLight,
         },
       },
       borderRadius: {

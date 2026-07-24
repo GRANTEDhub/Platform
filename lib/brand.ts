@@ -20,4 +20,10 @@ export const BRAND = {
   slate: "#334867",     // grey-navy — secondary accent (e.g. charts)
   taupe: "#c9c2b8",     // warm neutral — low-emphasis (e.g. charts)
   success: "#059669",   // status green — a functional signal, NOT the brand palette
+
+  // IntellEngine (the AI proposal-drafting tool) is its own sub-brand with its
+  // own wordmark/accent, deliberately distinct from GRANTED's navy/orange —
+  // used only within the IntellEngine surfaces, never elsewhere.
+  intellEngine: "#3F5C3A",      // wordmark icon + "intell" text
+  intellEngineLight: "#8A9A6E", // "Engine" text (lighter olive)
 } as const;

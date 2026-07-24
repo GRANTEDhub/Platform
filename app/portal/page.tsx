@@ -110,6 +110,7 @@ export default async function PortalHome() {
           isStaff={false}
           roadmapHref={base}
           ledgerHref="/portal/ledger"
+          intellEngineHref="/portal/intellengine"
           stats={stats}
           actionItems={actionItems}
           activity={counts}
