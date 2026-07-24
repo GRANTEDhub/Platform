@@ -98,6 +98,7 @@ const SECTIONS: Section[] = [
 
 export default function IntellEngineBuildClient() {
   const [sections, setSections] = useState(SECTIONS);
+  const [templateNote, setTemplateNote] = useState<string | null>(null);
   const completed = sections.filter((s) => s.draft.trim().length > 0).length;
 
   function updateDraft(id: string, value: string) {
@@ -124,11 +125,17 @@ export default function IntellEngineBuildClient() {
         <div className="rounded-2xl bg-white p-6 shadow-grounded">
           <div className="flex items-center justify-between">
             <h2 className="font-serif text-[19px] font-semibold text-brand-navy">Project Scope Builder</h2>
-            <button className="text-sm font-medium text-brand-orange hover:underline">Change Template</button>
+            <button
+              onClick={() => setTemplateNote("Template switching is coming soon.")}
+              className="text-sm font-medium text-brand-orange hover:underline"
+            >
+              Change Template
+            </button>
           </div>
           <p className="mt-1 text-[13px] text-muted-foreground">
             Complete each section of your project scope. All fields have AI assistance available.
           </p>
+          {templateNote && <p className="mt-1 text-[12px] text-muted-foreground">{templateNote}</p>}
           <div className="mt-4 flex items-center justify-between text-xs font-medium text-muted-foreground">
             <span>Fields Completed</span>
             <span>
