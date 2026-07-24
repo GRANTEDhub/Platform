@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Plus, X } from "lucide-react";
+import { ArrowLeft, Check, Pencil, Plus, X } from "lucide-react";
 import { HubShell } from "@/components/layout/hub-background";
 import { IntellEngineLogo } from "@/components/intellengine/logo";
 import { IntellEngineProgress } from "@/components/intellengine/progress-bar";
@@ -46,6 +46,8 @@ export default function IntellEngineScopeClient() {
   const [budget, setBudget] = useState("250,000 - 400,000");
   const [partners, setPartners] = useState<Partner[]>(INITIAL_PARTNERS);
   const [draftPartner, setDraftPartner] = useState({ name: "", role: "", description: "" });
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editDraft, setEditDraft] = useState<Partner>({ name: "", role: "", description: "" });
 
   const scopeWordCount = scope.trim().length ? scope.trim().split(/\s+/).length : 0;
   const overLimit = scopeWordCount > SCOPE_WORD_LIMIT;
@@ -54,6 +56,17 @@ export default function IntellEngineScopeClient() {
     if (!draftPartner.role.trim() && !draftPartner.description.trim()) return;
     setPartners([...partners, { ...draftPartner, name: draftPartner.name.trim() }]);
     setDraftPartner({ name: "", role: "", description: "" });
+  }
+
+  function startEdit(i: number) {
+    setEditingIndex(i);
+    setEditDraft(partners[i]);
+  }
+
+  function saveEdit() {
+    if (editingIndex === null) return;
+    setPartners(partners.map((p, idx) => (idx === editingIndex ? { ...editDraft, name: editDraft.name.trim() } : p)));
+    setEditingIndex(null);
   }
 
   return (
@@ -126,25 +139,72 @@ export default function IntellEngineScopeClient() {
 
           {partners.length > 0 && (
             <div className="mt-4 space-y-3">
-              {partners.map((p, i) => (
-                <div
-                  key={i}
-                  className="flex items-start justify-between gap-3 rounded-xl border border-brand-navy/10 bg-brand-cream/50 p-4"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-brand-navy">{p.name || "Unnamed partner"}</p>
-                    <p className="text-xs font-medium text-brand-orange">{p.role}</p>
-                    <p className="mt-1 text-[13px] text-muted-foreground">{p.description}</p>
+              {partners.map((p, i) =>
+                editingIndex === i ? (
+                  <div key={i} className="space-y-2 rounded-xl border border-brand-navy/20 bg-white p-4">
+                    <input
+                      value={editDraft.name}
+                      onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })}
+                      placeholder="Organization name (optional)"
+                      className="w-full rounded-lg border border-brand-navy/15 bg-white px-3 py-2 text-sm outline-none focus:border-brand-navy/35 focus:ring-2 focus:ring-brand-navy/10"
+                    />
+                    <input
+                      value={editDraft.role}
+                      onChange={(e) => setEditDraft({ ...editDraft, role: e.target.value })}
+                      placeholder="Role, e.g. Clinical services partner"
+                      className="w-full rounded-lg border border-brand-navy/15 bg-white px-3 py-2 text-sm outline-none focus:border-brand-navy/35 focus:ring-2 focus:ring-brand-navy/10"
+                    />
+                    <input
+                      value={editDraft.description}
+                      onChange={(e) => setEditDraft({ ...editDraft, description: e.target.value })}
+                      placeholder="1-2 sentences on what they'll do"
+                      className="w-full rounded-lg border border-brand-navy/15 bg-white px-3 py-2 text-sm outline-none focus:border-brand-navy/35 focus:ring-2 focus:ring-brand-navy/10"
+                    />
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        onClick={saveEdit}
+                        className="flex items-center gap-1 rounded-full bg-brand-navy px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-navyDeep"
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                        Save
+                      </button>
+                      <button
+                        onClick={() => setEditingIndex(null)}
+                        className="rounded-full px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-brand-navy"
+                      >
+                        Cancel
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    onClick={() => setPartners(partners.filter((_, idx) => idx !== i))}
-                    aria-label={`Remove ${p.name || "unnamed partner"}`}
-                    className="shrink-0 text-muted-foreground hover:text-destructive"
+                ) : (
+                  <div
+                    key={i}
+                    className="flex items-start justify-between gap-3 rounded-xl border border-brand-navy/10 bg-brand-cream/50 p-4"
                   >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-              ))}
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-brand-navy">{p.name || "Unnamed partner"}</p>
+                      <p className="text-xs font-medium text-brand-orange">{p.role}</p>
+                      <p className="mt-1 text-[13px] text-muted-foreground">{p.description}</p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <button
+                        onClick={() => startEdit(i)}
+                        aria-label={`Edit ${p.name || "unnamed partner"}`}
+                        className="text-muted-foreground hover:text-brand-navy"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => setPartners(partners.filter((_, idx) => idx !== i))}
+                        aria-label={`Remove ${p.name || "unnamed partner"}`}
+                        className="text-muted-foreground hover:text-destructive"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                ),
+              )}
             </div>
           )}
 
