@@ -127,7 +127,7 @@ export function ClientDashboard({
           <QuickAction href={ledgerHref} icon={History} title="Grant Ledger" sub="Every grant we've surfaced, and what came of it" />
         )}
         {intellEngineHref && (
-          <QuickAction href={intellEngineHref} icon={Sparkles} title="IntellEngine" sub="Draft a proposal with AI assistance" />
+          <QuickAction href={intellEngineHref} icon={Sparkles} title="IntellEngine" sub="Draft a proposal — AI assistance coming soon" />
         )}
         <QuickAction external href={scheduleHref} icon={CalendarPlus} title="Schedule with an advisor" sub="Book a grant strategy call" />
         <QuickAction external href={`mailto:${SUPPORT}?subject=Question%20for%20my%20GRANTED%20team`} icon={MessageSquare} title="Message your team" sub="In-app messaging — coming soon" />
