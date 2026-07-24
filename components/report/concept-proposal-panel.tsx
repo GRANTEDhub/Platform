@@ -18,6 +18,24 @@ const SOURCE_TAG: Record<ConceptProposalPartner["source"], { label: string; sugg
   suggested: { label: "Suggested — verify", suggested: true },
 };
 
+function optimisticGeneratingRow(cardId: string): ConceptProposalRow {
+  return {
+    id: "",
+    card_id: cardId,
+    grant_id: null,
+    client_id: null,
+    status: "generating",
+    proposal_data: null,
+    model: null,
+    error: null,
+    generated_at: null,
+    generated_by: null,
+    edited_at: null,
+    edited_by: null,
+    created_at: "",
+  };
+}
+
 export function ConceptProposalPanel({
   cardId,
   initial,
@@ -27,6 +45,7 @@ export function ConceptProposalPanel({
 }) {
   const [row, setRow] = useState<ConceptProposalRow | null>(initial);
   const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const res = await fetch(`/api/concept/${cardId}`, { cache: "no-store" });
@@ -45,9 +64,22 @@ export function ConceptProposalPanel({
 
   const generate = useCallback(async () => {
     setBusy(true);
+    setActionError(null);
+    // Immediate feedback: flip to the generating state before the round-trip so
+    // the click is never a silent no-op.
+    setRow((prev) => ({ ...(prev ?? optimisticGeneratingRow(cardId)), status: "generating", error: null }));
     try {
       const res = await fetch(`/api/concept/${cardId}`, { method: "POST" });
-      if (res.ok) await refresh();
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setActionError(body.error || "Couldn't start generation. Try again.");
+        await refresh(); // reconcile back to the real (pre-click) state
+        return;
+      }
+      await refresh();
+    } catch {
+      setActionError("Couldn't reach the server. Try again.");
+      await refresh();
     } finally {
       setBusy(false);
     }
@@ -83,6 +115,9 @@ export function ConceptProposalPanel({
         {status === "ready" && !proposal && (
           <ErrorState error="The proposal generated but came back empty." busy={busy} onRetry={generate} />
         )}
+        {actionError && (
+          <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">{actionError}</p>
+        )}
       </div>
     </Card>
   );
@@ -97,10 +132,10 @@ function EmptyState({ busy, onGenerate }: { busy: boolean; onGenerate: () => voi
       <button
         onClick={onGenerate}
         disabled={busy}
-        className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-brand-navy px-5 py-2 text-sm font-semibold text-white transition hover:bg-brand-navyDeep disabled:opacity-50"
+        className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-brand-navy px-5 py-2 text-sm font-semibold text-white transition hover:bg-brand-navyDeep disabled:opacity-60"
       >
-        <Sparkles className="h-4 w-4" />
-        Generate concept proposal
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+        {busy ? "Starting…" : "Generate concept proposal"}
       </button>
     </div>
   );

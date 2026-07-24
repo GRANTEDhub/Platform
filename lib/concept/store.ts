@@ -47,25 +47,29 @@ export async function ensureConceptProposalPlaceholder(
 
 // Force the card into 'generating' for a manual generate / retry / regenerate,
 // creating the row if absent and clearing any prior error. Used by the endpoint;
-// the caller then fires runConceptProposalGeneration in the background.
+// the caller then fires runConceptProposalGeneration in the background. Returns
+// the DB error message (if any) so the endpoint can surface it instead of failing
+// silently -- e.g. "relation concept_proposals does not exist" when migration 0060
+// has not been applied yet.
 export async function markConceptProposalGenerating(
   cardId: string,
   grantId: string | null,
   clientId: string | null,
   userId: string | null,
-): Promise<void> {
+): Promise<{ error: string | null }> {
   const db = createServiceClient();
   const existing = await getConceptProposal(cardId);
   if (!existing) {
-    await db
+    const { error } = await db
       .from("concept_proposals")
       .insert({ card_id: cardId, grant_id: grantId, client_id: clientId, status: "generating", generated_by: userId });
-    return;
+    return { error: error?.message ?? null };
   }
-  await db
+  const { error } = await db
     .from("concept_proposals")
     .update({ status: "generating", error: null, generated_by: userId })
     .eq("card_id", cardId);
+  return { error: error?.message ?? null };
 }
 
 // GRANTED-tracked ecosystem orgs in the client's state that could serve as named

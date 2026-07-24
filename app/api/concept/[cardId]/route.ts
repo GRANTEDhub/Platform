@@ -46,7 +46,21 @@ export async function POST(_req: NextRequest, { params }: { params: { cardId: st
     return NextResponse.json({ error: "Concept proposals require a client grant card" }, { status: 400 });
   }
 
-  await markConceptProposalGenerating(params.cardId, card.grant_id, card.client_id, auth.userId);
+  // Surface a failure to even start (most commonly: the concept_proposals table
+  // does not exist yet because migration 0060 has not been applied) instead of
+  // returning a false "generating" that would spin forever.
+  const { error } = await markConceptProposalGenerating(params.cardId, card.grant_id, card.client_id, auth.userId);
+  if (error) {
+    const missingTable = /concept_proposals/.test(error) && /exist|relation/i.test(error);
+    return NextResponse.json(
+      {
+        error: missingTable
+          ? "Concept-proposal storage isn't set up yet — the database step (migration 0060) hasn't been applied."
+          : `Couldn't start generation: ${error}`,
+      },
+      { status: 503 },
+    );
+  }
   waitUntil(runConceptProposalGeneration(params.cardId, auth.userId));
   return NextResponse.json({ status: "generating" });
 }
