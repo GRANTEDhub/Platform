@@ -57,6 +57,7 @@ export default function IntellEngineScopeClient() {
   const [files, setFiles] = useState<string[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const [partnerNote, setPartnerNote] = useState<string | null>(null);
+  const [editNote, setEditNote] = useState<string | null>(null);
 
   const scopeWordCount = scope.trim().length ? scope.trim().split(/\s+/).length : 0;
   const overLimit = scopeWordCount > SCOPE_WORD_LIMIT;
@@ -74,10 +75,15 @@ export default function IntellEngineScopeClient() {
   function startEdit(i: number) {
     setEditingIndex(i);
     setEditDraft(partners[i]);
+    setEditNote(null);
   }
 
   function saveEdit() {
     if (editingIndex === null) return;
+    if (!editDraft.role.trim() && !editDraft.description.trim()) {
+      setEditNote("Add a role or description before saving.");
+      return;
+    }
     setPartners(partners.map((p, idx) => (idx === editingIndex ? { ...editDraft, name: editDraft.name.trim() } : p)));
     setEditingIndex(null);
   }
@@ -196,12 +202,16 @@ export default function IntellEngineScopeClient() {
                         Save
                       </button>
                       <button
-                        onClick={() => setEditingIndex(null)}
+                        onClick={() => {
+                          setEditingIndex(null);
+                          setEditNote(null);
+                        }}
                         className="rounded-full px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-brand-navy"
                       >
                         Cancel
                       </button>
                     </div>
+                    {editNote && <p className="text-[12px] text-muted-foreground">{editNote}</p>}
                   </div>
                 ) : (
                   <div
@@ -318,7 +328,16 @@ export default function IntellEngineScopeClient() {
           </button>
           {/* Not wired to real storage yet -- only the filename is kept, matching
               the shell scope of this pass (same pattern as the compliance page). */}
-          <input ref={fileRef} type="file" multiple className="hidden" onChange={(e) => addFiles(e.target.files)} />
+          <input
+            ref={fileRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              addFiles(e.target.files);
+              e.target.value = ""; // allow re-selecting the same filename after removing it
+            }}
+          />
         </div>
 
         <div className="flex justify-end">
