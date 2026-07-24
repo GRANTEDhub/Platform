@@ -124,7 +124,7 @@ export default function IntellEngineBuildClient() {
       <div className="mx-auto mt-8 max-w-3xl space-y-6">
         <div className="rounded-2xl bg-white p-6 shadow-grounded">
           <div className="flex items-center justify-between">
-            <h2 className="font-serif text-[19px] font-semibold text-brand-navy">Project Scope Builder</h2>
+            <h2 className="font-serif text-[19px] font-semibold text-brand-navy">Proposal Builder</h2>
             <button
               onClick={() => setTemplateNote("Template switching is coming soon.")}
               className="text-sm font-medium text-brand-orange hover:underline"
@@ -133,7 +133,7 @@ export default function IntellEngineBuildClient() {
             </button>
           </div>
           <p className="mt-1 text-[13px] text-muted-foreground">
-            Complete each section of your project scope. AI assistance is coming soon — for now,
+            Complete each section of your proposal. AI assistance is coming soon — for now,
             each field below is a template you can edit directly.
           </p>
           {templateNote && <p className="mt-1 text-[12px] text-muted-foreground">{templateNote}</p>}
