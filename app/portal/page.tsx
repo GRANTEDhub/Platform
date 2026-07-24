@@ -24,6 +24,7 @@ type CardRow = {
   fit_score: 1 | 2 | 3;
   decision: CardDecision;
   interested_at: string | null;
+  sme_released_at: string | null;
   grants:
     | Pick<Grant, "id" | "title" | "funder" | "submission_deadline">
     | Pick<Grant, "id" | "title" | "funder" | "submission_deadline">[]
@@ -44,11 +45,18 @@ export default async function PortalHome() {
 
   const { data: cardRows } = await supabase
     .from("review_cards")
-    .select("id, fit_score, decision, interested_at, grants(id, title, funder, submission_deadline)")
+    .select("id, fit_score, decision, interested_at, sme_released_at, grants(id, title, funder, submission_deadline)")
     .eq("client_id", org.clientId)
     .neq("card_type", "prospect");
 
-  const cards = ((cardRows ?? []) as CardRow[]).map((r) => ({ ...r, grant: grantOf(r.grants) }));
+  const allCards = ((cardRows ?? []) as CardRow[]).map((r) => ({ ...r, grant: grantOf(r.grants) }));
+  // For an account-managed client (0059), a card not yet released by staff must
+  // be entirely invisible here -- not counted, not surfaced in a deadline, not
+  // hinted at -- otherwise the dashboard leaks the existence of a match the
+  // client isn't supposed to know about yet, defeating the whole point of the
+  // SME gate. Standard clients: unchanged, every card is visible.
+  const managed = !!client?.account_managed;
+  const cards = managed ? allCards.filter((c) => c.sme_released_at !== null) : allCards;
   // "In review" now means interested-but-undecided (sitting in the Grant Report,
   // past the Grant Alerts gate) -- not-yet-triaged cards are a separate bucket
   // (newAlerts, below), not part of this count. See migration 0057.
