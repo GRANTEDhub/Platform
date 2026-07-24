@@ -34,7 +34,9 @@ export function normalizeConceptProposal(raw: unknown): ConceptProposal {
     .map((p): ConceptProposalPartner => {
       const pr = (p ?? {}) as Record<string, unknown>;
       const source =
-        pr.source === "client_cited" || pr.source === "prospect" ? pr.source : "suggested";
+        pr.source === "client_cited" || pr.source === "prospect" || pr.source === "manual"
+          ? pr.source
+          : "suggested";
       return {
         name: asNullableString(pr.name),
         org_type_label: asNullableString(pr.org_type_label),

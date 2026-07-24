@@ -5,7 +5,9 @@ import {
   getConceptProposal,
   markConceptProposalGenerating,
   runConceptProposalGeneration,
+  saveConceptProposalEdits,
 } from "@/lib/concept/store";
+import { normalizeConceptProposal } from "@/lib/concept/generate";
 
 // Concept-proposal read + (re)generate. Staff-admin only -- the concept proposal is
 // an internal artifact (concept_proposals is admin-only RLS). GET returns the
@@ -28,6 +30,26 @@ export async function GET(_req: NextRequest, { params }: { params: { cardId: str
   if (auth instanceof NextResponse) return auth;
   const proposal = await getConceptProposal(params.cardId);
   return NextResponse.json({ proposal });
+}
+
+// Save an account manager's manual edits to the generated proposal.
+export async function PUT(req: NextRequest, { params }: { params: { cardId: string } }) {
+  const auth = await requireAdminUser();
+  if (auth instanceof NextResponse) return auth;
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const proposal = normalizeConceptProposal(body);
+  const { error } = await saveConceptProposalEdits(params.cardId, proposal, auth.userId);
+  if (error) return NextResponse.json({ error: `Couldn't save: ${error}` }, { status: 500 });
+
+  const row = await getConceptProposal(params.cardId);
+  return NextResponse.json({ proposal: row });
 }
 
 export async function POST(_req: NextRequest, { params }: { params: { cardId: string } }) {

@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { ReportDetail, type ReportDetailCard } from "@/components/report/report-detail";
+import { ConceptProposalUpsell } from "@/components/report/concept-upsell";
 import { HubShell } from "@/components/layout/hub-background";
 import { deciderLabel } from "@/lib/report/shape";
 import type { GrantDetailFields } from "@/components/grants/grant-detail";
@@ -72,6 +73,7 @@ export default async function PortalGrantDetail({ params }: { params: { id: stri
         focusAreas={(g.focus_areas ?? []).slice(0, 3)}
         deciderLabel={decidedBy}
         backHref="/portal/grants"
+        afterContent={client && !client.account_managed ? <ConceptProposalUpsell clientName={org.clientName} /> : undefined}
       />
     </HubShell>
   );
