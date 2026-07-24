@@ -13,6 +13,17 @@ export async function GET(request: NextRequest) {
     if (!error) {
       return NextResponse.redirect(`${origin}${next}`);
     }
+    // Logged deliberately: exchangeCodeForSession's failure reason (missing
+    // verifier vs. an expired/already-used code vs. something else) was
+    // previously invisible -- the redirect to /login looked identical either
+    // way, in both the browser and our own server logs.
+    console.error("auth callback: code exchange failed", {
+      status: error.status,
+      name: error.name,
+      message: error.message,
+    });
+  } else {
+    console.error("auth callback: no code in callback URL", { url: request.url });
   }
 
   return NextResponse.redirect(`${origin}/login?error=auth`);
