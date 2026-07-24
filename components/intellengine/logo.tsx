@@ -12,7 +12,7 @@ export function IntellEngineLogo({ size = "md" }: { size?: "sm" | "md" | "lg" })
     <div className="inline-flex items-baseline">
       <img
         src="/granted-mark-light.svg"
-        alt=""
+        alt="I"
         style={{ width: px, height: px }}
         className="relative top-[0.14em] -mr-0.5 rotate-90"
       />
