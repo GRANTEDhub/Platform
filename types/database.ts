@@ -335,6 +335,23 @@ export type CardDecision = "pending" | "approved" | "passed";
 // decision" view). Picking one also records decision='approved'. Re-routable.
 export type PursuitPath = "intellengine" | "sme" | "in_house";
 
+// An IntellEngine proposal in flight (migration 0062). One row per proposal in
+// the IntellEngine hub -- tied to a matched grant (card_id set) or started from
+// scratch (card_id null). `status` = the furthest step reached in the
+// scope -> compliance -> build flow (structural progress, NOT AI-drafted
+// content); it drives the hub's status label and the resume target.
+export type IntellEngineDraftStatus = "scope" | "compliance" | "build" | "complete";
+
+export interface IntellEngineDraft {
+  id: string;
+  client_id: string;
+  card_id: string | null;
+  title: string;
+  status: IntellEngineDraftStatus;
+  created_at: string;
+  updated_at: string;
+}
+
 // Per-factor match sub-scores (#105). Ordinal, never a percentage; a factor whose
 // underlying client data is blank reads "insufficient_data" (never a guess).
 export type FactorRating = "strong" | "moderate" | "weak" | "insufficient_data";

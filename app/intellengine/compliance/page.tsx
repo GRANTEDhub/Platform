@@ -3,7 +3,7 @@ import IntellEngineComplianceClient from "./compliance-client";
 
 export const dynamic = "force-dynamic";
 
-export default async function IntellEngineCompliance() {
+export default async function IntellEngineCompliance({ searchParams }: { searchParams: { draft?: string } }) {
   await requireClientOrAdmin();
-  return <IntellEngineComplianceClient />;
+  return <IntellEngineComplianceClient draftId={searchParams.draft} />;
 }

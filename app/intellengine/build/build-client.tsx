@@ -6,6 +6,7 @@ import { ArrowLeft, RotateCcw, LifeBuoy, CheckCircle2 } from "lucide-react";
 import { HubShell } from "@/components/layout/hub-background";
 import { IntellEngineLogo } from "@/components/intellengine/logo";
 import { IntellEngineProgress } from "@/components/intellengine/progress-bar";
+import { ContinueButton } from "@/components/intellengine/step-nav";
 
 const SUPPORT = "support@grantedco.com";
 
@@ -96,7 +97,7 @@ const SECTIONS: Section[] = [
   },
 ];
 
-export default function IntellEngineBuildClient() {
+export default function IntellEngineBuildClient({ draftId }: { draftId?: string }) {
   const [sections, setSections] = useState(SECTIONS);
   const [templateNote, setTemplateNote] = useState<string | null>(null);
   const completed = sections.filter((s) => s.draft.trim().length > 0).length;
@@ -108,7 +109,7 @@ export default function IntellEngineBuildClient() {
   return (
     <HubShell variant="texture" width="6xl">
       <Link
-        href="/intellengine/compliance"
+        href={draftId ? `/intellengine/compliance?draft=${draftId}` : "/intellengine/compliance"}
         className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-brand-navy"
       >
         <ArrowLeft className="h-4 w-4" />
@@ -154,6 +155,17 @@ export default function IntellEngineBuildClient() {
         {sections.map((s) => (
           <SectionCard key={s.id} section={s} onChange={(v) => updateDraft(s.id, v)} />
         ))}
+
+        <div className="flex justify-end">
+          <ContinueButton
+            draftId={draftId}
+            nextHref="/intellengine"
+            nextStatus="complete"
+            className="rounded-full bg-brand-navy px-8 py-3 text-sm font-semibold text-white shadow-soft transition hover:bg-brand-navyDeep disabled:opacity-60"
+          >
+            Save &amp; return to IntellEngine
+          </ContinueButton>
+        </div>
       </div>
     </HubShell>
   );

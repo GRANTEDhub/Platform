@@ -164,6 +164,23 @@ function ChooserPanel({
       return;
     }
     if (await record("intellengine")) {
+      // Create (or resume) this grant's IntellEngine draft, then open it -- so the
+      // client lands on the grant-aware proposal page, not the generic hub. Falls
+      // back to the hub if the draft call hiccups (the path is already recorded).
+      try {
+        const res = await fetch("/api/intellengine/drafts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ card_id: cardId }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.draft?.id) {
+          router.push(`/intellengine/${data.draft.id}`);
+          return;
+        }
+      } catch {
+        // fall through to the hub
+      }
       router.push("/intellengine");
     }
   }
