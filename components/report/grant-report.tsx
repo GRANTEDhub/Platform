@@ -7,25 +7,68 @@ import { DecisionBadge } from "@/components/grants/badges";
 import { HeroBand } from "@/components/layout/hero-band";
 import { ScoreRing, FactorMark, Tag } from "./primitives";
 import { ConceptProposalReveal } from "./concept-proposal-reveal";
+import { PursuitChooser } from "./pursuit-chooser";
 import { factorDisplay, reportStats, type ReportItem } from "@/lib/report/shape";
 
-type Filter = "all" | "strong" | "soon" | "pursuing";
+type Filter =
+  | "all"
+  | "strong"
+  | "soon"
+  | "pursuing"
+  | "to_decide"
+  | "in_progress"
+  | "intellengine"
+  | "sme"
+  | "in_house"
+  | "archived";
 
-// Honest, data-backed filters. The Figma mock showed Federal/State/Foundation —
-// the platform can't reliably derive funder level, so we substitute filters that
-// map to real fields (fit score, deadline, decision) in the same pill row.
-const FILTERS: { key: Filter; label: string }[] = [
+// Staff view: honest, data-backed filters (fit / deadline / decision). The Figma
+// mock's Federal/State/Foundation isn't derivable, so we substitute real fields.
+const STAFF_FILTERS: { key: Filter; label: string }[] = [
   { key: "all", label: "All" },
   { key: "strong", label: "Strong fit" },
   { key: "soon", label: "Deadline soon" },
   { key: "pursuing", label: "Pursuing" },
 ];
 
+// Client view: the report is a decision workflow (migration 0061). Default shows
+// grants still awaiting a pursuit decision; the rest are grouped by how they're
+// being pursued. "Passed" is the folded-in Grant Ledger -- the archive of grants
+// the client looked at and declined (only shown when there are any).
+const CLIENT_FILTERS: { key: Filter; label: string }[] = [
+  { key: "to_decide", label: "To decide" },
+  { key: "in_progress", label: "In progress" },
+  { key: "intellengine", label: "IntellEngine" },
+  { key: "sme", label: "With an SME" },
+  { key: "in_house", label: "In-house" },
+  { key: "archived", label: "Passed" },
+];
+
 function matchesFilter(item: ReportItem, f: Filter): boolean {
-  if (f === "strong") return item.fitScore === 3;
-  if (f === "soon") return item.deadlineSoon;
-  if (f === "pursuing") return item.decision === "approved";
-  return true;
+  switch (f) {
+    case "strong":
+      return item.fitScore === 3;
+    case "soon":
+      return item.deadlineSoon;
+    case "pursuing":
+      return item.decision === "approved";
+    case "to_decide":
+      // Awaiting a pursuit decision -- but a passed grant clears its path back to
+      // null, so exclude passed here (it lives under "Passed" / the old Ledger).
+      return item.decision !== "passed" && item.pursuitPath === null;
+    case "in_progress":
+      return item.pursuitPath !== null;
+    case "intellengine":
+      return item.pursuitPath === "intellengine";
+    case "sme":
+      return item.pursuitPath === "sme";
+    case "in_house":
+      return item.pursuitPath === "in_house";
+    case "archived":
+      return item.decision === "passed";
+    default:
+      return true; // "all"
+  }
 }
 
 export function GrantReport({
@@ -34,6 +77,7 @@ export function GrantReport({
   subtitle,
   basePath,
   clientName,
+  tier,
 }: {
   items: ReportItem[];
   heading: string;
@@ -43,10 +87,21 @@ export function GrantReport({
   // Client org name — threaded on the client portal for the concept-proposal reveal
   // / base-tier upsell mailto. Absent on staff surfaces (items carry no concept there).
   clientName?: string;
+  // Set on the CLIENT report only — switches on the pursuit-decision workflow
+  // (0061): pursuit filters, "to decide" default, and the per-row pursuit chooser.
+  // Absent on staff surfaces, which keep the plain fit/deadline/decision filters.
+  tier?: "premium" | "base";
 }) {
+  const isClient = !!tier;
+  const hasPassed = useMemo(() => items.some((i) => i.decision === "passed"), [items]);
+  // Hide the "Passed" chip until there's something to show under it.
+  const FILTERS = isClient
+    ? CLIENT_FILTERS.filter((f) => f.key !== "archived" || hasPassed)
+    : STAFF_FILTERS;
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<Filter>("all");
+  const [filter, setFilter] = useState<Filter>(isClient ? "to_decide" : "all");
   const stats = useMemo(() => reportStats(items), [items]);
+  const inProgressCount = useMemo(() => items.filter((i) => i.pursuitPath !== null).length, [items]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -103,7 +158,7 @@ export function GrantReport({
                   : "border border-brand-navy/15 text-muted-foreground hover:border-brand-navy/30 hover:text-brand-navy"
               }`}
             >
-              {f.label}
+              {f.key === "in_progress" && inProgressCount > 0 ? `${f.label} · ${inProgressCount}` : f.label}
             </button>
           );
         })}
@@ -119,7 +174,7 @@ export function GrantReport({
       ) : (
         <div className="space-y-4">
           {visible.map((item, i) => (
-            <Row key={item.id} item={item} href={`${basePath}/${item.id}`} index={i} clientName={clientName} />
+            <Row key={item.id} item={item} href={`${basePath}/${item.id}`} index={i} clientName={clientName} tier={tier} />
           ))}
         </div>
       )}
@@ -132,11 +187,13 @@ function Row({
   href,
   index,
   clientName,
+  tier,
 }: {
   item: ReportItem;
   href: string;
   index: number;
   clientName?: string;
+  tier?: "premium" | "base";
 }) {
   return (
     // Stretched-link pattern: the whole card navigates via an absolute overlay
@@ -193,7 +250,12 @@ function Row({
               <span className="ml-1 font-medium text-brand-orange">· {item.deadlineDaysLeft}d left</span>
             )}
           </p>
-          <div className="mt-1 flex items-center gap-2">
+          <div className="mt-1 flex flex-wrap items-center justify-end gap-2">
+            {tier && (
+              <div className="relative z-[2]">
+                <PursuitChooser cardId={item.id} pursuitPath={item.pursuitPath} tier={tier} variant="row" />
+              </div>
+            )}
             {item.concept && (
               <div className="relative z-[2]">
                 <ConceptProposalReveal concept={item.concept} clientName={clientName} variant="row" />

@@ -7,7 +7,7 @@ import { GrantReport } from "@/components/report/grant-report";
 import { ClientActivity, type ClientActivityItem } from "@/components/report/client-activity";
 import { HubShell } from "@/components/layout/hub-background";
 import { toReportItems, type ReportCardRow } from "@/lib/report/shape";
-import type { Client } from "@/types/database";
+import type { Client, PursuitPath } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -57,7 +57,7 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
   // AM. Separate query since it includes passes, which the roadmap list hides.
   const { data: activityRows } = await supabase
     .from("review_cards")
-    .select("id, decision, decision_reason, decided_at, grants(title)")
+    .select("id, decision, decision_reason, decided_at, pursuit_path, grants(title)")
     .eq("client_id", params.id)
     .eq("decided_by_actor", "client")
     .neq("card_type", "prospect")
@@ -69,6 +69,7 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
     decision: string;
     decision_reason: string | null;
     decided_at: string | null;
+    pursuit_path: PursuitPath | null;
     grants: { title: string | null } | { title: string | null }[] | null;
   }>)
     .filter((r) => r.decision === "approved" || r.decision === "passed")
@@ -80,6 +81,7 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
         decision: r.decision as "approved" | "passed",
         reason: r.decision_reason,
         decidedAt: r.decided_at,
+        pursuitPath: r.pursuit_path,
       };
     });
 

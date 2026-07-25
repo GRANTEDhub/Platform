@@ -49,7 +49,7 @@ export default async function PortalGrantDetail({
   let query: any = supabase
     .from("review_cards")
     .select(
-      "fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, decision, decided_by, decided_by_actor, card_type, grants(id, source_url, title, funder, focus_areas, assistance_listings, submission_deadline, period_of_performance, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, description, eligible_entity_types, geographic_eligibility, ineligible_entities, subaward_prohibited, incumbent_risk, technical_burden_flags, hard_disqualifiers, verification_flags, scoring_rubric, ideal_applicant_profile, grant_status)",
+      "fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, decision, decided_by, decided_by_actor, pursuit_path, card_type, grants(id, source_url, title, funder, focus_areas, assistance_listings, submission_deadline, period_of_performance, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, description, eligible_entity_types, geographic_eligibility, ineligible_entities, subaward_prohibited, incumbent_risk, technical_burden_flags, hard_disqualifiers, verification_flags, scoring_rubric, ideal_applicant_profile, grant_status)",
     )
     .eq("id", params.id)
     .eq("client_id", org.clientId)
@@ -57,7 +57,7 @@ export default async function PortalGrantDetail({
   // Same release gate as everywhere else (0059) -- a direct URL hit on an
   // unreleased card's id must 404 just like it's invisible everywhere else,
   // not just unlinked. IDs are unguessable UUIDs (low risk), but this closes
-  // the gap for free while the Ledger widens what's otherwise reachable here.
+  // the gap for free.
   if (client?.account_managed) query = query.not("sme_released_at", "is", null);
   const { data } = await query.maybeSingle();
 
@@ -74,6 +74,7 @@ export default async function PortalGrantDetail({
   // here, read-only. Fetched service-role (concept_proposals is admin-only RLS);
   // the card query above already pinned it to this client + the release gate.
   const conceptRow = client?.account_managed ? await getConceptProposal(params.id) : null;
+  const tier = client?.account_managed ? "premium" : "base";
 
   // Back target reflects where the client came from: this detail is reachable from
   // Grant Alerts (?from=alerts, before the grant is in the Report) as well as from
@@ -94,6 +95,7 @@ export default async function PortalGrantDetail({
         deciderLabel={decidedBy}
         backHref={backHref}
         backLabel={backLabel}
+        tier={tier}
         afterContent={
           client?.account_managed ? (
             <ClientConceptProposal row={conceptRow} />

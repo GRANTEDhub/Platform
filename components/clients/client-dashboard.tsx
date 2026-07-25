@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CalendarPlus, Flag, History, LifeBuoy, MessageSquare, Sparkles, Target, type LucideIcon } from "lucide-react";
+import { CalendarPlus, Flag, LifeBuoy, MessageSquare, Sparkles, Target, type LucideIcon } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ClientMatchChart } from "@/components/clients/client-match-chart";
 import { HeroBand } from "@/components/layout/hero-band";
@@ -35,7 +35,6 @@ export function ClientDashboard({
   subLine,
   isStaff,
   roadmapHref,
-  ledgerHref,
   intellEngineHref,
   stats,
   actionItems,
@@ -49,14 +48,9 @@ export function ClientDashboard({
   subLine: string | null;
   isStaff: boolean;
   roadmapHref: string;
-  // Client-only: a read-only history of every grant ever surfaced + its
-  // outcome. Staff already have their own full-history view elsewhere, so this
-  // renders a 5th shortcut tile only when provided (client portal passes it;
-  // the staff dashboard doesn't).
-  ledgerHref?: string;
   // Client-only: entry point into the self-serve AI proposal-drafting flow
-  // (IntellEngine). Same tile-only pattern as ledgerHref -- no persistent nav
-  // yet, that's a separate, later redesign.
+  // (IntellEngine). Renders a shortcut tile only when provided (client portal
+  // passes it; the staff dashboard doesn't).
   intellEngineHref?: string;
   stats: DashStat[];
   actionItems: DashActionItem[];
@@ -123,9 +117,6 @@ export function ClientDashboard({
       {/* shortcuts — square tiles, bottom row */}
       <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <QuickAction featured href={roadmapHref} icon={Target} title="Grant Report" sub="Review your matched opportunities" />
-        {ledgerHref && (
-          <QuickAction href={ledgerHref} icon={History} title="Grant Ledger" sub="Every grant we've surfaced, and what came of it" />
-        )}
         {intellEngineHref && (
           <QuickAction href={intellEngineHref} icon={Sparkles} title="IntellEngine" sub="Draft a proposal — AI assistance coming soon" />
         )}
