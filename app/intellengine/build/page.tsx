@@ -3,7 +3,7 @@ import IntellEngineBuildClient from "./build-client";
 
 export const dynamic = "force-dynamic";
 
-export default async function IntellEngineBuild() {
+export default async function IntellEngineBuild({ searchParams }: { searchParams: { draft?: string } }) {
   await requireClientOrAdmin();
-  return <IntellEngineBuildClient />;
+  return <IntellEngineBuildClient draftId={searchParams.draft} />;
 }

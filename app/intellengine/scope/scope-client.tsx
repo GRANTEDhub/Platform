@@ -6,6 +6,7 @@ import { ArrowLeft, Check, Paperclip, Pencil, Plus, Upload, X } from "lucide-rea
 import { HubShell } from "@/components/layout/hub-background";
 import { IntellEngineLogo } from "@/components/intellengine/logo";
 import { IntellEngineProgress } from "@/components/intellengine/progress-bar";
+import { ContinueButton } from "@/components/intellengine/step-nav";
 
 const SCOPE_WORD_LIMIT = 500;
 
@@ -43,7 +44,7 @@ const INITIAL_PARTNERS: Partner[] = [
 // Uploaded files are NOT actually stored anywhere -- there's no backend at
 // all in this shell pass. Only the filename is kept (to make the
 // interaction feel real), never implying the file has been received/saved.
-export default function IntellEngineScopeClient() {
+export default function IntellEngineScopeClient({ draftId }: { draftId?: string }) {
   const [scope, setScope] = useState(
     "Establish a mobile health clinic that visits underserved neighborhoods three times weekly, providing preventive care, health screenings, and chronic disease management.",
   );
@@ -105,7 +106,7 @@ export default function IntellEngineScopeClient() {
   return (
     <HubShell variant="texture" width="6xl">
       <Link
-        href="/intellengine"
+        href={draftId ? `/intellengine/${draftId}` : "/intellengine"}
         className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-brand-navy"
       >
         <ArrowLeft className="h-4 w-4" />
@@ -341,12 +342,14 @@ export default function IntellEngineScopeClient() {
         </div>
 
         <div className="flex justify-end">
-          <Link
-            href="/intellengine/compliance"
-            className="rounded-full bg-brand-navy px-8 py-3 text-sm font-semibold text-white shadow-soft transition hover:bg-brand-navyDeep"
+          <ContinueButton
+            draftId={draftId}
+            nextHref="/intellengine/compliance"
+            nextStatus="compliance"
+            className="rounded-full bg-brand-navy px-8 py-3 text-sm font-semibold text-white shadow-soft transition hover:bg-brand-navyDeep disabled:opacity-60"
           >
             Continue to compliance check
-          </Link>
+          </ContinueButton>
         </div>
       </div>
     </HubShell>

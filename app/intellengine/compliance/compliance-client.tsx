@@ -6,6 +6,7 @@ import { ArrowLeft, AlertTriangle, CheckCircle2, FileText } from "lucide-react";
 import { HubShell } from "@/components/layout/hub-background";
 import { IntellEngineLogo } from "@/components/intellengine/logo";
 import { IntellEngineProgress } from "@/components/intellengine/progress-bar";
+import { ContinueButton } from "@/components/intellengine/step-nav";
 
 type DocStatus = "verified" | "needs_update";
 type Doc = { name: string; lastUpdated: string; status: DocStatus };
@@ -25,7 +26,7 @@ const INITIAL_DOCS: Doc[] = [
   { name: "Mission Statement", lastUpdated: "2026-02-01", status: "verified" },
 ];
 
-export default function IntellEngineComplianceClient() {
+export default function IntellEngineComplianceClient({ draftId }: { draftId?: string }) {
   const [docs, setDocs] = useState(INITIAL_DOCS);
   const needsUpdate = docs.filter((d) => d.status === "needs_update").length;
 
@@ -42,7 +43,7 @@ export default function IntellEngineComplianceClient() {
   return (
     <HubShell variant="texture">
       <Link
-        href="/intellengine/scope"
+        href={draftId ? `/intellengine/scope?draft=${draftId}` : "/intellengine/scope"}
         className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-brand-navy"
       >
         <ArrowLeft className="h-4 w-4" />
@@ -94,12 +95,14 @@ export default function IntellEngineComplianceClient() {
         </div>
 
         <div className="flex justify-end">
-          <Link
-            href="/intellengine/build"
-            className="rounded-full bg-brand-navy px-8 py-3 text-sm font-semibold text-white shadow-soft transition hover:bg-brand-navyDeep"
+          <ContinueButton
+            draftId={draftId}
+            nextHref="/intellengine/build"
+            nextStatus="build"
+            className="rounded-full bg-brand-navy px-8 py-3 text-sm font-semibold text-white shadow-soft transition hover:bg-brand-navyDeep disabled:opacity-60"
           >
             Continue to proposal builder
-          </Link>
+          </ContinueButton>
         </div>
       </div>
     </HubShell>
