@@ -57,7 +57,7 @@ export default async function PortalGrantDetail({
   // Same release gate as everywhere else (0059) -- a direct URL hit on an
   // unreleased card's id must 404 just like it's invisible everywhere else,
   // not just unlinked. IDs are unguessable UUIDs (low risk), but this closes
-  // the gap for free while the Ledger widens what's otherwise reachable here.
+  // the gap for free.
   if (client?.account_managed) query = query.not("sme_released_at", "is", null);
   const { data } = await query.maybeSingle();
 

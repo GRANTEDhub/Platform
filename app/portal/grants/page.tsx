@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { GrantReport } from "@/components/report/grant-report";
@@ -12,9 +14,11 @@ export const dynamic = "force-dynamic";
 // service role), so the list can only ever contain THIS client's own matches; the
 // 0055 policies enforce the isolation.
 //
-// We show pending + approved client cards (passed are hidden). review_cards only
-// ever holds engine-qualifying matches, so every row is a vetted opportunity —
-// "Pursuing" (approved) carries its badge; the rest await a decision.
+// We show every interested card -- pending, approved, AND passed. Passed grants
+// are hidden from the default view but reachable under the "Passed" filter: that
+// filter is the folded-in Grant Ledger (the separate /portal/ledger tile is gone),
+// the archive of grants the client looked at and declined. review_cards only ever
+// holds engine-qualifying matches, so every row is a vetted opportunity.
 //
 // Grant Alerts gate (0057): a card only lands here once it's been marked
 // interested in Grant Alerts -- brand-new, not-yet-triaged matches live there
@@ -37,7 +41,6 @@ export default async function PortalGrantReport() {
     )
     .eq("client_id", org.clientId)
     .neq("card_type", "prospect")
-    .neq("decision", "passed")
     .not("interested_at", "is", null);
 
   const baseItems = toReportItems((data ?? []) as unknown as ReportCardRow[]);
@@ -51,13 +54,23 @@ export default async function PortalGrantReport() {
       ? await getConceptProposalsByCardIds(baseItems.map((i) => i.id))
       : new Map();
   const items = withConcept(baseItems, tier, byCard);
+  // Subtitle counts the ACTIVE opportunities only -- passed grants live under the
+  // "Passed" filter and shouldn't inflate the headline count.
+  const activeCount = items.filter((i) => i.decision !== "passed").length;
   const subtitle =
-    items.length === 0
+    activeCount === 0
       ? "Your matched opportunities will appear here, ranked by fit."
-      : `${items.length} matched ${items.length === 1 ? "opportunity" : "opportunities"} · Ranked by fit`;
+      : `${activeCount} matched ${activeCount === 1 ? "opportunity" : "opportunities"} · Ranked by fit`;
 
   return (
     <HubShell variant="texture" width="7xl">
+      <Link
+        href="/portal"
+        className="mb-6 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-brand-navy"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        Dashboard
+      </Link>
       <GrantReport
         items={items}
         heading={`${org.clientName} · Grant Report`}

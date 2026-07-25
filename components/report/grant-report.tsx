@@ -19,7 +19,8 @@ type Filter =
   | "in_progress"
   | "intellengine"
   | "sme"
-  | "in_house";
+  | "in_house"
+  | "archived";
 
 // Staff view: honest, data-backed filters (fit / deadline / decision). The Figma
 // mock's Federal/State/Foundation isn't derivable, so we substitute real fields.
@@ -32,13 +33,15 @@ const STAFF_FILTERS: { key: Filter; label: string }[] = [
 
 // Client view: the report is a decision workflow (migration 0061). Default shows
 // grants still awaiting a pursuit decision; the rest are grouped by how they're
-// being pursued.
+// being pursued. "Passed" is the folded-in Grant Ledger -- the archive of grants
+// the client looked at and declined (only shown when there are any).
 const CLIENT_FILTERS: { key: Filter; label: string }[] = [
   { key: "to_decide", label: "To decide" },
   { key: "in_progress", label: "In progress" },
   { key: "intellengine", label: "IntellEngine" },
   { key: "sme", label: "With an SME" },
   { key: "in_house", label: "In-house" },
+  { key: "archived", label: "Passed" },
 ];
 
 function matchesFilter(item: ReportItem, f: Filter): boolean {
@@ -50,7 +53,9 @@ function matchesFilter(item: ReportItem, f: Filter): boolean {
     case "pursuing":
       return item.decision === "approved";
     case "to_decide":
-      return item.pursuitPath === null;
+      // Awaiting a pursuit decision -- but a passed grant clears its path back to
+      // null, so exclude passed here (it lives under "Passed" / the old Ledger).
+      return item.decision !== "passed" && item.pursuitPath === null;
     case "in_progress":
       return item.pursuitPath !== null;
     case "intellengine":
@@ -59,6 +64,8 @@ function matchesFilter(item: ReportItem, f: Filter): boolean {
       return item.pursuitPath === "sme";
     case "in_house":
       return item.pursuitPath === "in_house";
+    case "archived":
+      return item.decision === "passed";
     default:
       return true; // "all"
   }
@@ -86,7 +93,11 @@ export function GrantReport({
   tier?: "premium" | "base";
 }) {
   const isClient = !!tier;
-  const FILTERS = isClient ? CLIENT_FILTERS : STAFF_FILTERS;
+  const hasPassed = useMemo(() => items.some((i) => i.decision === "passed"), [items]);
+  // Hide the "Passed" chip until there's something to show under it.
+  const FILTERS = isClient
+    ? CLIENT_FILTERS.filter((f) => f.key !== "archived" || hasPassed)
+    : STAFF_FILTERS;
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>(isClient ? "to_decide" : "all");
   const stats = useMemo(() => reportStats(items), [items]);
