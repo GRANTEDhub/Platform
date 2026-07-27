@@ -101,7 +101,21 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   // "to review" links straight there. For a standard client it's the Grant Alerts
   // swipe convenience (`alertsHref`). The client's own decision status is a separate,
   // clearly-labeled read-only line so it's never confused with staff's to-dos.
+  const matchStatus = client.initial_match_status;
+  const matchInProgress = matchStatus === "queued" || matchStatus === "running";
+  const confirmRerun = matchStatus === "complete" || matchStatus === "error" || cards.length > 0;
+
   const actionItems: DashActionItem[] = [];
+  // A fresh prospect with no report yet: prompt the AM to run matching (the button,
+  // top right). Once cards land, the "to review" item below takes over.
+  if (isLead && cards.length === 0 && !matchInProgress) {
+    actionItems.push({
+      id: "run-matches",
+      title: "Run grant matches to surface opportunities",
+      tag: "Use the button, top right",
+      priority: "high",
+    });
+  }
   if (toReview > 0) {
     actionItems.push({
       id: "to-review",
@@ -125,10 +139,6 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   if (client.next_step) {
     actionItems.push({ id: "next-step", title: client.next_step, tag: "From your team", priority: "high" });
   }
-
-  const matchStatus = client.initial_match_status;
-  const matchInProgress = matchStatus === "queued" || matchStatus === "running";
-  const confirmRerun = matchStatus === "complete" || matchStatus === "error" || cards.length > 0;
 
   const subLine =
     [client.org_type?.replace(/_/g, " "), client.location_city, client.location_state].filter(Boolean).join(" · ") || null;
@@ -160,7 +170,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
             clientId={client.id}
             inProgress={matchInProgress}
             confirmRerun={confirmRerun}
-            idleLabel="Refresh matches"
+            idleLabel={isLead ? "Run Grant Matches" : "Refresh matches"}
             tone="dark"
           />
         }
