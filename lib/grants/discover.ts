@@ -1,8 +1,9 @@
 // Track 2 discovery — the IntellEngine daily move, in code: read a grant's
-// existing ideal applicant profile, run one Brave search for fitting non-client
-// orgs (Arkansas first), extract real candidates GROUNDED in the actual results,
-// score them with the existing engine, and write prospects + prospect cards for
-// the qualifiers. Never re-shreds. Fails gracefully like USASpending.
+// existing ideal applicant profile, run one national Brave search for fitting
+// non-client orgs, extract real candidates GROUNDED in the actual results, apply
+// a geographic footprint rule (Arkansas OR broad reach; drop narrow non-Arkansas
+// orgs), score the survivors with the existing engine, and write prospects +
+// prospect cards for the qualifiers. Never re-shreds. Fails gracefully like USASpending.
 //
 // Hallucination guards (both structural, not prompt trust):
 //   1. source_url must be one Brave actually returned (code check below).
@@ -29,15 +30,31 @@ export interface DiscoverResult {
   carded?: number; // qualifiers (fit >= 2) written as prospect cards
 }
 
-const EXTRACT_SYSTEM = `You identify real candidate ORGANIZATIONS from web search results for GRANTED, a U.S. grant consulting firm looking for non-client orgs (Arkansas first) that could pursue a federal grant.
+// A candidate org as extracted from search results. name/source_url/
+// capability_summary are schema-required; the rest (incl. the footprint fields
+// added for the geographic rule) are best-effort.
+interface Candidate {
+  name: string;
+  source_url: string;
+  capability_summary: string;
+  org_type?: string;
+  location_state?: string;
+  location_county?: string;
+  geographic_reach?: "national" | "multi_state" | "single_or_few_states";
+  operates_in_arkansas?: boolean;
+}
+
+const EXTRACT_SYSTEM = `You identify real candidate ORGANIZATIONS from web search results for GRANTED, a U.S. grant consulting firm looking for non-client orgs that could pursue a federal grant.
 
 You are given a grant's ideal applicant profile and a list of REAL search results (title, url, description). Identify organizations that plausibly fit the profile AND that actually appear in the results.
 
 HARD RULES:
 - Only return an organization that appears in the provided results. NEVER invent one.
 - For each org, source_url MUST be copied EXACTLY from the result it came from. Do not modify, shorten, or fabricate URLs.
-- Prefer Arkansas organizations. Exclude government grant pages, news articles, directories, and the funder itself -- you want candidate APPLICANT orgs, not coverage of the grant.
+- Exclude government grant pages, news articles, directories, and the funder itself -- you want candidate APPLICANT orgs, not coverage of the grant.
 - capability_summary: 1-2 sentences on what the org does, drawn only from the result text.
+- geographic_reach: classify the org's footprint from the result text -- "national" (operates nationwide), "multi_state" (several states or a broad region), or "single_or_few_states" (clearly only one or two states). Use "single_or_few_states" ONLY when the text clearly indicates a narrow local footprint; if unsure, use "multi_state".
+- operates_in_arkansas: true if the org appears to operate in or serve Arkansas (from the result text), else false.
 - Do not use em dashes.
 
 Return via the submit_candidates tool. Return an empty list if no real candidate orgs appear.`;
@@ -85,9 +102,11 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
   const profile = grant.ideal_applicant_profile;
   if (!profile) return { ok: false, reason: "No ideal applicant profile -- re-shred the grant first" };
 
-  // One lean, Arkansas-first query built from the profile.
+  // One lean, national query built from the profile. No Arkansas bias in the
+  // search itself -- the footprint rule below (Arkansas OR broad reach; drop
+  // narrow non-Arkansas) does the geographic scoping.
   const sector = (grant.focus_areas || [])[0] || "";
-  const query = [profile.core_funded_role, sector, "Arkansas organization"].filter(Boolean).join(" ");
+  const query = [profile.core_funded_role, sector, "organization"].filter(Boolean).join(" ");
 
   const search = await braveSearch(query);
   if (!search.ok) return { ok: false, reason: `Search failed: ${search.note ?? "unknown"}`, searched: query };
@@ -120,6 +139,8 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
                   location_county: { type: "string" },
                   source_url: { type: "string" },
                   capability_summary: { type: "string" },
+                  geographic_reach: { type: "string", enum: ["national", "multi_state", "single_or_few_states"] },
+                  operates_in_arkansas: { type: "boolean" },
                 },
                 required: ["name", "source_url", "capability_summary"],
               },
@@ -143,7 +164,7 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
   if (!toolUse || toolUse.type !== "tool_use") {
     return { ok: true, searched: query, candidates: 0, grounded: 0, carded: 0 };
   }
-  const extracted = ((toolUse.input as { candidates?: Array<Record<string, string>> }).candidates ?? []);
+  const extracted = ((toolUse.input as { candidates?: Candidate[] }).candidates ?? []);
 
   // GUARD 1 (code): source_url must be EXACTLY one Brave returned (normalized).
   // A plausible-but-unreturned URL is rejected -- the model cannot pass through
@@ -175,6 +196,10 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
   const seen = new Set<string>();
   const grounded = extracted
     .filter((c) => c.source_url && resultUrls.has(norm(c.source_url)))
+    // Geographic footprint rule (Arkansas-agnostic): keep Arkansas orgs and
+    // broad-footprint orgs; drop orgs with a narrow (1-2 state) footprint that
+    // don't operate in Arkansas. Unknown reach is kept (never over-exclude).
+    .filter((c) => c.geographic_reach !== "single_or_few_states" || c.operates_in_arkansas === true)
     .filter((c) => {
       const n = normalizeOrgName(c.name);
       if (!n || clientNames.has(n) || existingProspectNames.has(n) || seen.has(n)) return false;
@@ -260,7 +285,7 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
 // fields are unknown for a prospect; capability_summary (from the web result)
 // carries what the org does. engagement_tier null signals "not an existing
 // client", which the matching prompt reads as a Track 2 prospect.
-function prospectAsClient(c: Record<string, string>): Client {
+function prospectAsClient(c: Candidate): Client {
   const now = new Date().toISOString();
   return {
     id: "prospect-candidate",

@@ -62,6 +62,10 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
 
   const gate = getGrantGateStatus(grant, all);
   const undecided = undecidedClientCount(all);
+  // A client actively pursuing this grant is the one case worth a loud warning
+  // before reaching out to an outside org (potential conflict). Prospecting is
+  // otherwise never held by client decisions.
+  const pursuing = clientCards.filter((c) => c.decision === "approved").length;
 
   const carryOver: OutcomeCard[] = clientCards.map((c) => ({
     id: c.id,
@@ -111,7 +115,7 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                 <Badge variant="warning">Closed for prospecting</Badge>
               ) : (
                 <div className="flex items-center gap-2">
-                  {gate === "released" && grant.is_domestic && <ProspectButton grantId={grant.id} />}
+                  {gate !== "not_ready" && grant.is_domestic && <ProspectButton grantId={grant.id} />}
                   <CloseProspectingButton grantId={grant.id} />
                 </div>
               )}
@@ -123,11 +127,10 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
               </p>
             )}
 
-            {gate !== "released" ? (
+            {gate === "not_ready" ? (
               <p className="mt-3 text-sm text-muted-foreground">
-                {gate === "not_ready"
-                  ? "Not ready — this grant has not finished scoring against the roster."
-                  : `Locked — ${undecided} client ${undecided === 1 ? "match is" : "matches are"} undecided. Clients get first dibs before prospecting.`}
+                Not scored yet — this grant hasn&apos;t finished scoring against the roster, so there&apos;s no
+                profile to discover prospects from.
               </p>
             ) : prospectCards.length === 0 ? (
               <p className="mt-3 text-sm text-muted-foreground">
@@ -163,19 +166,30 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
           <WhoCanApply grant={grant} dense />
 
           <Card className="p-5">
-            <SectionLabel>Prospecting</SectionLabel>
+            <SectionLabel>Client-match status</SectionLabel>
             <div className="mt-3 flex items-start gap-2.5 text-sm text-muted-foreground">
-              {gate === "not_ready" && <p>Not ready — grant has not finished scoring against the roster.</p>}
-              {gate === "released" && (
+              {gate === "not_ready" ? (
+                <p>Not scored yet — can&apos;t prospect until it&apos;s evaluated against the roster.</p>
+              ) : pursuing > 0 ? (
                 <>
-                  <Badge variant="success">Released</Badge>
-                  <span>Free to prospect — every client match is decided (or there are none).</span>
+                  <Badge variant="warning">Client pursuing</Badge>
+                  <span>
+                    {pursuing} client {pursuing === 1 ? "is" : "are"} actively pursuing this — reaching out to
+                    an outside org may conflict. See &ldquo;Also matched&rdquo; below.
+                  </span>
                 </>
-              )}
-              {gate === "locked" && (
+              ) : clientCards.length > 0 ? (
                 <>
-                  <Badge variant="warning">Locked</Badge>
-                  <span>{undecided} client {undecided === 1 ? "match" : "matches"} undecided — clients get first dibs.</span>
+                  <Badge variant="secondary">Matched</Badge>
+                  <span>
+                    Matched to {clientCards.length} client{clientCards.length === 1 ? "" : "s"} (see below)
+                    {undecided > 0 ? ", some still deciding" : ", all decided"}. Not held — free to prospect.
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Badge variant="accent">Open</Badge>
+                  <span>No client match — open to prospect.</span>
                 </>
               )}
             </div>
