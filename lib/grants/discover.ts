@@ -48,6 +48,7 @@ import {
   directoryOrgType,
 } from "@/lib/grants/eo-directory";
 import { deriveTargetEntityTypes, entityTypeLabel } from "@/lib/grants/entity-types";
+import { findTypedDirectoryOrgs } from "@/lib/grants/directories";
 import { createServiceClient } from "@/lib/supabase/server";
 import type { Grant, Client } from "@/types/database";
 
@@ -277,10 +278,33 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
       geographic_reach: "single_or_few_states" as const,
     }));
 
-  // No web results, no program to look up awardees, AND no directory groups derived
-  // -> a genuine "couldn't search". (Any one source attempting is enough to proceed;
-  // a source that attempts but returns [] just contributes fewer candidates.)
-  if (okSearches.length === 0 && cfdas.length === 0 && nteeIds.length === 0) {
+  // ── Source 4 (#208 Phase 2): typed enumeration directories for the non-nonprofit PRIME
+  // types (colleges, hospitals, transit, cities, counties), run ONLY for the grant's
+  // targeted primes -- a city-only grant enumerates municipalities, not charities. AR-
+  // scoped like the nonprofit directory; each degrades to [] on failure. Strictly
+  // additive, so drop anything already surfaced richer as an awardee or web hit. ──
+  const typedOrgs = targetTypes.length > 0 ? await findTypedDirectoryOrgs(targetTypes, "AR") : [];
+  const typedCandidates: Candidate[] = typedOrgs
+    .filter((o) => !priorNames.has(normalizeOrgName(o.name)))
+    .map((o) => ({
+      name: o.name,
+      source_url: o.source_url,
+      capability_summary: o.capability_summary,
+      org_type: o.org_type,
+      location_state: o.state,
+      operates_in_arkansas: true,
+      geographic_reach: "single_or_few_states" as const,
+    }));
+
+  // No web results, no program to look up awardees, no directory groups derived, AND no
+  // typed-directory hits -> a genuine "couldn't search". (Any one source attempting is
+  // enough to proceed; a source that attempts but returns [] just contributes fewer.)
+  if (
+    okSearches.length === 0 &&
+    cfdas.length === 0 &&
+    nteeIds.length === 0 &&
+    typedCandidates.length === 0
+  ) {
     return { ok: false, reason: `Search failed: ${searches[0]?.note ?? "unknown"}`, searched };
   }
 
@@ -314,9 +338,12 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
     countSeen.add(n);
     return true;
   };
-  const distinctCount = [...awardeeCandidates, ...directoryCandidates, ...braveGrounded].filter(
-    isDistinct,
-  ).length;
+  const distinctCount = [
+    ...awardeeCandidates,
+    ...directoryCandidates,
+    ...typedCandidates,
+    ...braveGrounded,
+  ].filter(isDistinct).length;
 
   // Two buckets: Arkansas (home market) and non-Arkansas (national), up to
   // TOP_PER_BUCKET scored each so both are always represented and AR is never crowded
@@ -328,7 +355,8 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
   const isAR = (c: Candidate) => c.operates_in_arkansas === true;
   const arSlate = interleave([
     awardeeCandidates.filter(isAR),
-    directoryCandidates, // AR-only by construction
+    typedCandidates, // #208 Phase 2 typed directories (AR-only), gated by target type
+    directoryCandidates, // AR-only nonprofit directory
     braveGrounded.filter(isAR),
   ]);
   const nonArSlate = interleave([
