@@ -151,7 +151,7 @@ function EmptyState({ busy, onGenerate }: { busy: boolean; onGenerate: () => voi
   return (
     <div className="rounded-xl border border-dashed border-brand-navy/15 p-5 text-center">
       <p className="text-sm text-muted-foreground">
-        No concept proposal yet. One generates automatically when you mark this grant interested, or generate it now.
+        No concept proposal yet. Generate one when you decide this grant is worth developing for the client.
       </p>
       <button
         onClick={onGenerate}

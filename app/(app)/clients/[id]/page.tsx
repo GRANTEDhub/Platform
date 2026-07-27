@@ -63,15 +63,13 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
     approved: cards.filter((c) => c.decision === "approved").length,
     passed: cards.filter((c) => c.decision === "passed").length,
   };
-  // For an account-managed client (0059), staff's OWN queues are keyed on the
-  // separate sme_* track, not the client-facing interested_at -- otherwise "grants
-  // to review" would count the client's signal, not staff's own unreviewed queue.
-  const newAlerts = managed
-    ? cards.filter((c) => c.sme_interested_at === null && c.decision !== "passed").length
+  // Staff's OWN review queue. For an account-managed client (0059) this is now a
+  // SINGLE gate (the sme_interested triage was removed): everything not yet released
+  // to the client. For a standard client it is the client-alerts convenience --
+  // their not-yet-triaged matches (staff acting on the client's behalf).
+  const toReview = managed
+    ? cards.filter((c) => c.sme_released_at === null && c.decision !== "passed").length
     : cards.filter((c) => c.interested_at === null && c.decision !== "passed").length;
-  const awaitingRelease = managed
-    ? cards.filter((c) => c.sme_interested_at !== null && c.sme_released_at === null && c.decision !== "passed").length
-    : 0;
   const nonPassed = cards.filter((c) => c.decision !== "passed");
 
   // Upcoming deadlines (real) among live matches — drives the deadline stat + the
@@ -92,19 +90,19 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
 
   const base = `/clients/${client.id}/roadmap`;
   const alertsHref = `${base}/triage`;
-  // Action items: one row for brand-new matches awaiting the Grant Alerts triage,
-  // one for matches already promoted to the Grant Report but still undecided, +
-  // the client's next step. Grantwriting/message items join here once those
-  // features exist. For an account-managed client, "to review"/"awaiting release"
-  // are staff's OWN queue (this dashboard IS staff's, after all); the client's own
-  // decision status is a separate, clearly-labeled read-only line so it's never
-  // confused with staff's to-dos (the "whose turn is it" gap from earlier).
+  // Action items: staff's own review queue, then the client's next step. For an
+  // account-managed client the review is a SINGLE gate (the roadmap review list at
+  // `base`, where why-it-matches + manual concept generate/edit + release live), so
+  // "to review" links straight there. For a standard client it's the Grant Alerts
+  // swipe convenience (`alertsHref`). The client's own decision status is a separate,
+  // clearly-labeled read-only line so it's never confused with staff's to-dos.
   const actionItems: DashActionItem[] = [];
-  if (newAlerts > 0) {
-    actionItems.push({ id: "grant-alerts", title: `You have ${newAlerts} grant${newAlerts === 1 ? "" : "s"} to review`, href: alertsHref });
-  }
-  if (managed && awaitingRelease > 0) {
-    actionItems.push({ id: "sme-release", title: `${awaitingRelease} grant${awaitingRelease === 1 ? "" : "s"} awaiting your release to the client`, href: base });
+  if (toReview > 0) {
+    actionItems.push({
+      id: "to-review",
+      title: `You have ${toReview} grant${toReview === 1 ? "" : "s"} to review`,
+      href: managed ? base : alertsHref,
+    });
   }
   if (counts.pending > 0) {
     actionItems.push({
