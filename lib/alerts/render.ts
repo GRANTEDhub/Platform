@@ -82,7 +82,11 @@ export async function renderAlertHtml(data: AlertData): Promise<string> {
     .replace("</head>", `<style>${fontCss}</style></head>`);
 }
 
-async function launch(): Promise<Browser> {
+// Launch a headless Chromium. Exported so a caller can kick off the (cold-start-heavy)
+// launch CONCURRENTLY with other async work -- store.ts starts it alongside the enrich
+// LLM call and hands the promise to renderAlertPdf, hiding the cold-start under enrich
+// instead of paying launch + render serially.
+export async function launchAlertBrowser(): Promise<Browser> {
   const serverless = !!process.env.AWS_LAMBDA_FUNCTION_NAME || !!process.env.VERCEL;
   if (serverless) {
     const chromium = (await import("@sparticuz/chromium")).default;
@@ -101,19 +105,29 @@ async function launch(): Promise<Browser> {
   });
 }
 
-export async function renderAlertPdf(data: AlertData): Promise<Buffer> {
+// Render the alert HTML to a one-page PDF. `browserPromise` (optional) lets the caller
+// pre-launch Chromium concurrently with other work (store.ts overlaps it with the enrich
+// LLM call) so the cold-start is already paid by render time; when omitted we launch
+// here. Either way this owns the browser and closes it. Stage timings are logged
+// (greppable `[alert-render-timing]`): `browserWait` is ~0 when pre-warmed vs the full
+// cold-start when not, so the logs show exactly where the wall-clock goes.
+export async function renderAlertPdf(data: AlertData, browserPromise?: Promise<Browser>): Promise<Buffer> {
+  const t0 = Date.now();
   const html = await renderAlertHtml(data);
-  const browser = await launch();
+  const tHtml = Date.now();
+  const browser = await (browserPromise ?? launchAlertBrowser());
+  const tBrowser = Date.now();
   try {
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: "load", timeout: 30_000 });
-    // Wait for the template's Google Fonts to actually load before printing; if
-    // the CDN is unreachable the template's Georgia/Arial fallbacks apply.
+    // Fonts are embedded @font-face data URIs (no network), so this resolves fast; kept
+    // as a correctness guard that the faces are applied before we print.
     try {
       await page.evaluate(() => (document as unknown as { fonts?: { ready?: Promise<unknown> } }).fonts?.ready);
     } catch {
       /* fonts.ready unsupported -> proceed with whatever loaded */
     }
+    const tContent = Date.now();
     // pageRanges:"1" is a hard backstop -- the template is sized to exactly one
     // letter page (fixed 1056px height, overflow hidden), but this guarantees we
     // never emit a stray second page even if content is unexpectedly tall.
@@ -123,6 +137,9 @@ export async function renderAlertPdf(data: AlertData): Promise<Buffer> {
       preferCSSPageSize: true,
       pageRanges: "1",
     });
+    console.info(
+      `[alert-render-timing] html=${tHtml - t0}ms browserWait=${tBrowser - tHtml}ms setContent=${tContent - tBrowser}ms pdf=${Date.now() - tContent}ms prewarmed=${!!browserPromise}`,
+    );
     return Buffer.from(pdf);
   } finally {
     await browser.close();
@@ -205,7 +222,7 @@ export async function renderHorizonPdf(items: HorizonRenderItem[]): Promise<Buff
   const shown = items.slice(0, HORIZON_PAGE_MAX);
   const overflow = Math.max(0, items.length - shown.length);
   const html = horizonHtml(shown, overflow, fontCss, assets.white);
-  const browser = await launch();
+  const browser = await launchAlertBrowser();
   try {
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: "load", timeout: 30_000 });
