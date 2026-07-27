@@ -1,18 +1,25 @@
-// Track 2 discovery — the IntellEngine move, in code. Two candidate sources, both
+// Track 2 discovery — the IntellEngine move, in code. Three candidate sources, all
 // grounded in real data, blended into one run:
 //   1. Web search (Brave): an Arkansas pass + a national pass on the grant's funded
 //      role; the LLM extracts orgs that ACTUALLY appear in the results.
 //   2. USASpending past-awardees (#208a): the orgs that WON this program (by
 //      Assistance Listing / CFDA) -- eligible by construction, in AR + nationally.
+//   3. IRS EO directory (#208b): real Arkansas nonprofits in the grant's field, from
+//      the ProPublica Nonprofit Explorer (NTEE major group derived by a small LLM
+//      call). The enumeration the other two miss -- capable-but-under-resourced orgs
+//      with little/no federal history (absent from USASpending) and too small to
+//      surface in a topical web search. AR-only; no revenue gate. lib/grants/eo-directory.ts
 // Candidates split into Arkansas / non-Arkansas buckets, up to five of each scored
 // with the existing engine, and prospect + prospect cards written for the
-// qualifiers (fit >= moderate). Never re-shreds. Fails gracefully like USASpending.
+// qualifiers (fit >= moderate). Within a bucket the sources are round-robined so no
+// one source (e.g. plentiful past-awardees) crowds the others out. Never re-shreds.
+// Fails gracefully like USASpending -- any single source degrades to [].
 //
 // NOTE: searching the eligible ORG TYPE ("faith-based nonprofits in Arkansas")
 // instead of the funded role was tried and regressed web yield to ZERO -- type
 // queries surface directory / aggregator pages, which the extractor skips. Web
-// search can't enumerate applicants by type; the USASpending awardee source (and
-// the later IRS EO directory engine) are the real enumeration -- see issue #208.
+// search can't enumerate applicants by type; the USASpending awardee source and the
+// IRS EO directory source (3) are the real enumeration -- see issue #208.
 //
 // Hallucination guards (structural, not prompt trust):
 //   1. A Brave candidate's source_url must be one Brave actually returned (code
@@ -33,6 +40,13 @@ import {
   awardeeCapabilitySummary,
   type ProgramAwardee,
 } from "@/lib/grants/usaspending";
+import {
+  deriveNteeGroups,
+  findDirectoryOrgs,
+  directorySourceUrl,
+  directoryCapabilitySummary,
+  directoryOrgType,
+} from "@/lib/grants/eo-directory";
 import { createServiceClient } from "@/lib/supabase/server";
 import type { Grant, Client } from "@/types/database";
 
@@ -42,7 +56,7 @@ export interface DiscoverResult {
   ok: boolean;
   reason?: string;
   searched?: string;
-  candidates?: number; // distinct candidates found across sources (web + awardees)
+  candidates?: number; // distinct candidates found across sources (web + awardees + directory)
   grounded?: number; // candidates actually scored (bucketed, up to 5 per bucket)
   carded?: number; // qualifiers (fit >= 2) written as prospect cards
 }
@@ -228,8 +242,36 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
     }
   }
 
-  // No web results AND no program to look up awardees -> a genuine "couldn't search".
-  if (okSearches.length === 0 && cfdas.length === 0) {
+  // ── Source 3: IRS EO directory (#208b). NTEE major group(s) derived from the grant
+  // by a small LLM call, then real Arkansas nonprofits in those groups pulled from the
+  // ProPublica Nonprofit Explorer. AR-only (our home market and the segment the other
+  // two sources miss); no revenue gate; sampled across the result set for a size spread.
+  // Degrades to [] on any failure. Not URL-guarded -- source_url is the authoritative
+  // ProPublica/IRS org record. ──
+  const nteeIds = await deriveNteeGroups(grant);
+  const directoryOrgs = nteeIds.length > 0 ? await findDirectoryOrgs(nteeIds, { state: "AR" }) : [];
+  // The directory is the STRICTLY-ADDITIVE source (the orgs the other two miss), so
+  // drop any org already surfaced as an awardee or web hit -- their richer, more
+  // specific representation (federal history / verified web capability) wins the tie.
+  const priorNames = new Set(
+    [...awardeeCandidates, ...braveGrounded].map((c) => normalizeOrgName(c.name)),
+  );
+  const directoryCandidates: Candidate[] = directoryOrgs
+    .filter((o) => !priorNames.has(normalizeOrgName(o.name)))
+    .map((o) => ({
+      name: o.name,
+      source_url: directorySourceUrl(o),
+      capability_summary: directoryCapabilitySummary(o),
+      org_type: directoryOrgType(o),
+      location_state: "AR",
+      operates_in_arkansas: true,
+      geographic_reach: "single_or_few_states" as const,
+    }));
+
+  // No web results, no program to look up awardees, AND no directory groups derived
+  // -> a genuine "couldn't search". (Any one source attempting is enough to proceed;
+  // a source that attempts but returns [] just contributes fewer candidates.)
+  if (okSearches.length === 0 && cfdas.length === 0 && nteeIds.length === 0) {
     return { ok: false, reason: `Search failed: ${searches[0]?.note ?? "unknown"}`, searched };
   }
 
@@ -254,24 +296,54 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
     ),
   );
 
-  // Combine -- awardees FIRST (eligible by construction, so scoring priority), then
-  // web hits -- and dedup across both sources.
-  const seen = new Set<string>();
-  const distinct = [...awardeeCandidates, ...braveGrounded].filter((c) => {
+  // Distinct-candidate count for the funnel readout ("N found"): every source, deduped
+  // against clients / already-carded prospects / itself.
+  const countSeen = new Set<string>();
+  const isDistinct = (c: Candidate): boolean => {
     const n = normalizeOrgName(c.name);
-    if (!n || clientNames.has(n) || existingProspectNames.has(n) || seen.has(n)) return false;
-    seen.add(n);
+    if (!n || clientNames.has(n) || existingProspectNames.has(n) || countSeen.has(n)) return false;
+    countSeen.add(n);
     return true;
-  });
+  };
+  const distinctCount = [...awardeeCandidates, ...directoryCandidates, ...braveGrounded].filter(
+    isDistinct,
+  ).length;
 
-  // Two buckets: Arkansas (home market) and non-Arkansas (national). Up to
-  // TOP_PER_BUCKET scored each so both are always represented and AR is never
-  // crowded out. An org not flagged for Arkansas falls to the non-AR bucket. The
-  // fit bar below still gates what cards -- a thin pool surfaces fewer; we never
-  // force-fit to fill the five.
+  // Two buckets: Arkansas (home market) and non-Arkansas (national), up to
+  // TOP_PER_BUCKET scored each so both are always represented and AR is never crowded
+  // out. WITHIN each bucket the sources are round-robined (awardee, directory, web) so
+  // a plentiful source can't crowd the others out -- the directory orgs (#208b's whole
+  // point) always reach the scorer even when past-awardees are abundant. The fit bar
+  // below still gates what cards; a thin pool surfaces fewer -- we never force-fit.
   const TOP_PER_BUCKET = 5;
-  const arBucket = distinct.filter((c) => c.operates_in_arkansas === true).slice(0, TOP_PER_BUCKET);
-  const nonArBucket = distinct.filter((c) => c.operates_in_arkansas !== true).slice(0, TOP_PER_BUCKET);
+  const isAR = (c: Candidate) => c.operates_in_arkansas === true;
+  const arSlate = interleave([
+    awardeeCandidates.filter(isAR),
+    directoryCandidates, // AR-only by construction
+    braveGrounded.filter(isAR),
+  ]);
+  const nonArSlate = interleave([
+    awardeeCandidates.filter((c) => !isAR(c)),
+    braveGrounded.filter((c) => !isAR(c)),
+  ]);
+
+  // Take up to TOP_PER_BUCKET from each slate, deduping across clients / already-carded
+  // prospects / anything already taken. AR is drained first, so an org appearing in
+  // both slates lands in AR (home-market priority).
+  const seen = new Set<string>();
+  const takeBucket = (slate: Candidate[]): Candidate[] => {
+    const out: Candidate[] = [];
+    for (const c of slate) {
+      const n = normalizeOrgName(c.name);
+      if (!n || clientNames.has(n) || existingProspectNames.has(n) || seen.has(n)) continue;
+      seen.add(n);
+      out.push(c);
+      if (out.length >= TOP_PER_BUCKET) break;
+    }
+    return out;
+  };
+  const arBucket = takeBucket(arSlate);
+  const nonArBucket = takeBucket(nonArSlate);
   const grounded = [...arBucket, ...nonArBucket];
 
   // Score each grounded candidate with the existing engine; write a prospect +
@@ -344,7 +416,19 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
     carded += results.reduce((sum, n) => sum + n, 0);
   }
 
-  return { ok: true, searched, candidates: distinct.length, grounded: grounded.length, carded };
+  return { ok: true, searched, candidates: distinctCount, grounded: grounded.length, carded };
+}
+
+// Round-robin merge: take element 0 of every group, then element 1 of every group, and
+// so on. Gives each source fair representation in a fixed-size slate instead of letting
+// the longest source fill it -- source order sets the tie-break within a round.
+function interleave<T>(groups: T[][]): T[] {
+  const out: T[] = [];
+  const maxLen = groups.reduce((m, g) => Math.max(m, g.length), 0);
+  for (let i = 0; i < maxLen; i++) {
+    for (const g of groups) if (i < g.length) out.push(g[i]);
+  }
+  return out;
 }
 
 // Adapt a discovered prospect into the Client shape the scorer reads. Most fields
