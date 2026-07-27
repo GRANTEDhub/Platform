@@ -213,24 +213,31 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
   );
 
   const seen = new Set<string>();
-  const grounded = extracted
+  const distinct = extracted
     .filter((c) => c.source_url && resultUrls.has(norm(c.source_url)))
-    // Geographic footprint rule (Arkansas-agnostic): keep Arkansas orgs and
-    // broad-footprint orgs; drop orgs with a narrow (1-2 state) footprint that
-    // don't operate in Arkansas. Unknown reach is kept (never over-exclude).
-    .filter((c) => c.geographic_reach !== "single_or_few_states" || c.operates_in_arkansas === true)
     .filter((c) => {
       const n = normalizeOrgName(c.name);
       if (!n || clientNames.has(n) || existingProspectNames.has(n) || seen.has(n)) return false;
       seen.add(n);
       return true;
-    })
-    .slice(0, 8); // cap discovery cost
+    });
+
+  // Two buckets: Arkansas (home market) and non-Arkansas (national). Score up to
+  // TOP_PER_BUCKET of each so both are always represented -- a home-market grant
+  // can't crowd out national prospects, and vice versa. An org the extractor didn't
+  // flag for Arkansas falls to the non-AR bucket. Capped per bucket to keep a run
+  // under the function's maxDuration (each score is an LLM call) and to honor the
+  // "up to 5 per bucket" target; the fit bar below still gates what actually cards,
+  // so a thin pool surfaces fewer -- we never force-fit to fill the five.
+  const TOP_PER_BUCKET = 5;
+  const arBucket = distinct.filter((c) => c.operates_in_arkansas === true).slice(0, TOP_PER_BUCKET);
+  const nonArBucket = distinct.filter((c) => c.operates_in_arkansas !== true).slice(0, TOP_PER_BUCKET);
+  const grounded = [...arBucket, ...nonArBucket];
 
   // Score each grounded candidate with the existing engine; write a prospect +
   // prospect card for qualifiers (fit >= 2). Bounded-concurrent batches of 5
-  // (mirrors runMatching) so a full 8-candidate run finishes well under the
-  // function's maxDuration instead of scoring sequentially and timing out.
+  // (mirrors runMatching) so a full ~10-candidate run (up to 5 per bucket) finishes
+  // well under the function's maxDuration instead of scoring sequentially and timing out.
   //
   // Concurrency safety: all dedup (client names, already-carded prospects,
   // intra-run same-org collapse) is resolved by the sequential pre-filter that
