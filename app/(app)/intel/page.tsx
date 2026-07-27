@@ -24,18 +24,18 @@ export default async function IntelPage() {
       <NavyHero
         eyebrow="Prospecting"
         title="Prospects"
-        subtitle="Track 2 — grants cleared for prospecting (no client match, or every client match decided). Open a grant to see its shred, surfaced prospects, and the Prospect action."
+        subtitle="Track 2 — every scored grant, with its client-match status. A client match no longer holds a grant back: you see who matched and what they decided, then choose whether to reach out. Open a grant for its shred, surfaced prospects, and the Prospect action."
       >
         <div className="flex items-center gap-2 border-t border-white/12 pt-5 text-sm text-white/70">
           <span className="font-semibold text-white">{feed.length}</span>
-          <span>grant{feed.length === 1 ? "" : "s"} cleared for prospecting</span>
+          <span>grant{feed.length === 1 ? "" : "s"} in prospecting</span>
         </div>
       </NavyHero>
 
       {feed.length === 0 ? (
         <Card className="py-16 text-center text-sm text-muted-foreground">
-          No grants are ready to prospect yet. A grant appears here once it has been
-          scored and any client matches are decided.
+          No grants to prospect yet. A grant appears here once it has been scored
+          against the roster.
         </Card>
       ) : (
         <ListGroup>
@@ -54,6 +54,9 @@ export default async function IntelPage() {
             ]
               .filter(Boolean)
               .join(" · ");
+            // A client actively pursuing this grant is the one case worth a loud
+            // flag before we reach out to an outside org (potential conflict).
+            const pursuing = item.clientMatches.filter((c) => c.decision === "approved").length;
             return (
               <ListGroupRow key={item.grant.id}>
                 <div className="grid grid-cols-[1fr_auto] items-center gap-4">
@@ -73,7 +76,9 @@ export default async function IntelPage() {
                       </span>
                     )}
                     {item.clientMatches.length === 0 ? (
-                      <Badge variant="accent">Open to prospect</Badge>
+                      <Badge variant="accent">Open — no client match</Badge>
+                    ) : pursuing > 0 ? (
+                      <Badge variant="warning">⚠ {pursuing} client{pursuing === 1 ? "" : "s"} pursuing</Badge>
                     ) : (
                       <Badge variant="secondary">
                         {item.clientMatches.length} client{item.clientMatches.length === 1 ? "" : "s"} matched

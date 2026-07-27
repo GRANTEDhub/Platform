@@ -36,8 +36,8 @@ export function ProspectButton({ grantId }: { grantId: string }) {
       if (!res.ok) throw new Error(data.error || "Discovery failed");
       setStatus(
         data.carded > 0
-          ? `${data.carded} prospect${data.carded === 1 ? "" : "s"} surfaced (from ${data.grounded} grounded candidate${data.grounded === 1 ? "" : "s"}).`
-          : `No qualifying prospects found (${data.candidates ?? 0} candidate${data.candidates === 1 ? "" : "s"} considered).`,
+          ? `${data.carded} new prospect${data.carded === 1 ? "" : "s"} surfaced — ${data.candidates ?? 0} found, ${data.grounded ?? 0} scored, ${data.carded} cleared the fit bar.`
+          : `No new prospects — ${data.candidates ?? 0} found, ${data.grounded ?? 0} scored, 0 cleared the fit bar. (Orgs already saved on this grant are skipped, so re-runs find only new ones.)`,
       );
       router.refresh();
     } catch (err) {

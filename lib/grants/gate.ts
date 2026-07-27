@@ -1,15 +1,18 @@
-// Client-first gate.
+// Client-match context for prospecting.
 //
-// Goal: never let the prospect engine (Track 2) touch a grant before active
-// clients have had first dibs. Status is COMPUTED from the grant's scoring
-// status and its CLIENT matches' decisions -- there is no stored flag to drift.
+// POLICY (2026-07): prospecting is NO LONGER BLOCKED by client decisions. Every
+// SCORED grant is prospectable; a client match no longer holds a grant back. The
+// status below is now an INFORMATIONAL flag surfaced in the prospect feed/detail
+// so the team sees who among our clients matched and what they decided BEFORE
+// reaching out -- the human makes the call, and is warned when a client is
+// actively pursuing. Still COMPUTED from live card decisions -- no stored flag to
+// drift.
 //
-//   not_ready -> grant has not finished scoring (status != 'complete'). The
-//                prospect engine must NOT pick it up: a client might still match.
-//   released  -> scored, and every client match is decided (or there are none).
-//                Free to prospect.
-//   locked    -> scored, but at least one client match is still pending/hold.
-//                Clients have not finished triaging; hold off prospecting.
+//   not_ready -> grant has not finished scoring (status != 'complete'). Still not
+//                prospectable: there's no ideal-applicant profile to discover from.
+//   released  -> scored, and every client match is decided (or none matched).
+//   locked    -> scored, but a client match is still pending. NO LONGER blocks
+//                prospecting -- surfaced as "clients still deciding" context.
 
 import { createServiceClient } from "@/lib/supabase/server";
 import type { Grant, ReviewCard, CardDecision } from "@/types/database";
@@ -96,13 +99,13 @@ export async function releasedGrantsForProspecting(
     .map((g) => g.id);
 }
 
-// The prospect feed: released grants, grant-centric, each with a carry-over note
-// of which clients matched and whether they were alerted (approved) or not
-// (passed). Released covers BOTH entry paths from the universal flow: a grant
-// with no client matches (released, empty clientMatches) and one where every
-// client match is decided. Excludes international and hard-disqualified grants
-// (never prospectable) and anything not finished scoring. Read-only; the Track 2
-// discovery engine (step 3) is what acts on a feed item.
+// The prospect feed: every SCORED grant, grant-centric, each carrying its
+// client-match status + a note of which clients matched and what they decided
+// (approved / passed / pending). Per the policy above, a client match no longer
+// holds a grant back -- locked grants appear too, flagged so the human sees the
+// client context (and any active pursuit) before reaching out. Excludes
+// international, hard-disqualified, forecasted, admin-closed, and not-yet-scored
+// grants. Read-only; discovery (discover.ts) is what acts on a feed item.
 export interface ProspectCardLite {
   id: string;
   fit_score: number | null;
@@ -118,6 +121,9 @@ export interface ProspectFeedItem {
     funder: string | null;
     submission_deadline: string | null;
   };
+  // Informational only (see policy at top): 'released' = decided/no match,
+  // 'locked' = a client is still deciding. Never blocks the feed.
+  status: GateStatus;
   clientMatches: { name: string; decision: CardDecision }[];
   prospectCards: ProspectCardLite[];
 }
@@ -184,7 +190,10 @@ export async function getProspectFeed(
   for (const g of eligible) {
     const rows = byGrant.get(g.id) ?? [];
     const status = getGrantGateStatus(g, rows.map((r) => ({ card_type: r.card_type, decision: r.decision })));
-    if (status !== "released") continue;
+    // Policy: do NOT skip 'locked' grants -- prospecting is no longer held by
+    // client decisions. The grant query already limits to scored (status =
+    // 'complete') grants, so 'not_ready' can't occur here; every eligible grant
+    // is surfaced, carrying its status as context.
     const clientMatches = rows
       .filter((r) => r.card_type !== "prospect" && clientName(r) !== null)
       .map((r) => ({ name: clientName(r)!, decision: r.decision }));
@@ -204,6 +213,7 @@ export async function getProspectFeed(
         funder: g.funder,
         submission_deadline: g.submission_deadline,
       },
+      status,
       clientMatches,
       prospectCards,
     });
