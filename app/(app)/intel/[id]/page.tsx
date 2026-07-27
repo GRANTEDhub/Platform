@@ -80,11 +80,11 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
   return (
     <div className="min-h-full bg-brand-cream px-6 py-7 sm:px-8">
       <Link
-        href="/intel"
+        href="/intel/grants"
         className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-brand-navy"
       >
         <ArrowLeft className="h-4 w-4" />
-        Prospecting
+        Grant prospecting
       </Link>
       <NavyHero
         eyebrow="Prospecting"

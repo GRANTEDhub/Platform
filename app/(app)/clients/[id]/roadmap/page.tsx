@@ -7,6 +7,7 @@ import { GrantReport } from "@/components/report/grant-report";
 import { ClientActivity, type ClientActivityItem } from "@/components/report/client-activity";
 import { HubShell } from "@/components/layout/hub-background";
 import { toReportItems, type ReportCardRow } from "@/lib/report/shape";
+import { isUnconvertedLead } from "@/lib/leads/stage";
 import type { Client, PursuitPath } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -27,11 +28,15 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
 
   const { data: client } = await supabase
     .from("clients")
-    .select("id, name, account_managed")
+    .select("id, name, account_managed, pipeline_stage")
     .eq("id", params.id)
-    .single<Pick<Client, "id" | "name" | "account_managed">>();
+    .single<Pick<Client, "id" | "name" | "account_managed" | "pipeline_stage">>();
   if (!client) notFound();
   const managed = !!client.account_managed;
+  // A prospect (un-converted lead, Tara-build) has no portal, so — like a managed
+  // client — its whole scored queue is staff's to review here; the per-card action
+  // is a cold one-pager send, not a portal release.
+  const isLead = isUnconvertedLead(client.pipeline_stage);
 
   // Typed `any`: the two branches chain a different shape of filters (two calls
   // vs one), which sends the Supabase query builder's generic into a "type
@@ -44,12 +49,10 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
     .eq("client_id", params.id)
     .neq("card_type", "prospect")
     .neq("decision", "passed");
-  // Managed: this is now the SINGLE AM gate (Gate 1 / the sme_interested triage
-  // swipe is gone) -- staff's whole queue is every non-passed card, both awaiting
-  // release AND already released (read-only past that point; the client's own Grant
-  // Report owns the decision). Standard: unchanged -- the client's Grant Alerts gate
-  // (0057), promoted-only.
-  query = managed ? query : query.not("interested_at", "is", null);
+  // Managed client (single AM gate) and lead/prospect (no portal): staff's whole
+  // queue is every non-passed card. Standard client: unchanged -- the client's Grant
+  // Alerts gate (0057), promoted-only.
+  query = managed || isLead ? query : query.not("interested_at", "is", null);
   const { data } = await query;
 
   const items = toReportItems((data ?? []) as unknown as ReportCardRow[]);
@@ -87,15 +90,19 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
     });
 
   const awaitingCount = items.filter((i) => !i.smeReleased).length;
-  const subtitle = managed
+  const subtitle = isLead
     ? items.length === 0
-      ? "Nothing in your queue right now."
-      : awaitingCount === 0
-        ? `${items.length} ${items.length === 1 ? "grant" : "grants"} released to the client — showing read-only`
-        : `${awaitingCount} awaiting your release · ${items.length - awaitingCount} already released to the client`
-    : items.length === 0
-      ? "No matched opportunities yet — they appear here as the engine surfaces them."
-      : `${items.length} matched ${items.length === 1 ? "opportunity" : "opportunities"} · Ranked by fit · The client sees this exact view`;
+      ? "No grants yet — generate this prospect's grant report from their dashboard."
+      : `${items.length} matched ${items.length === 1 ? "grant" : "grants"} · review each and send a one-pager`
+    : managed
+      ? items.length === 0
+        ? "Nothing in your queue right now."
+        : awaitingCount === 0
+          ? `${items.length} ${items.length === 1 ? "grant" : "grants"} released to the client — showing read-only`
+          : `${awaitingCount} awaiting your release · ${items.length - awaitingCount} already released to the client`
+      : items.length === 0
+        ? "No matched opportunities yet — they appear here as the engine surfaces them."
+        : `${items.length} matched ${items.length === 1 ? "opportunity" : "opportunities"} · Ranked by fit · The client sees this exact view`;
 
   return (
     <HubShell variant="texture" width="7xl">
@@ -109,7 +116,13 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
       <ClientActivity items={activity} basePath={`/clients/${client.id}/roadmap`} clientName={client.name} />
       <GrantReport
         items={items}
-        heading={managed ? `${client.name} · Your review queue` : `${client.name} · Grant Report`}
+        heading={
+          isLead
+            ? `${client.name} · Prospect grant report`
+            : managed
+              ? `${client.name} · Your review queue`
+              : `${client.name} · Grant Report`
+        }
         subtitle={subtitle}
         basePath={`/clients/${client.id}/roadmap`}
       />

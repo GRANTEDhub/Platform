@@ -12,6 +12,7 @@ import {
   type DashStat,
 } from "@/components/clients/client-dashboard";
 import { deadlineDaysLeft } from "@/lib/report/shape";
+import { isUnconvertedLead } from "@/lib/leads/stage";
 import type { Client, CardDecision, Grant } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -47,6 +48,10 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   if (!client) notFound();
 
   const managed = !!client.account_managed;
+  // A prospect (un-converted lead): no portal, so its whole scored queue is staff's
+  // to review on the roadmap list — the "to review" action links there, not to the
+  // client-alerts triage swipe.
+  const isLead = isUnconvertedLead(client.pipeline_stage);
 
   const { data: cardRows } = await supabase
     .from("review_cards")
@@ -101,7 +106,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
     actionItems.push({
       id: "to-review",
       title: `You have ${toReview} grant${toReview === 1 ? "" : "s"} to review`,
-      href: managed ? base : alertsHref,
+      href: managed || isLead ? base : alertsHref,
     });
   }
   if (counts.pending > 0) {

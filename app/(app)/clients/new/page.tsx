@@ -10,14 +10,21 @@ import { createClientAction } from "../actions";
 // default; the heavy pool-scoring work lives in the drain, not here.
 export const maxDuration = 60;
 
-export default async function NewClientPage() {
+export default async function NewClientPage({
+  searchParams,
+}: {
+  searchParams: { kind?: string };
+}) {
   await requireAdmin();
+  // The Prospecting landing's "Add prospect" entry links here with ?kind=prospect
+  // so the record-type starts on prospect; still user-changeable.
+  const defaultKind = searchParams.kind === "prospect" ? "prospect" : undefined;
 
   return (
     <div>
       <PageHeader title="Add Client/Prospect" description="Create a new client or prospect record." />
       <div className="p-8">
-        <ClientForm action={createClientAction} submitLabel="Create record" />
+        <ClientForm action={createClientAction} submitLabel="Create record" defaultKind={defaultKind} />
       </div>
     </div>
   );

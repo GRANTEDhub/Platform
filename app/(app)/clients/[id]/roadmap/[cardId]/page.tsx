@@ -4,9 +4,12 @@ import { createClient } from "@/lib/supabase/server";
 import { ReportDetail, type ReportDetailCard } from "@/components/report/report-detail";
 import { ReleaseToClientBar } from "@/components/report/release-bar";
 import { ConceptProposalPanel } from "@/components/report/concept-proposal-panel";
+import { AlertSend } from "@/app/(app)/review/[id]/alert-send";
 import { getConceptProposal } from "@/lib/concept/store";
+import { getSentAlertForCard } from "@/lib/alerts/sent-status";
 import { HubShell } from "@/components/layout/hub-background";
 import { deciderLabel } from "@/lib/report/shape";
+import { isUnconvertedLead } from "@/lib/leads/stage";
 import type { GrantDetailFields } from "@/components/grants/grant-detail";
 import type { Client } from "@/types/database";
 
@@ -50,9 +53,13 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   const g = card.grants;
   const { data: client } = await supabase
     .from("clients")
-    .select("name, account_managed")
+    .select("name, account_managed, pipeline_stage")
     .eq("id", params.id)
-    .single<Pick<Client, "name" | "account_managed">>();
+    .single<Pick<Client, "name" | "account_managed" | "pipeline_stage">>();
+  // A prospect (un-converted lead) has no portal: the terminal action is a cold
+  // one-pager send, not a release. (Concept proposals stay client-only, per policy.)
+  const isLead = isUnconvertedLead(client?.pipeline_stage);
+  const sentAlert = isLead ? await getSentAlertForCard(params.cardId) : null;
   const decidedBy = deciderLabel(
     card.decision,
     card.decided_by,
@@ -83,6 +90,13 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
               cardId={params.cardId}
               released={!!card.sme_released_at}
               backHref={`/clients/${params.id}/roadmap`}
+            />
+          ) : isLead ? (
+            <AlertSend
+              cardId={params.cardId}
+              sentAt={sentAlert?.sentAt ?? null}
+              sentTo={sentAlert?.sentTo ?? null}
+              contactName={client?.name ?? null}
             />
           ) : undefined
         }
