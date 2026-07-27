@@ -7,7 +7,7 @@ import { enrichAlert } from "./enrich";
 import { conceptHookForCard } from "@/lib/concept/store";
 import { buildAlertData, buildAlertEmailBody, buildProspectEmailBody } from "./data";
 import { senderFirstName } from "./sender";
-import { renderAlertPdf, renderHorizonPdf } from "./render";
+import { renderAlertPdf, renderHorizonPdf, launchAlertBrowser } from "./render";
 import { mergeAlertPdfs } from "./merge-pdf";
 import { getForecastHorizon } from "@/lib/grants/forecast-relevance";
 import type { AlertContext } from "./generate";
@@ -75,7 +75,18 @@ export async function generateDraftAlert(
     await db.from("grant_alerts").delete().eq("id", prior.id);
   }
 
-  const enrichment = await enrichAlert(ctx.grant, ctx.card);
+  // Overlap the Chromium cold-start with the enrich LLM call: kick off launch now and
+  // hand the promise to renderAlertPdf below, so the browser is warm by render time
+  // instead of paying enrich + launch + render serially (launch needs no alert data).
+  // renderAlertPdf owns and closes the browser; if enrich itself throws first, tear the
+  // browser down here so a Chromium process is never leaked.
+  const draftStartedAt = Date.now();
+  const browserPromise = launchAlertBrowser();
+  const enrichment = await enrichAlert(ctx.grant, ctx.card).catch((err) => {
+    void browserPromise.then((b) => b.close()).catch(() => {});
+    throw err;
+  });
+  const enrichedAt = Date.now();
   const alertData = buildAlertData(ctx.grant, ctx.card, enrichment);
 
   // Cold-outreach alerts carry a clickable booking link in the PDF, minted HERE at
@@ -103,7 +114,10 @@ export async function generateDraftAlert(
     if (minted) alertData.schedulingUrl = `${origin}/go/${minted.rawToken}`;
   }
 
-  const pdf = await renderAlertPdf(alertData);
+  const pdf = await renderAlertPdf(alertData, browserPromise);
+  console.info(
+    `[alert-draft-timing] card=${ctx.card.id} enrichWall=${enrichedAt - draftStartedAt}ms renderWall=${Date.now() - enrichedAt}ms`,
+  );
 
   // Warm CLIENT alerts get the short facts body; COLD alerts (a discovery PROSPECT
   // card OR a LEAD client card / Tara-build prospect) get the salutation +
