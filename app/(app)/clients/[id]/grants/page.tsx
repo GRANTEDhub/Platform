@@ -17,6 +17,17 @@ import type { Client, Grant } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
+// DORMANT (intentionally unlinked). This per-client "Grant activity" page — the
+// full all-statuses match list + multi-select aggregate send + forecast horizon —
+// sat next to the grant report review page and read as confusing (different grant
+// sets: report = live review queue, this = everything incl. passed) and its
+// forecast horizon fires an LLM call on every load. The entry link (from the grant
+// report page) was removed so nothing navigates here and no LLM spend is incurred.
+// The build is preserved on purpose: the aggregate-send engine (ClientGrantsBatch +
+// lib/alerts/batch-send.ts + the prepare/send/preview endpoints) is what a future
+// merged aggregate-send — checkboxes on the grant report rows -> "send as one email"
+// — will reuse. Do not delete; re-link or lift the batch UI onto the report instead.
+
 // Surface the client's most actionable matches first: new (pending), then
 // held, then decided.
 const STATUS_ORDER: Record<string, number> = { pending: 0, hold: 1, approved: 2, passed: 3 };
