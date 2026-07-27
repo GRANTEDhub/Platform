@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ArrowRight } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { GrantReport } from "@/components/report/grant-report";
@@ -106,13 +106,27 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
 
   return (
     <HubShell variant="texture" width="7xl">
-      <Link
-        href={`/clients/${client.id}`}
-        className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-brand-navy"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        {client.name}
-      </Link>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <Link
+          href={`/clients/${client.id}`}
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-brand-navy"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          {client.name}
+        </Link>
+        {/* Entry to the Grant activity page: the full match list + multi-select
+            aggregate send (one merged-PDF email). For a prospect this is how you send
+            several grants in a single outreach. */}
+        {items.length > 0 && (
+          <Link
+            href={`/clients/${client.id}/grants`}
+            className="inline-flex items-center gap-1.5 rounded-full border border-brand-navy/15 px-4 py-1.5 text-sm font-semibold text-brand-navy transition-colors hover:bg-brand-navy/[0.05]"
+          >
+            {isLead ? "Send several as one email" : "Grant activity"}
+            <ArrowRight className="h-4 w-4" />
+          </Link>
+        )}
+      </div>
       <ClientActivity items={activity} basePath={`/clients/${client.id}/roadmap`} clientName={client.name} />
       <GrantReport
         items={items}
