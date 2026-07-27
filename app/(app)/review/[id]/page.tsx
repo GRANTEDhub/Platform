@@ -17,6 +17,7 @@ import { ProgramAwardMap } from "./program-award-map";
 import { formatDeadlineShort } from "@/lib/grants/format";
 import { getSentAlertForCard } from "@/lib/alerts/sent-status";
 import { FactorBreakdown, ScoreArcRing } from "@/components/report/match-score";
+import { prospectCredibility } from "@/lib/prospects/credibility";
 import type { ProgramAwardSummary } from "@/lib/grants/program-awards";
 import type { ReviewCard, Client, Grant, Prospect } from "@/types/database";
 
@@ -24,7 +25,7 @@ export const dynamic = "force-dynamic";
 
 type FullCard = ReviewCard & {
   clients: Pick<Client, "id" | "name" | "org_type" | "engagement_tier" | "primary_contact_email" | "primary_contact_name"> | null;
-  prospects: Pick<Prospect, "id" | "name" | "org_type" | "source_url" | "primary_contact_email" | "primary_contact_name"> | null;
+  prospects: Pick<Prospect, "id" | "name" | "org_type" | "source_url" | "capability_summary" | "primary_contact_email" | "primary_contact_name"> | null;
   grants: (GrantDetailFields & Pick<Grant, "title" | "funder" | "fon" | "program_award_summary" | "assistance_listings">) | null;
 };
 
@@ -54,7 +55,7 @@ export default async function CardDetailPage({
 
   const { data } = await supabase
     .from("review_cards")
-    .select("*, clients(id, name, org_type, engagement_tier, primary_contact_email, primary_contact_name), prospects(id, name, org_type, source_url, primary_contact_email, primary_contact_name), grants(id, title, funder, fon, grant_status, source_url, submission_deadline, period_of_performance, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, description, eligible_entity_types, geographic_eligibility, ineligible_entities, subaward_prohibited, incumbent_risk, technical_burden_flags, hard_disqualifiers, verification_flags, scoring_rubric, ideal_applicant_profile, program_award_summary, assistance_listings)")
+    .select("*, clients(id, name, org_type, engagement_tier, primary_contact_email, primary_contact_name), prospects(id, name, org_type, source_url, capability_summary, primary_contact_email, primary_contact_name), grants(id, title, funder, fon, grant_status, source_url, submission_deadline, period_of_performance, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, description, eligible_entity_types, geographic_eligibility, ineligible_entities, subaward_prohibited, incumbent_risk, technical_burden_flags, hard_disqualifiers, verification_flags, scoring_rubric, ideal_applicant_profile, program_award_summary, assistance_listings)")
     .eq("id", params.id)
     .single();
 
@@ -208,6 +209,11 @@ function MatchTab({
           Fit / Proposed role / Recommended prime now live in the banner tiles. */}
       <MatchSummaryCard card={card} clientMatchCount={clientMatchCount} />
 
+      {/* Prospect-only: a read-time credibility snapshot (proven awardee / emerging
+          registered org / web-surfaced) so the reviewer knows who this org is. Not a
+          scoring input -- see lib/prospects/credibility.ts. */}
+      {isProspect && card.prospects && <ProspectCredibilityCard prospect={card.prospects} />}
+
       <ConceptProposalCard card={card} />
 
       {watchouts.length > 0 && (
@@ -223,12 +229,54 @@ function MatchTab({
         </Collapsible>
       )}
 
-      {isProspect && card.prospects?.source_url && (
-        <p className="text-sm">
-          <a href={card.prospects.source_url} target="_blank" rel="noopener noreferrer" className="font-medium text-brand-orange hover:underline">Prospect source ↗</a>
-        </p>
-      )}
     </div>
+  );
+}
+
+// Prospect credibility snapshot (Match tab, prospects only). A read-time "who is this
+// org" heads-up -- a proven/emerging/web-surfaced pill + a one-line reason + the
+// source-written capability detail + the source link. Purely informational: capacity
+// is deliberately NOT a ranking factor, so this never touches the fit score (the
+// tier is derived from source_url + the already-persisted capability_summary --
+// lib/prospects/credibility.ts).
+function ProspectCredibilityCard({
+  prospect,
+}: {
+  prospect: Pick<Prospect, "source_url" | "capability_summary">;
+}) {
+  const c = prospectCredibility(prospect);
+  const pillTone =
+    c.tier === "proven"
+      ? "bg-brand-navy/[0.06] text-emerald-700"
+      : c.tier === "emerging"
+        ? "bg-brand-orange/10 text-brand-orange"
+        : "bg-brand-navy/[0.06] text-muted-foreground";
+  return (
+    <Card className="p-6 sm:p-7">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <SectionLabel>Org credibility</SectionLabel>
+        <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${pillTone}`}>
+          {c.label}
+        </span>
+      </div>
+      <p className="mt-3 text-sm leading-relaxed text-foreground">{c.blurb}</p>
+      {c.detail && (
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{c.detail}</p>
+      )}
+      <div className="mt-4 flex items-center justify-between gap-3 border-t border-brand-navy/[0.08] pt-3">
+        <span className="text-[11px] text-muted-foreground">Context only — not part of the fit score.</span>
+        {prospect.source_url && (
+          <a
+            href={prospect.source_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 text-xs font-medium text-brand-orange hover:underline"
+          >
+            Source ↗
+          </a>
+        )}
+      </div>
+    </Card>
   );
 }
 
