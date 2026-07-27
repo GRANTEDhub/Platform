@@ -30,7 +30,7 @@ export default async function ProspectingLandingPage() {
           body="Browse every scored grant and its client-match status, then discover fitting non-client orgs to reach out to."
         />
         <ProspectingCard
-          href="/clients/new?kind=prospect"
+          href="/intel/prospects/new"
           icon={UserPlus}
           title="Add prospect"
           body="Add a prospective client — staff-only, no portal, no daily matching. Generate their grant report on demand, then review and send one-pagers."

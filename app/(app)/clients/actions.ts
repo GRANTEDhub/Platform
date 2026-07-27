@@ -63,6 +63,7 @@ function parse(formData: FormData) {
     primary_contact_name: get("primary_contact_name"),
     primary_contact_email: get("primary_contact_email"),
     primary_contact_phone: get("primary_contact_phone"),
+    website: get("website"),
     location_city: get("location_city"),
     location_county: get("location_county"),
     location_state: get("location_state") || "AR",

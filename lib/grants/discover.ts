@@ -448,6 +448,7 @@ function prospectAsClient(c: Candidate): Client {
     primary_contact_name: null,
     primary_contact_email: null,
     primary_contact_phone: null,
+    website: null,
     location_city: null,
     location_county: c.location_county ?? null,
     location_state: c.location_state ?? null,
