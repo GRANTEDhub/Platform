@@ -44,11 +44,12 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
     .eq("client_id", params.id)
     .neq("card_type", "prospect")
     .neq("decision", "passed");
-  // Managed: staff's whole queue -- both awaiting release AND already released
-  // (read-only past that point; the client's own Grant Report owns the decision).
-  query = managed
-    ? query.not("sme_interested_at", "is", null)
-    : query.not("interested_at", "is", null); // Grant Alerts gate (0057) -- promoted-only
+  // Managed: this is now the SINGLE AM gate (Gate 1 / the sme_interested triage
+  // swipe is gone) -- staff's whole queue is every non-passed card, both awaiting
+  // release AND already released (read-only past that point; the client's own Grant
+  // Report owns the decision). Standard: unchanged -- the client's Grant Alerts gate
+  // (0057), promoted-only.
+  query = managed ? query : query.not("interested_at", "is", null);
   const { data } = await query;
 
   const items = toReportItems((data ?? []) as unknown as ReportCardRow[]);

@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { SwipeDeck } from "@/components/report/swipe-deck";
@@ -6,14 +7,15 @@ import { toReportItems, type ReportCardRow } from "@/lib/report/shape";
 
 export const dynamic = "force-dynamic";
 
-// Staff account-manager Grant Alerts (swipe). For a STANDARD client, this is a
-// convenience mirror of the client's OWN gate (0057) -- shows their
-// not-yet-interested matches, and swiping right sets THEIR interested_at (staff
-// acting on the client's behalf). For an ACCOUNT-MANAGED client (0059), this is
-// staff's OWN, separate first pass -- shows matches nobody on staff has looked
-// at yet (sme_interested_at), and swiping right sets sme_interested_at instead,
-// promoting the card to staff's OWN Grant Report queue, not the client's. Either
-// way, left rejects outright (decision='passed'), shared and terminal.
+// Staff account-manager Grant Alerts (swipe) -- STANDARD clients only now. It is a
+// convenience mirror of the client's OWN gate (0057): shows their not-yet-interested
+// matches, and swiping right sets THEIR interested_at (staff acting on the client's
+// behalf); left rejects outright (decision='passed'), shared and terminal.
+//
+// ACCOUNT-MANAGED clients no longer have this first-pass gate. Their review is a
+// SINGLE gate on the roadmap review list (where the why-it-matches detail, the manual
+// concept-proposal generate/edit, and the release-to-client action all live), so a
+// managed client is redirected there -- keeping one gate, not two.
 export default async function ClientRoadmapTriage({ params }: { params: { id: string } }) {
   await requireAdmin();
   const supabase = createClient();
@@ -24,6 +26,7 @@ export default async function ClientRoadmapTriage({ params }: { params: { id: st
     .eq("id", params.id)
     .single<{ account_managed: boolean }>();
   const managed = !!client?.account_managed;
+  if (managed) redirect(`/clients/${params.id}/roadmap`);
 
   let query = supabase
     .from("review_cards")

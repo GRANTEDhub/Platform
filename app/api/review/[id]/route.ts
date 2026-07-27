@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { waitUntil } from "@vercel/functions";
 import { createClient } from "@/lib/supabase/server";
 import { computeGrantSummary } from "@/lib/review/summary";
-import { ensureConceptProposalPlaceholder, runConceptProposalGeneration } from "@/lib/concept/store";
 import type { CardDecision, PursuitPath } from "@/types/database";
 
 // Re-exported so existing importers (DecisionPanel, DecisionConfirmation) keep
@@ -70,22 +68,11 @@ export async function PATCH(
     if (error) {
       return NextResponse.json({ error: "Failed to update card" }, { status: 500 });
     }
-    // On the SME "interested" pass (account-managed clients, 0059), kick off the
-    // concept proposal so it's ready when the AM opens the grant. Non-blocking:
-    // the swipe returns immediately; generation runs in the background and flips
-    // the row generating -> ready/error. Only on a FRESH create, so an existing or
-    // manually edited proposal is never clobbered. Never on release, never for
-    // prospect / grant-less cards. Additive to the interest write -- touches no
-    // locked file (concept_proposals is its own table).
-    if (body.sme_interested && data.grant_id && data.client_id && data.card_type !== "prospect") {
-      const { created } = await ensureConceptProposalPlaceholder(
-        data.id,
-        data.grant_id,
-        data.client_id,
-        user.id,
-      );
-      if (created) waitUntil(runConceptProposalGeneration(data.id, user.id));
-    }
+    // No auto-generation of the concept proposal here anymore. With the single AM
+    // review gate (Gate 1 / sme_interested triage removed), the concept proposal is
+    // generated MANUALLY from the review panel only when the AM decides it's
+    // warranted (POST /api/concept/[cardId]) -- never automatically on an interest
+    // pass. Keeps costly generation opt-in and never clobbers a manual edit.
     return NextResponse.json({ card: data, grant_summary: null });
   }
 

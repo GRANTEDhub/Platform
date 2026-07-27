@@ -1,130 +1,189 @@
 import Link from "next/link";
+import { differenceInCalendarDays, format, parseISO } from "date-fns";
+import { ClipboardList, Building2, type LucideIcon } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { NavyHero } from "@/components/ui/navy-hero";
-import { Card } from "@/components/ui/card";
-import { ListGroup, ListGroupHeader, ListGroupRow } from "@/components/ui/list-group";
-import { ScoreBadge, DecisionBadge } from "@/components/grants/badges";
-import { groupCardsByOrg, type MatchCard } from "@/lib/grants/grouping";
+import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
-// New/All toggle styled for the navy hero (white-on-navy, orange active pill).
-function heroTab(active: boolean) {
-  return `rounded-lg px-4 py-1.5 text-sm font-semibold transition-colors ${
-    active ? "bg-brand-orange text-white" : "text-white/65 hover:text-white"
-  }`;
+// The staff review queue -- the repurposed Matches tab. ACCOUNT-MANAGED (premium)
+// clients only: a base client's matches surface straight to their own Grant Alerts,
+// so there is nothing for staff to review. For each premium client with matches
+// awaiting review, one card with the count; click through to that client's SINGLE
+// review gate (the roadmap review list, where why-it-matches + the manual concept
+// generate/edit + release-to-client all live).
+//
+// "To review" = a non-passed card not yet released to the client (sme_released_at
+// IS NULL) -- exactly the count the per-client dashboard shows, so the two can't
+// drift. Only clients WITH pending review appear, so this is the day's worklist,
+// not the whole roster (Portfolio is the browse-everyone surface).
+
+type ClientRow = { id: string; name: string; org_type: string | null; engagement_tier: string | null };
+type CardRow = {
+  client_id: string | null;
+  grants: { submission_deadline: string | null } | { submission_deadline: string | null }[] | null;
+};
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "—";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-export default async function MatchingPage({
-  searchParams,
-}: {
-  searchParams: { filter?: string };
-}) {
-  await requireUser(); // admins + contractors work the queue
-  const showAll = searchParams.filter === "all";
+// Stable navy/orange monogram per client (hashed on id), matching Portfolio.
+function monogramFill(seed: string): string {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
+  return Math.abs(h) % 2 === 0 ? "bg-brand-navy" : "bg-brand-orange";
+}
+
+function deadlineParts(date: string | null): { top: string; bottom: string; urgent: boolean } {
+  if (!date) return { top: "—", bottom: "no deadline", urgent: false };
+  const days = differenceInCalendarDays(parseISO(date), new Date());
+  if (days < 0) return { top: format(parseISO(date), "MMM d"), bottom: "overdue", urgent: true };
+  return { top: format(parseISO(date), "MMM d"), bottom: `${days} ${days === 1 ? "day" : "days"}`, urgent: days <= 14 };
+}
+
+export default async function ReviewQueuePage() {
+  await requireUser();
   const supabase = createClient();
 
-  let query = supabase
-    .from("review_cards")
-    .select(
-      "*, clients(id, name, org_type, engagement_tier), grants(id, title, funder, submission_deadline, deadline)",
-    )
-    .order("fit_score", { ascending: false })
-    .order("created_at", { ascending: false });
-  if (!showAll) query = query.eq("decision", "pending");
+  const { data: clientData } = await supabase
+    .from("clients")
+    .select("id, name, org_type, engagement_tier")
+    .eq("account_managed", true);
+  const clients = (clientData ?? []) as ClientRow[];
+  const byId = new Map(clients.map((c) => [c.id, c]));
+  const ids = clients.map((c) => c.id);
 
-  const { data } = await query;
-  const groups = groupCardsByOrg((data ?? []) as MatchCard[]);
-  const totalNew = groups.reduce((s, g) => s + g.newCount, 0);
+  type Group = { client: ClientRow; count: number; soonest: string | null };
+  const groups = new Map<string, Group>();
+
+  if (ids.length > 0) {
+    const { data: cardData } = await supabase
+      .from("review_cards")
+      .select("client_id, grants(submission_deadline)")
+      .in("client_id", ids)
+      .neq("card_type", "prospect")
+      .neq("decision", "passed")
+      .is("sme_released_at", null);
+    for (const c of (cardData ?? []) as CardRow[]) {
+      if (!c.client_id) continue;
+      const client = byId.get(c.client_id);
+      if (!client) continue;
+      const g = Array.isArray(c.grants) ? c.grants[0] : c.grants;
+      const dl = g?.submission_deadline ?? null;
+      const cur = groups.get(c.client_id);
+      if (cur) {
+        cur.count += 1;
+        if (dl && (!cur.soonest || dl < cur.soonest)) cur.soonest = dl;
+      } else {
+        groups.set(c.client_id, { client, count: 1, soonest: dl });
+      }
+    }
+  }
+
+  // Most work first, then soonest deadline, then name.
+  const rows = [...groups.values()].sort(
+    (a, b) =>
+      b.count - a.count ||
+      (a.soonest ?? "9999").localeCompare(b.soonest ?? "9999") ||
+      a.client.name.localeCompare(b.client.name),
+  );
+  const totalToReview = rows.reduce((s, r) => s + r.count, 0);
 
   return (
-    <div className="space-y-6 p-6">
-      <NavyHero
-        eyebrow="Grant Matches"
-        title="Matches"
-        subtitle="New grant matches across the active client roster. Clear the day's queue: open a client, review the match, send or reject."
-      >
-        <div className="flex items-center justify-between gap-4 border-t border-white/12 pt-5">
-          <p className="text-sm text-white/80">
-            {showAll ? (
-              <>
-                <b className="font-semibold text-white">{groups.length}</b>{" "}
-                {groups.length === 1 ? "client" : "clients"} with matches
-              </>
-            ) : (
-              <>
-                <b className="font-semibold text-white">
-                  {totalNew} new {totalNew === 1 ? "match" : "matches"}
-                </b>{" "}
-                across {groups.length} {groups.length === 1 ? "client" : "clients"}
-              </>
-            )}
-          </p>
-          <div className="flex gap-1.5 rounded-xl bg-white/10 p-1">
-            <Link href="/matches" className={heroTab(!showAll)}>New</Link>
-            <Link href="/matches?filter=all" className={heroTab(showAll)}>All</Link>
-          </div>
+    <div className="px-6 py-8 lg:px-10 lg:py-9">
+      <header className="mb-8">
+        <h1 className="text-[30px] font-semibold tracking-tight text-brand-navy">Review queue</h1>
+        <p className="mt-1.5 text-[15px] text-muted-foreground">
+          Account-managed clients with grants awaiting your review before they reach the client&apos;s Grant Alerts.
+        </p>
+      </header>
+
+      <div className="mb-8 grid grid-cols-2 gap-4 sm:max-w-md">
+        <SummaryTile icon={ClipboardList} tone="orange" value={String(totalToReview)} label="grants to review" />
+        <SummaryTile icon={Building2} tone="navy" value={String(rows.length)} label={rows.length === 1 ? "client waiting" : "clients waiting"} />
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="rounded-2xl border border-brand-navy/[0.05] bg-white p-12 text-center text-muted-foreground shadow-soft">
+          Nothing to review — every account-managed client is caught up. New matches land here as grants are scored.
         </div>
-      </NavyHero>
+      ) : (
+        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+          {rows.map(({ client, count, soonest }) => {
+            const dl = deadlineParts(soonest);
+            const subtitle = [client.engagement_tier, client.org_type?.replace(/_/g, " ")].filter(Boolean).join(" · ") || "—";
+            return (
+              <Link key={client.id} href={`/clients/${client.id}/roadmap`} className="block">
+                <div className="rounded-2xl border border-brand-navy/[0.05] bg-white p-6 shadow-soft transition hover:shadow-lift">
+                  <div className="flex items-center gap-3.5">
+                    <div
+                      className={cn(
+                        "flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-[15px] font-semibold text-white",
+                        monogramFill(client.id),
+                      )}
+                    >
+                      {initials(client.name)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="truncate text-[16px] font-semibold leading-tight text-brand-navy">{client.name}</h3>
+                      <p className="mt-0.5 truncate text-[13px] capitalize text-muted-foreground">{subtitle}</p>
+                    </div>
+                  </div>
 
-      {groups.length === 0 && (
-        <Card className="py-16 text-center text-sm text-muted-foreground">
-          {showAll
-            ? "No matches yet. They appear here once a grant is ingested and scored against the roster."
-            : "Nothing new to review. New matches appear here as grants come in."}
-        </Card>
-      )}
-
-      {groups.map((g) => (
-        <ListGroup key={g.orgId}>
-          <ListGroupHeader
-            title={
-              <Link href={`/clients/${g.orgId}/grants`} className="hover:underline">
-                {g.orgName}
+                  <div className="mt-5 flex items-end justify-between border-t border-brand-navy/[0.06] pt-4">
+                    <div>
+                      <p className="text-[22px] font-semibold leading-none text-brand-orange">{count}</p>
+                      <p className="mt-1.5 text-[11px] text-muted-foreground">to review</p>
+                    </div>
+                    <div className="text-right">
+                      <p className={cn("text-[15px] font-semibold leading-none", dl.urgent ? "text-brand-orange" : "text-brand-navy")}>
+                        {dl.top}
+                      </p>
+                      <p className="mt-1.5 text-[11px] text-muted-foreground">{soonest ? "next deadline" : dl.bottom}</p>
+                    </div>
+                  </div>
+                </div>
               </Link>
-            }
-            subtitle={g.orgSubtitle}
-            right={
-              g.newCount > 0 ? (
-                <span className="rounded-full bg-brand-navy px-3 py-1 text-xs font-semibold text-white">
-                  {g.newCount} new
-                </span>
-              ) : undefined
-            }
-          />
-          {g.cards.map((c) => (
-            <ListGroupRow key={c.id}>
-              {/* Fixed score/status/date tracks so the columns align row-to-row
-                  within the group; title flexes and truncates. */}
-              <div className="grid grid-cols-[1fr_auto] items-center gap-4 sm:grid-cols-[1fr_170px_104px_104px] sm:gap-5">
-                <div className="min-w-0">
-                  <Link
-                    href={`/review/${c.id}`}
-                    className="block truncate text-sm font-medium text-brand-navy hover:underline"
-                  >
-                    {c.grants?.title || "Untitled opportunity"}
-                  </Link>
-                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                    {c.grants?.funder}
-                    {c.proposed_role ? (
-                      <>
-                        {" · "}
-                        <span className="font-medium">{c.proposed_role}</span>
-                      </>
-                    ) : null}
-                  </p>
-                </div>
-                <div className="hidden sm:block"><ScoreBadge score={c.fit_score} /></div>
-                <div className="hidden sm:block"><DecisionBadge decision={c.decision} /></div>
-                <div className="hidden text-right text-xs text-muted-foreground sm:block">
-                  {c.grants?.submission_deadline || "—"}
-                </div>
-              </div>
-            </ListGroupRow>
-          ))}
-        </ListGroup>
-      ))}
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SummaryTile({
+  icon: Icon,
+  tone,
+  value,
+  label,
+}: {
+  icon: LucideIcon;
+  tone: "navy" | "orange";
+  value: string;
+  label: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-brand-navy/[0.05] bg-white p-5 shadow-soft">
+      <div className="flex items-center gap-3.5">
+        <span
+          className={cn(
+            "grid h-11 w-11 shrink-0 place-items-center rounded-xl text-white",
+            tone === "orange" ? "bg-brand-orange" : "bg-brand-navy",
+          )}
+        >
+          <Icon className="h-[18px] w-[18px]" />
+        </span>
+        <div className="min-w-0">
+          <p className="text-[26px] font-semibold leading-none text-brand-navy">{value}</p>
+          <p className="mt-1.5 truncate text-[13px] text-muted-foreground">{label}</p>
+        </div>
+      </div>
     </div>
   );
 }
