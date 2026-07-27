@@ -57,7 +57,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
     .eq("id", params.id)
     .single<Pick<Client, "name" | "account_managed" | "pipeline_stage">>();
   // A prospect (un-converted lead) has no portal: the terminal action is a cold
-  // one-pager send, not a release. (Concept proposals stay client-only, per policy.)
+  // one-pager send, not a release.
   const isLead = isUnconvertedLead(client?.pipeline_stage);
   const sentAlert = isLead ? await getSentAlertForCard(params.cardId) : null;
   const decidedBy = deciderLabel(
@@ -68,10 +68,12 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
     client?.name || "the client",
   );
 
-  // Concept proposal is a premium (account-managed) artifact for internal AM
-  // review only -- fetched + rendered here, never on the client's own copy of
-  // this surface. Generated on the SME interested pass (0059 / migration 0060).
-  const conceptProposal = client?.account_managed ? await getConceptProposal(params.cardId) : null;
+  // Concept proposal is an INTERNAL AM artifact — for a premium client (a paid
+  // deliverable they later see in the portal) OR a prospect (staff prep only: it is
+  // NEVER emailed to the prospect; per policy the prospect gets the one-pager, not
+  // the paid concept). Rendered on this staff surface, never on a client's own copy.
+  const showConcept = !!client?.account_managed || isLead;
+  const conceptProposal = showConcept ? await getConceptProposal(params.cardId) : null;
 
   return (
     <HubShell variant="map">
@@ -92,17 +94,30 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
               backHref={`/clients/${params.id}/roadmap`}
             />
           ) : isLead ? (
-            <AlertSend
-              cardId={params.cardId}
-              sentAt={sentAlert?.sentAt ?? null}
-              sentTo={sentAlert?.sentTo ?? null}
-              contactName={client?.name ?? null}
-            />
+            // Two actions, side by side: send the one-pager, or (internal) work up a
+            // concept proposal. The concept button jumps to the panel below, where
+            // it's generated/edited — it is never emailed to the prospect.
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <AlertSend
+                cardId={params.cardId}
+                sentAt={sentAlert?.sentAt ?? null}
+                sentTo={sentAlert?.sentTo ?? null}
+                contactName={client?.name ?? null}
+              />
+              <a
+                href="#concept"
+                className="inline-flex h-10 w-full items-center justify-center rounded-full bg-brand-orange px-5 text-sm font-semibold text-white transition hover:bg-brand-orange/90"
+              >
+                Generate concept proposal
+              </a>
+            </div>
           ) : undefined
         }
         afterContent={
-          client?.account_managed ? (
-            <ConceptProposalPanel cardId={params.cardId} initial={conceptProposal} />
+          showConcept ? (
+            <div id="concept" className="scroll-mt-24">
+              <ConceptProposalPanel cardId={params.cardId} initial={conceptProposal} />
+            </div>
           ) : undefined
         }
       />
