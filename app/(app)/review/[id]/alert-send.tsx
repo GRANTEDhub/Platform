@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PriorEmailGate } from "@/components/alerts/prior-email-gate";
 import { DecisionConfirmation } from "./decision-confirmation";
@@ -48,6 +50,27 @@ export function AlertSend({
   const [coldBody, setColdBody] = useState(""); // the first-contact body (default)
   const [followUpBody, setFollowUpBody] = useState<string | null>(null); // the follow-up swap
   const [reoutreach, setReoutreach] = useState<ReOutreach | null>(null);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  // The draft is generated server-side (LLM narrative + Chromium PDF); the route
+  // caps at 60s. Bound the client fetch just above that so a slow / stuck render
+  // surfaces a clear error instead of an indefinite "Preparing draft…".
+  async function fetchDraft(method: "GET" | "POST") {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 75000);
+    try {
+      return await fetch(`/api/alerts/${cardId}/draft`, { method, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function draftError(e: unknown, fallback: string): string {
+    if (e instanceof Error && e.name === "AbortError")
+      return "The draft is taking longer than expected — please try again.";
+    return e instanceof Error ? e.message : fallback;
+  }
 
   async function openModal() {
     setError(null);
@@ -55,7 +78,7 @@ export function AlertSend({
     setOpen(true);
     setLoading(true);
     try {
-      const res = await fetch(`/api/alerts/${cardId}/draft`);
+      const res = await fetchDraft("GET");
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || "Failed to load draft");
       setTo(d.to || "");
@@ -69,7 +92,7 @@ export function AlertSend({
       setSchedulingLink(!!d.schedulingLink);
       setPriorEmailedAt(d.priorEmailedAt ?? null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load draft");
+      setError(draftError(e, "Failed to load draft"));
     } finally {
       setLoading(false);
     }
@@ -88,7 +111,7 @@ export function AlertSend({
     setError(null);
     setStatus(null);
     try {
-      const res = await fetch(`/api/alerts/${cardId}/draft`, { method: "POST" });
+      const res = await fetchDraft("POST");
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || "Failed to regenerate");
       setTo(d.to || "");
@@ -102,7 +125,7 @@ export function AlertSend({
       setPriorEmailedAt(d.priorEmailedAt ?? null);
       setRev((r) => r + 1); // force the preview link to fetch the new saved PDF
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to regenerate");
+      setError(draftError(e, "Failed to regenerate"));
     } finally {
       setRegenBusy(false);
     }
@@ -188,7 +211,7 @@ export function AlertSend({
       {status && <p className="mt-2 text-xs text-muted-foreground">{status}</p>}
       {error && !open && <p className="mt-2 text-xs text-destructive">{error}</p>}
 
-      {open && (
+      {mounted && open && createPortal(
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
           onClick={() => !busy && !regenBusy && setOpen(false)}
@@ -203,7 +226,13 @@ export function AlertSend({
             </p>
 
             {loading ? (
-              <p className="mt-4 text-sm text-muted-foreground">Preparing draft…</p>
+              <div className="mt-6 flex flex-col items-center gap-3 py-8 text-center">
+                <Loader2 className="h-6 w-6 animate-spin text-brand-orange" />
+                <p className="text-sm font-medium text-brand-navy">Generating the draft…</p>
+                <p className="text-xs text-muted-foreground">
+                  Writing the note and rendering the one-page PDF — this can take up to a minute.
+                </p>
+              </div>
             ) : (
               <div className="mt-4 space-y-3">
                 <label className="block space-y-1">
@@ -286,7 +315,8 @@ export function AlertSend({
               </Button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );
