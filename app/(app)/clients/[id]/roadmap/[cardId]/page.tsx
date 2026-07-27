@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { ReportDetail, type ReportDetailCard } from "@/components/report/report-detail";
 import { ReleaseToClientBar } from "@/components/report/release-bar";
 import { ConceptProposalPanel } from "@/components/report/concept-proposal-panel";
+import { GenerateConceptButton } from "@/components/report/generate-concept-button";
 import { AlertSend } from "@/app/(app)/review/[id]/alert-send";
 import { getConceptProposal } from "@/lib/concept/store";
 import { getSentAlertForCard } from "@/lib/alerts/sent-status";
@@ -94,9 +95,9 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
               backHref={`/clients/${params.id}/roadmap`}
             />
           ) : isLead ? (
-            // Two actions, side by side: send the one-pager, or (internal) work up a
-            // concept proposal. The concept button jumps to the panel below, where
-            // it's generated/edited — it is never emailed to the prospect.
+            // Two actions, side by side: send the one-pager, or (internal) generate a
+            // concept proposal. The concept button generates in one click; the result
+            // renders in the panel below. It is never emailed to the prospect.
             <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <AlertSend
                 cardId={params.cardId}
@@ -104,12 +105,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
                 sentTo={sentAlert?.sentTo ?? null}
                 contactName={client?.name ?? null}
               />
-              <a
-                href="#concept"
-                className="inline-flex h-10 w-full items-center justify-center rounded-full bg-brand-orange px-5 text-sm font-semibold text-white transition hover:bg-brand-orange/90"
-              >
-                Generate concept proposal
-              </a>
+              <GenerateConceptButton cardId={params.cardId} status={conceptProposal?.status ?? null} />
             </div>
           ) : undefined
         }
