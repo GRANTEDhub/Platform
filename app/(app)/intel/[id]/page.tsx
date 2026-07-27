@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { NavyHero } from "@/components/ui/navy-hero";
@@ -78,6 +79,13 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
 
   return (
     <div className="min-h-full bg-brand-cream px-6 py-7 sm:px-8">
+      <Link
+        href="/intel"
+        className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-brand-navy"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        Prospecting
+      </Link>
       <NavyHero
         eyebrow="Prospecting"
         eyebrowRight={<GrantStatusPill status={grant.grant_status} />}
