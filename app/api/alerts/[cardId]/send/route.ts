@@ -21,6 +21,7 @@ import {
   type ReOutreach,
 } from "@/lib/alerts/send-core";
 import { buildProspectEmailBody } from "@/lib/alerts/data";
+import { conceptHookForCard } from "@/lib/concept/store";
 import { senderFirstName } from "@/lib/alerts/sender";
 import { computeGrantSummary } from "@/lib/review/summary";
 import type { Prospect } from "@/types/database";
@@ -106,11 +107,14 @@ export async function POST(req: NextRequest, { params }: { params: { cardId: str
     alert.created_by !== user.id &&
     emailBody === (alert.email_body ?? "").trim()
   ) {
+    const conceptHook = ctx.isLead ? await conceptHookForCard(ctx.card.id) : null;
     emailBody = buildProspectEmailBody(
       ctx.grant,
       ctx.card,
       senderFirstName({ full_name: profile.full_name, email: profile.email }),
       !!alert.alert_data?.schedulingUrl,
+      false,
+      conceptHook,
     );
   }
 

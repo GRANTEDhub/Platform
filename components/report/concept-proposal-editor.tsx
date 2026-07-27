@@ -113,6 +113,9 @@ export function ConceptProposalEditor({
       total_project_amount: total.trim(),
       estimated_match: noMatch ? null : match.trim() || null,
       project_term: term.trim() || null,
+      // Not edited here — pass the existing hook through so a manual edit doesn't wipe
+      // the outreach teaser (regenerate to refresh it).
+      hook: initial.hook ?? null,
       partners,
     };
     try {

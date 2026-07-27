@@ -522,6 +522,10 @@ export interface ConceptProposal {
   estimated_match: string | null; // estimate from the NOFO cost-share; null = none required
   project_term: string | null; // from period_of_performance; null if the NOFO is silent
   partners: ConceptProposalPartner[];
+  // A one-line outreach teaser (<=25 words) generated alongside the proposal — used
+  // ONLY to pre-fill a prospect's cold alert email (a hook to spark a conversation,
+  // never the full concept, which stays internal). Null if none formed / pre-hook row.
+  hook: string | null;
 }
 
 export type ConceptProposalStatus = "generating" | "ready" | "error";

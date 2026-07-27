@@ -27,6 +27,7 @@ const SAMPLE_PROPOSAL: ConceptProposal = {
   total_project_amount: "$750,000 (est.)",
   estimated_match: "$150,000 (est.)",
   project_term: "2 years",
+  hook: null,
   partners: [
     {
       name: null,
