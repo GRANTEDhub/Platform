@@ -48,12 +48,16 @@ export function normalizeConceptProposal(raw: unknown): ConceptProposal {
     // A partner with neither a name nor a type label carries no information.
     .filter((p) => p.name || p.org_type_label);
 
+  const hookRaw = asString(r.hook);
+
   return {
     scope: asString(r.scope),
     role,
     total_project_amount: asString(r.total_project_amount),
     estimated_match: asNullableString(r.estimated_match),
     project_term: asNullableString(r.project_term),
+    // A hook is a teaser, not the plan — clamp hard even though the prompt says <=25.
+    hook: hookRaw ? truncateWords(hookRaw, 30) : null,
     partners,
   };
 }

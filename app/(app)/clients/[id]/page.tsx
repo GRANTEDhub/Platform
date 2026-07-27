@@ -12,6 +12,7 @@ import {
   type DashStat,
 } from "@/components/clients/client-dashboard";
 import { deadlineDaysLeft } from "@/lib/report/shape";
+import { isUnconvertedLead } from "@/lib/leads/stage";
 import type { Client, CardDecision, Grant } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -47,6 +48,10 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   if (!client) notFound();
 
   const managed = !!client.account_managed;
+  // A prospect (un-converted lead): no portal, so its whole scored queue is staff's
+  // to review on the roadmap list — the "to review" action links there, not to the
+  // client-alerts triage swipe.
+  const isLead = isUnconvertedLead(client.pipeline_stage);
 
   const { data: cardRows } = await supabase
     .from("review_cards")
@@ -96,12 +101,26 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   // "to review" links straight there. For a standard client it's the Grant Alerts
   // swipe convenience (`alertsHref`). The client's own decision status is a separate,
   // clearly-labeled read-only line so it's never confused with staff's to-dos.
+  const matchStatus = client.initial_match_status;
+  const matchInProgress = matchStatus === "queued" || matchStatus === "running";
+  const confirmRerun = matchStatus === "complete" || matchStatus === "error" || cards.length > 0;
+
   const actionItems: DashActionItem[] = [];
+  // A fresh prospect with no report yet: prompt the AM to run matching (the button,
+  // top right). Once cards land, the "to review" item below takes over.
+  if (isLead && cards.length === 0 && !matchInProgress) {
+    actionItems.push({
+      id: "run-matches",
+      title: "Run grant matches to surface opportunities",
+      tag: "Use the button, top right",
+      priority: "high",
+    });
+  }
   if (toReview > 0) {
     actionItems.push({
       id: "to-review",
       title: `You have ${toReview} grant${toReview === 1 ? "" : "s"} to review`,
-      href: managed ? base : alertsHref,
+      href: managed || isLead ? base : alertsHref,
     });
   }
   if (counts.pending > 0) {
@@ -120,10 +139,6 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   if (client.next_step) {
     actionItems.push({ id: "next-step", title: client.next_step, tag: "From your team", priority: "high" });
   }
-
-  const matchStatus = client.initial_match_status;
-  const matchInProgress = matchStatus === "queued" || matchStatus === "running";
-  const confirmRerun = matchStatus === "complete" || matchStatus === "error" || cards.length > 0;
 
   const subLine =
     [client.org_type?.replace(/_/g, " "), client.location_city, client.location_state].filter(Boolean).join(" · ") || null;
@@ -155,7 +170,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
             clientId={client.id}
             inProgress={matchInProgress}
             confirmRerun={confirmRerun}
-            idleLabel="Refresh matches"
+            idleLabel={isLead ? "Run Grant Matches" : "Refresh matches"}
             tone="dark"
           />
         }

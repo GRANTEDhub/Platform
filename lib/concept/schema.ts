@@ -73,6 +73,13 @@ AMOUNTS & TERM:
 - project_term: the period of performance IF the NOFO states one (e.g. "3 years"). If the NOFO
   does not specify one, return null. Do not invent a term.
 
+HOOK (for a cold outreach email):
+- hook: ONE enticing sentence, 25 words max, of the shape "[client] could partner with
+  [partner] to [do X]" (or "[client] could pursue [grant] to [do X]" if leading alone).
+  High-level and inviting — a teaser to spark a conversation, NOT a summary of the scope.
+  Do not restate the budget, term, or the full plan. Null only if you genuinely can't
+  form one. This is the only part that may be shown to a prospect; keep it a hook.
+
 Write plainly and specifically to THIS client and THIS grant. Do not use em dashes.`;
 
 export const CONCEPT_PROPOSAL_TOOL = {
@@ -99,6 +106,11 @@ export const CONCEPT_PROPOSAL_TOOL = {
         type: ["string", "null"],
         description: "Period of performance if the NOFO states one; null otherwise.",
       },
+      hook: {
+        type: ["string", "null"],
+        description:
+          "A single enticing outreach teaser, 25 words max, shape '[client] could partner with [partner] to [do X]'. High-level and inviting, NOT a scope summary. A hook to spark a conversation. Null if none can be formed.",
+      },
       partners: {
         type: "array",
         items: {
@@ -117,7 +129,7 @@ export const CONCEPT_PROPOSAL_TOOL = {
         },
       },
     },
-    required: ["scope", "role", "total_project_amount", "estimated_match", "project_term", "partners"],
+    required: ["scope", "role", "total_project_amount", "estimated_match", "project_term", "hook", "partners"],
   },
 };
 

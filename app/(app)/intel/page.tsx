@@ -1,96 +1,69 @@
 import Link from "next/link";
+import { Radar, UserPlus, ArrowRight, type LucideIcon } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
 import { NavyHero } from "@/components/ui/navy-hero";
-import { Card } from "@/components/ui/card";
-import { ListGroup, ListGroupHeader, ListGroupRow } from "@/components/ui/list-group";
-import { Badge } from "@/components/ui/badge";
-import { getProspectFeed } from "@/lib/grants/gate";
 
 export const dynamic = "force-dynamic";
 
-// Prospects = Track 2 (BizDev), admin-only. A grant-centric FEED of opportunities
-// cleared by the client-first gate for prospecting. Each row links into its own
-// detail (/intel/[id]) where the grant facts, the carry-over note, the surfaced
-// prospects and the Prospect action live -- this list stays a lean index. Same
-// visual language as the Matches queue: navy hero + a single hairline ListGroup.
-export default async function IntelPage() {
+// Prospecting landing (Track 2, admin-only). Two doors:
+//   1. Grant prospecting — the grant-centric feed we've built (discover fitting
+//      non-client orgs per grant). -> /intel/grants
+//   2. Add prospect — stand up a prospective CLIENT (a lead: staff-only, no portal,
+//      no daily matching) and map grants for them. Reuses the Add Client/Prospect
+//      form in prospect mode. -> /clients/new?kind=prospect
+export default async function ProspectingLandingPage() {
   await requireAdmin();
-  const supabase = createClient();
-  const feed = await getProspectFeed(supabase);
 
   return (
     <div className="space-y-6 p-6">
       <NavyHero
         eyebrow="Prospecting"
-        title="Prospects"
-        subtitle="Track 2 — every scored grant, with its client-match status. A client match no longer holds a grant back: you see who matched and what they decided, then choose whether to reach out. Open a grant for its shred, surfaced prospects, and the Prospect action."
-      >
-        <div className="flex items-center gap-2 border-t border-white/12 pt-5 text-sm text-white/70">
-          <span className="font-semibold text-white">{feed.length}</span>
-          <span>grant{feed.length === 1 ? "" : "s"} in prospecting</span>
-        </div>
-      </NavyHero>
+        title="Prospecting"
+        subtitle="Two ways to prospect: work a grant to find fitting non-client orgs, or add a prospective client and map grants for them."
+      />
 
-      {feed.length === 0 ? (
-        <Card className="py-16 text-center text-sm text-muted-foreground">
-          No grants to prospect yet. A grant appears here once it has been scored
-          against the roster.
-        </Card>
-      ) : (
-        <ListGroup>
-          <ListGroupHeader
-            title="Cleared for prospecting"
-            right={
-              <span className="rounded-full bg-brand-navy px-3 py-1 text-xs font-semibold text-white">
-                {feed.length}
-              </span>
-            }
-          />
-          {feed.map((item) => {
-            const sub = [
-              item.grant.funder,
-              item.grant.submission_deadline ? `deadline ${item.grant.submission_deadline}` : null,
-            ]
-              .filter(Boolean)
-              .join(" · ");
-            // A client actively pursuing this grant is the one case worth a loud
-            // flag before we reach out to an outside org (potential conflict).
-            const pursuing = item.clientMatches.filter((c) => c.decision === "approved").length;
-            return (
-              <ListGroupRow key={item.grant.id}>
-                <div className="grid grid-cols-[1fr_auto] items-center gap-4">
-                  <div className="min-w-0">
-                    <Link
-                      href={`/intel/${item.grant.id}`}
-                      className="block truncate text-sm font-medium text-brand-navy hover:underline"
-                    >
-                      {item.grant.title || "Untitled opportunity"}
-                    </Link>
-                    <p className="mt-0.5 truncate text-xs text-muted-foreground">{sub || "—"}</p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    {item.prospectCards.length > 0 && (
-                      <span className="rounded-full bg-brand-navy px-3 py-1 text-xs font-semibold text-white">
-                        {item.prospectCards.length} prospect{item.prospectCards.length === 1 ? "" : "s"}
-                      </span>
-                    )}
-                    {item.clientMatches.length === 0 ? (
-                      <Badge variant="accent">Open — no client match</Badge>
-                    ) : pursuing > 0 ? (
-                      <Badge variant="warning">⚠ {pursuing} client{pursuing === 1 ? "" : "s"} pursuing</Badge>
-                    ) : (
-                      <Badge variant="secondary">
-                        {item.clientMatches.length} client{item.clientMatches.length === 1 ? "" : "s"} matched
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-              </ListGroupRow>
-            );
-          })}
-        </ListGroup>
-      )}
+      <div className="grid gap-5 sm:grid-cols-2">
+        <ProspectingCard
+          href="/intel/grants"
+          icon={Radar}
+          title="Grant prospecting"
+          body="Browse every scored grant and its client-match status, then discover fitting non-client orgs to reach out to."
+        />
+        <ProspectingCard
+          href="/intel/prospects/new"
+          icon={UserPlus}
+          title="Add prospect"
+          body="Add a prospective client — staff-only, no portal, no daily matching. Generate their grant report on demand, then review and send one-pagers."
+        />
+      </div>
     </div>
+  );
+}
+
+function ProspectingCard({
+  href,
+  icon: Icon,
+  title,
+  body,
+}: {
+  href: string;
+  icon: LucideIcon;
+  title: string;
+  body: string;
+}) {
+  return (
+    <Link href={href} className="group block">
+      <div className="flex h-full flex-col rounded-2xl border border-brand-navy/[0.06] bg-white p-6 shadow-soft transition hover:shadow-lift">
+        <span className="grid h-12 w-12 place-items-center rounded-xl bg-brand-navy text-white">
+          <Icon className="h-5 w-5" />
+        </span>
+        <h3 className="mt-4 text-[17px] font-semibold text-brand-navy">{title}</h3>
+        <p className="mt-1.5 flex-1 text-sm leading-relaxed text-muted-foreground">{body}</p>
+        <span className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-brand-orange">
+          Open
+          <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+        </span>
+      </div>
+    </Link>
   );
 }

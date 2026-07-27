@@ -8,9 +8,9 @@ import { MatchingConfig } from "./matching-config";
 import { NarrativeFields } from "@/components/intake/narrative-fields";
 import { narrativeFromClient } from "@/lib/intake/narrative";
 import { isUnconvertedLead } from "@/lib/leads/stage";
+import { ORG_TYPES } from "@/lib/clients/org-types";
 import type { Client } from "@/types/database";
 
-const ORG_TYPES = ["nonprofit", "local_government", "small_business", "higher_education"];
 // Client-only statuses. Prospect/lead state is driven by the kind toggle (a
 // prospect is written status='lead' + pipeline_stage='discovery_pending' server-
 // side), so it is not an option here.
@@ -54,6 +54,7 @@ export function ClientForm({
   client,
   action,
   submitLabel,
+  defaultKind,
 }: {
   client?: Client;
   // Mirrors actions.ts ClientActionResult: an expected validation failure resolves
@@ -63,14 +64,17 @@ export function ClientForm({
   // instead of as a 500 page.
   action: (formData: FormData) => Promise<{ error: string } | undefined>;
   submitLabel: string;
+  // Preselect the record type on CREATE (e.g. the "Add prospect" entry from the
+  // Prospecting landing passes "prospect"). Still user-changeable; ignored on EDIT.
+  defaultKind?: "client" | "prospect";
 }) {
   // Record type gates the whole form on CREATE (Option A): a NEW record starts with
-  // NO kind selected (null), so the user must choose client or prospect before the
-  // rest of the form appears -- no silent 'client' default to overlook. On EDIT the
-  // type is known, so derive it from the stored row (an un-converted lead is a
-  // prospect; otherwise a client) and show the full form immediately.
+  // NO kind selected (null) unless a defaultKind is passed, so the user must choose
+  // client or prospect before the rest of the form appears -- no silent 'client'
+  // default to overlook. On EDIT the type is known, so derive it from the stored row
+  // (an un-converted lead is a prospect; otherwise a client) and show it immediately.
   const initialKind: "client" | "prospect" | null = !client
-    ? null
+    ? defaultKind ?? null
     : isUnconvertedLead(client.pipeline_stage)
       ? "prospect"
       : "client";

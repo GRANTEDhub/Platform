@@ -12,6 +12,8 @@ import { signedUrl } from "@/lib/storage";
 import { ClientForm } from "../../client-form";
 import { SamRegistration } from "../../sam-registration";
 import { updateClientAction } from "../../actions";
+import { AddProspectForm } from "@/app/(app)/intel/prospects/add-prospect-form";
+import { isUnconvertedLead } from "@/lib/leads/stage";
 import type { Client, Invoice, ClientOverview } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -39,6 +41,21 @@ export default async function EditClientPage({ params }: { params: { id: string 
 
   const { data: client } = await supabase.from("clients").select("*").eq("id", params.id).single<Client>();
   if (!client) notFound();
+
+  // A prospect (un-converted lead) edits through the SAME lightweight form used to
+  // add it — not the full client form + admin rail (billing / portal / repository
+  // don't apply to a prospect). Early-return so those client-only queries are skipped.
+  if (isUnconvertedLead(client.pipeline_stage)) {
+    const prospectAction = updateClientAction.bind(null, client.id);
+    return (
+      <div>
+        <PageHeader title={`Edit ${client.name}`} />
+        <div className="max-w-2xl space-y-8 p-8">
+          <AddProspectForm client={client} action={prospectAction} submitLabel="Save changes" />
+        </div>
+      </div>
+    );
+  }
 
   const [{ data: overviewData }, { data: invoices }, { data: docRows }, { data: memberRows }] = await Promise.all([
     supabase.from("client_overview").select("*").eq("id", params.id).single(),

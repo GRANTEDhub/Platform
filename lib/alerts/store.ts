@@ -4,6 +4,7 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { uploadPdf, downloadPdf, removeObjects } from "@/lib/storage";
 import { mintAccessToken } from "@/lib/tokens";
 import { enrichAlert } from "./enrich";
+import { conceptHookForCard } from "@/lib/concept/store";
 import { buildAlertData, buildAlertEmailBody, buildProspectEmailBody } from "./data";
 import { senderFirstName } from "./sender";
 import { renderAlertPdf, renderHorizonPdf } from "./render";
@@ -116,7 +117,11 @@ export async function generateDraftAlert(
       const { data } = await db.from("profiles").select("full_name, email").eq("id", userId).maybeSingle();
       sender = data ?? null;
     }
-    emailBody = buildProspectEmailBody(ctx.grant, ctx.card, senderFirstName(sender), !!alertData.schedulingUrl);
+    // A LEAD (manual prospect) with a ready internal concept gets its one-line hook
+    // pre-filled into the cold email (a teaser, editable in the send modal). A Track-2
+    // prospect card has no concept, so it's skipped.
+    const conceptHook = ctx.isLead ? await conceptHookForCard(ctx.card.id) : null;
+    emailBody = buildProspectEmailBody(ctx.grant, ctx.card, senderFirstName(sender), !!alertData.schedulingUrl, false, conceptHook);
   } else {
     emailBody = buildAlertEmailBody(ctx.grant, ctx.card);
   }

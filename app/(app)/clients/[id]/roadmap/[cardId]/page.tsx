@@ -4,9 +4,13 @@ import { createClient } from "@/lib/supabase/server";
 import { ReportDetail, type ReportDetailCard } from "@/components/report/report-detail";
 import { ReleaseToClientBar } from "@/components/report/release-bar";
 import { ConceptProposalPanel } from "@/components/report/concept-proposal-panel";
+import { GenerateConceptButton } from "@/components/report/generate-concept-button";
+import { AlertSend } from "@/app/(app)/review/[id]/alert-send";
 import { getConceptProposal } from "@/lib/concept/store";
+import { getSentAlertForCard } from "@/lib/alerts/sent-status";
 import { HubShell } from "@/components/layout/hub-background";
 import { deciderLabel } from "@/lib/report/shape";
+import { isUnconvertedLead } from "@/lib/leads/stage";
 import type { GrantDetailFields } from "@/components/grants/grant-detail";
 import type { Client } from "@/types/database";
 
@@ -50,9 +54,13 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   const g = card.grants;
   const { data: client } = await supabase
     .from("clients")
-    .select("name, account_managed")
+    .select("name, account_managed, pipeline_stage")
     .eq("id", params.id)
-    .single<Pick<Client, "name" | "account_managed">>();
+    .single<Pick<Client, "name" | "account_managed" | "pipeline_stage">>();
+  // A prospect (un-converted lead) has no portal: the terminal action is a cold
+  // one-pager send, not a release.
+  const isLead = isUnconvertedLead(client?.pipeline_stage);
+  const sentAlert = isLead ? await getSentAlertForCard(params.cardId) : null;
   const decidedBy = deciderLabel(
     card.decision,
     card.decided_by,
@@ -61,10 +69,12 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
     client?.name || "the client",
   );
 
-  // Concept proposal is a premium (account-managed) artifact for internal AM
-  // review only -- fetched + rendered here, never on the client's own copy of
-  // this surface. Generated on the SME interested pass (0059 / migration 0060).
-  const conceptProposal = client?.account_managed ? await getConceptProposal(params.cardId) : null;
+  // Concept proposal is an INTERNAL AM artifact — for a premium client (a paid
+  // deliverable they later see in the portal) OR a prospect (staff prep only: it is
+  // NEVER emailed to the prospect; per policy the prospect gets the one-pager, not
+  // the paid concept). Rendered on this staff surface, never on a client's own copy.
+  const showConcept = !!client?.account_managed || isLead;
+  const conceptProposal = showConcept ? await getConceptProposal(params.cardId) : null;
 
   return (
     <HubShell variant="map">
@@ -84,11 +94,26 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
               released={!!card.sme_released_at}
               backHref={`/clients/${params.id}/roadmap`}
             />
+          ) : isLead ? (
+            // Two actions, side by side: send the one-pager, or (internal) generate a
+            // concept proposal. The concept button generates in one click; the result
+            // renders in the panel below. It is never emailed to the prospect.
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <AlertSend
+                cardId={params.cardId}
+                sentAt={sentAlert?.sentAt ?? null}
+                sentTo={sentAlert?.sentTo ?? null}
+                contactName={client?.name ?? null}
+              />
+              <GenerateConceptButton cardId={params.cardId} status={conceptProposal?.status ?? null} />
+            </div>
           ) : undefined
         }
         afterContent={
-          client?.account_managed ? (
-            <ConceptProposalPanel cardId={params.cardId} initial={conceptProposal} />
+          showConcept ? (
+            <div id="concept" className="scroll-mt-24">
+              <ConceptProposalPanel cardId={params.cardId} initial={conceptProposal} />
+            </div>
           ) : undefined
         }
       />

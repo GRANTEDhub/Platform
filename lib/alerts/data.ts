@@ -222,6 +222,10 @@ export function buildProspectEmailBody(
   senderFirstName: string | null,
   hasSchedulingLink: boolean,
   followUp = false,
+  // Optional one-line teaser from an internally-generated concept proposal. A HOOK
+  // (never the full concept), woven in to spark a conversation. Editable in the send
+  // modal like the rest of the body. Omitted when there's no concept.
+  conceptHook: string | null = null,
 ): string {
   const name = senderFirstName?.trim();
   // Cold = first-contact intro naming the sender + the firm credential block below.
@@ -238,6 +242,7 @@ export function buildProspectEmailBody(
     ? "The full alert, including a link to schedule a call, is attached as a one-page PDF."
     : "The full alert is attached as a one-page PDF.";
   const lines = ["Hello,", "", intro, "", grantAnnouncement(g, card), ""];
+  if (conceptHook?.trim()) lines.push(`One idea to explore: ${conceptHook.trim()}`, ""); // teaser hook, editable
   if (!followUp) lines.push(PROSPECT_CREDENTIAL, ""); // first-contact credential; dropped on a follow-up
   lines.push(pdfLine, "", "Best,", "GRANTED");
   return lines.join("\n");

@@ -119,6 +119,16 @@ export async function saveConceptProposalEdits(
   return { error: error?.message ?? null };
 }
 
+// The one-line outreach hook from a READY concept proposal, or null. Used by the
+// alert draft to pre-fill a prospect's cold email with a teaser (never the full
+// concept). Null unless a concept exists AND is ready AND carries a hook.
+export async function conceptHookForCard(cardId: string): Promise<string | null> {
+  const row = await getConceptProposal(cardId);
+  if (!row || row.status !== "ready") return null;
+  const hook = row.proposal_data?.hook;
+  return typeof hook === "string" && hook.trim() ? hook.trim() : null;
+}
+
 // GRANTED-tracked ecosystem orgs in the client's state that could serve as named
 // partners (each prospects row has a verified source_url). A simple state-match
 // shortlist -- the model judges actual fit and is free to prefer the client's own
