@@ -1,9 +1,9 @@
-// Track 2 discovery — the IntellEngine daily move, in code: read a grant's
-// existing ideal applicant profile, run one national Brave search for fitting
-// non-client orgs, extract real candidates GROUNDED in the actual results, apply
-// a geographic footprint rule (Arkansas OR broad reach; drop narrow non-Arkansas
-// orgs), score the survivors with the existing engine, and write prospects +
-// prospect cards for the qualifiers. Never re-shreds. Fails gracefully like USASpending.
+// Track 2 discovery — the IntellEngine daily move, in code: read a grant's ideal
+// applicant profile, run several Brave searches for the ELIGIBLE ORG TYPE (who can
+// apply) across Arkansas + nationally, extract real candidates GROUNDED in the
+// actual results, split them into Arkansas / non-Arkansas buckets and score up to
+// five of each with the existing engine, then write prospects + prospect cards for
+// the qualifiers (fit >= moderate). Never re-shreds. Fails gracefully like USASpending.
 //
 // Hallucination guards (both structural, not prompt trust):
 //   1. source_url must be one Brave actually returned (code check below).
@@ -102,24 +102,44 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
   const profile = grant.ideal_applicant_profile;
   if (!profile) return { ok: false, reason: "No ideal applicant profile -- re-shred the grant first" };
 
-  // TWO searches so both home-market and broad-footprint orgs surface: an
-  // Arkansas-focused pass (the reliable home-market prospects -- essential for
-  // place-based grants, whose applicants are inherently local) and a national pass
-  // (broad / multi-state orgs). The footprint rule below then keeps AR + broad and
-  // drops narrow non-Arkansas. A single query can't serve both: a purely national
-  // query surfaces out-of-state locals the filter then discards (leaving nothing on
-  // a place-based grant), while a purely Arkansas query misses national orgs.
+  // Hunt for the APPLICANT ORG TYPE + geography (who can apply), NOT the grant's
+  // funded activity -- a topical query ("houses of worship security") returns pages
+  // ABOUT the grant, not candidate orgs, so it barely scratches a large applicant
+  // pool. Seeds come from the eligible entity types and the profile's ideal prime
+  // shapes (core_funded_role as a fallback); each seed gets an Arkansas pass and a
+  // national pass, so both home-market and broad orgs surface for the two buckets.
   const sector = (grant.focus_areas || [])[0] || "";
-  const base = [profile.core_funded_role, sector].filter(Boolean).join(" ");
-  const queries = [`${base} Arkansas organization`.trim(), `${base} organization`.trim()];
+  const seeds = Array.from(
+    new Set(
+      [
+        ...(grant.eligible_entity_types ?? []),
+        ...(profile.archetypes ?? []).map((a) => a.ideal_prime_shape || a.label),
+        profile.core_funded_role,
+      ]
+        .filter((s): s is string => !!s && s.trim().length > 0)
+        .map((s) => s.trim()),
+    ),
+  ).slice(0, 3);
+  if (seeds.length === 0) seeds.push("nonprofit organization");
+
+  const queries = Array.from(
+    new Set(
+      seeds.flatMap((s) => [
+        [s, sector, "in Arkansas"].filter(Boolean).join(" "),
+        [s, sector].filter(Boolean).join(" "),
+      ]),
+    ),
+  ).slice(0, 6);
   const searched = queries.join(" | ");
 
+  // Parallel; a search that fails / rate-limits just drops out (graceful).
   const searches = await Promise.all(queries.map((q) => braveSearch(q)));
   const okSearches = searches.filter((s) => s.ok);
   if (okSearches.length === 0) {
     return { ok: false, reason: `Search failed: ${searches[0]?.note ?? "unknown"}`, searched };
   }
-  // Merge + dedupe results by URL across both passes.
+  // Merge + dedupe results by URL across all passes; cap so the extraction prompt
+  // stays bounded even when several passes each return a full page.
   const urlSeen = new Set<string>();
   const mergedResults = okSearches
     .flatMap((s) => s.results)
@@ -128,7 +148,8 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
       if (urlSeen.has(u)) return false;
       urlSeen.add(u);
       return true;
-    });
+    })
+    .slice(0, 45);
   if (mergedResults.length === 0) {
     return { ok: true, searched, candidates: 0, grounded: 0, carded: 0 };
   }
@@ -137,7 +158,7 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
   const anthropic = getAnthropicClient();
   const resp = await anthropic.messages.create({
     model: MODEL,
-    max_tokens: 2000,
+    max_tokens: 3500,
     temperature: 0,
     system: EXTRACT_SYSTEM,
     tools: [
