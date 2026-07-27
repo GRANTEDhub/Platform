@@ -47,6 +47,7 @@ import {
   directoryCapabilitySummary,
   directoryOrgType,
 } from "@/lib/grants/eo-directory";
+import { deriveTargetEntityTypes, entityTypeLabel } from "@/lib/grants/entity-types";
 import { createServiceClient } from "@/lib/supabase/server";
 import type { Grant, Client } from "@/types/database";
 
@@ -59,6 +60,7 @@ export interface DiscoverResult {
   candidates?: number; // distinct candidates found across sources (web + awardees + directory)
   grounded?: number; // candidates actually scored (bucketed, up to 5 per bucket)
   carded?: number; // qualifiers (fit >= 2) written as prospect cards
+  targeted?: string[]; // entity type(s) identified as eligible primes and targeted this run
 }
 
 // A candidate org from either source. name/source_url/capability_summary are
@@ -248,7 +250,14 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
   // two sources miss); no revenue gate; sampled across the result set for a size spread.
   // Degrades to [] on any failure. Not URL-guarded -- source_url is the authoritative
   // ProPublica/IRS org record. ──
-  const nteeIds = await deriveNteeGroups(grant);
+  // Entity-type targeting (#208 follow-up): identify the eligible PRIME type(s) and only
+  // run the nonprofit directory when a nonprofit can actually prime -- skip it for a
+  // city- or IHE-only grant so we never surface ineligible charities. Empty
+  // classification keeps the prior behavior (never regress to zero). The directory
+  // already returns ALL 501(c) subsections, not just (c)(3) charities.
+  const targetTypes = await deriveTargetEntityTypes(grant);
+  const wantNonprofit = targetTypes.length === 0 || targetTypes.includes("nonprofit");
+  const nteeIds = wantNonprofit ? await deriveNteeGroups(grant) : [];
   const directoryOrgs = nteeIds.length > 0 ? await findDirectoryOrgs(nteeIds, { state: "AR" }) : [];
   // The directory is the STRICTLY-ADDITIVE source (the orgs the other two miss), so
   // drop any org already surfaced as an awardee or web hit -- their richer, more
@@ -416,7 +425,14 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
     carded += results.reduce((sum, n) => sum + n, 0);
   }
 
-  return { ok: true, searched, candidates: distinctCount, grounded: grounded.length, carded };
+  return {
+    ok: true,
+    searched,
+    candidates: distinctCount,
+    grounded: grounded.length,
+    carded,
+    targeted: targetTypes.map(entityTypeLabel),
+  };
 }
 
 // Round-robin merge: take element 0 of every group, then element 1 of every group, and
