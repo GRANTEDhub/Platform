@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { ORG_TYPES } from "@/lib/clients/org-types";
 
 // A deliberately LIGHT prospect intake — just the fields needed to map a few grants,
 // separate from the full Add Client/Prospect form. Posts to the SAME createClientAction
@@ -8,8 +9,6 @@ import { useState } from "react";
 // staff-only, no portal, no daily matching — matched on demand via Generate report.
 // Mirrors ClientForm's submit pattern (await the action; a successful create redirects
 // to the new dashboard and unmounts this, so we only reach past the await on an error).
-
-const ORG_TYPES = ["nonprofit", "local_government", "small_business", "higher_education"];
 
 const inputCls = "flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm";
 const labelCls = "text-[11px] font-medium uppercase tracking-wide text-muted-foreground";

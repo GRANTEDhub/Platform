@@ -8,9 +8,9 @@ import { MatchingConfig } from "./matching-config";
 import { NarrativeFields } from "@/components/intake/narrative-fields";
 import { narrativeFromClient } from "@/lib/intake/narrative";
 import { isUnconvertedLead } from "@/lib/leads/stage";
+import { ORG_TYPES } from "@/lib/clients/org-types";
 import type { Client } from "@/types/database";
 
-const ORG_TYPES = ["nonprofit", "local_government", "small_business", "higher_education"];
 // Client-only statuses. Prospect/lead state is driven by the kind toggle (a
 // prospect is written status='lead' + pipeline_stage='discovery_pending' server-
 // side), so it is not an option here.
