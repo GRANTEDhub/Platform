@@ -102,16 +102,35 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
   const profile = grant.ideal_applicant_profile;
   if (!profile) return { ok: false, reason: "No ideal applicant profile -- re-shred the grant first" };
 
-  // One lean, national query built from the profile. No Arkansas bias in the
-  // search itself -- the footprint rule below (Arkansas OR broad reach; drop
-  // narrow non-Arkansas) does the geographic scoping.
+  // TWO searches so both home-market and broad-footprint orgs surface: an
+  // Arkansas-focused pass (the reliable home-market prospects -- essential for
+  // place-based grants, whose applicants are inherently local) and a national pass
+  // (broad / multi-state orgs). The footprint rule below then keeps AR + broad and
+  // drops narrow non-Arkansas. A single query can't serve both: a purely national
+  // query surfaces out-of-state locals the filter then discards (leaving nothing on
+  // a place-based grant), while a purely Arkansas query misses national orgs.
   const sector = (grant.focus_areas || [])[0] || "";
-  const query = [profile.core_funded_role, sector, "organization"].filter(Boolean).join(" ");
+  const base = [profile.core_funded_role, sector].filter(Boolean).join(" ");
+  const queries = [`${base} Arkansas organization`.trim(), `${base} organization`.trim()];
+  const searched = queries.join(" | ");
 
-  const search = await braveSearch(query);
-  if (!search.ok) return { ok: false, reason: `Search failed: ${search.note ?? "unknown"}`, searched: query };
-  if (search.results.length === 0) {
-    return { ok: true, searched: query, candidates: 0, grounded: 0, carded: 0 };
+  const searches = await Promise.all(queries.map((q) => braveSearch(q)));
+  const okSearches = searches.filter((s) => s.ok);
+  if (okSearches.length === 0) {
+    return { ok: false, reason: `Search failed: ${searches[0]?.note ?? "unknown"}`, searched };
+  }
+  // Merge + dedupe results by URL across both passes.
+  const urlSeen = new Set<string>();
+  const mergedResults = okSearches
+    .flatMap((s) => s.results)
+    .filter((r) => {
+      const u = r.url.trim().replace(/\/+$/, "").toLowerCase();
+      if (urlSeen.has(u)) return false;
+      urlSeen.add(u);
+      return true;
+    });
+  if (mergedResults.length === 0) {
+    return { ok: true, searched, candidates: 0, grounded: 0, carded: 0 };
   }
 
   // Extract candidate orgs grounded in the real results.
@@ -154,7 +173,7 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
     messages: [
       {
         role: "user",
-        content: `IDEAL APPLICANT PROFILE:\n${JSON.stringify(profile, null, 2)}\n\nSEARCH RESULTS:\n${search.results
+        content: `IDEAL APPLICANT PROFILE:\n${JSON.stringify(profile, null, 2)}\n\nSEARCH RESULTS:\n${mergedResults
           .map((r, i) => `${i + 1}. ${r.title}\n${r.url}\n${r.description}`)
           .join("\n\n")}`,
       },
@@ -162,7 +181,7 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
   });
   const toolUse = resp.content.find((b) => b.type === "tool_use");
   if (!toolUse || toolUse.type !== "tool_use") {
-    return { ok: true, searched: query, candidates: 0, grounded: 0, carded: 0 };
+    return { ok: true, searched, candidates: 0, grounded: 0, carded: 0 };
   }
   const extracted = ((toolUse.input as { candidates?: Candidate[] }).candidates ?? []);
 
@@ -170,7 +189,7 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
   // A plausible-but-unreturned URL is rejected -- the model cannot pass through
   // a link we did not actually fetch. (GUARD 2 is the NOT NULL column.)
   const norm = (u: string) => u.trim().replace(/\/+$/, "").toLowerCase();
-  const resultUrls = new Set(search.results.map((r) => norm(r.url)));
+  const resultUrls = new Set(mergedResults.map((r) => norm(r.url)));
 
   // Dedup: skip orgs that match an existing client (we do not prospect our own
   // roster) or a prospect already carded on this grant; dedup within the run.
@@ -278,7 +297,7 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
     carded += results.reduce((sum, n) => sum + n, 0);
   }
 
-  return { ok: true, searched: query, candidates: extracted.length, grounded: grounded.length, carded };
+  return { ok: true, searched, candidates: extracted.length, grounded: grounded.length, carded };
 }
 
 // Adapt a discovered prospect into the Client shape the scorer reads. Most
