@@ -14,6 +14,7 @@ import {
   Receipt,
   FileSignature,
   TrendingUp,
+  MessageSquareText,
   Settings,
   type LucideIcon,
 } from "lucide-react";
@@ -37,6 +38,7 @@ const ICONS: Record<string, LucideIcon> = {
   invoices: Receipt,
   contracts: FileSignature,
   sales: TrendingUp,
+  feedback: MessageSquareText,
   settings: Settings,
 };
 
