@@ -5,10 +5,10 @@ import { createClient } from "@/lib/supabase/server";
 import { PageBackdrop } from "@/components/layout/page-backdrop";
 import {
   ClientDashboard,
-  type DashActionItem,
   type DashStat,
 } from "@/components/clients/client-dashboard";
 import { deadlineDaysLeft } from "@/lib/report/shape";
+import { deriveClientNotifications } from "@/lib/portal/notifications";
 import type { Client, CardDecision, Grant } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -65,8 +65,16 @@ export default async function PortalHome() {
     approved: cards.filter((c) => c.decision === "approved").length,
     passed: cards.filter((c) => c.decision === "passed").length,
   };
-  const newAlerts = cards.filter((c) => c.interested_at === null && c.decision !== "passed").length;
   const nonPassed = cards.filter((c) => c.decision !== "passed");
+  // Action items come from the shared derivation the header notification bell
+  // also uses -- one source of truth, so the dashboard and the bell can never
+  // disagree. Pass the unfiltered cards; derive re-applies the same
+  // account-managed sme_released_at gate internally.
+  const { items: actionItems } = deriveClientNotifications({
+    cards: allCards,
+    managed,
+    nextStep: client?.next_step ?? null,
+  });
 
   // Upcoming deadlines (real) among live matches -- drives the deadline stat + the
   // action-items list.
@@ -85,17 +93,6 @@ export default async function PortalHome() {
   ];
 
   const base = "/portal/grants";
-  const alertsHref = "/portal/triage";
-  const actionItems: DashActionItem[] = [];
-  if (newAlerts > 0) {
-    actionItems.push({ id: "grant-alerts", title: `You have ${newAlerts} grant${newAlerts === 1 ? "" : "s"} to review`, href: alertsHref });
-  }
-  if (counts.pending > 0) {
-    actionItems.push({ id: "grant-report-pending", title: `${counts.pending} grant${counts.pending === 1 ? "" : "s"} awaiting a decision`, href: base });
-  }
-  if (client?.next_step) {
-    actionItems.push({ id: "next-step", title: client.next_step, tag: "From your team", priority: "high" });
-  }
 
   const subLine =
     [client?.org_type?.replace(/_/g, " "), client?.location_city, client?.location_state].filter(Boolean).join(" · ") || null;
