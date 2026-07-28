@@ -7,50 +7,31 @@ import { HubShell } from "@/components/layout/hub-background";
 import { IntellEngineLogo } from "@/components/intellengine/logo";
 import { IntellEngineProgress } from "@/components/intellengine/progress-bar";
 import { ContinueButton } from "@/components/intellengine/step-nav";
+import type { ScopeSeed } from "@/lib/intellengine/prepopulate";
 
 const SCOPE_WORD_LIMIT = 500;
 
 type Partner = { name: string; role: string; description: string };
 
-const INITIAL_PARTNERS: Partner[] = [
-  {
-    name: "Regional Health Network",
-    role: "Clinical services partner",
-    description: "Provides licensed clinical staff and medical oversight for the mobile unit.",
-  },
-  {
-    name: "County Transit Authority",
-    role: "Logistics partner",
-    description: "Supplies the vehicle and coordinates weekly route scheduling.",
-  },
-];
-
 // Step 2 of 3 -- the interactive concept-proposal editor. Lets the client
 // adjust the high-level shape (scope, role, partners, budget) before
-// IntellEngine drafts the full section-by-section proposal. No screenshot
-// existed for this step in the source design, so it's built fresh using the
-// same design language as the rest of the flow. Local state only -- nothing
-// persists yet, since there's no backend to save it to in this shell pass.
+// IntellEngine drafts the full section-by-section proposal, using the same
+// design language as the rest of the flow.
 //
-// FUTURE WIRING (not built yet -- tracked here per Shannon's note): this
-// page's fields are exactly what the concept-proposal generator will
-// eventually produce/consume for a client -- scope of work (<500 words),
-// estimated budget, the client's role, partners (named or unnamed) with a
-// role + 1-2 sentence description each, plus free-form notes and supporting
-// files as additional generation input. Once that generator exists, this
-// page should auto-populate from its output instead of the hardcoded
-// defaults below, while staying exactly as editable as it is now.
+// Initial values come from `seed` (built server-side in page.tsx via
+// scopeSeedFrom): the released concept proposal the GRANTED team already scoped
+// for this client + grant when available, else a light grant-derived hint, else
+// blank for a from-scratch proposal. Everything stays fully editable.
 //
-// Uploaded files are NOT actually stored anywhere -- there's no backend at
-// all in this shell pass. Only the filename is kept (to make the
-// interaction feel real), never implying the file has been received/saved.
-export default function IntellEngineScopeClient({ draftId }: { draftId?: string }) {
-  const [scope, setScope] = useState(
-    "Establish a mobile health clinic that visits underserved neighborhoods three times weekly, providing preventive care, health screenings, and chronic disease management.",
-  );
-  const [role, setRole] = useState<"prime" | "partner">("prime");
-  const [budget, setBudget] = useState("250,000 - 400,000");
-  const [partners, setPartners] = useState<Partner[]>(INITIAL_PARTNERS);
+// Editor state is still local -- persisting these edits back to the draft is the
+// remaining follow-up (the intellengine_drafts row holds only structural progress
+// today, per migration 0062). Uploaded files keep only the filename; nothing is
+// stored yet, never implying the file was received.
+export default function IntellEngineScopeClient({ draftId, seed }: { draftId?: string; seed: ScopeSeed }) {
+  const [scope, setScope] = useState(seed.scope);
+  const [role, setRole] = useState<"prime" | "partner">(seed.role);
+  const [budget, setBudget] = useState(seed.budget);
+  const [partners, setPartners] = useState<Partner[]>(seed.partners);
   const [draftPartner, setDraftPartner] = useState({ name: "", role: "", description: "" });
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState<Partner>({ name: "", role: "", description: "" });
@@ -120,6 +101,13 @@ export default function IntellEngineScopeClient({ draftId }: { draftId?: string 
       </div>
 
       <div className="mx-auto mt-8 max-w-4xl space-y-6">
+        {seed.origin !== "scratch" && (
+          <div className="rounded-xl border border-brand-navy/10 bg-brand-cream/60 px-4 py-3 text-[13px] text-brand-navy/80">
+            {seed.origin === "concept"
+              ? "Prepopulated from the concept proposal your GRANTED team scoped for this grant — edit anything below."
+              : "Starting from this grant's details — add your scope of work below."}
+          </div>
+        )}
         <div className="rounded-2xl bg-white p-6 shadow-grounded">
           <h2 className="font-serif text-[19px] font-semibold text-brand-navy">Project scope of work</h2>
           <p className="mt-1 text-[13px] text-muted-foreground">
