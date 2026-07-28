@@ -212,10 +212,17 @@ export function ClientForm({
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
           Location
         </h2>
-        <div className="grid gap-4 sm:grid-cols-3">
+        <Field
+          label="Street address"
+          name="location_street"
+          defaultValue={client?.location_street}
+          placeholder="e.g. 500 W Markham St (enables tract-level need + eligibility data)"
+        />
+        <div className="grid gap-4 sm:grid-cols-4">
           <Field label="City" name="location_city" defaultValue={client?.location_city} />
           <Field label="County" name="location_county" defaultValue={client?.location_county} />
           <Field label="State" name="location_state" defaultValue={client?.location_state ?? "AR"} />
+          <Field label="ZIP" name="location_zip" defaultValue={client?.location_zip} />
         </div>
       </section>
 
