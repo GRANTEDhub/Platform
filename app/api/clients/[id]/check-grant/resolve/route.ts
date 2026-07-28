@@ -30,7 +30,20 @@ type Candidate = {
   status: string;
   ready: boolean; // status === 'complete' -> fully shredded, safe to score cleanly
   reason?: string | null; // why this matched the described need (need-out path only)
+  onRoadmap?: boolean; // already matched to THIS client (a review_card exists)
 };
+
+type DB = ReturnType<typeof createServiceClient>;
+
+// Flag candidates already on THIS client's roadmap so staff see "we've already matched
+// this one" instead of re-checking a known match. Best-effort; never throws.
+async function flagOnRoadmap(db: DB, clientId: string, candidates: Candidate[]): Promise<void> {
+  const ids = candidates.map((c) => c.grantId);
+  if (ids.length === 0) return;
+  const { data } = await db.from("review_cards").select("grant_id").eq("client_id", clientId).in("grant_id", ids);
+  const matched = new Set((data ?? []).map((r) => (r as { grant_id: string }).grant_id));
+  for (const c of candidates) if (matched.has(c.grantId)) c.onRoadmap = true;
+}
 
 function toCandidate(row: Record<string, unknown>): Candidate {
   const status = String(row.status ?? "");
@@ -67,7 +80,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (oppId) {
       const { data } = await db.from("grants").select(CANDIDATE_COLS).ilike("source_url", `%${oppId}%`).limit(1);
       const row = (data ?? [])[0];
-      if (row) return NextResponse.json({ kind: "url", candidates: [toCandidate(row)] });
+      if (row) {
+        const cands = [toCandidate(row)];
+        await flagOnRoadmap(db, params.id, cands);
+        return NextResponse.json({ kind: "url", candidates: cands });
+      }
       return NextResponse.json({
         kind: "url",
         candidates: [],
@@ -130,6 +147,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     merged.push({ ...toCandidate(g as unknown as Record<string, unknown>), reason: m.reason });
   }
   const candidates = merged.slice(0, 8);
+  await flagOnRoadmap(db, params.id, candidates);
   return NextResponse.json({
     kind: "name",
     candidates,

@@ -24,6 +24,7 @@ type Candidate = {
   status: string;
   ready: boolean;
   reason?: string | null; // why it matched the described need (need-out path)
+  onRoadmap?: boolean; // already matched to this client
 };
 
 type Verdict = "fit" | "weak" | "no" | "excluded";
@@ -167,7 +168,14 @@ export function CheckGrant({ clientId, clientName }: { clientId: string; clientN
               className="flex w-full items-center justify-between gap-4 rounded-lg border border-brand-navy/10 bg-white px-4 py-3 text-left transition hover:border-brand-navy/25"
             >
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-brand-navy">{c.title ?? "Untitled grant"}</p>
+                <div className="flex items-center gap-2">
+                  <p className="truncate text-sm font-medium text-brand-navy">{c.title ?? "Untitled grant"}</p>
+                  {c.onRoadmap && (
+                    <span className="shrink-0 rounded-full bg-brand-navy/[0.06] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-navy">
+                      On roadmap
+                    </span>
+                  )}
+                </div>
                 <p className="truncate text-xs text-muted-foreground">
                   {c.funder ?? "Unknown funder"}
                   {c.submission_deadline ? ` · due ${c.submission_deadline}` : ""}

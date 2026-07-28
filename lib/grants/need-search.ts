@@ -28,11 +28,13 @@ export type NeedPoolGrant = Pick<
 
 export type NeedMatch = { grantId: string; reason: string };
 
-// Cap the pool fed to the reranker. forecast-relevance ranks ~240 summaries in one
-// cheap call, so a few hundred is comfortable; we bound it and LOG when it bites so a
-// truncation is never silent (older grants beyond the cap simply aren't need-ranked --
-// an exact name/FON still resolves via the direct ledger match in the resolve route).
-const POOL_CAP = 300;
+// Backstop cap on the pool fed to the reranker. Set well ABOVE the whole active pool
+// (the ledger is a few hundred grants; forecast-relevance already ranks ~240 in one
+// cheap call), so in practice it never bites -- a still-open grant is never silently
+// dropped for being older, which is the miss a described-need search must not have. The
+// cap remains only as a runaway backstop, and we LOG if it ever engages so a future
+// ledger that outgrows it is visible, not silent.
+const POOL_CAP = 800;
 
 // The open, scoreable, domestic pool: fully shredded (status complete), domestic, with
 // a usable description, and not past a known deadline (keep null/unparseable deadlines
