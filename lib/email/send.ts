@@ -214,6 +214,51 @@ export async function sendGrantAlertEmail(opts: {
   return { to, subject, id: data?.id ?? null };
 }
 
+// Notifies an account-managed client that their team has released a new grant
+// match to their portal -- a lightweight transactional notice, NOT the PDF
+// one-pager (that's sendGrantAlertEmail). Body = a short greeting + a deep link
+// into the client's Grant Alerts view. Same GRANTED identity/gating contract as
+// the other sends: callers MUST pre-check canSendOutreach(); the testing-mode
+// allowlist is hard-backstopped here so a release notice never reaches a real
+// client from a test deploy.
+export async function sendGrantReleaseEmail(opts: {
+  to: string;
+  contactName?: string | null;
+  grantTitle: string | null;
+  url: string;
+}): Promise<SentResult> {
+  const to = (opts.to ?? "").trim();
+  if (!isDeliverableEmail(to)) throw new Error(`No deliverable recipient: "${opts.to ?? "(null)"}"`);
+  if (!isRecipientAllowed(to)) {
+    throw new Error(`Recipient not on send allowlist (testing mode): ${to}`);
+  }
+  if (!opts.url?.trim()) throw new Error("No deep link configured");
+
+  const subject = `New grant match ready to review | ${subjectGrantName(opts.grantTitle)}`;
+  const greeting = opts.contactName ? `Hi ${opts.contactName},` : "Hello,";
+  const text = [
+    greeting,
+    "",
+    `Your GRANTED team has flagged a new grant match for you to review: ${opts.grantTitle?.trim() || "a new opportunity"}.`,
+    "",
+    "Take a look and let us know whether it's worth pursuing:",
+    opts.url.trim(),
+    "",
+    "— GRANTED",
+  ].join("\n");
+
+  const resend = new Resend(process.env.RESEND_PLATFORM_API);
+  const { data, error } = await resend.emails.send({
+    from: FROM,
+    to,
+    replyTo: REPLY_TO,
+    subject,
+    text,
+  });
+  if (error) throw new Error(`Resend send failed: ${error.message}`);
+  return { to, subject, id: data?.id ?? null };
+}
+
 // Sends the signed-contract PDF to the client as an attachment (their permanent
 // copy). Same GRANTED identity/gating contract as the other sends: callers MUST
 // pre-check canSendEmail(); the testing-mode allowlist is hard-backstopped here
