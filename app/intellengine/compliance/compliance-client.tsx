@@ -2,11 +2,12 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, AlertTriangle, CheckCircle2, FileText } from "lucide-react";
+import { ArrowLeft, AlertTriangle, CheckCircle2, FileText, Info, ShieldAlert, type LucideIcon } from "lucide-react";
 import { HubShell } from "@/components/layout/hub-background";
 import { IntellEngineLogo } from "@/components/intellengine/logo";
 import { IntellEngineProgress } from "@/components/intellengine/progress-bar";
 import { ContinueButton } from "@/components/intellengine/step-nav";
+import type { EligibilityLevel, EligibilityVerdict } from "@/lib/intellengine/eligibility";
 
 type DocStatus = "verified" | "needs_update";
 type Doc = { name: string; lastUpdated: string; status: DocStatus };
@@ -26,7 +27,13 @@ const INITIAL_DOCS: Doc[] = [
   { name: "Mission Statement", lastUpdated: "2026-02-01", status: "verified" },
 ];
 
-export default function IntellEngineComplianceClient({ draftId }: { draftId?: string }) {
+export default function IntellEngineComplianceClient({
+  draftId,
+  verdict,
+}: {
+  draftId?: string;
+  verdict: EligibilityVerdict | null;
+}) {
   const [docs, setDocs] = useState(INITIAL_DOCS);
   const needsUpdate = docs.filter((d) => d.status === "needs_update").length;
 
@@ -57,6 +64,8 @@ export default function IntellEngineComplianceClient({ draftId }: { draftId?: st
       </div>
 
       <div className="mx-auto mt-8 max-w-3xl space-y-6">
+        {verdict && <EligibilityCard verdict={verdict} />}
+
         <div className="rounded-2xl bg-white p-6 shadow-grounded">
           <h2 className="font-serif text-[19px] font-semibold text-brand-navy">Organization Profile</h2>
           <p className="mt-1.5 text-sm text-muted-foreground">
@@ -153,6 +162,72 @@ function DocCard({ doc, onVerify }: { doc: Doc; onVerify: (bumpDate: boolean) =>
       {/* Not wired to real storage yet -- selecting a file just simulates the
           document being re-verified, matching the shell scope of this pass. */}
       <input ref={fileRef} type="file" className="hidden" onChange={() => onVerify(true)} />
+    </div>
+  );
+}
+
+// The real per-client eligibility read (lib/intellengine/eligibility.ts, computed
+// server-side from the grant's NOFO fields). Deliberately advisory: it surfaces a
+// verdict + the NOFO's own eligibility facts but NEVER gates the Continue button
+// (see the PR #24 lesson -- a blunt block buried eligible nonprofits).
+const LEVEL_STYLES: Record<
+  EligibilityLevel,
+  { label: string; card: string; title: string; iconColor: string; icon: LucideIcon }
+> = {
+  eligible: { label: "Likely eligible", card: "border-emerald-200 bg-emerald-50", title: "text-emerald-900", iconColor: "text-emerald-600", icon: CheckCircle2 },
+  caution: { label: "Confirm eligibility", card: "border-amber-200 bg-amber-50", title: "text-amber-900", iconColor: "text-amber-500", icon: AlertTriangle },
+  ineligible: { label: "Eligibility concern", card: "border-red-200 bg-red-50", title: "text-red-900", iconColor: "text-red-600", icon: ShieldAlert },
+  unknown: { label: "Eligibility to confirm", card: "border-brand-navy/15 bg-white", title: "text-brand-navy", iconColor: "text-brand-navy/60", icon: Info },
+};
+
+function EligibilityCard({ verdict }: { verdict: EligibilityVerdict }) {
+  const s = LEVEL_STYLES[verdict.level];
+  const Icon = s.icon;
+  return (
+    <div className={`rounded-2xl border p-6 shadow-grounded ${s.card}`}>
+      <div className="flex items-start gap-3">
+        <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${s.iconColor}`} />
+        <div className="min-w-0">
+          <p className={`text-sm font-semibold ${s.title}`}>Eligibility check — {s.label}</p>
+          <p className="mt-0.5 text-[13px] text-brand-navy/80">{verdict.headline}</p>
+        </div>
+      </div>
+
+      {verdict.reasons.length > 0 && (
+        <ul className="mt-3 list-disc space-y-1.5 pl-11 text-[13px] text-brand-navy/75">
+          {verdict.reasons.map((r, i) => (
+            <li key={i}>{r}</li>
+          ))}
+        </ul>
+      )}
+
+      {(verdict.eligibleTypes.length > 0 || verdict.excluded || verdict.geographic) && (
+        <dl className="mt-4 space-y-2.5 border-t border-brand-navy/10 pt-4 text-[13px]">
+          {verdict.eligibleTypes.length > 0 && (
+            <div>
+              <dt className="font-medium text-brand-navy">Who can apply (from the NOFO)</dt>
+              <dd className="mt-0.5 text-brand-navy/70">{verdict.eligibleTypes.join(" · ")}</dd>
+            </div>
+          )}
+          {verdict.excluded && (
+            <div>
+              <dt className="font-medium text-brand-navy">Explicitly excluded</dt>
+              <dd className="mt-0.5 text-brand-navy/70">{verdict.excluded}</dd>
+            </div>
+          )}
+          {verdict.geographic && (
+            <div>
+              <dt className="font-medium text-brand-navy">Geographic eligibility</dt>
+              <dd className="mt-0.5 text-brand-navy/70">{verdict.geographic}</dd>
+            </div>
+          )}
+        </dl>
+      )}
+
+      <p className="mt-4 text-[12px] text-brand-navy/55">
+        A preliminary read from this grant&apos;s NOFO — not a final determination. Your GRANTED team confirms
+        eligibility before you apply, and this never blocks you from continuing.
+      </p>
     </div>
   );
 }
