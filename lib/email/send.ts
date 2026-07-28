@@ -300,3 +300,43 @@ export async function sendContractCopyEmail(opts: {
   if (error) throw new Error(`Resend send failed: ${error.message}`);
   return { to, subject, id: data?.id ?? null };
 }
+
+// Welcomes a newly invited client and links them to set up their account (set a
+// password, then review their profile). Lightweight text notice; the setup link
+// is a one-time /auth/confirm link built in lib/clients/portal-login.ts. Same
+// GRANTED identity/gating contract as the other senders -- callers MUST pre-check
+// canSendOutreach(); the testing-mode allowlist is hard-backstopped here so a
+// welcome never reaches a real inbox from a test deploy.
+export async function sendClientInviteEmail(opts: {
+  to: string;
+  contactName?: string | null;
+  orgName: string;
+  url: string;
+}): Promise<SentResult> {
+  const to = (opts.to ?? "").trim();
+  if (!isDeliverableEmail(to)) throw new Error(`No deliverable recipient: "${opts.to ?? "(null)"}"`);
+  if (!isRecipientAllowed(to)) {
+    throw new Error(`Recipient not on send allowlist (testing mode): ${to}`);
+  }
+  if (!opts.url?.trim()) throw new Error("No setup link configured");
+
+  const subject = "Welcome to GRANTED — set up your account";
+  const greeting = opts.contactName ? `Hi ${opts.contactName},` : "Hello,";
+  const text = [
+    greeting,
+    "",
+    `Welcome to GRANTED! We're glad to be starting the grant search for ${opts.orgName}.`,
+    "",
+    "Set up your account and confirm your organization's profile here:",
+    opts.url.trim(),
+    "",
+    "That link signs you in and lets you set a password. If it has expired by the time you open it, reply to this email and we'll send a fresh one.",
+    "",
+    "— GRANTED",
+  ].join("\n");
+
+  const resend = new Resend(process.env.RESEND_PLATFORM_API);
+  const { data, error } = await resend.emails.send({ from: FROM, to, replyTo: REPLY_TO, subject, text });
+  if (error) throw new Error(`Resend send failed: ${error.message}`);
+  return { to, subject, id: data?.id ?? null };
+}
