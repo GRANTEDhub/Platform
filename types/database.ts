@@ -299,12 +299,28 @@ export interface Geocode {
   matched_address: string; // the address the geocoder actually matched
   source: string; // "US Census Geocoder"
 }
+// One federal shortage-area designation the org's address falls inside (lib/geo/hrsa.ts).
+// HPSA carries a 0-26 score (competitiveness signal); MUA/MUP has no score on the layer.
+export interface ShortageDesignation {
+  program: "HPSA" | "MUA" | "MUP";
+  discipline: string | null; // HPSA: "Primary Care" | "Dental Health" | "Mental Health"; null for MUA/MUP
+  score: number | null; // HPSA_SCORE; null for MUA/MUP
+  population_type: string | null; // HPSA: e.g. "Geographic HPSA" / "Low Income Population HPSA"
+  name: string | null; // MUA/MUP service-area name; null for HPSA (no name field)
+  status: string; // always "Designated" (proposed-for-withdrawal is filtered out)
+}
+export interface ShortageContext {
+  checked_at: string; // ISO timestamp of the lookup
+  source: string; // "HRSA (data.hrsa.gov ArcGIS)"
+  designations: ShortageDesignation[]; // [] = checked, point is in none (a real negative)
+}
 export interface CommunityContext {
   checked_at: string; // ISO timestamp of the pull
   source: string; // "US Census ACS 5-year"
   vintage: string; // ACS vintage year, e.g. "2022"
   geographies: CommunityGeography[]; // most-specific first (place, then county)
   geocode?: Geocode | null; // point + tract, when a street address resolves
+  shortage?: ShortageContext | null; // HRSA shortage-area designations at the geocoded point
 }
 
 export interface Grant {
