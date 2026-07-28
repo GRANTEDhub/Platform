@@ -10,6 +10,7 @@
 
 import type { Client, CommunityContext, CommunityGeography, CommunityIndicators, Geocode } from "@/types/database";
 import { stateFips } from "@/lib/geo/us-fips";
+import { lookupShortageAreas } from "@/lib/geo/hrsa";
 
 const ACS_VINTAGE = "2022"; // matches the prospecting enumeration vintage
 const ACS_BASE = `https://api.census.gov/data/${ACS_VINTAGE}/acs/acs5`;
@@ -181,9 +182,15 @@ export async function buildCommunityContext(client: Client): Promise<CommunityCo
     }
   }
 
-  // Geocode is keyless and runs regardless of the ACS key; kick both off together.
-  const geocodePromise = geocodeClient(client).catch(() => null);
-  const [geocode, geos] = await Promise.all([geocodePromise, Promise.all(geoJobs)]);
+  // Geocode is keyless and runs regardless of the ACS key. The HRSA shortage-area
+  // overlay depends on the resulting point, so it chains off the geocode; that chain
+  // runs concurrently with the ACS geography fetches. All fail-safe.
+  const geoPointPromise = (async () => {
+    const geocode = await geocodeClient(client).catch(() => null);
+    const shortage = geocode ? await lookupShortageAreas(geocode.lat, geocode.lon).catch(() => null) : null;
+    return { geocode, shortage };
+  })();
+  const [{ geocode, shortage }, geos] = await Promise.all([geoPointPromise, Promise.all(geoJobs)]);
 
   const resolved = geos.filter((g): g is CommunityGeography => g != null);
   const rank = (g: CommunityGeography) => (g.level === "place" ? 0 : 1); // place first
@@ -196,5 +203,6 @@ export async function buildCommunityContext(client: Client): Promise<CommunityCo
     vintage: ACS_VINTAGE,
     geographies: resolved,
     geocode: geocode ?? null,
+    shortage: shortage ?? null,
   };
 }

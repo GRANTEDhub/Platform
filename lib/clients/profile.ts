@@ -389,6 +389,23 @@ export function formatClientProfileForEnrichment(profile: ClientProfile | null |
     }
   }
 
+  // Federal shortage-area designations at the org's ADDRESS (HRSA). Point-in-polygon on
+  // the geocoded location -- an eligibility/competitiveness signal for HRSA and
+  // health-workforce grants; like the ACS block, it describes the location, not org
+  // capacity, and cannot move the seat.
+  if (cc?.shortage && Array.isArray(cc.shortage.designations) && cc.shortage.designations.length) {
+    const parts = cc.shortage.designations.map((d) => {
+      if (d.program === "HPSA") {
+        return d.score != null ? `${d.discipline} HPSA (score ${d.score})` : `${d.discipline} HPSA`;
+      }
+      return d.name ? `${d.program}: ${d.name}` : d.program;
+    });
+    lines.push(
+      `Federal shortage-area designations at the org's address (HRSA): ${parts.join("; ")} -- ` +
+        `relevant to HRSA / health-workforce eligibility and scoring; describes the location, not org capacity.`,
+    );
+  }
+
   return (
     `\nCLIENT PROFILE (distilled context to GROUND the outreach narrative -- the seat, ` +
     `score, and eligibility are ALREADY decided and are NOT yours to revisit; use this only ` +
