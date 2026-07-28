@@ -256,6 +256,35 @@ export interface ClientProfile {
   };
   inferred: string[]; // fields inferred rather than stated
   gaps: string[]; // thin/missing data -- surfaces confidence
+  // Community need-context (U.S. Census ACS 5-year), attached out-of-band AFTER
+  // distillation (lib/geo/census.ts). Grounds demonstrated-need language in the
+  // enrichment narrative; NOT read by occupancy. Optional -- older stored profiles
+  // omit it, and it stays absent when the client's location does not resolve.
+  community_context?: CommunityContext | null;
+}
+
+// U.S. Census ACS 5-year community need-context. Resolved by place/county NAME from the
+// client's stored location; no street address on file means no tract-level precision yet.
+// See lib/geo/census.ts. Every field is nullable -- ACS suppresses small-geography values.
+export interface CommunityIndicators {
+  population: number | null;
+  median_household_income: number | null; // dollars
+  poverty_rate: number | null; // percent, 0-100
+  unemployment_rate: number | null; // percent, 0-100
+}
+export interface CommunityGeography {
+  level: "county" | "place";
+  name: string; // e.g. "Pulaski County" | "Little Rock"
+  state: string; // 2-letter
+  geoid: string; // Census GEOID (anchors source_url)
+  indicators: CommunityIndicators;
+  source_url: string; // data.census.gov profile
+}
+export interface CommunityContext {
+  checked_at: string; // ISO timestamp of the pull
+  source: string; // "US Census ACS 5-year"
+  vintage: string; // ACS vintage year, e.g. "2022"
+  geographies: CommunityGeography[]; // most-specific first (place, then county)
 }
 
 export interface Grant {
