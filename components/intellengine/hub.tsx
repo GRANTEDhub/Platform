@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, ChevronRight, FileText, Loader2, Plus, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, FileText, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
 import { IntellEngineLogo } from "@/components/intellengine/logo";
 import { STATUS_LABEL } from "@/lib/intellengine/drafts";
 import type { IntellEngineDraftStatus } from "@/types/database";
@@ -40,6 +40,28 @@ export function IntellEngineHub({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Per-draft delete: confirmId is the row showing its inline "Delete?" confirm;
+  // deleting is the row whose delete request is in flight.
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  async function handleDelete(id: string) {
+    setDeleting(id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/intellengine/drafts/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Couldn't delete that proposal");
+      }
+      setConfirmId(null);
+      setDeleting(null);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't delete that proposal");
+      setDeleting(null);
+    }
+  }
 
   async function startMatched(cardId: string) {
     setBusy(cardId);
@@ -194,12 +216,11 @@ export function IntellEngineHub({
         ) : (
           <div className="mt-4 space-y-3">
             {drafts.map((d) => (
-              <Link
+              <div
                 key={d.id}
-                href={`/intellengine/${d.id}`}
-                className="flex items-center justify-between gap-3 rounded-2xl border border-brand-navy/[0.08] bg-white p-4 shadow-grounded transition hover:border-brand-navy/25"
+                className="flex items-center gap-2 rounded-2xl border border-brand-navy/[0.08] bg-white p-4 shadow-grounded transition hover:border-brand-navy/25"
               >
-                <span className="flex min-w-0 items-center gap-3">
+                <Link href={`/intellengine/${d.id}`} className="flex min-w-0 flex-1 items-center gap-3">
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-navy/[0.06] text-brand-navy">
                     <FileText className="h-4 w-4" />
                   </span>
@@ -207,9 +228,41 @@ export function IntellEngineHub({
                     <span className="block truncate text-sm font-semibold text-brand-navy">{d.title}</span>
                     <span className="block text-xs text-muted-foreground">{STATUS_LABEL[d.status]}</span>
                   </span>
-                </span>
-                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-              </Link>
+                </Link>
+                {confirmId === d.id ? (
+                  <span className="flex shrink-0 items-center gap-1.5">
+                    <span className="hidden text-xs text-muted-foreground sm:inline">Delete?</span>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(d.id)}
+                      disabled={deleting === d.id}
+                      className="flex items-center justify-center rounded-full bg-red-600 px-3 py-1 text-xs font-semibold text-white transition hover:bg-red-700 disabled:opacity-60"
+                    >
+                      {deleting === d.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Delete"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmId(null)}
+                      disabled={deleting === d.id}
+                      className="rounded-full border border-brand-navy/15 px-3 py-1 text-xs font-medium text-muted-foreground transition hover:text-brand-navy disabled:opacity-60"
+                    >
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setError(null);
+                      setConfirmId(d.id);
+                    }}
+                    aria-label={`Delete ${d.title}`}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-red-50 hover:text-red-600"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         )}
