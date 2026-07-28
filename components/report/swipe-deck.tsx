@@ -404,6 +404,12 @@ function CardFace({
           <p className="mt-2.5 text-center text-[11px] text-muted-foreground">
             Drag or tap · ← Pass · Interested →
           </p>
+          <p className="mx-auto mt-3 max-w-md text-center text-[11px] leading-relaxed text-muted-foreground/80">
+            Grant Alerts are a quick snapshot and concept proposal to gauge your interest. Marking one
+            <span className="font-medium text-brand-navy"> Interested</span> simply moves it to your Grant Report —
+            where you can assess the full details and make a pursuit decision or contact an expert. It&apos;s not a
+            commitment.
+          </p>
         </div>
       )}
     </div>
