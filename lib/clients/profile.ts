@@ -304,6 +304,30 @@ export async function refreshClientProfileById(
   }
 }
 
+// Refresh ONLY the community need-context on an existing client_profile, WITHOUT
+// re-running the LLM distillation (cheap: one Census call + a jsonb patch). Used by the
+// one-shot backfill. Requires a present client_profile -- community context is read only
+// when a profile exists (enrichMatchWithProfile gates on it), so a null profile is a
+// no-op. Fail-safe: an unresolved location leaves the profile untouched.
+export async function refreshClientCommunityContextById(
+  db: SupabaseClient,
+  clientId: string,
+): Promise<"updated" | "no-profile" | "no-context" | "error"> {
+  const { data } = await db.from("clients").select("*").eq("id", clientId).single();
+  if (!data) return "error";
+  const client = data as Client;
+  if (!client.client_profile) return "no-profile"; // nothing to enrich yet
+  const community = await buildCommunityContext(client);
+  if (!community) return "no-context"; // location did not resolve
+  const next: ClientProfile = { ...client.client_profile, community_context: community };
+  const { error } = await db.from("clients").update({ client_profile: next }).eq("id", clientId);
+  if (error) {
+    console.error("Community-context write failed for client", clientId, error.message);
+    return "error";
+  }
+  return "updated";
+}
+
 // Enrichment-facing rendering of a ClientProfile (Stage 4 redesign). This feeds
 // the SEPARATE enrichment call (enrichMatchWithProfile) that runs AFTER the seat
 // and score are fixed -- it grounds the outward narrative (why-this-org, concept,
