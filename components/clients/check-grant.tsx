@@ -23,6 +23,8 @@ type Candidate = {
   submission_deadline: string | null;
   status: string;
   ready: boolean;
+  reason?: string | null; // why it matched the described need (need-out path)
+  onRoadmap?: boolean; // already matched to this client
 };
 
 type Verdict = "fit" | "weak" | "no" | "excluded";
@@ -122,7 +124,8 @@ export function CheckGrant({ clientId, clientName }: { clientId: string; clientN
         <div>
           <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Check a grant</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Drop in a grant name or a Grants.gov / Simpler.gov link to see if {clientName} is a fit.
+            Drop in a grant name or link, or describe what {clientName} needs (e.g. &ldquo;improve our
+            emergency services facilities&rdquo;) — we&apos;ll find matches and check the fit.
           </p>
         </div>
         {phase !== "idle" && (
@@ -138,7 +141,7 @@ export function CheckGrant({ clientId, clientName }: { clientId: string; clientN
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Grant name, opportunity number, or link…"
+            placeholder="Grant name, link, or what you're looking for…"
             className="flex-1 rounded-lg border border-brand-navy/15 bg-white px-3 py-2 text-sm text-brand-navy outline-none ring-brand-orange/30 focus:ring-2"
           />
           <Button type="submit" disabled={phase === "resolving" || !query.trim()}>
@@ -165,12 +168,20 @@ export function CheckGrant({ clientId, clientName }: { clientId: string; clientN
               className="flex w-full items-center justify-between gap-4 rounded-lg border border-brand-navy/10 bg-white px-4 py-3 text-left transition hover:border-brand-navy/25"
             >
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-brand-navy">{c.title ?? "Untitled grant"}</p>
+                <div className="flex items-center gap-2">
+                  <p className="truncate text-sm font-medium text-brand-navy">{c.title ?? "Untitled grant"}</p>
+                  {c.onRoadmap && (
+                    <span className="shrink-0 rounded-full bg-brand-navy/[0.06] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-navy">
+                      On roadmap
+                    </span>
+                  )}
+                </div>
                 <p className="truncate text-xs text-muted-foreground">
                   {c.funder ?? "Unknown funder"}
                   {c.submission_deadline ? ` · due ${c.submission_deadline}` : ""}
                   {!c.ready ? ` · still processing (${c.status})` : ""}
                 </p>
+                {c.reason && <p className="mt-1 text-xs text-brand-navy/70">{c.reason}</p>}
               </div>
               <span className="shrink-0 text-xs font-medium text-brand-orange">Check fit →</span>
             </button>
