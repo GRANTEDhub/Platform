@@ -406,6 +406,22 @@ export function formatClientProfileForEnrichment(profile: ClientProfile | null |
     );
   }
 
+  // HUD place-based designations at the org's ADDRESS (QCT/DDA). A federal distress /
+  // underservedness marker -- strongest for housing and community-development funding.
+  // Like the blocks above, it describes the location, not org capacity, and cannot move
+  // the seat. Only surfaced when actually designated (a positive signal).
+  const hud = cc?.hud;
+  if (hud && (hud.qct === true || hud.dda === true)) {
+    const tags: string[] = [];
+    if (hud.qct === true) tags.push("a HUD Qualified Census Tract (QCT)");
+    if (hud.dda === true) tags.push("a Difficult Development Area (DDA)");
+    lines.push(
+      `Place-based designation at the org's address (HUD): located in ${tags.join(" and ")} -- ` +
+        `a federal distress/underservedness marker relevant to housing and community-development ` +
+        `funding; describes the location, not org capacity.`,
+    );
+  }
+
   return (
     `\nCLIENT PROFILE (distilled context to GROUND the outreach narrative -- the seat, ` +
     `score, and eligibility are ALREADY decided and are NOT yours to revisit; use this only ` +

@@ -314,6 +314,15 @@ export interface ShortageContext {
   source: string; // "HRSA (data.hrsa.gov ArcGIS)"
   designations: ShortageDesignation[]; // [] = checked, point is in none (a real negative)
 }
+// HUD place-based designations at the geocoded point (lib/geo/hud.ts). QCT / DDA are
+// the LIHTC distress designations and a general need/underservedness marker. Each flag:
+// true = designated, false = checked-and-not, null = that layer was unavailable.
+export interface HudDesignations {
+  checked_at: string; // ISO timestamp of the lookup
+  source: string; // "HUD (services.arcgis.com)"
+  qct: boolean | null; // Qualified Census Tract
+  dda: boolean | null; // Difficult Development Area
+}
 export interface CommunityContext {
   checked_at: string; // ISO timestamp of the pull
   source: string; // "US Census ACS 5-year"
@@ -321,6 +330,7 @@ export interface CommunityContext {
   geographies: CommunityGeography[]; // most-specific first (place, then county)
   geocode?: Geocode | null; // point + tract, when a street address resolves
   shortage?: ShortageContext | null; // HRSA shortage-area designations at the geocoded point
+  hud?: HudDesignations | null; // HUD QCT/DDA at the geocoded point
 }
 
 export interface Grant {
