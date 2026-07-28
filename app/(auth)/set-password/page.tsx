@@ -44,8 +44,9 @@ export default function SetPasswordPage() {
       setError(error.message);
       return;
     }
-    // Into the portal. (Phase B / #16 will redirect first-timers to a profile
-    // review; for now the dashboard is the landing.)
+    // Into the portal. The portal layout redirects first-time clients (whose
+    // profile isn't confirmed yet) to /welcome for the profile review (#16);
+    // returning clients land straight on the dashboard.
     router.push("/portal");
     router.refresh();
   }
