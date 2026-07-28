@@ -8,7 +8,7 @@
 // null/[] on ANY failure (missing key, network, shape change) so enrichment never breaks
 // and simply omits the section. source_url (data.census.gov) is the authoritative record.
 
-import type { Client, CommunityContext, CommunityGeography, CommunityIndicators } from "@/types/database";
+import type { Client, CommunityContext, CommunityGeography, CommunityIndicators, Geocode } from "@/types/database";
 import { stateFips } from "@/lib/geo/us-fips";
 
 const ACS_VINTAGE = "2022"; // matches the prospecting enumeration vintage
@@ -111,28 +111,90 @@ async function fetchLevel(
   return null;
 }
 
+// ── Census Geocoder: street address -> point + tract GEOID ───────────────────
+// Keyless. The join key for the tract-level overlays (HRSA, and later HUD/EJ). Only
+// a full STREET address resolves ("Little Rock, AR" returns no match), which is why
+// clients carry location_street. "Public_AR_Current" = Public Address Ranges (national,
+// NOT Arkansas). Fail-safe: null on no street / no match / bad shape.
+const GEOCODER_ONELINE =
+  "https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress";
+
+async function geocodeAddress(oneline: string): Promise<Geocode | null> {
+  const url =
+    `${GEOCODER_ONELINE}?address=${encodeURIComponent(oneline)}` +
+    `&benchmark=Public_AR_Current&vintage=Census2020_Current&format=json`;
+  const data = (await getJson(url)) as
+    | { result?: { addressMatches?: Array<Record<string, unknown>> } }
+    | null;
+  const match = data?.result?.addressMatches?.[0] as
+    | {
+        coordinates?: { x?: number; y?: number };
+        matchedAddress?: string;
+        geographies?: Record<string, Array<Record<string, unknown>>>;
+      }
+    | undefined;
+  if (!match) return null;
+  const lon = Number(match.coordinates?.x);
+  const lat = Number(match.coordinates?.y);
+  const tract = match.geographies?.["Census Tracts"]?.[0];
+  const geoid = tract?.["GEOID"];
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || !geoid) return null;
+  return {
+    lat,
+    lon,
+    tract_geoid: String(geoid),
+    state_fips: String(tract?.["STATE"] ?? ""),
+    county_fips: String(tract?.["COUNTY"] ?? ""),
+    tract_code: String(tract?.["TRACT"] ?? ""),
+    matched_address: String(match.matchedAddress ?? oneline),
+    source: "US Census Geocoder",
+  };
+}
+
+// Assemble the one-line address from the client's stored fields and geocode it. Null
+// when there is no street on file (v1 requires street precision for the overlays).
+async function geocodeClient(client: Client): Promise<Geocode | null> {
+  if (!client.location_street?.trim()) return null;
+  const oneline = [client.location_street, client.location_city, client.location_state, client.location_zip]
+    .map((p) => (typeof p === "string" ? p.trim() : ""))
+    .filter(Boolean)
+    .join(", ");
+  return geocodeAddress(oneline);
+}
+
 // Build community need-context for a client. Resolves place- (city) and county-level
-// indicators in parallel from the names on file. Fail-safe: returns null if the key is
-// missing, the state is unknown, or nothing resolves; never throws into the caller.
+// ACS indicators by name AND geocodes the street address (for the tract join key),
+// all concurrently. Fail-safe: returns null only if nothing at all resolves; never
+// throws into the caller. The geocode is plumbing -- it is not rendered into narrative.
 export async function buildCommunityContext(client: Client): Promise<CommunityContext | null> {
   const key = process.env.CENSUS_API_KEY;
   const fips = stateFips(client.location_state);
-  if (!key || !fips) return null;
-  const state2 = String(client.location_state).trim().toUpperCase();
+  const state2 = client.location_state ? String(client.location_state).trim().toUpperCase() : null;
 
-  const jobs: Promise<CommunityGeography | null>[] = [];
-  if (client.location_city?.trim()) {
-    jobs.push(fetchLevel("place", fips, state2, client.location_city, key).catch(() => null));
+  const geoJobs: Promise<CommunityGeography | null>[] = [];
+  if (key && fips && state2) {
+    if (client.location_city?.trim()) {
+      geoJobs.push(fetchLevel("place", fips, state2, client.location_city, key).catch(() => null));
+    }
+    if (client.location_county?.trim()) {
+      geoJobs.push(fetchLevel("county", fips, state2, client.location_county, key).catch(() => null));
+    }
   }
-  if (client.location_county?.trim()) {
-    jobs.push(fetchLevel("county", fips, state2, client.location_county, key).catch(() => null));
-  }
-  if (jobs.length === 0) return null;
 
-  const resolved = (await Promise.all(jobs)).filter((g): g is CommunityGeography => g != null);
-  if (resolved.length === 0) return null;
+  // Geocode is keyless and runs regardless of the ACS key; kick both off together.
+  const geocodePromise = geocodeClient(client).catch(() => null);
+  const [geocode, geos] = await Promise.all([geocodePromise, Promise.all(geoJobs)]);
 
+  const resolved = geos.filter((g): g is CommunityGeography => g != null);
   const rank = (g: CommunityGeography) => (g.level === "place" ? 0 : 1); // place first
   resolved.sort((a, b) => rank(a) - rank(b));
-  return { checked_at: new Date().toISOString(), source: "US Census ACS 5-year", vintage: ACS_VINTAGE, geographies: resolved };
+
+  if (resolved.length === 0 && !geocode) return null;
+  return {
+    checked_at: new Date().toISOString(),
+    source: "US Census ACS 5-year",
+    vintage: ACS_VINTAGE,
+    geographies: resolved,
+    geocode: geocode ?? null,
+  };
 }

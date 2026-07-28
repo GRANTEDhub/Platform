@@ -63,6 +63,11 @@ export interface Client {
   location_city: string | null;
   location_county: string | null;
   location_state: string | null;
+  // Street address (migration 0064). Nullable, additive. Powers point-level
+  // geocoding (tract GEOID) for the shortage-area / eligibility overlays; the
+  // Census Geocoder only resolves a full street address, not a city name.
+  location_street: string | null;
+  location_zip: string | null;
   service_area: string[] | null;
   retainer_hours: number | null;
   contract_start: string | null;
@@ -280,11 +285,26 @@ export interface CommunityGeography {
   indicators: CommunityIndicators;
   source_url: string; // data.census.gov profile
 }
+// Point geocode from the U.S. Census Geocoder (migration 0064 + lib/geo/census.ts).
+// The tract GEOID is the join key for the shortage-area / eligibility overlays
+// (HRSA, and later HUD/EJ). Present only when the client has a resolvable street
+// address; null otherwise. NOT rendered into narrative on its own -- it is plumbing.
+export interface Geocode {
+  lat: number;
+  lon: number;
+  tract_geoid: string; // 11-digit state(2)+county(3)+tract(6)
+  state_fips: string;
+  county_fips: string;
+  tract_code: string; // 6-digit
+  matched_address: string; // the address the geocoder actually matched
+  source: string; // "US Census Geocoder"
+}
 export interface CommunityContext {
   checked_at: string; // ISO timestamp of the pull
   source: string; // "US Census ACS 5-year"
   vintage: string; // ACS vintage year, e.g. "2022"
   geographies: CommunityGeography[]; // most-specific first (place, then county)
+  geocode?: Geocode | null; // point + tract, when a street address resolves
 }
 
 export interface Grant {
