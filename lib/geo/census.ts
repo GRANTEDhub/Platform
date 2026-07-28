@@ -11,6 +11,7 @@
 import type { Client, CommunityContext, CommunityGeography, CommunityIndicators, Geocode } from "@/types/database";
 import { stateFips } from "@/lib/geo/us-fips";
 import { lookupShortageAreas } from "@/lib/geo/hrsa";
+import { lookupHudDesignations } from "@/lib/geo/hud";
 
 const ACS_VINTAGE = "2022"; // matches the prospecting enumeration vintage
 const ACS_BASE = `https://api.census.gov/data/${ACS_VINTAGE}/acs/acs5`;
@@ -182,15 +183,20 @@ export async function buildCommunityContext(client: Client): Promise<CommunityCo
     }
   }
 
-  // Geocode is keyless and runs regardless of the ACS key. The HRSA shortage-area
-  // overlay depends on the resulting point, so it chains off the geocode; that chain
-  // runs concurrently with the ACS geography fetches. All fail-safe.
+  // Geocode is keyless and runs regardless of the ACS key. The point-based overlays
+  // (HRSA shortage areas + HUD QCT/DDA) depend on the resulting point, so they chain
+  // off the geocode and run concurrently with each other; the whole chain runs
+  // concurrently with the ACS geography fetches. All fail-safe.
   const geoPointPromise = (async () => {
     const geocode = await geocodeClient(client).catch(() => null);
-    const shortage = geocode ? await lookupShortageAreas(geocode.lat, geocode.lon).catch(() => null) : null;
-    return { geocode, shortage };
+    if (!geocode) return { geocode: null, shortage: null, hud: null };
+    const [shortage, hud] = await Promise.all([
+      lookupShortageAreas(geocode.lat, geocode.lon).catch(() => null),
+      lookupHudDesignations(geocode.lat, geocode.lon).catch(() => null),
+    ]);
+    return { geocode, shortage, hud };
   })();
-  const [{ geocode, shortage }, geos] = await Promise.all([geoPointPromise, Promise.all(geoJobs)]);
+  const [{ geocode, shortage, hud }, geos] = await Promise.all([geoPointPromise, Promise.all(geoJobs)]);
 
   const resolved = geos.filter((g): g is CommunityGeography => g != null);
   const rank = (g: CommunityGeography) => (g.level === "place" ? 0 : 1); // place first
@@ -204,5 +210,6 @@ export async function buildCommunityContext(client: Client): Promise<CommunityCo
     geographies: resolved,
     geocode: geocode ?? null,
     shortage: shortage ?? null,
+    hud: hud ?? null,
   };
 }
