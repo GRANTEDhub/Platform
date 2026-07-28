@@ -1,25 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { motion, useMotionValue, useTransform, useDragControls, animate, type MotionValue } from "motion/react";
-import { ArrowLeft, ArrowRight, ArrowUpRight, Check, X } from "lucide-react";
+import { motion, useDragControls } from "motion/react";
+import { ArrowUpRight, Check, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { ScoreRing, Tag } from "./primitives";
 import { ConceptProposalReveal } from "./concept-proposal-reveal";
 import type { ReportItem } from "@/lib/report/shape";
 
-// Card-stack triage for brand-new matches — Grant Alerts, the first gate ahead of
-// the Grant Report (see migration 0057). Swipe/tap right = Interested (sets
-// interested_at, NOT decision -- a low-stakes "worth a closer look" flag that
-// promotes the card into the Grant Report), left = Archive (decision='passed',
-// same as a reject anywhere else). A binary call, no middle option. Fly-off
-// physics via `motion`. Writes go through the same PATCH /api/review/[id] as the
-// detail gate (actor-tracked, no email). The card body scrolls; horizontal drag is
-// initiated from the banner (a drag handle) so reading the detail doesn't fight
-// the gesture.
+// Grant Alerts (browse) for the client's brand-new, not-yet-triaged matches — the gate
+// ahead of the Grant Report (migration 0057). BROWSE model (#21b): left/right — via the
+// arrows, the keyboard, or a drag/swipe — NAVIGATE between alerts one at a time WITHOUT
+// deciding, so a client can flip through and come back later. A decision is ONLY ever an
+// explicit button: Interested (sets interested_at, promotes to the Grant Report — does
+// NOT touch decision) or Pass (decision='passed'). One card on screen at a time; the
+// page itself never scrolls (the card body does). Writes go through PATCH
+// /api/review/[id], actor-tracked, no email.
+//
+// Account-managed clients (0059) only see a card here once staff releases it
+// (sme_released_at). interestMode="sme" is staff's own separate first pass (0059):
+// right = sme_interested_at instead of the client's interested_at; Pass is identical.
 
-const THRESHOLD = 110;
+const THRESHOLD = 90;
 const ROAD_BG = "/login-bg.jpg";
 
 export function SwipeDeck({
@@ -35,43 +37,69 @@ export function SwipeDeck({
   // Client org name — only threaded on the client portal, for the concept-proposal
   // reveal / base-tier upsell mailto. Absent on staff surfaces (no reveal there).
   clientName?: string;
-  // "client" (default): right-swipe sets interested_at (the client's own gate,
-  // 0057). "sme": right-swipe sets sme_interested_at instead -- staff's OWN,
-  // separate first pass for an account-managed client (0059). Reject is
-  // identical either way (decision='passed').
+  // "client" (default): right sets interested_at (the client's own gate, 0057). "sme":
+  // right sets sme_interested_at instead — staff's OWN separate first pass for an
+  // account-managed client (0059). Pass is identical either way (decision='passed').
   interestMode?: "client" | "sme";
 }) {
   const [queue, setQueue] = useState(items);
-  const done = items.length - queue.length;
+  const [index, setIndex] = useState(0);
+  const decided = items.length - queue.length;
+  const total = queue.length;
+  const current = queue[index];
 
-  async function persist(id: string, action: "interested" | "passed") {
-    try {
-      const body =
-        action === "passed"
-          ? { decision: "passed" }
-          : interestMode === "sme"
-            ? { sme_interested: true }
-            : { interested: true };
-      await fetch(`/api/review/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-    } catch {
-      // Optimistic: the card already flew off. A failed write surfaces back in
-      // Grant Alerts (the card reappears on refresh) rather than blocking.
-    }
-  }
+  const persist = useCallback(
+    async (id: string, action: "interested" | "passed") => {
+      try {
+        const body =
+          action === "passed"
+            ? { decision: "passed" }
+            : interestMode === "sme"
+              ? { sme_interested: true }
+              : { interested: true };
+        await fetch(`/api/review/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      } catch {
+        // Optimistic: a failed write resurfaces the card on refresh rather than blocking.
+      }
+    },
+    [interestMode],
+  );
 
-  function settle(item: ReportItem, action: "interested" | "passed") {
-    persist(item.id, action);
-    setQueue((q) => q.filter((i) => i.id !== item.id));
-  }
+  const go = useCallback(
+    (delta: number) => {
+      setIndex((i) => Math.min(Math.max(i + delta, 0), Math.max(0, total - 1)));
+    },
+    [total],
+  );
 
-  const top = queue[0];
-  const peek = queue[1];
+  // Decide on the current card: persist, drop it from the queue, and stay at the same
+  // position so the next card slides into view (clamped when we removed the last one).
+  const decide = useCallback(
+    (action: "interested" | "passed") => {
+      if (!current) return;
+      const id = current.id;
+      persist(id, action);
+      setQueue((q) => q.filter((it) => it.id !== id));
+      setIndex((i) => Math.max(0, Math.min(i, total - 2)));
+    },
+    [current, persist, total],
+  );
 
-  if (!top) {
+  // Keyboard browse — ← / → move between alerts (never decide).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") go(-1);
+      else if (e.key === "ArrowRight") go(1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [go]);
+
+  if (!current) {
     return (
       <div className="mx-auto max-w-2xl py-16 text-center">
         {interestMode === "sme" && (
@@ -84,7 +112,9 @@ export function SwipeDeck({
         </div>
         <h2 className="mt-5 font-serif text-2xl font-semibold text-brand-navy">All caught up</h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          {done > 0 ? `You reviewed ${done} ${done === 1 ? "grant" : "grants"}.` : "Nothing new to review right now."}
+          {decided > 0
+            ? `You reviewed ${decided} ${decided === 1 ? "grant" : "grants"}.`
+            : "Nothing new to review right now."}
         </p>
         <Link
           href={backHref}
@@ -107,69 +137,88 @@ export function SwipeDeck({
         <Link href={backHref} className="text-sm font-medium text-muted-foreground hover:text-brand-navy">
           ← Grant Report
         </Link>
-        <span className="text-sm text-muted-foreground">{queue.length} to review</span>
+        <span className="text-sm text-muted-foreground">
+          {index + 1} of {total}
+        </span>
       </div>
 
-      <div className="relative h-[640px]">
-        {peek && (
-          <div className="absolute inset-0 translate-y-3 scale-[0.97] opacity-60">
-            <CardFace item={peek} interactive={false} />
-          </div>
-        )}
-        <SwipeCard key={top.id} item={top} detailBasePath={detailBasePath} onSettle={settle} clientName={clientName} />
+      <div className="relative">
+        <NavArrow side="left" disabled={index === 0} onClick={() => go(-1)} />
+        <NavArrow side="right" disabled={index >= total - 1} onClick={() => go(1)} />
+        <BrowseCard
+          key={current.id}
+          item={current}
+          detailBasePath={detailBasePath}
+          onArchive={() => decide("passed")}
+          onInterested={() => decide("interested")}
+          onNavigate={go}
+          clientName={clientName}
+        />
       </div>
+
+      <p className="mt-3 text-center text-[11px] text-muted-foreground">
+        ← / → · arrow keys · or swipe to browse — Pass or Interested to decide
+      </p>
     </div>
   );
 }
 
-function SwipeCard({
+function NavArrow({ side, disabled, onClick }: { side: "left" | "right"; disabled: boolean; onClick: () => void }) {
+  const Icon = side === "left" ? ChevronLeft : ChevronRight;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={side === "left" ? "Previous alert" : "Next alert"}
+      className={`absolute top-1/2 z-10 hidden -translate-y-1/2 items-center justify-center rounded-full border border-brand-navy/15 bg-white/90 p-2 shadow-soft transition sm:flex ${
+        side === "left" ? "-left-4" : "-right-4"
+      } ${disabled ? "cursor-not-allowed opacity-30" : "hover:border-brand-navy/35 hover:bg-white"}`}
+    >
+      <Icon className="h-5 w-5 text-brand-navy" />
+    </button>
+  );
+}
+
+// A single browsable alert card. Drag is horizontal-only and initiated from the banner
+// (a drag handle), so reading/scrolling the body never fights the gesture; a drag past
+// the threshold navigates (prev/next), it never decides. Keyed by item id in the parent
+// so each navigation plays the entrance animation.
+function BrowseCard({
   item,
   detailBasePath,
-  onSettle,
+  onArchive,
+  onInterested,
+  onNavigate,
   clientName,
 }: {
   item: ReportItem;
   detailBasePath: string;
-  onSettle: (item: ReportItem, action: "interested" | "passed") => void;
+  onArchive: () => void;
+  onInterested: () => void;
+  onNavigate: (delta: number) => void;
   clientName?: string;
 }) {
-  const x = useMotionValue(0);
-  const rotate = useTransform(x, [-260, 260], [-11, 11]);
-  const interestOpacity = useTransform(x, [30, 130], [0, 1]);
-  const archiveOpacity = useTransform(x, [-130, -30], [1, 0]);
   const dragControls = useDragControls();
-
-  function flyOff(dir: 1 | -1, action: "interested" | "passed") {
-    animate(x, dir * 760, {
-      type: "spring",
-      stiffness: 320,
-      damping: 38,
-      onComplete: () => onSettle(item, action),
-    });
-  }
-
   return (
     <motion.div
-      className="absolute inset-0"
-      style={{ x, rotate }}
       drag="x"
       dragListener={false}
       dragControls={dragControls}
-      dragElastic={0.6}
+      dragElastic={0.5}
       dragConstraints={{ left: 0, right: 0 }}
       onDragEnd={(_, info) => {
-        if (info.offset.x > THRESHOLD) flyOff(1, "interested");
-        else if (info.offset.x < -THRESHOLD) flyOff(-1, "passed");
-        else animate(x, 0, { type: "spring", stiffness: 400, damping: 34 });
+        if (info.offset.x < -THRESHOLD) onNavigate(1);
+        else if (info.offset.x > THRESHOLD) onNavigate(-1);
       }}
+      initial={{ opacity: 0, x: 24 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ type: "spring", stiffness: 420, damping: 36 }}
     >
       <CardFace
         item={item}
-        interactive
-        interestOpacity={interestOpacity}
-        archiveOpacity={archiveOpacity}
-        onArchive={() => flyOff(-1, "passed")}
-        onInterested={() => flyOff(1, "interested")}
+        onArchive={onArchive}
+        onInterested={onInterested}
         onHandlePointerDown={(e) => dragControls.start(e)}
         detailHref={`${detailBasePath}/${item.id}?from=alerts`}
         clientName={clientName}
@@ -196,8 +245,8 @@ function Section({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
-// Compact agree/flag score feedback, ported from DecisionBar for the swipe card.
-// Same write path (POST /api/feedback), fresh per card (unmounts on swipe).
+// Compact agree/flag score feedback. Same write path (POST /api/feedback), fresh per
+// card (unmounts on navigate/decide via the id key).
 function ScoreFeedback({ cardId }: { cardId: string }) {
   const [busy, setBusy] = useState(false);
   const [fb, setFb] = useState<"idle" | "agreed" | "flagged">("idle");
@@ -275,9 +324,6 @@ function ScoreFeedback({ cardId }: { cardId: string }) {
 
 function CardFace({
   item,
-  interactive,
-  interestOpacity,
-  archiveOpacity,
   onArchive,
   onInterested,
   onHandlePointerDown,
@@ -285,20 +331,17 @@ function CardFace({
   clientName,
 }: {
   item: ReportItem;
-  interactive: boolean;
-  interestOpacity?: MotionValue<number>;
-  archiveOpacity?: MotionValue<number>;
-  onArchive?: () => void;
-  onInterested?: () => void;
-  onHandlePointerDown?: (e: React.PointerEvent) => void;
-  detailHref?: string;
+  onArchive: () => void;
+  onInterested: () => void;
+  onHandlePointerDown: (e: React.PointerEvent) => void;
+  detailHref: string;
   clientName?: string;
 }) {
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-3xl border border-brand-navy/[0.06] bg-white shadow-lift">
-      {/* road-photo banner — doubles as the drag handle */}
+    <div className="flex h-[640px] flex-col overflow-hidden rounded-3xl border border-brand-navy/[0.06] bg-white shadow-lift">
+      {/* road-photo banner — doubles as the horizontal drag handle for browsing */}
       <div
-        className={`relative h-32 shrink-0 ${interactive ? "cursor-grab active:cursor-grabbing touch-none" : ""}`}
+        className="relative h-32 shrink-0 cursor-grab touch-none active:cursor-grabbing"
         onPointerDown={onHandlePointerDown}
       >
         <div
@@ -306,23 +349,6 @@ function CardFace({
           style={{ backgroundImage: `url('${ROAD_BG}')`, backgroundSize: "cover", backgroundPosition: "center" }}
         />
         <div className="absolute inset-0 bg-brand-navy/40" />
-        {interactive && (
-          <>
-            {/* Stamps sit on the side you're dragging toward: left = Pass, right = Interested. */}
-            <motion.span
-              style={{ opacity: archiveOpacity }}
-              className="absolute left-4 top-4 rounded-lg border-2 border-white/70 px-3 py-1 text-sm font-bold uppercase tracking-wider text-white"
-            >
-              Pass
-            </motion.span>
-            <motion.span
-              style={{ opacity: interestOpacity }}
-              className="absolute right-4 top-4 rounded-lg border-2 border-emerald-400 px-3 py-1 text-sm font-bold uppercase tracking-wider text-emerald-300"
-            >
-              Interested
-            </motion.span>
-          </>
-        )}
         <div className="absolute -bottom-8 right-6">
           <div className="rounded-full bg-white p-1.5 shadow-soft">
             <ScoreRing fitScore={item.fitScore} band={item.band} size="lg" />
@@ -346,14 +372,14 @@ function CardFace({
         )}
 
         {/* Concept proposal, right out the gate — read-only for premium, upsell teaser
-            for base. Only on the live top card (the peek behind isn't interactive). */}
-        {interactive && item.concept && (
+            for base. */}
+        {item.concept && (
           <div className="mt-4">
             <ConceptProposalReveal concept={item.concept} clientName={clientName} variant="card" />
           </div>
         )}
 
-        {interactive && <ScoreFeedback cardId={item.id} />}
+        <ScoreFeedback cardId={item.id} />
 
         {/* stat grid */}
         <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 rounded-2xl bg-brand-cream/70 p-4">
@@ -370,48 +396,42 @@ function CardFace({
           {item.geography && <Section label="Geography">{item.geography}</Section>}
         </div>
 
-        {detailHref && (
-          <Link
-            href={detailHref}
-            className="mt-4 inline-flex w-fit items-center gap-1 text-sm font-medium text-brand-orange hover:underline"
-          >
-            See the full breakdown <ArrowUpRight className="h-3.5 w-3.5" />
-          </Link>
-        )}
+        <Link
+          href={detailHref}
+          className="mt-4 inline-flex w-fit items-center gap-1 text-sm font-medium text-brand-orange hover:underline"
+        >
+          See the full breakdown <ArrowUpRight className="h-3.5 w-3.5" />
+        </Link>
       </div>
 
-      {/* labeled decision controls */}
-      {interactive && (
-        <div className="shrink-0 border-t border-brand-navy/[0.06] px-6 py-4">
-          <div className="flex items-center justify-center gap-3">
-            <button
-              onClick={onArchive}
-              className="flex items-center gap-2 rounded-full border border-brand-navy/20 bg-white px-5 py-2.5 text-sm font-semibold text-muted-foreground shadow-soft transition hover:border-brand-navy/35 hover:text-brand-navy"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              <X className="h-5 w-5" />
-              Pass
-            </button>
-            <button
-              onClick={onInterested}
-              className="flex items-center gap-2 rounded-full bg-brand-navy px-6 py-2.5 text-sm font-semibold text-white shadow-lift transition hover:bg-brand-navyDeep"
-            >
-              Interested
-              <Check className="h-5 w-5" strokeWidth={3} />
-              <ArrowRight className="h-4 w-4" />
-            </button>
-          </div>
-          <p className="mt-2.5 text-center text-[11px] text-muted-foreground">
-            Drag or tap · ← Pass · Interested →
-          </p>
-          <p className="mx-auto mt-3 max-w-md text-center text-[11px] leading-relaxed text-muted-foreground/80">
-            Grant Alerts are a quick snapshot and concept proposal to gauge your interest. Marking one
-            <span className="font-medium text-brand-navy"> Interested</span> simply moves it to your Grant Report —
-            where you can assess the full details and make a pursuit decision or contact an expert. It&apos;s not a
-            commitment.
-          </p>
+      {/* decision controls — the ONLY way to decide; browsing never decides */}
+      <div className="shrink-0 border-t border-brand-navy/[0.06] px-6 py-4">
+        <div className="flex items-center justify-center gap-3">
+          <button
+            onClick={onArchive}
+            className="flex items-center gap-2 rounded-full border border-brand-navy/20 bg-white px-5 py-2.5 text-sm font-semibold text-muted-foreground shadow-soft transition hover:border-brand-navy/35 hover:text-brand-navy"
+          >
+            <X className="h-5 w-5" />
+            Pass
+          </button>
+          <button
+            onClick={onInterested}
+            className="flex items-center gap-2 rounded-full bg-brand-navy px-6 py-2.5 text-sm font-semibold text-white shadow-lift transition hover:bg-brand-navyDeep"
+          >
+            Interested
+            <Check className="h-5 w-5" strokeWidth={3} />
+          </button>
         </div>
-      )}
+        <p className="mt-2.5 text-center text-[11px] text-muted-foreground">
+          Browse: ← / → or swipe · Decide: Pass / Interested
+        </p>
+        <p className="mx-auto mt-3 max-w-md text-center text-[11px] leading-relaxed text-muted-foreground/80">
+          Grant Alerts are a quick snapshot and concept proposal to gauge your interest. Marking one
+          <span className="font-medium text-brand-navy"> Interested</span> simply moves it to your Grant Report —
+          where you can assess the full details and make a pursuit decision or contact an expert. It&apos;s not a
+          commitment.
+        </p>
+      </div>
     </div>
   );
 }
