@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 import { PageHeader } from "@/components/layout/page-header";
 import { ClientForm } from "../client-form";
@@ -23,6 +24,14 @@ export default async function NewClientPage({
   return (
     <div>
       <PageHeader title="Add Client/Prospect" description="Create a new client or prospect record." />
+      {defaultKind !== "prospect" && (
+        <div className="mx-8 mt-4 rounded-xl border border-brand-navy/[0.08] bg-brand-cream/40 px-4 py-3 text-sm text-muted-foreground">
+          Prefer the client complete it themselves?{" "}
+          <Link href="/clients/invite" className="font-medium text-brand-orange hover:underline">
+            Invite them to set up their own account →
+          </Link>
+        </div>
+      )}
       <div className="p-8">
         <ClientForm action={createClientAction} submitLabel="Create record" defaultKind={defaultKind} />
       </div>

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createServiceClient } from "@/lib/supabase/server";
 import { requireAdmin } from "@/lib/auth";
+import { resolveOrCreateAuthUser } from "@/lib/clients/portal-login";
 
 // Staff-only management of a client's PORTAL logins (the client_members "guest
 // list") + seat limit. Every action is admin-gated and writes via the service
@@ -53,24 +54,17 @@ export async function inviteClientMember(formData: FormData) {
     .insert({ client_id: clientId, email, role: "member" });
   if (insErr) throw new Error(`Could not add member: ${insErr.message}`);
 
-  // Provision the login (open signup is off → we create it). Silent: no email is
-  // sent; staff tell the client to sign in at the login page (the magic link works
-  // because the account now exists). email_confirm so OTP sign-in works immediately.
-  let userId: string | null = null;
-  const { data: created, error: createErr } = await admin.auth.admin.createUser({
-    email,
-    email_confirm: true,
-  });
-  if (created?.user) {
-    userId = created.user.id;
-  } else if (createErr && /already|registered|exists/i.test(createErr.message)) {
-    // Existing account (re-add, or a member of another org): find + link it.
-    const { data: list } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    userId = list?.users?.find((u) => u.email?.toLowerCase() === email)?.id ?? null;
-  } else {
+  // Provision the login (open signup is off → we create it). Shared with the
+  // Invite-client onboarding flow via resolveOrCreateAuthUser. Silent here: no
+  // email is sent; staff tell the client to sign in (the magic link works once the
+  // account exists).
+  let userId: string | null;
+  try {
+    userId = await resolveOrCreateAuthUser(admin, email);
+  } catch (e) {
     // Real failure → roll back the membership so nothing is left half-provisioned.
     await admin.from("client_members").delete().eq("client_id", clientId).eq("email", email);
-    throw new Error(`Could not create the login: ${createErr?.message ?? "unknown error"}`);
+    throw e;
   }
 
   if (userId) {
