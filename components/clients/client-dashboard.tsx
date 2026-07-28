@@ -43,6 +43,7 @@ export function ClientDashboard({
   editHref,
   refresh,
   matchNote,
+  staffTools,
 }: {
   name: string;
   subLine: string | null;
@@ -59,6 +60,7 @@ export function ClientDashboard({
   editHref?: string | null;
   refresh?: React.ReactNode; // staff-only refresh control
   matchNote?: React.ReactNode; // staff-only in-progress indicator
+  staffTools?: React.ReactNode; // staff-only tools (e.g. "Check a grant"), below the hero
 }) {
   const scheduleHref = bookingUrl || `mailto:${SUPPORT}?subject=Schedule%20a%20strategy%20call`;
   return (
@@ -84,6 +86,7 @@ export function ClientDashboard({
         stats={stats.map((s) => ({ value: s.value, label: s.label, sub: s.sub, accent: s.accent }))}
       />
       {isStaff && matchNote}
+      {isStaff && staffTools}
 
       {/* main grid: action items (wide) + grant activity */}
       <div className="mt-8 grid gap-6 lg:grid-cols-3">
