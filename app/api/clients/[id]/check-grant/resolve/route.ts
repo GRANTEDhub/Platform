@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { extractSimplerGovOpportunityId } from "@/lib/grants/engine";
+import { loadOpenGrantPool, rankGrantsForNeed } from "@/lib/grants/need-search";
+
+// The described-need path runs one cheap LLM rerank over the open pool, so give the
+// route headroom beyond the default.
+export const maxDuration = 60;
 
 // "Check a grant" — step 1 of 2: RESOLVE a free-text input to candidate grant(s) in
 // our ledger, for the user to confirm before we score. No scoring, no persistence.
@@ -24,6 +29,7 @@ type Candidate = {
   submission_deadline: string | null;
   status: string;
   ready: boolean; // status === 'complete' -> fully shredded, safe to score cleanly
+  reason?: string | null; // why this matched the described need (need-out path only)
 };
 
 function toCandidate(row: Record<string, unknown>): Candidate {
@@ -38,7 +44,7 @@ function toCandidate(row: Record<string, unknown>): Candidate {
   };
 }
 
-export async function POST(req: NextRequest, { params: _params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const supabase = createClient();
   const {
     data: { user },
@@ -79,22 +85,74 @@ export async function POST(req: NextRequest, { params: _params }: { params: { id
     });
   }
 
-  // ── Name / keyword / FON path: ilike search over the domestic ledger ─────────────
+  // ── Name / need path: direct ledger match + conceptual need-rank, merged ─────────
+  // A short exact-ish query (grant name / funder / FON) resolves DIRECTLY (guaranteed,
+  // regardless of the need-pool cap); a described NEED is matched conceptually by the
+  // cheap LLM reranker over the open pool. Both feed the same confirm -> score flow.
   const safe = query.replace(/[%*(),:\\]/g, " ").trim();
-  if (!safe) return NextResponse.json({ kind: "name", candidates: [] });
-  const { data } = await db
-    .from("grants")
-    .select(CANDIDATE_COLS)
-    .or(`title.ilike.*${safe}*,funder.ilike.*${safe}*,fon.ilike.*${safe}*`)
-    .or("is_domestic.is.null,is_domestic.eq.true")
-    .order("ingested_at", { ascending: false })
-    .limit(8);
-  const candidates = (data ?? []).map(toCandidate);
+
+  const direct: Candidate[] = [];
+  if (safe) {
+    const { data } = await db
+      .from("grants")
+      .select(CANDIDATE_COLS)
+      .or(`title.ilike.*${safe}*,funder.ilike.*${safe}*,fon.ilike.*${safe}*`)
+      .or("is_domestic.is.null,is_domestic.eq.true")
+      .order("ingested_at", { ascending: false })
+      .limit(6);
+    direct.push(...(data ?? []).map(toCandidate));
+  }
+
+  // Conceptual need match over the open pool. Client context grounds eligibility /
+  // tie-breaks; the need text leads. Fail-safe (rankGrantsForNeed never throws).
+  const { data: clientRow } = await db
+    .from("clients")
+    .select("name, org_type, location_city, location_county, location_state, service_area, primary_funding_needs")
+    .eq("id", params.id)
+    .maybeSingle();
+  const pool = await loadOpenGrantPool(db);
+  const needMatches = await rankGrantsForNeed(query, orgContext(clientRow), pool, 8);
+  const poolById = new Map(pool.map((g) => [g.id, g]));
+
+  // Merge: direct hits first (exact), then need matches not already present; if the
+  // reranker also surfaced a direct hit, borrow its reason.
+  const merged: Candidate[] = [...direct];
+  const seen = new Set(direct.map((c) => c.grantId));
+  for (const m of needMatches) {
+    if (seen.has(m.grantId)) {
+      const hit = merged.find((c) => c.grantId === m.grantId);
+      if (hit && !hit.reason) hit.reason = m.reason;
+      continue;
+    }
+    const g = poolById.get(m.grantId);
+    if (!g) continue;
+    seen.add(m.grantId);
+    merged.push({ ...toCandidate(g as unknown as Record<string, unknown>), reason: m.reason });
+  }
+  const candidates = merged.slice(0, 8);
   return NextResponse.json({
     kind: "name",
     candidates,
     ...(candidates.length === 0
-      ? { message: "No ledger match. Check the spelling, try the funder or opportunity number, or paste the Grants.gov / Simpler.gov link." }
+      ? { message: "No ledger match — try different wording, the funder, or paste the Grants.gov / Simpler.gov link." }
       : {}),
   });
+}
+
+// Compact, public-safe org context for the need reranker (name/type/location/service
+// area/stated priorities). The need text is the primary signal; this only grounds
+// eligibility and tie-breaks.
+function orgContext(c: Record<string, unknown> | null): string {
+  if (!c) return "(no organization context available)";
+  const arr = (v: unknown): string[] => (Array.isArray(v) ? (v.filter((x) => typeof x === "string") as string[]) : []);
+  const parts = [
+    c.name ? `Organization: ${String(c.name)}` : "",
+    c.org_type ? `Type: ${String(c.org_type).replace(/_/g, " ")}` : "",
+    c.location_city || c.location_county || c.location_state
+      ? `Location: ${[c.location_city, c.location_county, c.location_state].filter(Boolean).join(", ")}`
+      : "",
+    arr(c.service_area).length ? `Service area: ${arr(c.service_area).join("; ")}` : "",
+    arr(c.primary_funding_needs).length ? `Stated funding priorities: ${arr(c.primary_funding_needs).join("; ")}` : "",
+  ].filter(Boolean);
+  return parts.join("\n") || "(no organization context available)";
 }
