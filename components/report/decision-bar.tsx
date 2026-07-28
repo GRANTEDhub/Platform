@@ -51,6 +51,13 @@ export function DecisionBar({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Couldn't save that");
       setShowPass(false);
+      // Client (tier set): a Pass or Save-for-later on the detail is a decision — show
+      // the brief "recorded" transition, then land back on the Grant Report to keep
+      // reviewing (#18c). Staff keep the in-place refresh.
+      if (tier) {
+        router.push(`/portal/grants/decided?o=${next}`);
+        return;
+      }
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't save that");
