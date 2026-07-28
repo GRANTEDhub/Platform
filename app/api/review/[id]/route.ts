@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { waitUntil } from "@vercel/functions";
+import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { computeGrantSummary } from "@/lib/review/summary";
+import { canSendOutreach } from "@/lib/email/guard";
+import { sendGrantReleaseEmail } from "@/lib/email/send";
+import { appBaseUrl } from "@/lib/site-url";
 import type { CardDecision, PursuitPath } from "@/types/database";
 
 // Re-exported so existing importers (DecisionPanel, DecisionConfirmation) keep
@@ -56,6 +60,18 @@ export async function PATCH(
     if (actor !== "staff") {
       return NextResponse.json({ error: "Staff only" }, { status: 403 });
     }
+    // Capture prior release state so the client is emailed only on the null ->
+    // set transition -- re-releasing an already-released card must not re-notify.
+    let firstRelease = false;
+    if (body.sme_release) {
+      const { data: prior } = await supabase
+        .from("review_cards")
+        .select("sme_released_at")
+        .eq("id", params.id)
+        .maybeSingle<{ sme_released_at: string | null }>();
+      firstRelease = !prior?.sme_released_at;
+    }
+
     const update = body.sme_release
       ? { sme_released_at: new Date().toISOString(), sme_released_by: user.id }
       : { sme_interested_at: new Date().toISOString(), sme_interested_by: user.id };
@@ -67,6 +83,14 @@ export async function PATCH(
       .single();
     if (error) {
       return NextResponse.json({ error: "Failed to update card" }, { status: 500 });
+    }
+    // On the FIRST release of a card to the client, notify them by email with a
+    // deep link to the released grant. The in-app bell already picks up
+    // sme_released_at on its own, so this is the email half only. Fire-and-forget
+    // via waitUntil: the release is the source of truth and must succeed even if
+    // the email is gated off (preview / not on the allowlist) or Resend errors.
+    if (body.sme_release && firstRelease && data?.client_id && data?.grant_id) {
+      waitUntil(notifyClientOfRelease(params.id, data.client_id, data.grant_id));
     }
     // No auto-generation of the concept proposal here anymore. With the single AM
     // review gate (Gate 1 / sme_interested triage removed), the concept proposal is
@@ -161,4 +185,44 @@ export async function PATCH(
     : null;
 
   return NextResponse.json({ card: data, grant_summary });
+}
+
+// Background (waitUntil) notify: emails the client's primary contact that a new
+// grant match has been released, with a deep link into their Grant Alerts view.
+// Runs after the response and uses the service-role client (the request-scoped
+// RLS client is tied to the finished request). NEVER throws -- a gated or failed
+// send must not affect the release, which already succeeded. Mirrors the
+// concept-generation background trigger's error contract.
+async function notifyClientOfRelease(cardId: string, clientId: string, grantId: string): Promise<void> {
+  try {
+    const db = createServiceClient();
+    const [{ data: client }, { data: grant }] = await Promise.all([
+      db
+        .from("clients")
+        .select("primary_contact_email, primary_contact_name")
+        .eq("id", clientId)
+        .maybeSingle<{ primary_contact_email: string | null; primary_contact_name: string | null }>(),
+      db.from("grants").select("title").eq("id", grantId).maybeSingle<{ title: string | null }>(),
+    ]);
+
+    const to = client?.primary_contact_email ?? null;
+    // Same combined gate as every outreach send: prod + enabled + key + on the
+    // testing allowlist. A blocked send logs why and returns cleanly.
+    const gate = canSendOutreach(to);
+    if (!gate.ok) {
+      console.log(`[release-notify] skipped card=${cardId}: ${gate.reason}`);
+      return;
+    }
+
+    const url = `${appBaseUrl()}/portal/grants/${cardId}?from=alerts`;
+    const sent = await sendGrantReleaseEmail({
+      to: to as string,
+      contactName: client?.primary_contact_name ?? null,
+      grantTitle: grant?.title ?? null,
+      url,
+    });
+    console.log(`[release-notify] sent card=${cardId} to=${sent.to} id=${sent.id}`);
+  } catch (e) {
+    console.error(`[release-notify] failed card=${cardId}:`, e instanceof Error ? e.message : e);
+  }
 }
