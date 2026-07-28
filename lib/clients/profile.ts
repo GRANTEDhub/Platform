@@ -16,6 +16,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAnthropicClient, MODEL } from "@/lib/anthropic";
 import { formatStoredUSASpending } from "@/lib/grants/usaspending";
 import { formatProgramsForDump } from "@/lib/intake/narrative";
+import { buildCommunityContext } from "@/lib/geo/census";
 import type { Client, ClientProfile } from "@/types/database";
 
 // One input shape for everyone (lead / prospect / client) -- the lead/client flag
@@ -279,6 +280,11 @@ export async function refreshClientProfileById(
   if (!data) return false;
   try {
     const profile = await constructClientProfile(buildClientProfileInput(data as Client));
+    // Attach community need-context (fail-safe: buildCommunityContext never throws and
+    // returns null when the client's location does not resolve). Written in the SAME
+    // update as the profile so a later refine can never leave a stale context behind.
+    const community = await buildCommunityContext(data as Client);
+    if (community) profile.community_context = community;
     const { error } = await db
       .from("clients")
       .update({ client_profile: profile })
@@ -296,6 +302,30 @@ export async function refreshClientProfileById(
     );
     return false; // leave client_profile as-is (null-safe)
   }
+}
+
+// Refresh ONLY the community need-context on an existing client_profile, WITHOUT
+// re-running the LLM distillation (cheap: one Census call + a jsonb patch). Used by the
+// one-shot backfill. Requires a present client_profile -- community context is read only
+// when a profile exists (enrichMatchWithProfile gates on it), so a null profile is a
+// no-op. Fail-safe: an unresolved location leaves the profile untouched.
+export async function refreshClientCommunityContextById(
+  db: SupabaseClient,
+  clientId: string,
+): Promise<"updated" | "no-profile" | "no-context" | "error"> {
+  const { data } = await db.from("clients").select("*").eq("id", clientId).single();
+  if (!data) return "error";
+  const client = data as Client;
+  if (!client.client_profile) return "no-profile"; // nothing to enrich yet
+  const community = await buildCommunityContext(client);
+  if (!community) return "no-context"; // location did not resolve
+  const next: ClientProfile = { ...client.client_profile, community_context: community };
+  const { error } = await db.from("clients").update({ client_profile: next }).eq("id", clientId);
+  if (error) {
+    console.error("Community-context write failed for client", clientId, error.message);
+    return "error";
+  }
+  return "updated";
 }
 
 // Enrichment-facing rendering of a ClientProfile (Stage 4 redesign). This feeds
@@ -341,6 +371,23 @@ export function formatClientProfileForEnrichment(profile: ClientProfile | null |
   push("Supporting roles it can genuinely fill", joined(profile.supporting_roles));
   push("Existing partnerships", joined(profile.partnerships));
   push("What they want to fund", joined(profile.funding_priorities));
+
+  // Community need indicators (U.S. Census ACS). Grounds demonstrated-need language;
+  // it describes the community, not the org's capacity, and cannot move the seat.
+  const cc = profile.community_context;
+  if (cc && Array.isArray(cc.geographies) && cc.geographies.length) {
+    lines.push(`Community need context (${cc.source} ${cc.vintage}) -- describes the community served, not org capacity:`);
+    for (const g of cc.geographies) {
+      const i = g.indicators;
+      const parts: string[] = [];
+      if (i.population != null) parts.push(`pop ${i.population.toLocaleString("en-US")}`);
+      if (i.median_household_income != null)
+        parts.push(`median household income $${i.median_household_income.toLocaleString("en-US")}`);
+      if (i.poverty_rate != null) parts.push(`poverty rate ${i.poverty_rate}%`);
+      if (i.unemployment_rate != null) parts.push(`unemployment ${i.unemployment_rate}%`);
+      if (parts.length) lines.push(`  - ${g.name}, ${g.state}: ${parts.join("; ")}`);
+    }
+  }
 
   return (
     `\nCLIENT PROFILE (distilled context to GROUND the outreach narrative -- the seat, ` +
