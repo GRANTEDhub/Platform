@@ -16,12 +16,20 @@ import type { HudDesignations } from "@/types/database";
 // not designated"): a silent false-negative would be the worst outcome.
 
 const HUD_ORG = "https://services.arcgis.com/VTyQ9soqVukalItT/arcgis/rest/services";
-// Year-versioned FeatureServers -- BUMP THE YEAR ANNUALLY (QCT/DDA lists are re-issued
-// effective Jan 1). The QCT_2026 URL is confirmed via HUD Open Data; DDA follows the
-// identical naming convention. A wrong/expired URL 404s -> null (unavailable, logged),
-// so it degrades visibly rather than silently reading "not designated".
-const QCT_LAYER = `${HUD_ORG}/QUALIFIED_CENSUS_TRACTS_2026/FeatureServer/0`;
-const DDA_LAYER = `${HUD_ORG}/DIFFICULT_DEVELOPMENT_AREAS_2026/FeatureServer/0`;
+// Candidate FeatureServers per designation, tried in order: the current year-stamped
+// service first, then the year-less evergreen alias as a fallback. Service names are
+// CASE-SENSITIVE on ArcGIS Online and are verified against the live HUD org listing
+// (QCT is all-caps; DDA is mixed-case). When HUD retires the _2026 service next year the
+// evergreen alias keeps this working until the year is bumped -- so it degrades to the
+// current data rather than silently going dark.
+const QCT_LAYERS = [
+  `${HUD_ORG}/QUALIFIED_CENSUS_TRACTS_2026/FeatureServer/0`,
+  `${HUD_ORG}/QUALIFIED_CENSUS_TRACTS/FeatureServer/0`,
+];
+const DDA_LAYERS = [
+  `${HUD_ORG}/Difficult_Development_Areas_2026/FeatureServer/0`,
+  `${HUD_ORG}/Difficult_Development_Areas/FeatureServer/0`,
+];
 const TIMEOUT_MS = 8000;
 
 // Point-in-polygon membership test against one HUD layer.
@@ -54,12 +62,23 @@ async function pointInLayer(layer: string, lon: number, lat: number): Promise<bo
   }
 }
 
+// Try each candidate layer in order; return the first DEFINITIVE answer (true = inside,
+// false = valid count of 0). Only fall through on null (that candidate was unavailable),
+// so a real "not designated" is never overridden by a fallback lookup.
+async function pointInAny(layers: string[], lon: number, lat: number): Promise<boolean | null> {
+  for (const layer of layers) {
+    const result = await pointInLayer(layer, lon, lat);
+    if (result !== null) return result;
+  }
+  return null;
+}
+
 // Look up HUD QCT/DDA membership at (lat, lon). Returns null only when BOTH queries
 // fail (we learned nothing); otherwise a context with per-designation booleans (a
-// false is a real negative; a null is "that one layer was unavailable").
+// false is a real negative; a null is "that layer was unavailable across all candidates").
 export async function lookupHudDesignations(lat: number, lon: number): Promise<HudDesignations | null> {
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-  const [qct, dda] = await Promise.all([pointInLayer(QCT_LAYER, lon, lat), pointInLayer(DDA_LAYER, lon, lat)]);
+  const [qct, dda] = await Promise.all([pointInAny(QCT_LAYERS, lon, lat), pointInAny(DDA_LAYERS, lon, lat)]);
   if (qct === null && dda === null) return null;
   return {
     checked_at: new Date().toISOString(),
