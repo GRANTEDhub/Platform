@@ -1,7 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { PortalHeader } from "@/components/layout/portal-header";
+import { getClientNotifications, type ClientNotifications } from "@/lib/portal/notifications";
 
-type MembershipRow = { clients: { name: string } | { name: string }[] | null };
+type MembershipRow = { clients: { id: string; name: string } | { id: string; name: string }[] | null };
 
 // Deliberately NOT gated here -- requireClientOrAdmin() on each page is the
 // one and only auth check for this route (see the 0656605 relocation commit:
@@ -18,6 +19,9 @@ export default async function IntellEngineLayout({ children }: { children: React
   } = await supabase.auth.getUser();
 
   let orgName: string | null = null;
+  // notifications stays null for a staff admin previewing (no membership) -- the
+  // header then renders bare (logo + sign out), the same chrome as before.
+  let notifications: ClientNotifications | null = null;
   if (user) {
     // Same predicate + order as requireClient()'s own lookup (lib/auth.ts) --
     // without a matching order, a user with 2+ active memberships could see a
@@ -25,19 +29,21 @@ export default async function IntellEngineLayout({ children }: { children: React
     // .limit(1) query isn't guaranteed to plan the same as an unlimited one.
     const { data } = await supabase
       .from("client_members")
-      .select("clients(name)")
+      .select("clients(id, name)")
       .eq("user_id", user.id)
       .not("activated_at", "is", null)
       .order("invited_at", { ascending: true })
       .limit(1)
       .maybeSingle<MembershipRow>();
     const clients = data?.clients;
-    orgName = (Array.isArray(clients) ? clients[0]?.name : clients?.name) ?? null;
+    const client = Array.isArray(clients) ? clients[0] : clients;
+    orgName = client?.name ?? null;
+    if (client?.id) notifications = await getClientNotifications(client.id);
   }
 
   return (
     <div className="flex min-h-screen flex-col">
-      <PortalHeader orgName={orgName} />
+      <PortalHeader orgName={orgName} notifications={notifications} />
       <main className="flex-1">{children}</main>
     </div>
   );
