@@ -52,6 +52,9 @@ export async function inviteClientAction(formData: FormData): Promise<InviteStat
       engagement_tier: tierLabel,
       account_managed: accountManaged,
       intake_sent_at: new Date().toISOString(),
+      // Two seats so the primary contact can add one teammate at first login
+      // (#16); staff raise it per the pricing tier for larger orgs.
+      seat_limit: 2,
     })
     .select("id")
     .single<{ id: string }>();

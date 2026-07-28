@@ -161,6 +161,11 @@ export interface Client {
   // Client-portal seat limit (migration 0055): how many portal logins this client
   // may have. Default 1; staff raise it per the pricing tier.
   seat_limit: number;
+  // First-login profile review (migration 0065, #16). Stamped when the client
+  // confirms their org profile on the /welcome screen; NULL = not yet confirmed
+  // (the portal redirects them to /welcome). Backfilled to now() for clients that
+  // were already onboarded (org_type present) so they skip the review.
+  profile_confirmed_at: string | null;
   created_at: string;
   updated_at: string;
 }

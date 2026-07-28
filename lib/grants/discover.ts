@@ -488,6 +488,7 @@ function prospectAsClient(c: Candidate): Client {
     org_type: c.org_type ?? null,
     status: "prospect",
     seat_limit: 1, // not a real client; portal seats are irrelevant to scoring
+    profile_confirmed_at: null, // synthetic scoring shape; no portal profile
     engagement_tier: null,
     primary_contact_name: null,
     primary_contact_email: null,
