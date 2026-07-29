@@ -3,27 +3,32 @@
 import { useEffect, useRef, useState } from "react";
 import { Input, Label } from "@/components/ui/input";
 
-// Google-Maps-style address autocomplete for the client/prospect form: type into
-// Street address, pick a suggestion, and city / county / state / ZIP fill in.
+// Google-Maps-style address autocomplete, as ONE "Address" line: type, pick a
+// suggestion, and the parts (street / city / county / state / ZIP) are filled into
+// HIDDEN inputs behind it. The admin sees one clean field; the server action still
+// receives the same five field names, unchanged.
 //
 // Browser-side by REQUIREMENT, not preference: the key is HTTP-referrer ("Websites")
-// restricted, so it is only accepted on requests that carry an allowed Referer —
+// restricted, so it is only accepted on requests that carry an allowed Referer --
 // a server-side proxy would send none and be rejected. So this calls the Places API
 // (New) REST endpoints directly from the browser with the public key.
 //
-// GRACEFUL DEGRADATION is the whole design: with no key configured, a referrer the
-// key doesn't allow (e.g. a *.vercel.app preview), or any API/network failure, it
-// silently falls back to plain typed inputs — exactly the pre-autocomplete behavior.
-// Autocomplete is a typing convenience; county is independently derived server-side
-// (Census geocoder), so nothing downstream depends on this working.
+// FAILURE IS VISIBLE, not silent. An earlier version degraded quietly to plain
+// typing, which made a misconfigured key indistinguishable from "no suggestions" --
+// undiagnosable from the outside. Now the real status/message is surfaced inline and
+// the lookup is retryable, while typing still always works: a one-line address is
+// enough on its own, because county is derived server-side from it (Census
+// one-line geocoder) and RUCC follows from the county.
 //
-// Field `name`s are unchanged (location_street/city/county/state/zip) so the server
-// action needs no changes.
+// Not-configured (no key) is a QUIET, expected state -- e.g. a *.vercel.app preview,
+// where the referrer-locked key is intentionally not accepted. Only a real API
+// failure is surfaced.
 
 const AUTOCOMPLETE_URL = "https://places.googleapis.com/v1/places:autocomplete";
 const DETAILS_URL = "https://places.googleapis.com/v1/places";
 const MIN_CHARS = 3;
 const DEBOUNCE_MS = 250;
+const MAX_FAILURES = 3; // stop hammering a broken config; retryable
 
 type Suggestion = { placeId: string; primary: string; secondary: string };
 
@@ -47,13 +52,13 @@ function parseComponents(components: AddressComponent[]) {
   const county = (find("administrative_area_level_2")?.longText ?? "").replace(/\s+County$/i, "");
   const state = find("administrative_area_level_1")?.shortText ?? "";
   const zip = find("postal_code")?.longText ?? "";
-  return {
-    street: [streetNumber, route].filter(Boolean).join(" "),
-    city,
-    county,
-    state,
-    zip,
-  };
+  return { street: [streetNumber, route].filter(Boolean).join(" "), city, county, state, zip };
+}
+
+// Compose the single visible line from stored parts (edit-mode prefill).
+function composeLine(p: { street: string; city: string; state: string; zip: string }): string {
+  const tail = [p.city, [p.state, p.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+  return [p.street, tail].filter(Boolean).join(", ");
 }
 
 export function AddressAutocomplete({
@@ -62,25 +67,48 @@ export function AddressAutocomplete({
   defaultCounty,
   defaultState,
   defaultZip,
+  defaultLine,
 }: {
   defaultStreet?: string | null;
   defaultCity?: string | null;
   defaultCounty?: string | null;
   defaultState?: string | null;
   defaultZip?: string | null;
+  // An ALREADY-COMPOSED full address line (the website-crafted address), used
+  // verbatim for the visible field. Without this the line is composed from the
+  // parts -- composing a full line WITH parts would duplicate the city/state/ZIP.
+  defaultLine?: string | null;
 }) {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
 
+  // Hidden, server-facing parts.
   const [street, setStreet] = useState(defaultStreet ?? "");
   const [city, setCity] = useState(defaultCity ?? "");
   const [county, setCounty] = useState(defaultCounty ?? "");
   const [stateVal, setStateVal] = useState(defaultState ?? "AR");
   const [zip, setZip] = useState(defaultZip ?? "");
 
+  // The single visible line.
+  const [line, setLine] = useState(
+    (defaultLine ?? "").trim() ||
+      composeLine({
+        street: defaultStreet ?? "",
+        city: defaultCity ?? "",
+        state: defaultState ?? "",
+        zip: defaultZip ?? "",
+      }),
+  );
+  // Street resolved from a picked suggestion; cleared when the admin edits the line,
+  // at which point the raw line is submitted as the address (the Census one-line
+  // geocoder handles a full address string, so nothing downstream breaks).
+  const [pickedStreet, setPickedStreet] = useState(defaultStreet ?? "");
+
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
-  const [degraded, setDegraded] = useState(false); // an API failure -> stop trying, plain typing
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [failures, setFailures] = useState(0);
+  const [showParts, setShowParts] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   // One session token spans the keystrokes of a single lookup + its details call
@@ -97,14 +125,14 @@ export function AddressAutocomplete({
     return () => document.removeEventListener("mousedown", onDown);
   }, []);
 
-  // Debounced suggestion fetch. Inert without a key or after a failure.
+  // Debounced suggestion fetch. Inert without a key, or after repeated failures.
   useEffect(() => {
-    if (!apiKey || degraded) return;
+    if (!apiKey || failures >= MAX_FAILURES) return;
     if (skipNextRef.current) {
       skipNextRef.current = false;
       return;
     }
-    const q = street.trim();
+    const q = line.trim();
     if (q.length < MIN_CHARS) {
       setSuggestions([]);
       setOpen(false);
@@ -134,7 +162,18 @@ export function AddressAutocomplete({
             sessionToken: sessionRef.current,
           }),
         });
-        if (!res.ok) throw new Error(`autocomplete ${res.status}`);
+        if (!res.ok) {
+          // Surface what Google actually said -- the difference between a blocked
+          // referrer, a disabled API, and a bad key is the whole diagnosis.
+          let detail = "";
+          try {
+            const body = (await res.json()) as { error?: { message?: string; status?: string } };
+            detail = body.error?.message || body.error?.status || "";
+          } catch {
+            /* non-JSON error body */
+          }
+          throw new Error(`HTTP ${res.status}${detail ? ` — ${detail}` : ""}`);
+        }
         const data = (await res.json()) as {
           suggestions?: {
             placePrediction?: {
@@ -155,50 +194,66 @@ export function AddressAutocomplete({
         setSuggestions(list);
         setActive(-1);
         setOpen(list.length > 0);
+        setApiError(null);
+        setFailures(0); // a success clears a transient failure streak
       } catch (err) {
         if ((err as Error)?.name === "AbortError") return;
-        // Key rejected for this referrer / API disabled / offline / CORS: stop
-        // trying and let the admin type the address normally.
-        setDegraded(true);
+        const msg = err instanceof Error ? err.message : String(err);
+        // A CORS/network rejection surfaces as an opaque "Failed to fetch"; name the
+        // usual cause so it is actionable rather than mysterious.
+        setApiError(
+          /failed to fetch|networkerror|load failed/i.test(msg)
+            ? "Address lookup blocked (network/CORS). Usually the API key's Websites restriction does not allow this domain."
+            : `Address lookup failed: ${msg}`,
+        );
+        setFailures((n) => n + 1);
         setSuggestions([]);
         setOpen(false);
       }
     }, DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [street, apiKey, degraded]);
+  }, [line, apiKey, failures]);
 
   async function choose(s: Suggestion) {
     setOpen(false);
     setSuggestions([]);
     skipNextRef.current = true;
-    setStreet(s.primary); // immediate feedback; refined by the details call below
+    const full = [s.primary, s.secondary].filter(Boolean).join(", ");
+    setLine(full);
+    setStreet(s.primary);
+    setPickedStreet(s.primary);
     if (!apiKey) return;
     try {
       const res = await fetch(
         `${DETAILS_URL}/${encodeURIComponent(s.placeId)}?sessionToken=${encodeURIComponent(sessionRef.current)}`,
-        {
-          headers: {
-            "X-Goog-Api-Key": apiKey,
-            "X-Goog-FieldMask": "addressComponents",
-          },
-        },
+        { headers: { "X-Goog-Api-Key": apiKey, "X-Goog-FieldMask": "addressComponents" } },
       );
-      if (!res.ok) throw new Error(`details ${res.status}`);
+      if (!res.ok) throw new Error(`details HTTP ${res.status}`);
       const data = (await res.json()) as { addressComponents?: AddressComponent[] };
       const parsed = parseComponents(data.addressComponents ?? []);
       // Only overwrite with something real -- never blank a field the pick didn't
       // resolve (e.g. a business with no street number keeps what was typed).
-      skipNextRef.current = true;
-      if (parsed.street) setStreet(parsed.street);
+      if (parsed.street) {
+        setStreet(parsed.street);
+        setPickedStreet(parsed.street);
+      }
       if (parsed.city) setCity(parsed.city);
       if (parsed.county) setCounty(parsed.county);
       if (parsed.state) setStateVal(parsed.state);
       if (parsed.zip) setZip(parsed.zip);
-    } catch {
-      // Keep the chosen text; the admin can complete the rest by hand.
+      setApiError(null);
+    } catch (err) {
+      // Keep the chosen text; the parts can be completed by hand (or derived
+      // server-side from the one-line address).
+      setApiError(`Couldn't load that address's details: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       sessionRef.current = ""; // session ends with the details call
     }
+  }
+
+  function onLineChange(v: string) {
+    setLine(v);
+    setPickedStreet(""); // hand-edited -> submit the raw line as the address
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -221,22 +276,21 @@ export function AddressAutocomplete({
     }
   }
 
+  // What actually goes to the server as the address: the picked street when a
+  // suggestion resolved one, else the raw typed line (geocoded server-side).
+  const streetOut = pickedStreet || line.trim() || street;
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-2">
       <div ref={wrapRef} className="relative space-y-2">
-        <Label htmlFor="location_street">Street address</Label>
+        <Label htmlFor="address_line">Address</Label>
         <Input
-          id="location_street"
-          name="location_street"
-          value={street}
-          onChange={(e) => setStreet(e.target.value)}
+          id="address_line"
+          value={line}
+          onChange={(e) => onLineChange(e.target.value)}
           onKeyDown={onKeyDown}
           autoComplete="off"
-          placeholder={
-            apiKey && !degraded
-              ? "Start typing an address — suggestions fill city, county, state, ZIP"
-              : "e.g. 500 W Markham St (enables tract-level need + eligibility data)"
-          }
+          placeholder="Start typing an address…"
         />
         {open && suggestions.length > 0 && (
           <ul className="absolute z-50 mt-1 w-full overflow-hidden rounded-md border border-input bg-white shadow-lift">
@@ -259,24 +313,71 @@ export function AddressAutocomplete({
         )}
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-4">
-        <div className="space-y-2">
-          <Label htmlFor="location_city">City</Label>
-          <Input id="location_city" name="location_city" value={city} onChange={(e) => setCity(e.target.value)} />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="location_county">County</Label>
-          <Input id="location_county" name="location_county" value={county} onChange={(e) => setCounty(e.target.value)} />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="location_state">State</Label>
-          <Input id="location_state" name="location_state" value={stateVal} onChange={(e) => setStateVal(e.target.value)} />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="location_zip">ZIP</Label>
-          <Input id="location_zip" name="location_zip" value={zip} onChange={(e) => setZip(e.target.value)} />
-        </div>
+      {/* Server-facing values. The admin sees one line; these carry the parts. */}
+      <input type="hidden" name="location_street" value={streetOut} readOnly />
+      {!showParts && (
+        <>
+          <input type="hidden" name="location_city" value={city} readOnly />
+          <input type="hidden" name="location_county" value={county} readOnly />
+          <input type="hidden" name="location_state" value={stateVal} readOnly />
+          <input type="hidden" name="location_zip" value={zip} readOnly />
+        </>
+      )}
+
+      {/* The real failure reason, when there is one. Actionable, not silent. */}
+      {apiError && (
+        <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
+          {apiError}
+          {failures >= MAX_FAILURES && " Suggestions are paused — type the address and it still saves."}{" "}
+          <button
+            type="button"
+            onClick={() => {
+              setFailures(0);
+              setApiError(null);
+            }}
+            className="font-medium underline"
+          >
+            Retry
+          </button>
+        </p>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+        <span>
+          {city || stateVal || zip
+            ? `Resolved: ${[city, stateVal, zip].filter(Boolean).join(", ")}${county ? ` · ${county} County` : ""}`
+            : "City, county, state, and ZIP fill in from the suggestion (or are derived on save)."}
+        </span>
+        <button
+          type="button"
+          onClick={() => setShowParts((v) => !v)}
+          className="font-medium text-brand-orange hover:underline"
+        >
+          {showParts ? "Hide address parts" : "Edit parts manually"}
+        </button>
       </div>
+
+      {/* Manual escape hatch: real inputs (same names) replace the hidden ones. */}
+      {showParts && (
+        <div className="grid gap-4 pt-1 sm:grid-cols-4">
+          <div className="space-y-2">
+            <Label htmlFor="location_city">City</Label>
+            <Input id="location_city" name="location_city" value={city} onChange={(e) => setCity(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="location_county">County</Label>
+            <Input id="location_county" name="location_county" value={county} onChange={(e) => setCounty(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="location_state">State</Label>
+            <Input id="location_state" name="location_state" value={stateVal} onChange={(e) => setStateVal(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="location_zip">ZIP</Label>
+            <Input id="location_zip" name="location_zip" value={zip} onChange={(e) => setZip(e.target.value)} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
