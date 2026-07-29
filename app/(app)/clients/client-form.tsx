@@ -5,6 +5,7 @@ import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ChipInput } from "@/components/ui/chip-input";
 import { NarrativeFields } from "@/components/intake/narrative-fields";
+import { AddressAutocomplete } from "@/components/clients/address-autocomplete";
 import { narrativeFromClient } from "@/lib/intake/narrative";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import { ORG_TYPES } from "@/lib/clients/org-types";
@@ -187,21 +188,17 @@ export function ClientForm({
         </div>
       </section>
 
-      {/* 4. Location. */}
+      {/* 4. Location — typeahead on street address fills city/county/state/ZIP.
+          Degrades to plain typed inputs with no key / on any API failure. */}
       <section className="space-y-4">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Location</h2>
-        <Field
-          label="Street address"
-          name="location_street"
-          defaultValue={client?.location_street}
-          placeholder="e.g. 500 W Markham St (enables tract-level need + eligibility data)"
+        <AddressAutocomplete
+          defaultStreet={client?.location_street}
+          defaultCity={client?.location_city}
+          defaultCounty={client?.location_county}
+          defaultState={client?.location_state}
+          defaultZip={client?.location_zip}
         />
-        <div className="grid gap-4 sm:grid-cols-4">
-          <Field label="City" name="location_city" defaultValue={client?.location_city} />
-          <Field label="County" name="location_county" defaultValue={client?.location_county} />
-          <Field label="State" name="location_state" defaultValue={client?.location_state ?? "AR"} />
-          <Field label="ZIP" name="location_zip" defaultValue={client?.location_zip} />
-        </div>
       </section>
 
       {/* 5. Narrative — the matching-relevant signal. Prospects get the light set
