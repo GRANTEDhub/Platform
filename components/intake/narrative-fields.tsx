@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { WebsiteDraftButton } from "@/components/intake/website-draft-button";
 import { PRIORITY_AREAS } from "@/lib/intake/fields";
 import { EMPTY_NARRATIVE, type NarrativeIntake, type NarrativeProgram } from "@/lib/intake/narrative";
 
@@ -20,9 +21,13 @@ const AREA = "flex w-full rounded-md border border-input bg-white px-3 py-2 text
 export function NarrativeFields({
   defaultValue,
   fundingNeedRequired,
+  websiteForDraft,
 }: {
   defaultValue?: NarrativeIntake;
   fundingNeedRequired?: boolean;
+  // When provided (admin client form), shows a "Draft from website" button that
+  // fills mission + funding_need from the org's site. Absent on the public intake.
+  websiteForDraft?: string;
 }) {
   const [n, setN] = useState<NarrativeIntake>(defaultValue ?? EMPTY_NARRATIVE);
 
@@ -49,6 +54,19 @@ export function NarrativeFields({
       {/* One hidden field carries the whole narrative: FormData (admin) reads it
           directly; the public fetch submit reads it via querySelector. */}
       <input type="hidden" name="intake_narrative" value={JSON.stringify(n)} readOnly />
+
+      {websiteForDraft !== undefined && (
+        <WebsiteDraftButton
+          url={websiteForDraft}
+          onDraft={(d) =>
+            setN((prev) => ({
+              ...prev,
+              mission: d.mission || prev.mission,
+              funding_need: d.funding_need || prev.funding_need,
+            }))
+          }
+        />
+      )}
 
       <Field label="What are you looking for?" required={fundingNeedRequired}>
         <textarea
