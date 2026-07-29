@@ -51,6 +51,23 @@ export interface Prospect {
   created_at: string;
 }
 
+// Cached IRS Form 990 financials from the ProPublica Nonprofit Explorer (migration
+// 0067). Enrichment CITATION only — grounds narrative + flags ("FY22 revenue $X,
+// IRS 990"); like usaspending_summary it is NEVER read by the occupancy scorer.
+export interface NonprofitFinance {
+  ein: string;
+  fiscal_year: number | null;
+  total_revenue: number | null;
+  total_expenses: number | null;
+  total_assets: number | null;
+  organization_name: string | null;
+  source_url: string;
+  // true = a real answer was obtained (a filing, OR a confirmed "org has no filings
+  // with data"); false is never stored — a failed lookup leaves the prior value and
+  // does not advance checked_at, so it retries.
+  verified: boolean;
+}
+
 export interface Client {
   id: string;
   name: string;
@@ -80,6 +97,13 @@ export interface Client {
   // Grant-matching profile (Phase 3). Non-financial; readable by contractors.
   rucc_codes: string | null;
   annual_budget: string | null;
+  // Org identity + auto-pulled financials (migration 0067). ein is the staff-entered
+  // IRS EIN; nonprofit_finance caches the latest IRS Form 990 figures pulled from the
+  // ProPublica Nonprofit Explorer. Enrichment CITATION only (never a matcher gate),
+  // mirroring the usaspending_summary cache. Refreshed at intake + edit.
+  ein: string | null;
+  nonprofit_finance: NonprofitFinance | null;
+  nonprofit_finance_checked_at: string | null;
   primary_funding_needs: string[] | null;
   project_stage: string | null;
   match_cost_share_capacity: string | null;

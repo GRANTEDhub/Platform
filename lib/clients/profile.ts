@@ -15,6 +15,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAnthropicClient, MODEL } from "@/lib/anthropic";
 import { formatStoredUSASpending } from "@/lib/grants/usaspending";
+import { formatStoredNonprofitFinance } from "@/lib/grants/propublica";
 import { formatProgramsForDump } from "@/lib/intake/narrative";
 import { buildCommunityContext } from "@/lib/geo/census";
 import type { Client, ClientProfile } from "@/types/database";
@@ -114,6 +115,9 @@ export function buildClientProfileInput(client: Client): ClientProfileInput {
   const autoPulled = [
     ["Self-reported federal grant history (AUTHORITATIVE)", str(client.federal_grant_history) ?? "Not provided"],
     ["USASpending cross-check (fuzzy org-name match; supplement only)", usa],
+    // Sourced budget citation from the org's latest IRS 990 (ProPublica), when an EIN
+    // is on file. A supplement to the self-reported annual_budget, not an override.
+    ["IRS 990 financials (ProPublica; sourced budget)", formatStoredNonprofitFinance(client.nonprofit_finance)],
     ["SAM registration", str(client.sam_registration_status) ?? str(client.sam_uei_status) ?? "Not verified"],
     ["SAM legal name", str(client.sam_matched_name)],
     ["UEI", str(client.uei)],

@@ -77,6 +77,10 @@ function parse(formData: FormData) {
     // Grant-matching profile
     rucc_codes: get("rucc_codes"),
     annual_budget: get("annual_budget"),
+    // Staff-entered EIN drives the IRS-990 budget pull (enrichClient). The cached
+    // nonprofit_finance + checked_at are auto-pulled and deliberately omitted from
+    // the payload so a save PRESERVES them (never hand-entered, like usaspending).
+    ein: get("ein"),
     primary_funding_needs: narrative.priority_areas.length ? narrative.priority_areas : null,
     project_stage: get("project_stage"),
     match_cost_share_capacity: get("match_cost_share_capacity"),
