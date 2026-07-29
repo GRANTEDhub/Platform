@@ -49,11 +49,11 @@ export function SwipeDeck({
   const current = queue[index];
 
   const persist = useCallback(
-    async (id: string, action: "interested" | "passed") => {
+    async (id: string, action: "interested" | "passed", reason?: string) => {
       try {
         const body =
           action === "passed"
-            ? { decision: "passed" }
+            ? { decision: "passed", decision_reason: reason?.trim() || undefined }
             : interestMode === "sme"
               ? { sme_interested: true }
               : { interested: true };
@@ -79,10 +79,10 @@ export function SwipeDeck({
   // Decide on the current card: persist, drop it from the queue, and stay at the same
   // position so the next card slides into view (clamped when we removed the last one).
   const decide = useCallback(
-    (action: "interested" | "passed") => {
+    (action: "interested" | "passed", reason?: string) => {
       if (!current) return;
       const id = current.id;
-      persist(id, action);
+      persist(id, action, reason);
       setQueue((q) => q.filter((it) => it.id !== id));
       setIndex((i) => Math.max(0, Math.min(i, total - 2)));
     },
@@ -149,7 +149,7 @@ export function SwipeDeck({
           key={current.id}
           item={current}
           detailBasePath={detailBasePath}
-          onArchive={() => decide("passed")}
+          onArchive={(reason) => decide("passed", reason)}
           onInterested={() => decide("interested")}
           onNavigate={go}
           clientName={clientName}
@@ -194,7 +194,7 @@ function BrowseCard({
 }: {
   item: ReportItem;
   detailBasePath: string;
-  onArchive: () => void;
+  onArchive: (reason?: string) => void;
   onInterested: () => void;
   onNavigate: (delta: number) => void;
   clientName?: string;
@@ -245,83 +245,6 @@ function Section({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
-// Compact agree/flag score feedback. Same write path (POST /api/feedback), fresh per
-// card (unmounts on navigate/decide via the id key).
-function ScoreFeedback({ cardId }: { cardId: string }) {
-  const [busy, setBusy] = useState(false);
-  const [fb, setFb] = useState<"idle" | "agreed" | "flagged">("idle");
-  const [showFlag, setShowFlag] = useState(false);
-  const [flagReason, setFlagReason] = useState("");
-
-  async function send(agree: boolean, reason?: string) {
-    setBusy(true);
-    try {
-      const res = await fetch("/api/feedback", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ review_card_id: cardId, agree, reason: agree ? undefined : reason }),
-      });
-      if (res.ok) {
-        setFb(agree ? "agreed" : "flagged");
-        setShowFlag(false);
-      }
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (fb !== "idle") {
-    return (
-      <p className="mt-3 text-[12px] text-muted-foreground">
-        {fb === "agreed" ? "Thanks — logged." : "Flagged — logged, we'll factor it into your matches."}
-      </p>
-    );
-  }
-
-  return (
-    <div className="mt-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Agree with the fit score?
-        </span>
-        <button
-          disabled={busy}
-          onClick={() => send(true)}
-          className="rounded-full border border-brand-navy/20 px-2.5 py-1 text-xs font-medium text-brand-navy transition hover:bg-brand-navy/5 disabled:opacity-50"
-        >
-          👍 Agree
-        </button>
-        <button
-          disabled={busy}
-          onClick={() => setShowFlag((v) => !v)}
-          className="rounded-full border border-brand-navy/20 px-2.5 py-1 text-xs font-medium text-brand-navy transition hover:bg-brand-navy/5 disabled:opacity-50"
-        >
-          👎 Flag
-        </button>
-      </div>
-      {showFlag && (
-        <div className="mt-2 space-y-2 rounded-xl border border-brand-navy/10 bg-brand-cream/50 p-3">
-          <textarea
-            value={flagReason}
-            onChange={(e) => setFlagReason(e.target.value)}
-            rows={2}
-            autoFocus
-            placeholder="What's off — eligibility, fit, role, geography?"
-            className="w-full rounded-lg border border-input bg-white px-3 py-2 text-xs outline-none focus:border-brand-navy/35"
-          />
-          <button
-            disabled={busy || !flagReason.trim()}
-            onClick={() => send(false, flagReason)}
-            className="rounded-full bg-brand-navy px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-          >
-            Submit
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function CardFace({
   item,
   onArchive,
@@ -331,12 +254,16 @@ function CardFace({
   clientName,
 }: {
   item: ReportItem;
-  onArchive: () => void;
+  onArchive: (reason?: string) => void;
   onInterested: () => void;
   onHandlePointerDown: (e: React.PointerEvent) => void;
   detailHref: string;
   clientName?: string;
 }) {
+  // Pass opens an OPTIONAL reason step; the reason (when given) is routed to the
+  // match_feedback calibration store server-side (replaced the old agree/flag box).
+  const [passing, setPassing] = useState(false);
+  const [passReason, setPassReason] = useState("");
   return (
     <div className="flex h-[640px] flex-col overflow-hidden rounded-3xl border border-brand-navy/[0.06] bg-white shadow-lift">
       {/* road-photo banner — doubles as the horizontal drag handle for browsing */}
@@ -379,8 +306,6 @@ function CardFace({
           </div>
         )}
 
-        <ScoreFeedback cardId={item.id} />
-
         {/* stat grid */}
         <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 rounded-2xl bg-brand-cream/70 p-4">
           <StatCell label="Total available" value={item.totalAvailable || "—"} />
@@ -406,31 +331,62 @@ function CardFace({
 
       {/* decision controls — the ONLY way to decide; browsing never decides */}
       <div className="shrink-0 border-t border-brand-navy/[0.06] px-6 py-4">
-        <div className="flex items-center justify-center gap-3">
-          <button
-            onClick={onArchive}
-            className="flex items-center gap-2 rounded-full border border-brand-navy/20 bg-white px-5 py-2.5 text-sm font-semibold text-muted-foreground shadow-soft transition hover:border-brand-navy/35 hover:text-brand-navy"
-          >
-            <X className="h-5 w-5" />
-            Pass
-          </button>
-          <button
-            onClick={onInterested}
-            className="flex items-center gap-2 rounded-full bg-brand-navy px-6 py-2.5 text-sm font-semibold text-white shadow-lift transition hover:bg-brand-navyDeep"
-          >
-            Interested
-            <Check className="h-5 w-5" strokeWidth={3} />
-          </button>
-        </div>
-        <p className="mt-2.5 text-center text-[11px] text-muted-foreground">
-          Browse: ← / → or swipe · Decide: Pass / Interested
-        </p>
-        <p className="mx-auto mt-3 max-w-md text-center text-[11px] leading-relaxed text-muted-foreground/80">
-          Grant Alerts are a quick snapshot and concept proposal to gauge your interest. Marking one
-          <span className="font-medium text-brand-navy"> Interested</span> simply moves it to your Grant Report —
-          where you can assess the full details and make a pursuit decision or contact an expert. It&apos;s not a
-          commitment.
-        </p>
+        {passing ? (
+          <div className="space-y-2.5">
+            <p className="text-center text-[13px] font-medium text-brand-navy">Why pass? (optional)</p>
+            <textarea
+              value={passReason}
+              onChange={(e) => setPassReason(e.target.value)}
+              rows={2}
+              autoFocus
+              placeholder="e.g. wrong geography, no capacity this cycle, not a fit"
+              className="w-full rounded-lg border border-input bg-white px-3 py-2 text-sm outline-none focus:border-brand-navy/35"
+            />
+            <div className="flex items-center justify-center gap-3">
+              <button
+                onClick={() => setPassing(false)}
+                className="rounded-full border border-brand-navy/20 bg-white px-5 py-2 text-sm font-medium text-muted-foreground transition hover:text-brand-navy"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => onArchive(passReason)}
+                className="flex items-center gap-2 rounded-full bg-destructive px-6 py-2 text-sm font-semibold text-white shadow-soft transition hover:opacity-90"
+              >
+                <X className="h-4 w-4" />
+                Pass on this grant
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center justify-center gap-3">
+              <button
+                onClick={() => setPassing(true)}
+                className="flex items-center gap-2 rounded-full border border-brand-navy/20 bg-white px-5 py-2.5 text-sm font-semibold text-muted-foreground shadow-soft transition hover:border-brand-navy/35 hover:text-brand-navy"
+              >
+                <X className="h-5 w-5" />
+                Pass
+              </button>
+              <button
+                onClick={onInterested}
+                className="flex items-center gap-2 rounded-full bg-brand-navy px-6 py-2.5 text-sm font-semibold text-white shadow-lift transition hover:bg-brand-navyDeep"
+              >
+                Interested
+                <Check className="h-5 w-5" strokeWidth={3} />
+              </button>
+            </div>
+            <p className="mt-2.5 text-center text-[11px] text-muted-foreground">
+              Browse: ← / → or swipe · Decide: Pass / Interested
+            </p>
+            <p className="mx-auto mt-3 max-w-md text-center text-[11px] leading-relaxed text-muted-foreground/80">
+              Grant Alerts are a quick snapshot and concept proposal to gauge your interest. Marking one
+              <span className="font-medium text-brand-navy"> Interested</span> simply moves it to your Grant Report —
+              where you can assess the full details and make a pursuit decision or contact an expert. It&apos;s not a
+              commitment.
+            </p>
+          </>
+        )}
       </div>
     </div>
   );
