@@ -14,6 +14,7 @@ import {
 } from "@/lib/alerts/store";
 import {
   recordClientDecision,
+  releaseClientCardForSend,
   finalizeClientCardSent,
   prospectConvertForSend,
   finalizeProspectSent,
@@ -127,7 +128,17 @@ export async function POST(req: NextRequest, { params }: { params: { cardId: str
   if (ctx.isLead) {
     return leadSend({ ctx, alert, recipient, subject, emailBody, reOutreach });
   }
-  return clientSend({ supabase, ctx, alert, recipient, subject, emailBody, userId: user.id, cardId: params.cardId });
+  return clientSend({
+    supabase,
+    ctx,
+    alert,
+    recipient,
+    subject,
+    emailBody,
+    userId: user.id,
+    cardId: params.cardId,
+    managed: !!ctx.client?.account_managed,
+  });
 }
 
 // ── Prospect: convert-to-lead + send the one-pager, atomically, on a real send ──
@@ -282,7 +293,10 @@ async function leadSend(a: {
   }
 }
 
-// ── Client: send the one-pager; sending is also the card's approval ──
+// ── Client: send the one-pager. For a STANDARD client, sending IS the approval;
+// for an ACCOUNT-MANAGED client it's a RELEASE to their portal (the client still
+// makes the pursue call), so the pre-email half records sme_released_at instead of
+// decision='approved'. Everything else (save-once PDF, guards, finalize) is shared.
 async function clientSend(a: {
   supabase: ReturnType<typeof createClient>;
   ctx: AlertContext;
@@ -292,13 +306,16 @@ async function clientSend(a: {
   emailBody: string;
   userId: string;
   cardId: string;
+  managed: boolean;
 }) {
-  const { supabase, ctx, alert, recipient, subject, emailBody, userId, cardId } = a;
+  const { supabase, ctx, alert, recipient, subject, emailBody, userId, cardId, managed } = a;
 
-  // Record the terminal decision first (pre-everything half -- see send-core), via
-  // the USER client so the admin-only approval trigger validates. The decision
-  // stands even if the send is later blocked/unsent.
-  const decision = await recordClientDecision(supabase, cardId, userId, emailBody);
+  // Pre-email half, via the USER client (staff-scoped RLS): a managed client is
+  // RELEASED (sme_released_at), a standard client is APPROVED. Either way it stands
+  // even if the send is later blocked/unsent (mirrors the prior approve).
+  const decision = managed
+    ? await releaseClientCardForSend(supabase, cardId, userId)
+    : await recordClientDecision(supabase, cardId, userId, emailBody);
   if (!decision.ok) {
     const isApprovalBlock = decision.reason === "approval_forbidden";
     return NextResponse.json(
@@ -307,16 +324,17 @@ async function clientSend(a: {
     );
   }
 
+  const verb = managed ? "released" : "approved";
   let sent = false;
   let send_status: string;
   let reason: string | undefined;
   if (!isDeliverableEmail(recipient)) {
-    send_status = "approved — no deliverable email, alert not sent";
+    send_status = `${verb} — no deliverable email, alert not sent`;
     reason = "no deliverable email on file";
   } else {
     const gate = canSendOutreach(recipient);
     if (!gate.ok) {
-      send_status = `approved, alert not sent (${gate.reason})`;
+      send_status = `${verb}, alert not sent (${gate.reason})`;
       reason = gate.reason;
     } else {
       // Guard 2 -- atomic claim BEFORE the email. A concurrent send that already
@@ -338,18 +356,23 @@ async function clientSend(a: {
         send_status = `alert sent to ${result.to}`;
       } catch (err) {
         // Claimed but the email threw -> roll the draft back so it isn't stuck
-        // "sent" with nothing delivered; the approval stands, retry re-sends.
+        // "sent" with nothing delivered; the approval/release stands, retry re-sends.
         await releaseAlertClaim(alert.id);
-        send_status = `approved, alert NOT sent: ${err instanceof Error ? err.message : String(err)}`;
+        send_status = `${verb}, alert NOT sent: ${err instanceof Error ? err.message : String(err)}`;
         reason = err instanceof Error ? err.message : String(err);
       }
     }
   }
 
-  const grant_summary = await computeGrantSummary(supabase, {
-    card_type: ctx.card.card_type,
-    grant_id: ctx.card.grant_id,
-  });
+  // A managed send is a RELEASE, not a terminal decision -- the decision-oriented
+  // confirmation screen ("still pending on this grant") would misread, so suppress
+  // it; the modal falls back to the plain "released / sent" status + refresh.
+  const grant_summary = managed
+    ? null
+    : await computeGrantSummary(supabase, {
+        card_type: ctx.card.card_type,
+        grant_id: ctx.card.grant_id,
+      });
 
-  return NextResponse.json({ sent, to: sent ? recipient : undefined, reason, send_status, grant_summary });
+  return NextResponse.json({ sent, to: sent ? recipient : undefined, reason, send_status, grant_summary, released: managed });
 }

@@ -21,14 +21,22 @@ export function AlertSend({
   sentAt,
   sentTo,
   contactName,
+  autoOpen = false,
+  onClose,
 }: {
   cardId: string;
   sentAt?: string | null;
   sentTo?: string | null;
   contactName?: string | null;
+  // When true (used from the account-managed "Release to client" dropdown), open
+  // the modal on mount and render NO inline trigger button -- the dropdown item is
+  // the trigger. onClose fires when the modal is dismissed so the parent can reset.
+  autoOpen?: boolean;
+  onClose?: () => void;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [autoOpened, setAutoOpened] = useState(false);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [regenBusy, setRegenBusy] = useState(false);
@@ -52,6 +60,21 @@ export function AlertSend({
   const [reoutreach, setReoutreach] = useState<ReOutreach | null>(null);
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  // Auto-open once when driven from the dropdown (openModal fetches the draft).
+  useEffect(() => {
+    if (autoOpen && mounted && !autoOpened) {
+      setAutoOpened(true);
+      void openModal();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOpen, mounted, autoOpened]);
+
+  // Dismiss: close the modal and tell the parent (resets the dropdown's mode).
+  function closeModal() {
+    setOpen(false);
+    onClose?.();
+  }
 
   // The draft is generated server-side (LLM narrative + Chromium PDF); the route
   // caps at 60s. Bound the client fetch just above that so a slow / stuck render
@@ -184,37 +207,43 @@ export function AlertSend({
   // Reject) -- no outer card of its own.
   return (
     <>
-      {alerted ? (
+      {/* No inline trigger when driven from the dropdown (autoOpen) -- the menu item
+          is the trigger and the modal opens on mount. */}
+      {!autoOpen && (
         <>
-          <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
-            <span className="font-bold text-emerald-700">✓</span>
-            <p className="text-xs leading-relaxed text-emerald-800">
-              <b>Alert sent{sentDate ? ` ${sentDate}` : ""}</b>
-              <br />
-              to {contactName ? `${contactName} · ` : ""}{sentTo}
-            </p>
-          </div>
-          <div className="mt-2 flex gap-2">
-            <Button className="flex-1" disabled title="Already alerted">
-              ✓ Alerted
+          {alerted ? (
+            <>
+              <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
+                <span className="font-bold text-emerald-700">✓</span>
+                <p className="text-xs leading-relaxed text-emerald-800">
+                  <b>Alert sent{sentDate ? ` ${sentDate}` : ""}</b>
+                  <br />
+                  to {contactName ? `${contactName} · ` : ""}{sentTo}
+                </p>
+              </div>
+              <div className="mt-2 flex gap-2">
+                <Button className="flex-1" disabled title="Already alerted">
+                  ✓ Alerted
+                </Button>
+                <Button variant="outline" onClick={openModal} disabled={busy}>
+                  ↻ Regenerate
+                </Button>
+              </div>
+            </>
+          ) : (
+            <Button className="w-full" onClick={openModal} disabled={busy}>
+              Send grant alert
             </Button>
-            <Button variant="outline" onClick={openModal} disabled={busy}>
-              ↻ Regenerate
-            </Button>
-          </div>
+          )}
+          {status && <p className="mt-2 text-xs text-muted-foreground">{status}</p>}
+          {error && !open && <p className="mt-2 text-xs text-destructive">{error}</p>}
         </>
-      ) : (
-        <Button className="w-full" onClick={openModal} disabled={busy}>
-          Send grant alert
-        </Button>
       )}
-      {status && <p className="mt-2 text-xs text-muted-foreground">{status}</p>}
-      {error && !open && <p className="mt-2 text-xs text-destructive">{error}</p>}
 
       {mounted && open && createPortal(
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => !busy && !regenBusy && setOpen(false)}
+          onClick={() => !busy && !regenBusy && closeModal()}
         >
           <div
             className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl border bg-card p-5 shadow-xl"
@@ -305,7 +334,7 @@ export function AlertSend({
             )}
 
             <div className="mt-4 flex justify-end gap-2">
-              <Button variant="ghost" onClick={() => setOpen(false)} disabled={busy || regenBusy}>Cancel</Button>
+              <Button variant="ghost" onClick={closeModal} disabled={busy || regenBusy}>Cancel</Button>
               <Button
                 onClick={send}
                 disabled={busy || loading || regenBusy || alerted || !to.trim() || !body.trim() || (coldReContact && !reoutreach)}
