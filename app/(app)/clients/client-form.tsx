@@ -280,7 +280,7 @@ export function ClientForm({
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Match / cost-share capacity" name="match_cost_share_capacity" defaultValue={client?.match_cost_share_capacity} />
             <Field label="Annual budget" name="annual_budget" defaultValue={client?.annual_budget} />
-            <Field label="RUCC codes" name="rucc_codes" defaultValue={client?.rucc_codes} />
+            <Field label="RUCC codes" name="rucc_codes" defaultValue={client?.rucc_codes} placeholder="Blank = auto-fill from county (USDA ERS 2023)" />
             <Field label="IRS EIN" name="ein" defaultValue={client?.ein} placeholder="e.g. 71-0236875 — pulls annual budget from the IRS 990" />
           </div>
           {/* Sourced budget citation from the org's latest IRS 990 (ProPublica),

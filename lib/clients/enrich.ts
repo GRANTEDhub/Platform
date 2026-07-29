@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { refreshClientUSASpendingById } from "@/lib/grants/usaspending-refresh";
 import { refreshClientNonprofitFinanceById } from "@/lib/clients/nonprofit-finance-refresh";
+import { refreshClientRuccById } from "@/lib/clients/rucc-refresh";
 import { refreshClientProfileById } from "@/lib/clients/profile";
 
 // Out-of-band client enrichment, fire-and-forget via waitUntil on the same events
@@ -34,6 +35,18 @@ export async function enrichClient(db: SupabaseClient, clientId: string): Promis
   } catch (err) {
     console.error(
       "enrichClient: nonprofit-finance refresh failed for client",
+      clientId,
+      err instanceof Error ? err.message : err,
+    );
+  }
+  // Auto-derive RUCC (rurality) from the client's county via the USDA ERS crosswalk
+  // (local lookup, no network). Fill-if-empty, so a manual value is never clobbered.
+  // Runs before the profile refine so the distillation reads the derived value.
+  try {
+    await refreshClientRuccById(db, clientId);
+  } catch (err) {
+    console.error(
+      "enrichClient: RUCC auto-fill failed for client",
       clientId,
       err instanceof Error ? err.message : err,
     );
