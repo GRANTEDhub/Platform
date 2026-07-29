@@ -34,7 +34,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
   const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-  if (profile?.role !== "admin") return NextResponse.json({ error: "Admins only" }, { status: 403 });
+  if (!profile) return NextResponse.json({ error: "Staff only" }, { status: 403 });
 
   const body = (await req.json().catch(() => ({}))) as { grantId?: string };
   if (!body.grantId) return NextResponse.json({ error: "grantId is required" }, { status: 400 });

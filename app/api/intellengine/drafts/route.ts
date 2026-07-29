@@ -7,9 +7,15 @@ import type { IntellEngineDraft } from "@/types/database";
 //     picker -> body { card_id } (the card's pursuit_path is set to 'intellengine'
 //     separately, via PATCH /api/review/[id]; this route only owns the draft);
 //   - the hub's "Start from scratch" -> body {} (card_id null).
-// Everything runs under the caller's RLS, so a client can only ever create a draft
-// for their own org. Re-creating on the same card RESUMES the existing draft
-// (one-per-card unique index) instead of duplicating.
+// Everything runs under the caller's RLS. Two caller shapes:
+//   - a CLIENT member: the target org is derived from their membership; body
+//     client_id is ignored, so they can only ever draft for their own org.
+//   - a STAFF user (admin or contractor): drafting on a client's behalf from the
+//     console, so the target org comes from an EXPLICIT body.client_id. The 0062
+//     staff RLS (is_staff()) permits the insert; this is draft-only and never
+//     approves the card, so a contractor is fine here.
+// Re-creating on the same card RESUMES the existing draft (one-per-card unique
+// index) instead of duplicating.
 
 type GrantEmbed = { title: string | null } | { title: string | null }[] | null;
 
@@ -25,27 +31,34 @@ export async function POST(req: NextRequest) {
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
-  // Resolve the caller's client org. Same predicate/order as requireClient(): a
-  // staff user (or anyone without an active membership) has no clientId here and
-  // is rejected -- these drafts are client-owned.
-  const { data: membership } = await supabase
-    .from("client_members")
-    .select("client_id")
-    .eq("user_id", user.id)
-    .not("activated_at", "is", null)
-    .order("invited_at", { ascending: true })
-    .limit(1)
-    .maybeSingle<{ client_id: string }>();
-  const clientId = membership?.client_id;
-  if (!clientId) return NextResponse.json({ error: "No client portal access" }, { status: 403 });
-
-  let body: { card_id?: string | null };
+  let body: { card_id?: string | null; client_id?: string | null };
   try {
     body = await req.json();
   } catch {
     body = {};
   }
   const cardId = body.card_id ?? null;
+
+  // Resolve the target client org. A STAFF caller (has a profiles row) drafts on a
+  // client's behalf, so the org comes from an explicit body.client_id. A CLIENT
+  // member drafts for their OWN org (membership), ignoring any body.client_id.
+  const { data: profile } = await supabase.from("profiles").select("id").eq("id", user.id).maybeSingle();
+  let clientId: string | undefined;
+  if (profile) {
+    clientId = body.client_id ?? undefined;
+    if (!clientId) return NextResponse.json({ error: "client_id required" }, { status: 400 });
+  } else {
+    const { data: membership } = await supabase
+      .from("client_members")
+      .select("client_id")
+      .eq("user_id", user.id)
+      .not("activated_at", "is", null)
+      .order("invited_at", { ascending: true })
+      .limit(1)
+      .maybeSingle<{ client_id: string }>();
+    clientId = membership?.client_id;
+    if (!clientId) return NextResponse.json({ error: "No client portal access" }, { status: 403 });
+  }
 
   // From-scratch proposal: no grant, generic title.
   if (!cardId) {

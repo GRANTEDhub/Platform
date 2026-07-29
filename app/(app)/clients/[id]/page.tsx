@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { format, parseISO } from "date-fns";
 import { Loader2, TrendingUp, Eye, Target, CalendarClock } from "lucide-react";
-import { requireAdmin } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { AutoRefresh } from "@/components/ui/auto-refresh";
 import { PageBackdrop } from "@/components/layout/page-backdrop";
@@ -42,7 +42,7 @@ function grantOf(g: CardRow["grants"]) {
 }
 
 export default async function ClientDashboardPage({ params }: { params: { id: string } }) {
-  await requireAdmin();
+  await requireUser();
   const supabase = createClient();
 
   const { data: client } = await supabase.from("clients").select("*").eq("id", params.id).single<Client>();
@@ -161,6 +161,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         subLine={subLine}
         isStaff
         roadmapHref={base}
+        intellEngineHref={`/clients/${client.id}/intellengine`}
         stats={stats}
         actionItems={actionItems}
         activity={counts}

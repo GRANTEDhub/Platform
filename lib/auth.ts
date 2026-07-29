@@ -114,17 +114,17 @@ export async function requireClient(): Promise<ClientSession> {
 }
 
 /**
- * Require EITHER a signed-in client portal member OR a staff admin.
- * Unauthenticated -> /login. Staff who aren't admin -> /review.
+ * Require EITHER a signed-in client portal member OR ANY staff user (admin OR
+ * contractor). Unauthenticated -> /login.
  *
- * Scoped narrowly to IntellEngine's shell pages, which currently render
- * fully generic/mocked content with no per-client data at all -- so there's
- * no privacy reason to keep staff out, and letting them in via their normal
- * (password) login sidesteps the client portal's magic-link-only friction
- * entirely for previewing a build. Once IntellEngine is wired to real
- * per-client data, this should be revisited in favor of a proper
- * requireAdmin()-gated staff mirror (the same pattern Grant Report/Roadmap
- * already use), not a shared client route.
+ * Guards IntellEngine's wizard step pages. The client reaches them for their own
+ * org; STAFF reach them from the console client view (`/clients/[id]/intellengine`)
+ * to run the same wizard on a client's behalf. A staff caller resolves the draft
+ * (and thus the client) from the draft id via the caller's own RLS -- the 0062
+ * staff policy (`is_staff()`) already scopes staff reads/writes to those tables --
+ * so there is no data-isolation reason to keep contractors out, and drafting is
+ * NOT an approval (approval stays admin-only, via the pursuit chooser). Only the
+ * READ/WRITE of the draft happens here; the card-approval trigger is never touched.
  */
 export async function requireClientOrAdmin(): Promise<void> {
   const supabase = createClient();
@@ -133,11 +133,8 @@ export async function requireClientOrAdmin(): Promise<void> {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
-  if (profile) {
-    if (profile.role !== "admin") redirect("/review");
-    return;
-  }
+  const { data: profile } = await supabase.from("profiles").select("id").eq("id", user.id).maybeSingle();
+  if (profile) return; // any staff (admin or contractor)
 
   const { data: rows } = await supabase
     .from("client_members")

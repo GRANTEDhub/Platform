@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { format, parseISO } from "date-fns";
-import { requireAdmin } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,7 +36,11 @@ function Detail({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 export default async function EditClientPage({ params }: { params: { id: string } }) {
-  await requireAdmin();
+  // Any staff (admin OR contractor/AM) may edit a client/prospect profile. Billing
+  // detail (Outstanding + invoices, and the signed-contract Repository) is gated to
+  // admins below -- the AM edits the profile but never sees what we bill.
+  const profile = await requireUser();
+  const isAdmin = profile.role === "admin";
   const supabase = createClient();
 
   const { data: client } = await supabase.from("clients").select("*").eq("id", params.id).single<Client>();
@@ -129,21 +133,24 @@ export default async function EditClientPage({ params }: { params: { id: string 
                 <Detail label="Retainer hours" value={String(client.retainer_hours ?? 0)} />
                 <Detail label="Hours remaining" value={hoursRemaining !== null ? Number(hoursRemaining).toFixed(1) : "—"} />
               </div>
-              <div className="border-t border-brand-navy/[0.06] pt-4">
-                <Detail label="Outstanding" value={formatCurrency(owedCents / 100)} />
-                {bills.length === 0 ? (
-                  <p className="mt-2 text-muted-foreground">No invoices yet.</p>
-                ) : (
-                  <ul className="mt-2 divide-y">
-                    {bills.map((i) => (
-                      <li key={i.id} className="flex justify-between py-2">
-                        <Badge variant="secondary">{i.status}</Badge>
-                        <span className="tabular-nums">{formatCurrency(i.amount_cents / 100)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+              {/* What we bill the client -- admin-only (hidden from the contractor/AM). */}
+              {isAdmin && (
+                <div className="border-t border-brand-navy/[0.06] pt-4">
+                  <Detail label="Outstanding" value={formatCurrency(owedCents / 100)} />
+                  {bills.length === 0 ? (
+                    <p className="mt-2 text-muted-foreground">No invoices yet.</p>
+                  ) : (
+                    <ul className="mt-2 divide-y">
+                      {bills.map((i) => (
+                        <li key={i.id} className="flex justify-between py-2">
+                          <Badge variant="secondary">{i.status}</Badge>
+                          <span className="tabular-nums">{formatCurrency(i.amount_cents / 100)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -154,12 +161,15 @@ export default async function EditClientPage({ params }: { params: { id: string 
             </CardContent>
           </Card>
 
-          <Card className={RAIL}>
-            <CardHeader><CardTitle>Repository</CardTitle></CardHeader>
-            <CardContent>
-              <ClientRepository documents={documents} />
-            </CardContent>
-          </Card>
+          {/* Repository holds signed contracts (the amount we charge) -- admin-only. */}
+          {isAdmin && (
+            <Card className={RAIL}>
+              <CardHeader><CardTitle>Repository</CardTitle></CardHeader>
+              <CardContent>
+                <ClientRepository documents={documents} />
+              </CardContent>
+            </Card>
+          )}
 
           {client.notes && (
             <Card className={RAIL}>

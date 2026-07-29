@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, FileText, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
 import { IntellEngineLogo } from "@/components/intellengine/logo";
-import { STATUS_LABEL } from "@/lib/intellengine/drafts";
+import { STATUS_LABEL, resumeStep } from "@/lib/intellengine/drafts";
 import type { IntellEngineDraftStatus } from "@/types/database";
 
 export interface HubDraft {
@@ -30,13 +30,31 @@ export function IntellEngineHub({
   drafts,
   candidates,
   orbitCount,
+  clientId,
+  backHref = "/portal",
 }: {
   clientName: string;
   drafts: HubDraft[];
   candidates: HubCandidate[];
   orbitCount: number;
+  // Staff mode (driven from the console client view): the target client is passed
+  // explicitly, so drafting acts on THAT client. In staff mode, developing a grant
+  // is DRAFT-ONLY -- it never routes/approves the card (that stays an admin action
+  // via the pursuit chooser) -- and navigation skips the client-only per-draft
+  // landing, going straight to the wizard step.
+  clientId?: string;
+  backHref?: string;
 }) {
   const router = useRouter();
+  const staffMode = !!clientId;
+  // Where a draft opens: staff go straight to the resume step (the /intellengine/
+  // [draftId] landing is a client-only route); clients use the landing. Staff also
+  // carry `from` so the step's back link returns to this hub instead of the
+  // client-only landing (which would bounce staff to /clients).
+  const draftHref = (id: string, status: IntellEngineDraftStatus) =>
+    staffMode
+      ? `/intellengine/${resumeStep(status)}?draft=${id}&from=${encodeURIComponent(backHref)}`
+      : `/intellengine/${id}`;
   const [pickerOpen, setPickerOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -67,21 +85,26 @@ export function IntellEngineHub({
     setBusy(cardId);
     setError(null);
     try {
-      // Route the card to IntellEngine (sets pursuit_path + approval + attribution)
-      // via the same endpoint the Grant Report's chooser uses, then open its draft.
-      await fetch(`/api/review/${cardId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pursuit_path: "intellengine" }),
-      });
+      // Client mode: routing the card to IntellEngine records the client's pursuit
+      // (sets pursuit_path + approval + attribution) via the same endpoint the Grant
+      // Report chooser uses. Staff mode: DRAFT-ONLY -- skip this, so drafting on a
+      // client's behalf never approves their pursuit (and never hits the admin-only
+      // approval trigger, so contractors work).
+      if (!staffMode) {
+        await fetch(`/api/review/${cardId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pursuit_path: "intellengine" }),
+        });
+      }
       const res = await fetch("/api/intellengine/drafts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ card_id: cardId }),
+        body: JSON.stringify({ card_id: cardId, ...(clientId ? { client_id: clientId } : {}) }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.draft?.id) {
-        router.push(`/intellengine/${data.draft.id}`);
+        router.push(draftHref(data.draft.id, data.draft.status));
         return;
       }
       throw new Error(data.error || "Couldn't open that proposal");
@@ -98,11 +121,11 @@ export function IntellEngineHub({
       const res = await fetch("/api/intellengine/drafts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify(clientId ? { client_id: clientId } : {}),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.draft?.id) {
-        router.push(`/intellengine/${data.draft.id}`);
+        router.push(draftHref(data.draft.id, data.draft.status));
         return;
       }
       throw new Error(data.error || "Couldn't start a proposal");
@@ -115,11 +138,11 @@ export function IntellEngineHub({
   return (
     <>
       <Link
-        href="/portal"
+        href={backHref}
         className="mb-6 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-brand-navy"
       >
         <ArrowLeft className="h-4 w-4" />
-        Dashboard
+        {staffMode ? `Back to ${clientName}` : "Dashboard"}
       </Link>
 
       <div className="flex flex-col items-center text-center">
@@ -220,7 +243,7 @@ export function IntellEngineHub({
                 key={d.id}
                 className="flex items-center gap-2 rounded-2xl border border-brand-navy/[0.08] bg-white p-4 shadow-grounded transition hover:border-brand-navy/25"
               >
-                <Link href={`/intellengine/${d.id}`} className="flex min-w-0 flex-1 items-center gap-3">
+                <Link href={draftHref(d.id, d.status)} className="flex min-w-0 flex-1 items-center gap-3">
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-navy/[0.06] text-brand-navy">
                     <FileText className="h-4 w-4" />
                   </span>

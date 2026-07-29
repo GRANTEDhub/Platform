@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { waitUntil } from "@vercel/functions";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { requireAdmin } from "@/lib/auth";
+import { requireAdmin, requireUser } from "@/lib/auth";
 import { validateConstraint } from "@/lib/grants/constraints";
 import { enrichClient } from "@/lib/clients/enrich";
 import { parseNarrative, narrativeToIntakeData, parseChipList } from "@/lib/intake/narrative";
@@ -189,7 +189,11 @@ export async function updateClientAction(
   id: string,
   formData: FormData,
 ): Promise<ClientActionResult> {
-  await requireAdmin();
+  // Any staff (admin OR contractor/AM) may edit a client or prospect PROFILE. The
+  // write runs under the caller's RLS -- the 0066 clients_update policy permits
+  // staff -- and the billing tables (invoices/contracts) stay admin-only, so this
+  // never exposes what we bill. (createClientAction stays admin-only.)
+  await requireUser();
   const supabase = createClient();
 
   // Same as createClientAction: expected validation failures return inline; the

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
-import { requireAdmin } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { GrantReport } from "@/components/report/grant-report";
 import { ClientActivity, type ClientActivityItem } from "@/components/report/client-activity";
@@ -23,7 +23,7 @@ export const dynamic = "force-dynamic";
 // smeReleased) is what tells the two states apart; released cards are no longer
 // actionable here (the client's own Grant Report owns the pursue decision now).
 export default async function ClientRoadmapPage({ params }: { params: { id: string } }) {
-  await requireAdmin();
+  await requireUser();
   const supabase = createClient();
 
   const { data: client } = await supabase

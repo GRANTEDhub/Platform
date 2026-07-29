@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { requireAdmin } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { ReportDetail, type ReportDetailCard } from "@/components/report/report-detail";
 import { ReleaseToClientBar } from "@/components/report/release-bar";
@@ -35,7 +35,8 @@ type DetailRow = ReportDetailCard & {
 // swapped for ReleaseToClientBar -- the pursue call is the CLIENT's to make, on
 // their own copy of this page, once staff releases it.
 export default async function ClientRoadmapDetail({ params }: { params: { id: string; cardId: string } }) {
-  const profile = await requireAdmin();
+  const profile = await requireUser();
+  const isAdmin = profile.role === "admin";
   const supabase = createClient();
 
   const { data } = await supabase
@@ -72,8 +73,12 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   // Concept proposal is an INTERNAL AM artifact — for a premium client (a paid
   // deliverable they later see in the portal) OR a prospect (staff prep only: it is
   // NEVER emailed to the prospect; per policy the prospect gets the one-pager, not
-  // the paid concept). Rendered on this staff surface, never on a client's own copy.
-  const showConcept = !!client?.account_managed || isLead;
+  // the paid concept). Shown to ALL staff (admin + contractor) -- concepts are core
+  // AM work; the contractor IS the AM. Rendered on this staff surface, never on a
+  // client's own copy.
+  // Managed-client concept: any staff (the AM). Prospect/lead concept is BizDev
+  // prep, which stays admin-only alongside the cold-outreach controls.
+  const showConcept = !!client?.account_managed || (isLead && isAdmin);
   const conceptProposal = showConcept ? await getConceptProposal(params.cardId) : null;
 
   return (
@@ -94,10 +99,10 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
               released={!!card.sme_released_at}
               backHref={`/clients/${params.id}/roadmap`}
             />
-          ) : isLead ? (
+          ) : isLead && isAdmin ? (
             // Two actions, side by side: send the one-pager, or (internal) generate a
-            // concept proposal. The concept button generates in one click; the result
-            // renders in the panel below. It is never emailed to the prospect.
+            // concept proposal. Admin-only: this is prospect/lead BizDev outreach,
+            // which stays admin-only even though warm client work is open to the AM.
             <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <AlertSend
                 cardId={params.cardId}

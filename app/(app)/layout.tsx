@@ -26,9 +26,12 @@ const ADMIN_NAV: NavItem[] = [
   { href: "/settings", label: "Settings", icon: "settings" },
 ];
 
-// Contractors are scoped to Track 1 grant work: the opportunity feed and the
-// client match queue. Grant Intel (prospect / BizDev) is admin-only.
+// Contractors get grant work AND the client console: Portfolio -> a client's
+// dashboard / Grant Report / IntellEngine. Invoicing & contract surfaces stay
+// admin-only (Edit profile, Invoices, Contracts, the Portfolio money footer, and
+// concept proposals). Grant Intel (prospect / BizDev) remains admin-only.
 const CONTRACTOR_NAV: NavItem[] = [
+  { href: "/clients", label: "Portfolio", icon: "portfolio" },
   { href: "/grants", label: "Ledger", icon: "grants" },
   { href: "/matches", label: "Matches", icon: "matching" },
 ];
