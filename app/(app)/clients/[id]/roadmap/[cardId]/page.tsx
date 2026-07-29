@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { requireAdmin } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { ReportDetail, type ReportDetailCard } from "@/components/report/report-detail";
 import { ReleaseToClientBar } from "@/components/report/release-bar";
@@ -35,7 +35,8 @@ type DetailRow = ReportDetailCard & {
 // swapped for ReleaseToClientBar -- the pursue call is the CLIENT's to make, on
 // their own copy of this page, once staff releases it.
 export default async function ClientRoadmapDetail({ params }: { params: { id: string; cardId: string } }) {
-  const profile = await requireAdmin();
+  const profile = await requireUser();
+  const isAdmin = profile.role === "admin";
   const supabase = createClient();
 
   const { data } = await supabase
@@ -73,7 +74,10 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   // deliverable they later see in the portal) OR a prospect (staff prep only: it is
   // NEVER emailed to the prospect; per policy the prospect gets the one-pager, not
   // the paid concept). Rendered on this staff surface, never on a client's own copy.
-  const showConcept = !!client?.account_managed || isLead;
+  // ADMIN-ONLY: concept_proposals is is_admin() RLS (the paid-deliverable firewall),
+  // so it is hidden from contractors here just as it is in IntellEngine -- a
+  // contractor sees the read-only report without the concept panel/generate.
+  const showConcept = isAdmin && (!!client?.account_managed || isLead);
   const conceptProposal = showConcept ? await getConceptProposal(params.cardId) : null;
 
   return (

@@ -60,8 +60,15 @@ export default async function StaffIntellEngineHub({ params }: { params: { id: s
 
   type CardRow = { id: string; pursuit_path: PursuitPath | null; decision: string; grants: GrantEmbed };
   const cards = (cardRows ?? []) as CardRow[];
+  // Cards that already have a draft. In staff (draft-only) mode we never set
+  // pursuit_path, so unlike the client hub a developed card wouldn't drop out of the
+  // picker on its own -- exclude it explicitly so it isn't re-offered (it's already
+  // under "Your proposals").
+  const draftedCardIds = new Set(
+    ((draftRows ?? []) as { card_id: string | null }[]).map((d) => d.card_id).filter(Boolean),
+  );
   const candidates: HubCandidate[] = cards
-    .filter((c) => c.decision !== "passed" && c.pursuit_path === null)
+    .filter((c) => c.decision !== "passed" && c.pursuit_path === null && !draftedCardIds.has(c.id))
     .map((c) => {
       const g = grantOf(c.grants);
       return { cardId: c.id, title: g?.title || "Untitled opportunity", funder: g?.funder ?? null };

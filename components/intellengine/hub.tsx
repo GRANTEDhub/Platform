@@ -48,9 +48,13 @@ export function IntellEngineHub({
   const router = useRouter();
   const staffMode = !!clientId;
   // Where a draft opens: staff go straight to the resume step (the /intellengine/
-  // [draftId] landing is a client-only route); clients use the landing.
+  // [draftId] landing is a client-only route); clients use the landing. Staff also
+  // carry `from` so the step's back link returns to this hub instead of the
+  // client-only landing (which would bounce staff to /clients).
   const draftHref = (id: string, status: IntellEngineDraftStatus) =>
-    staffMode ? `/intellengine/${resumeStep(status)}?draft=${id}` : `/intellengine/${id}`;
+    staffMode
+      ? `/intellengine/${resumeStep(status)}?draft=${id}&from=${encodeURIComponent(backHref)}`
+      : `/intellengine/${id}`;
   const [pickerOpen, setPickerOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

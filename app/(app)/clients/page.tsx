@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { differenceInCalendarDays, parseISO } from "date-fns";
 import { Building2, CheckCircle2, DollarSign, CalendarClock, type LucideIcon } from "lucide-react";
-import { requireAdmin } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { cn, formatCurrency } from "@/lib/utils";
 import { isUnconvertedLead } from "@/lib/leads/stage";
@@ -22,7 +22,10 @@ type Rollup = { active: number; inReview: number; fitSum: number; fitCount: numb
 const EMPTY_ROLLUP: Rollup = { active: 0, inReview: 0, fitSum: 0, fitCount: 0 };
 
 export default async function ClientsPage() {
-  await requireAdmin();
+  // Contractors see the roster (grant work), but NOT GRANTED's billing: the money
+  // footer, the "outstanding" tile, and the admin-only "+ Add client" are gated.
+  const profile = await requireUser();
+  const isAdmin = profile.role === "admin";
   const supabase = createClient();
 
   const { data: overviewData } = await supabase.from("client_overview").select("*").order("name");
@@ -77,8 +80,9 @@ export default async function ClientsPage() {
         inReview: r.inReview,
         avgFit: r.fitCount > 0 ? (r.fitSum / r.fitCount).toFixed(1) : null,
         nextDeadline: c.next_deadline,
-        // Money footer is a client concept; prospects don't bill.
-        money: isProspect ? null : [owedText, hoursText].filter(Boolean).join("  ·  "),
+        // Money footer is a client concept; prospects don't bill, and it's
+        // GRANTED billing so contractors never see it.
+        money: isProspect || !isAdmin ? null : [owedText, hoursText].filter(Boolean).join("  ·  "),
       };
     })
     // Clients first, then prospects; within each, most active then alphabetical.
@@ -103,18 +107,22 @@ export default async function ClientsPage() {
             Your roster — clients and prospects, grant pipeline and account status at a glance.
           </p>
         </div>
-        <Link
-          href="/clients/new"
-          className="shrink-0 rounded-full bg-brand-navy px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-navyDeep"
-        >
-          + Add client
-        </Link>
+        {isAdmin && (
+          <Link
+            href="/clients/new"
+            className="shrink-0 rounded-full bg-brand-navy px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-navyDeep"
+          >
+            + Add client
+          </Link>
+        )}
       </header>
 
       <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <SummaryTile icon={Building2} tone="navy" value={String(activeCount)} label="active clients" hint={`${prospectCount} prospect${prospectCount === 1 ? "" : "s"}`} />
         <SummaryTile icon={CheckCircle2} tone="orange" value={String(totalActive)} label="active opportunities" />
-        <SummaryTile icon={DollarSign} tone="orange" value={formatCurrency(totalOwedCents / 100)} label="outstanding" />
+        {isAdmin && (
+          <SummaryTile icon={DollarSign} tone="orange" value={formatCurrency(totalOwedCents / 100)} label="outstanding" />
+        )}
         <SummaryTile icon={CalendarClock} tone="navy" value={String(deadlineSoon)} label="deadlines ≤30d" />
       </div>
 

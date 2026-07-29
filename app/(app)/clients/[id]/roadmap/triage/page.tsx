@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { requireAdmin } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { SwipeDeck } from "@/components/report/swipe-deck";
 import { HubShell } from "@/components/layout/hub-background";
@@ -17,7 +17,7 @@ export const dynamic = "force-dynamic";
 // concept-proposal generate/edit, and the release-to-client action all live), so a
 // managed client is redirected there -- keeping one gate, not two.
 export default async function ClientRoadmapTriage({ params }: { params: { id: string } }) {
-  await requireAdmin();
+  await requireUser();
   const supabase = createClient();
 
   const { data: client } = await supabase

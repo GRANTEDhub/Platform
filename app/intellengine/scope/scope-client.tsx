@@ -27,7 +27,18 @@ type Partner = { name: string; role: string; description: string };
 // remaining follow-up (the intellengine_drafts row holds only structural progress
 // today, per migration 0062). Uploaded files keep only the filename; nothing is
 // stored yet, never implying the file was received.
-export default function IntellEngineScopeClient({ draftId, seed }: { draftId?: string; seed: ScopeSeed }) {
+export default function IntellEngineScopeClient({
+  draftId,
+  seed,
+  backHref,
+}: {
+  draftId?: string;
+  seed: ScopeSeed;
+  // Where the top-left back link points. Staff (driven from the console hub) pass
+  // their hub URL, since the default per-draft landing is client-only and would
+  // bounce them to /clients. Clients omit it and get the normal landing.
+  backHref?: string;
+}) {
   const [scope, setScope] = useState(seed.scope);
   const [role, setRole] = useState<"prime" | "partner">(seed.role);
   const [budget, setBudget] = useState(seed.budget);
@@ -87,7 +98,7 @@ export default function IntellEngineScopeClient({ draftId, seed }: { draftId?: s
   return (
     <HubShell variant="texture" width="6xl">
       <Link
-        href={draftId ? `/intellengine/${draftId}` : "/intellengine"}
+        href={backHref ?? (draftId ? `/intellengine/${draftId}` : "/intellengine")}
         className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-brand-navy"
       >
         <ArrowLeft className="h-4 w-4" />
