@@ -67,8 +67,23 @@ export async function resolveIntellEngineContext(
     ? (await svc.from("grants").select("*").eq("id", card.grant_id).maybeSingle<Grant>()).data ?? null
     : null;
 
+  // The concept proposal is admin-only (0060 RLS: is_admin()); this service-role
+  // read bypasses RLS, so it must re-check the caller. Surface it ONLY to a caller
+  // entitled to see it: the CLIENT (their own org's, via the entitled+released gate
+  // below) or a staff ADMIN -- never a CONTRACTOR (non-admin staff). Contractors can
+  // now reach IntellEngine (requireClientOrAdmin was widened), but the concept is a
+  // paid deliverable behind an admin-only wall, so they get the same blank/grant-hint
+  // scope a non-premium client gets.
+  const {
+    data: { user },
+  } = await rls.auth.getUser();
+  const { data: callerProfile } = user
+    ? await rls.from("profiles").select("role").eq("id", user.id).maybeSingle<{ role: string }>()
+    : { data: null };
+  const conceptAllowed = !callerProfile || callerProfile.role === "admin";
+
   let concept: ConceptProposal | null = null;
-  if (entitled && card?.sme_released_at) {
+  if (entitled && card?.sme_released_at && conceptAllowed) {
     const { data: cp } = await svc
       .from("concept_proposals")
       .select("status, proposal_data")

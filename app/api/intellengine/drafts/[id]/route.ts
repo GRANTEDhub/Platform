@@ -74,10 +74,40 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
     .maybeSingle<Pick<IntellEngineDraft, "id" | "card_id">>();
   if (!draft) return NextResponse.json({ error: "Draft not found" }, { status: 404 });
 
+  // Caller role. A CONTRACTOR (non-admin staff) must not delete a draft whose card
+  // the client/admin has ROUTED to IntellEngine: the un-route below would flip that
+  // card's decision out of 'approved' back to 'pending', silently reverting a
+  // recorded pursuit approval. The approval trigger (0056) only guards writes INTO
+  // 'approved', not out of it, so this is the app's job. Client (no profile) and
+  // admin are unaffected -- un-routing their own routed draft is legitimate.
+  const { data: callerProfile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .maybeSingle<{ role: string }>();
+  const callerIsContractor = !!callerProfile && callerProfile.role !== "admin";
+
+  if (callerIsContractor && draft.card_id) {
+    const { data: card } = await supabase
+      .from("review_cards")
+      .select("pursuit_path")
+      .eq("id", draft.card_id)
+      .maybeSingle<{ pursuit_path: string | null }>();
+    if (card?.pursuit_path === "intellengine") {
+      return NextResponse.json(
+        { error: "This proposal is a routed pursuit — only an admin can remove it." },
+        { status: 403 },
+      );
+    }
+  }
+
   const { error: delErr } = await supabase.from("intellengine_drafts").delete().eq("id", params.id);
   if (delErr) return NextResponse.json({ error: "Couldn't delete this proposal" }, { status: 500 });
 
-  if (draft.card_id) {
+  // Un-route only for a client or admin (never a contractor -- defense in depth on
+  // top of the 403 above): return the grant to the Report as an undecided match so
+  // it isn't stranded "routed, but no draft".
+  if (draft.card_id && !callerIsContractor) {
     const { error: resetErr } = await supabase
       .from("review_cards")
       .update({ pursuit_path: null, decision: "pending", decided_at: null, decided_by: null, decided_by_actor: null })
