@@ -35,7 +35,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     .select("role")
     .eq("id", user.id)
     .single();
-  if (profile?.role !== "admin") return NextResponse.json({ error: "Admins only" }, { status: 403 });
+  if (!profile) return NextResponse.json({ error: "Staff only" }, { status: 403 });
 
   const db = createServiceClient();
   const { data: client } = await db

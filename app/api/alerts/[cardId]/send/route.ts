@@ -47,7 +47,7 @@ export async function POST(req: NextRequest, { params }: { params: { cardId: str
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   const { data: profile } = await supabase.from("profiles").select("role, full_name, email").eq("id", user.id).single();
-  if (profile?.role !== "admin") return NextResponse.json({ error: "Admins only" }, { status: 403 });
+  if (!profile) return NextResponse.json({ error: "Staff only" }, { status: 403 });
 
   const ctx = await loadAlertContext(params.cardId);
   if (!ctx) return NextResponse.json({ error: "Card or grant not found" }, { status: 404 });

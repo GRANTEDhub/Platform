@@ -36,7 +36,6 @@ type DetailRow = ReportDetailCard & {
 // their own copy of this page, once staff releases it.
 export default async function ClientRoadmapDetail({ params }: { params: { id: string; cardId: string } }) {
   const profile = await requireUser();
-  const isAdmin = profile.role === "admin";
   const supabase = createClient();
 
   const { data } = await supabase
@@ -73,11 +72,10 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   // Concept proposal is an INTERNAL AM artifact — for a premium client (a paid
   // deliverable they later see in the portal) OR a prospect (staff prep only: it is
   // NEVER emailed to the prospect; per policy the prospect gets the one-pager, not
-  // the paid concept). Rendered on this staff surface, never on a client's own copy.
-  // ADMIN-ONLY: concept_proposals is is_admin() RLS (the paid-deliverable firewall),
-  // so it is hidden from contractors here just as it is in IntellEngine -- a
-  // contractor sees the read-only report without the concept panel/generate.
-  const showConcept = isAdmin && (!!client?.account_managed || isLead);
+  // the paid concept). Shown to ALL staff (admin + contractor) -- concepts are core
+  // AM work; the contractor IS the AM. Rendered on this staff surface, never on a
+  // client's own copy.
+  const showConcept = !!client?.account_managed || isLead;
   const conceptProposal = showConcept ? await getConceptProposal(params.cardId) : null;
 
   return (

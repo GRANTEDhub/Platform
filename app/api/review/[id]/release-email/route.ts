@@ -31,7 +31,7 @@ async function adminAndCtx(
   } = await supabase.auth.getUser();
   if (!user) return { error: NextResponse.json({ error: "Not authenticated" }, { status: 401 }) };
   const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
-  if (profile?.role !== "admin") return { error: NextResponse.json({ error: "Admins only" }, { status: 403 }) };
+  if (!profile) return { error: NextResponse.json({ error: "Staff only" }, { status: 403 }) };
 
   const { data: card } = await supabase
     .from("review_cards")

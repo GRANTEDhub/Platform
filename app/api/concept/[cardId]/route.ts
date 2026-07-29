@@ -9,24 +9,26 @@ import {
 } from "@/lib/concept/store";
 import { normalizeConceptProposal } from "@/lib/concept/generate";
 
-// Concept-proposal read + (re)generate. Staff-admin only -- the concept proposal is
-// an internal artifact (concept_proposals is admin-only RLS). GET returns the
-// current row (or null); POST kicks off generation/retry non-blocking (used by the
-// panel's Generate/Retry buttons) and returns immediately with status 'generating'.
+// Concept-proposal read + (re)generate. ANY staff (admin OR contractor) -- the
+// concept proposal is core account-manager work, and our contractor IS the AM. All
+// reads/writes here go through the service role anyway (concept_proposals is
+// admin-only RLS, but nothing queries it as the caller), so the gate is purely
+// "is this a staff user". GET returns the current row (or null); POST kicks off
+// generation/retry non-blocking; PUT saves manual edits.
 
-async function requireAdminUser(): Promise<{ userId: string } | NextResponse> {
+async function requireStaffUser(): Promise<{ userId: string } | NextResponse> {
   const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  const { data: prof } = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
-  if (!prof || prof.role !== "admin") return NextResponse.json({ error: "Staff only" }, { status: 403 });
+  const { data: prof } = await supabase.from("profiles").select("id").eq("id", user.id).maybeSingle();
+  if (!prof) return NextResponse.json({ error: "Staff only" }, { status: 403 });
   return { userId: user.id };
 }
 
 export async function GET(_req: NextRequest, { params }: { params: { cardId: string } }) {
-  const auth = await requireAdminUser();
+  const auth = await requireStaffUser();
   if (auth instanceof NextResponse) return auth;
   const proposal = await getConceptProposal(params.cardId);
   return NextResponse.json({ proposal });
@@ -34,7 +36,7 @@ export async function GET(_req: NextRequest, { params }: { params: { cardId: str
 
 // Save an account manager's manual edits to the generated proposal.
 export async function PUT(req: NextRequest, { params }: { params: { cardId: string } }) {
-  const auth = await requireAdminUser();
+  const auth = await requireStaffUser();
   if (auth instanceof NextResponse) return auth;
 
   let body: unknown;
@@ -53,7 +55,7 @@ export async function PUT(req: NextRequest, { params }: { params: { cardId: stri
 }
 
 export async function POST(_req: NextRequest, { params }: { params: { cardId: string } }) {
-  const auth = await requireAdminUser();
+  const auth = await requireStaffUser();
   if (auth instanceof NextResponse) return auth;
 
   // Resolve the card's grant/client so a manual generate (no row yet) can create one.
