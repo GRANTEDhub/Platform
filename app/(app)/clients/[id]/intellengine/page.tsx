@@ -44,15 +44,19 @@ export default async function StaffIntellEngineHub({ params }: { params: { id: s
     (draftRows ?? []) as Pick<IntellEngineDraft, "id" | "card_id" | "title" | "status" | "updated_at">[]
   ).map((d) => ({ id: d.id, title: d.title, status: d.status, updatedAt: d.updated_at }));
 
-  // Same candidate logic as the client hub: matched grants past the Grant Alerts
-  // gate (interested), awaiting a pursuit decision -- the picker offers the
-  // not-yet-started ones; the count also includes ones already routed to IntellEngine.
+  // Staff picker -- BROADER than the client's own hub (which lists only grants the
+  // client marked "Interested"): a grant the team has RELEASED to the client
+  // (sme_released_at, account-managed) counts too, so an AM can develop a released
+  // grant the client hasn't clicked through -- otherwise the picker is empty for a
+  // managed client. Either gate qualifies; still awaiting a pursuit decision. The
+  // picker offers the not-yet-routed ones; the count also includes ones already
+  // routed to IntellEngine.
   const { data: cardRows } = await supabase
     .from("review_cards")
     .select("id, pursuit_path, decision, grants(title, funder)")
     .eq("client_id", params.id)
     .neq("card_type", "prospect")
-    .not("interested_at", "is", null);
+    .or("interested_at.not.is.null,sme_released_at.not.is.null");
 
   type CardRow = { id: string; pursuit_path: PursuitPath | null; decision: string; grants: GrantEmbed };
   const cards = (cardRows ?? []) as CardRow[];
