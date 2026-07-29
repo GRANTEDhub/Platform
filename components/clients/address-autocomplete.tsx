@@ -79,7 +79,15 @@ export function AddressAutocomplete({
   // parts -- composing a full line WITH parts would duplicate the city/state/ZIP.
   defaultLine?: string | null;
 }) {
-  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+  // Sanitize the configured key: a value pasted into the dashboard commonly carries
+  // surrounding quotes or trailing whitespace, which Google rejects as
+  // "400 API key not valid" -- indistinguishable from a genuinely wrong key. Strip
+  // both so a cosmetic paste error can't masquerade as a bad key. (A stray newline
+  // would make fetch throw on the header, so it is stripped here too.)
+  const apiKey = (process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "")
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .trim();
 
   // Hidden, server-facing parts.
   const [street, setStreet] = useState(defaultStreet ?? "");
@@ -199,12 +207,24 @@ export function AddressAutocomplete({
       } catch (err) {
         if ((err as Error)?.name === "AbortError") return;
         const msg = err instanceof Error ? err.message : String(err);
-        // A CORS/network rejection surfaces as an opaque "Failed to fetch"; name the
-        // usual cause so it is actionable rather than mysterious.
+        // Name the usual cause per failure class, so the message is actionable rather
+        // than just Google's wording:
+        //  - opaque "Failed to fetch" == CORS/network, normally a referrer restriction
+        //  - 400 API_KEY_INVALID == the key STRING is wrong, or the build predates it
+        //    (NEXT_PUBLIC_* is inlined at BUILD time, so saving the env var is not
+        //    enough -- production must be redeployed)
+        //  - 403 == the key is real but not permitted for this API/referrer
+        const isNetwork = /failed to fetch|networkerror|load failed/i.test(msg);
+        const isBadKey = /api key not valid|api_key_invalid/i.test(msg);
+        const is403 = /HTTP 403/.test(msg);
         setApiError(
-          /failed to fetch|networkerror|load failed/i.test(msg)
+          isNetwork
             ? "Address lookup blocked (network/CORS). Usually the API key's Websites restriction does not allow this domain."
-            : `Address lookup failed: ${msg}`,
+            : isBadKey
+              ? `Address lookup failed: ${msg} — the key value looks wrong, or production hasn't been redeployed since it was added (the key is baked in at build time). Re-copy it into Vercel and redeploy.`
+              : is403
+                ? `Address lookup failed: ${msg} — the key is recognized but not permitted here: check its Websites restriction covers this domain and its API restrictions include Places API (New).`
+                : `Address lookup failed: ${msg}`,
         );
         setFailures((n) => n + 1);
         setSuggestions([]);
