@@ -7,11 +7,41 @@
 //    advance nonprofit_finance_checked_at, so it retries on the next refresh.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { fetchNonprofitFinancials } from "@/lib/grants/propublica";
+import { fetchNonprofitFinancials, resolveEinByName } from "@/lib/grants/propublica";
 
 export interface FinanceRefreshableClient {
   id: string;
   ein: string | null;
+  name?: string | null;
+  org_type?: string | null;
+  location_state?: string | null;
+}
+
+// Resolve and store an EIN when none is on file, so the 990 pull has a key to work
+// with -- a nonprofit's own site almost never prints its EIN, which otherwise leaves
+// annual budget permanently blank. Nonprofit-only (a city or a business has no 990),
+// fill-if-empty, and conservative: resolveEinByName refuses ambiguous matches, so a
+// null result just leaves the field for a human. Returns the EIN to use, if any.
+async function ensureEin(
+  db: SupabaseClient,
+  client: FinanceRefreshableClient,
+): Promise<string | null> {
+  const existing = (client.ein ?? "").trim();
+  if (existing) return existing;
+  // Only orgs that actually file a 990. Skipping others avoids a pointless lookup
+  // and the risk of matching a similarly-named nonprofit onto a government client.
+  const orgType = (client.org_type ?? "").trim();
+  if (orgType && orgType !== "nonprofit" && orgType !== "higher_education") return null;
+  if (!client.name || !client.name.trim()) return null;
+
+  const match = await resolveEinByName(client.name, client.location_state ?? null);
+  if (!match) return null;
+  const { error } = await db.from("clients").update({ ein: match.ein }).eq("id", client.id);
+  if (error) {
+    console.error("EIN auto-resolve write failed for client", client.id, error.message);
+    return null;
+  }
+  return match.ein;
 }
 
 // Returns true if the cache was written, false if skipped (no EIN) or the lookup
@@ -20,9 +50,12 @@ export async function refreshClientNonprofitFinance(
   db: SupabaseClient,
   client: FinanceRefreshableClient,
 ): Promise<boolean> {
-  if (!client.ein || !client.ein.trim()) return false;
+  // Auto-resolve the EIN when it is missing, so the budget pull is not gated on
+  // someone hand-entering one. No EIN resolvable -> nothing to look up.
+  const ein = await ensureEin(db, client);
+  if (!ein) return false;
 
-  const result = await fetchNonprofitFinancials(client.ein);
+  const result = await fetchNonprofitFinancials(ein);
   if (!result.verified) return false; // don't overwrite / don't advance checked_at
 
   const { error } = await db
@@ -47,7 +80,7 @@ export async function refreshClientNonprofitFinanceById(
 ): Promise<boolean> {
   const { data } = await db
     .from("clients")
-    .select("id, ein")
+    .select("id, ein, name, org_type, location_state")
     .eq("id", clientId)
     .single<FinanceRefreshableClient>();
   if (!data) return false;

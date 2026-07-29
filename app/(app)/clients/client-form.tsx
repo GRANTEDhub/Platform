@@ -6,7 +6,12 @@ import { Button } from "@/components/ui/button";
 import { ChipInput } from "@/components/ui/chip-input";
 import { NarrativeFields } from "@/components/intake/narrative-fields";
 import { AddressAutocomplete } from "@/components/clients/address-autocomplete";
-import { narrativeFromClient, EMPTY_NARRATIVE } from "@/lib/intake/narrative";
+import {
+  narrativeFromClient,
+  EMPTY_NARRATIVE,
+  type NarrativeProgram,
+  type NarrativePartner,
+} from "@/lib/intake/narrative";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import { ORG_TYPES } from "@/lib/clients/org-types";
 import type { Client } from "@/types/database";
@@ -32,6 +37,9 @@ type Crafted = {
   ein: string;
   mission: string;
   funding_need: string;
+  programs: NarrativeProgram[];
+  partners: NarrativePartner[];
+  service_area: string[];
 };
 
 function Field({
@@ -340,7 +348,13 @@ export function ClientForm({
             client
               ? narrativeFromClient(client)
               : crafted
-                ? { ...EMPTY_NARRATIVE, mission: crafted.mission, funding_need: crafted.funding_need }
+                ? {
+                    ...EMPTY_NARRATIVE,
+                    mission: crafted.mission,
+                    funding_need: crafted.funding_need,
+                    programs: crafted.programs ?? [],
+                    partners: crafted.partners ?? [],
+                  }
                 : undefined
           }
           websiteForDraft={website}
@@ -429,7 +443,7 @@ export function ClientForm({
           <ChipInput
             name="service_area"
             label="Service area"
-            defaultValue={client?.service_area ?? undefined}
+            defaultValue={client?.service_area ?? crafted?.service_area ?? undefined}
             placeholder="Type a county or region, press Enter"
           />
         </section>

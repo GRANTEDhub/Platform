@@ -5,7 +5,12 @@ import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { WebsiteDraftButton } from "@/components/intake/website-draft-button";
 import { PRIORITY_AREAS } from "@/lib/intake/fields";
-import { EMPTY_NARRATIVE, type NarrativeIntake, type NarrativeProgram } from "@/lib/intake/narrative";
+import {
+  EMPTY_NARRATIVE,
+  type NarrativeIntake,
+  type NarrativeProgram,
+  type NarrativePartner,
+} from "@/lib/intake/narrative";
 
 // Shared narrative-capture block, mounted in BOTH the public intake form and the
 // admin client create/edit form. Self-contained (like MatchingConfig): it owns its
@@ -56,6 +61,12 @@ export function NarrativeFields({
     set("programs", [...n.programs, { name: "", description: "", serves: "", status: "existing" }]);
   const removeProgram = (i: number) =>
     set("programs", n.programs.filter((_, idx) => idx !== i));
+
+  const setPartner = (i: number, patch: Partial<NarrativePartner>) =>
+    set("partners", n.partners.map((p, idx) => (idx === i ? { ...p, ...patch } : p)));
+  const addPartner = () => set("partners", [...n.partners, { name: "", role: "" }]);
+  const removePartner = (i: number) =>
+    set("partners", n.partners.filter((_, idx) => idx !== i));
 
   return (
     <div className="space-y-6">
@@ -169,16 +180,43 @@ export function NarrativeFields({
 
       {full && (
         <>
-          <Field label="Partnerships">
-            <textarea
-              className={AREA}
-              rows={3}
-              maxLength={2000}
-              value={n.partnerships}
-              onChange={(e) => set("partnerships", e.target.value)}
-              placeholder="Key partners and the nature of each relationship."
-            />
-          </Field>
+          {/* Structured partners — same add/remove shape as Programs, and the same
+              shape the concept proposal's consortium table uses, so a partner captured
+              here is reusable there instead of being re-typed out of free text. */}
+          <div>
+            <Label>Partnerships</Label>
+            <p className="mt-1 text-xs text-neutral-500">
+              Each partner: who they are and what the partnership provides.
+            </p>
+            <div className="mt-2 space-y-4">
+              {n.partners.map((p, i) => (
+                <div key={i} className="space-y-2 rounded-md border border-input p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input
+                      className="min-w-[12rem] flex-1"
+                      placeholder="Partner organization"
+                      value={p.name}
+                      onChange={(e) => setPartner(i, { name: e.target.value })}
+                    />
+                    <Button type="button" variant="ghost" size="sm" onClick={() => removePartner(i)}>
+                      Remove
+                    </Button>
+                  </div>
+                  <textarea
+                    className={AREA}
+                    rows={2}
+                    maxLength={1000}
+                    placeholder="What the partnership entails (their role, what they bring)"
+                    value={p.role}
+                    onChange={(e) => setPartner(i, { role: e.target.value })}
+                  />
+                </div>
+              ))}
+              <Button type="button" variant="outline" size="sm" onClick={addPartner}>
+                + Add partner
+              </Button>
+            </div>
+          </div>
 
           <Field label="Anything else we should know?">
             <textarea

@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/utils";
 import { PortalAccess, type PortalMember } from "@/components/clients/portal-access";
 import { ClientRepository } from "@/components/clients/client-repository";
+import { FormExitGuard } from "@/components/clients/form-exit-guard";
 import { signedUrl } from "@/lib/storage";
 import { ClientForm } from "../../client-form";
 import { SamRegistration } from "../../sam-registration";
@@ -53,6 +54,9 @@ export default async function EditClientPage({ params }: { params: { id: string 
     const prospectAction = updateClientAction.bind(null, client.id);
     return (
       <div>
+        <div className="px-8 pt-6">
+          <FormExitGuard backHref={`/clients/${client.id}`} backLabel="Back to profile" />
+        </div>
         <PageHeader title={`Edit ${client.name}`} />
         <div className="max-w-2xl space-y-8 p-8">
           <ClientForm client={client} action={prospectAction} submitLabel="Save changes" />
@@ -105,6 +109,9 @@ export default async function EditClientPage({ params }: { params: { id: string 
 
   return (
     <div>
+      <div className="px-8 pt-6">
+        <FormExitGuard backHref={`/clients/${client.id}`} backLabel="Back to profile" />
+      </div>
       <PageHeader title={`Edit ${client.name}`} />
       <div className="max-w-3xl space-y-8 p-8">
         <ClientForm client={client} action={action} submitLabel="Save changes" />
