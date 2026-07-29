@@ -206,8 +206,9 @@ SUPPRESS: Cooperative agreement + TTA delivery model + client is not a national 
 SUPPRESS: Sub-initiative pool under $5M statewide
   -- Do not recommend as standalone pursuit. Award size too small for level of effort.
 
-SUPPRESS: Reimbursement-only program AND client has no confirmed cash flow to front costs
-  -- Flag as "requires cash flow confirmation" before advancing.
+FLAG, do NOT suppress: Reimbursement-only program AND client has no confirmed cash flow to front costs
+  -- Surface the grant and add a before_you_approve item "requires cash flow confirmation".
+     Cash-flow / budget capacity is a caveat for the human to weigh, NEVER a reason to hide the grant.
 
 SUBAWARD PROHIBITION -- CONSORTIUM COLLAPSE RULE:
 If subaward_prohibited = true, there is no pass-through structure. The application is single-applicant only.
@@ -222,9 +223,9 @@ First gate failure = disqualify for direct pursuit. Assess alternative route.
 
 Gate 1 -- Domestic scope: U.S.-only. International = disqualify.
 Gate 2 -- Entity type: Is this client's org type in the eligible entity list? For-profit = route to facilitator only.
-Gate 3 -- Geography: Does client's service area overlap the eligible region? HUC watershed, state restriction, rurality standard.
+Gate 3 -- Geography: Does the client's service area overlap the eligible region (state/region/HUC-watershed restriction)? The client's OWN RUCC/rurality is NOT a kill here -- a metro-coded applicant may still serve rural beneficiaries and remain eligible, so carry any rurality concern forward as a flag, never a Gate-3 disqualification. Only a hard region/state restriction the client's service area is entirely outside gates here.
 Gate 4 -- Purpose alignment: Does what this grant actually rewards match what this client does?
-Gate 5 -- Award size: Is the award range realistic for this client's capacity and delivery model?
+Gate 5 -- Award size (NON-DISQUALIFYING): note whether the award range fits the client's capacity/delivery model, but do NOT disqualify on it. Award size vs. the client's budget/capacity is a caveat to flag (before_you_approve / the cost_share rationale), never a Gate failure -- budget/capacity does not kill a grant.
 Gate 6 -- Deadline viability: Can the client realistically submit? Under 4 weeks = very tight, flag immediately.
 
 ROUTE LOGIC (failure is not always a full kill):
@@ -342,14 +343,31 @@ within it (it is NOT an average):
 2. Eligibility cleanliness -- TWO filters: (a) entity type eligible AND (b)
    program scope/purpose aligned. Broad eligibility lists create false positives;
    clearing entity type is necessary, not sufficient. Topical adjacency != fit.
-3. Geographic fit -- RUCC/rural eligibility, service area, place-based rules
-   (RUCC 2 metro auto-fails rural-designated programs).
+3. Geographic fit -- the client's service area vs. the grant's place-based rules.
+   The client's OWN RUCC/rurality is a CONTEXT FLAG, never an auto-fail: a metro-coded
+   applicant can serve rural beneficiaries and remain eligible, so a rurality mismatch
+   adds a "confirm rural eligibility" caveat and does NOT lower the score or drop the
+   grant. Only a hard region/state restriction the client is entirely outside reduces fit.
 4. Program history / track record -- prior awards, incumbency, past performance
    on the relevant mechanism (prime vs sub history is distinct).
-5. Match / cost-share feasibility for THIS client -- a real disqualifier even
-   when eligible; small-budget, match-sensitive clients fail high-match programs.
-6. Population / mission alignment -- does the served population and mission
-   genuinely fit the program intent.
+5. Match / cost-share feasibility for THIS client -- a CAVEAT, never a disqualifier
+   or score reducer: a high match requirement or a small / match-sensitive budget is
+   surfaced as a before_you_approve flag ("high match; confirm cost-share capacity")
+   with the grant kept fully visible. Budget / match never hides a grant or lowers the
+   seat-based score.
+6. Population / mission alignment -- does the served population and mission genuinely
+   fit the program intent. The client's checked "priority funding areas" are a SOFT
+   preference signal only: a grant that fits the seat and mission must still surface
+   even if it falls outside the client's checked areas -- an unchecked area is never a
+   reason to hide or zero a genuine match.
+
+PROFILE FIELDS ARE FLAGS, NOT GATES: the client's budget, match / cost-share capacity,
+RUCC / rurality, project stage, and checked priority areas may add before_you_approve
+caveats and color the factor rationales, but they must NEVER suppress, disqualify, or
+lower fit_score. What still gates a grant is UNCHANGED: the Phase-1 triage gates
+(Gate 1 domestic scope, Gate 2 entity eligibility, Gate 3's hard region/state
+restriction, Gate 4 purpose alignment, Gate 6 deadline viability), SEAT occupancy
+(factor 1), and admin hard-constraints. These profile fields are simply not among them.
 
 Populate reasoning_context with the per-factor rationale: name the seat, and the
 factor that gated or set the score.
