@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { refreshClientUSASpendingById } from "@/lib/grants/usaspending-refresh";
+import { refreshClientNonprofitFinanceById } from "@/lib/clients/nonprofit-finance-refresh";
 import { refreshClientProfileById } from "@/lib/clients/profile";
 
 // Out-of-band client enrichment, fire-and-forget via waitUntil on the same events
@@ -21,6 +22,18 @@ export async function enrichClient(db: SupabaseClient, clientId: string): Promis
   } catch (err) {
     console.error(
       "enrichClient: USASpending refresh failed for client",
+      clientId,
+      err instanceof Error ? err.message : err,
+    );
+  }
+  // IRS 990 financials (ProPublica), keyed on the EIN. Independently guarded and a
+  // no-op when no EIN is on file. Runs before the profile refine so the distillation
+  // can read the freshly-cached figure as a budget citation.
+  try {
+    await refreshClientNonprofitFinanceById(db, clientId);
+  } catch (err) {
+    console.error(
+      "enrichClient: nonprofit-finance refresh failed for client",
       clientId,
       err instanceof Error ? err.message : err,
     );

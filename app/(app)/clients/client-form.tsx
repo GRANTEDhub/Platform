@@ -281,7 +281,21 @@ export function ClientForm({
             <Field label="Match / cost-share capacity" name="match_cost_share_capacity" defaultValue={client?.match_cost_share_capacity} />
             <Field label="Annual budget" name="annual_budget" defaultValue={client?.annual_budget} />
             <Field label="RUCC codes" name="rucc_codes" defaultValue={client?.rucc_codes} />
+            <Field label="IRS EIN" name="ein" defaultValue={client?.ein} placeholder="e.g. 71-0236875 — pulls annual budget from the IRS 990" />
           </div>
+          {/* Sourced budget citation from the org's latest IRS 990 (ProPublica),
+              pulled in the background after an EIN is saved. A flag/citation, never a
+              matcher gate. */}
+          {client?.nonprofit_finance?.verified && client.nonprofit_finance.total_revenue != null && (
+            <p className="rounded-md border border-input bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">Latest IRS 990</span>
+              {client.nonprofit_finance.fiscal_year ? ` (FY${client.nonprofit_finance.fiscal_year})` : ""}: total revenue{" "}
+              ${client.nonprofit_finance.total_revenue.toLocaleString("en-US")}
+              {client.nonprofit_finance.total_expenses != null &&
+                `, expenses $${client.nonprofit_finance.total_expenses.toLocaleString("en-US")}`}
+              {" "}— pulled from ProPublica. Citation only; not used to gate matching.
+            </p>
+          )}
           <ChipInput
             name="service_area"
             label="Service area"
