@@ -54,6 +54,27 @@ export async function recordClientDecision(
   return { ok: true };
 }
 
+// ── Account-managed client, pre-email: RELEASE instead of approve ───────────
+// For an account-managed client the alert is a RELEASE to their portal, not an
+// approval -- the client still makes the pursue call on their own copy of the
+// card. So sending the PDF sets sme_released_at (the release gate, 0059) rather
+// than decision='approved'. Same USER-client contract as recordClientDecision
+// (staff-only write; no approval trigger involved -- sme_released_at isn't gated).
+// Idempotent: re-release just re-stamps the timestamp (Guard 1 already blocks a
+// second email). Returns the same shape so the route maps it to HTTP uniformly.
+export async function releaseClientCardForSend(
+  supabase: ReturnType<typeof createClient>,
+  cardId: string,
+  userId: string,
+): Promise<ClientDecisionResult> {
+  const { error } = await supabase
+    .from("review_cards")
+    .update({ sme_released_at: new Date().toISOString(), sme_released_by: userId })
+    .eq("id", cardId);
+  if (error) return { ok: false, reason: "error" };
+  return { ok: true };
+}
+
 // ── Client, post-email: finalize the delivered alert ────────────────────────
 // Marks the draft sent (immutable thereafter) and stamps the card's sent_at/sent_to
 // via the USER client (same RLS-scoped write the route used). Call only after a

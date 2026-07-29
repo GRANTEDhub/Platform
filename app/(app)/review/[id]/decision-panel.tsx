@@ -11,15 +11,12 @@ import type { GrantSummary } from "@/app/api/review/[id]/route";
 type DecidePayload = { decision_reason?: string };
 
 // The decision panel at the top of the review sidebar (sticky on a long grant).
-// Two clusters, decision-first:
-//   - The decision controls (top). The primary action is `alertSend` (the "Send
-//     grant alert" button, passed in for admin client cards) which sits above
-//     Reject. Sending the alert is also the card's approval (handled in the alert
-//     route), so there is no separate plain-text Send here anymore. Reject records
-//     a 'passed' decision; Reset returns to pending.
-//   - Score feedback (below the divider) on Argo's 1-3 fit score, independent of
-//     the decision. Agree logs a silent confirm; Flag captures WHY we disagree ->
-//     match_feedback calibration dataset (POST /api/feedback).
+// The primary action is `alertSend` (the "Send grant alert" button, passed in for
+// admin client cards) which sits above Reject. Sending the alert is also the card's
+// approval (handled in the alert route), so there is no separate plain-text Send
+// here. Reject records a 'passed' decision AND requires a reason -- that reason is
+// the calibration signal, routed to match_feedback server-side (replacing the old
+// standalone agree/flag control). Reset returns to pending.
 export function DecisionPanel({
   cardId,
   decision,
@@ -33,26 +30,20 @@ export function DecisionPanel({
   decision: CardDecision;
   isAdmin: boolean;
   alertSend?: React.ReactNode;
-  // "full" = both clusters (default). "decision" = Send/Reject only (top strip).
-  // "feedback" = Agree/Flag score feedback only. Splitting lets the two clusters
-  // live in different columns without duplicating state.
-  variant?: "full" | "decision" | "feedback";
+  // "decision" = the "Your call" top-strip layout (label + centered group).
+  // "full" (default) = the same controls without that wrapper.
+  variant?: "full" | "decision";
   // Drop the white card wrapper so the cluster can sit INSIDE another card.
   bare?: boolean;
   // Extra classes on the root (e.g. `flex-1` to fill the top-strip column height).
   className?: string;
 }) {
-  const showDecision = variant !== "feedback";
-  const showFeedback = variant !== "decision";
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [panel, setPanel] = useState<null | "reject" | "flag">(null);
+  const [panel, setPanel] = useState<null | "reject">(null);
   const [confirm, setConfirm] = useState<GrantSummary | null>(null);
   const [rejectReason, setRejectReason] = useState("");
-
-  const [fb, setFb] = useState<"idle" | "agreed" | "flagged">("idle");
-  const [flagReason, setFlagReason] = useState("");
 
   async function decide(next: CardDecision, payload?: DecidePayload) {
     setBusy(true);
@@ -78,132 +69,61 @@ export function DecisionPanel({
     }
   }
 
-  async function sendFeedback(agree: boolean, reason?: string) {
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/feedback", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ review_card_id: cardId, agree, reason: agree ? undefined : reason }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to record feedback");
-      setFb(agree ? "agreed" : "flagged");
-      setPanel(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to record feedback");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   if (confirm) return <DecisionConfirmation summary={confirm} />;
 
   return (
     <div className={`${bare ? "" : "rounded-2xl bg-white p-5 shadow-soft"}${variant === "decision" ? " flex flex-col" : ""}${className ? ` ${className}` : ""}`}>
-      {showDecision && (
-        <>
-          {/* Top-strip "Your call" box: label at top, the Send/Reject group centered
-              in the remaining height so a banner-matched box reads composed -- not
-              buttons pinned to the top with dead space below. */}
-          {variant === "decision" && <SectionLabel>Your call</SectionLabel>}
-          <div className={variant === "decision" ? "flex flex-1 flex-col justify-center gap-2" : ""}>
-            {/* Primary action is "Send grant alert" (client cards) which also approves
-                the card; it sits above Reject. Prospect cards get no send here. */}
-            {alertSend}
-            {!isAdmin && (
-              <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
-                Final approval is admin-only. You can reject a match for review.
-              </p>
-            )}
-            <Button
-              variant="outline"
-              className={`w-full border-destructive/40 text-destructive hover:bg-destructive/5 ${variant !== "decision" && (alertSend || !isAdmin) ? "mt-2" : ""}`}
-              disabled={busy}
-              onClick={() => setPanel((p) => (p === "reject" ? null : "reject"))}
-            >
-              Reject
-            </Button>
-            {decision !== "pending" && (
-              <Button variant="ghost" size="sm" className={`w-full ${variant === "decision" ? "" : "mt-2"}`} disabled={busy} onClick={() => decide("pending")}>
-                Reset decision
-              </Button>
-            )}
-
-            {panel === "reject" && (
-              <div className="mt-2.5 space-y-2 rounded-md border border-brand-navy/10 bg-card p-2.5">
-                <textarea
-                  value={rejectReason}
-                  onChange={(e) => setRejectReason(e.target.value)}
-                  rows={3}
-                  autoFocus
-                  placeholder="Why reject? (e.g. wrong entity type, no realistic prime path)"
-                  className="flex w-full rounded-md border border-input bg-card px-2.5 py-1.5 text-sm"
-                />
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="w-full border-destructive/40 text-destructive hover:bg-destructive/5"
-                  disabled={busy}
-                  onClick={() => decide("passed", { decision_reason: rejectReason })}
-                >
-                  Reject match
-                </Button>
-              </div>
-            )}
-          </div>
-        </>
-      )}
-
-      {showDecision && showFeedback && <div className="my-3.5 h-px bg-brand-navy/10" />}
-
-      {showFeedback && (
-        <>
-          {/* Score feedback: agree/flag on Argo's 1-3 fit score, independent of the
-              decision. */}
-          <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
-            Agree with the score?
+      {/* Top-strip "Your call" box: label at top, the Send/Reject group centered
+          in the remaining height so a banner-matched box reads composed -- not
+          buttons pinned to the top with dead space below. */}
+      {variant === "decision" && <SectionLabel>Your call</SectionLabel>}
+      <div className={variant === "decision" ? "flex flex-1 flex-col justify-center gap-2" : ""}>
+        {/* Primary action is "Send grant alert" (client cards) which also approves
+            the card; it sits above Reject. Prospect cards get no send here. */}
+        {alertSend}
+        {!isAdmin && (
+          <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+            Final approval is admin-only. You can reject a match for review.
           </p>
-          {fb === "idle" ? (
-            <div className="mt-2.5 flex gap-2">
-              <Button variant="outline" size="sm" className="flex-1" disabled={busy} onClick={() => sendFeedback(true)}>
-                👍 Agree
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="flex-1"
-                disabled={busy}
-                onClick={() => setPanel((p) => (p === "flag" ? null : "flag"))}
-              >
-                👎 Flag
-              </Button>
-            </div>
-          ) : (
-            <p className="mt-2 text-xs text-muted-foreground">
-              {fb === "agreed" ? "Score confirmed — logged." : "Flagged — logged for calibration."}
-            </p>
-          )}
+        )}
+        <Button
+          variant="outline"
+          className={`w-full border-destructive/40 text-destructive hover:bg-destructive/5 ${variant !== "decision" && (alertSend || !isAdmin) ? "mt-2" : ""}`}
+          disabled={busy}
+          onClick={() => setPanel((p) => (p === "reject" ? null : "reject"))}
+        >
+          Reject
+        </Button>
+        {decision !== "pending" && (
+          <Button variant="ghost" size="sm" className={`w-full ${variant === "decision" ? "" : "mt-2"}`} disabled={busy} onClick={() => decide("pending")}>
+            Reset decision
+          </Button>
+        )}
 
-          {panel === "flag" && (
-            <div className="mt-2.5 space-y-2 rounded-md border border-brand-navy/10 bg-brand-cream/60 p-2.5">
-              <p className="text-xs font-medium text-brand-navy">Why do you disagree with the score?</p>
-              <textarea
-                value={flagReason}
-                onChange={(e) => setFlagReason(e.target.value)}
-                rows={3}
-                autoFocus
-                placeholder="What did the engine get wrong — eligibility, role, fit?"
-                className="flex w-full rounded-md border border-input bg-card px-2.5 py-1.5 text-sm"
-              />
-              <Button size="sm" className="w-full" disabled={busy || !flagReason.trim()} onClick={() => sendFeedback(false, flagReason)}>
-                Submit flag
-              </Button>
-            </div>
-          )}
-        </>
-      )}
+        {panel === "reject" && (
+          <div className="mt-2.5 space-y-2 rounded-md border border-brand-navy/10 bg-card p-2.5">
+            <textarea
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              rows={3}
+              autoFocus
+              placeholder="Why reject? (e.g. wrong entity type, no realistic prime path)"
+              className="flex w-full rounded-md border border-input bg-card px-2.5 py-1.5 text-sm"
+            />
+            {/* Reason required -- it's the match calibration signal now, routed to
+                match_feedback server-side (this replaced the old agree/flag control). */}
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full border-destructive/40 text-destructive hover:bg-destructive/5"
+              disabled={busy || !rejectReason.trim()}
+              onClick={() => decide("passed", { decision_reason: rejectReason.trim() })}
+            >
+              Reject match
+            </Button>
+          </div>
+        )}
+      </div>
 
       {error && !panel && <p className="mt-2.5 text-sm text-destructive">{error}</p>}
     </div>

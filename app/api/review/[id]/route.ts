@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { computeGrantSummary } from "@/lib/review/summary";
+import { recordCardFeedback } from "@/lib/feedback/record";
 import { canSendOutreach } from "@/lib/email/guard";
 import { sendGrantReleaseEmail } from "@/lib/email/send";
 import { appBaseUrl } from "@/lib/site-url";
@@ -176,6 +177,24 @@ export async function PATCH(
       { error: isApprovalBlock ? "Only admins can approve a match for client delivery" : "Failed to update card" },
       { status: isApprovalBlock ? 403 : 500 },
     );
+  }
+
+  // A Pass WITH a reason is the calibration signal now (replacing the old
+  // standalone agree/flag control): record it to match_feedback as a negative
+  // datapoint (agree=false, reason=the why). Best-effort -- the decision above is
+  // the source of truth and already committed, so a feedback-store failure must not
+  // fail the reject. No reason -> no datapoint (an empty pass carries no signal).
+  if (body.decision === "passed" && body.decision_reason?.trim()) {
+    try {
+      await recordCardFeedback(supabase, {
+        reviewCardId: params.id,
+        createdBy: user.id,
+        agree: false,
+        reason: body.decision_reason.trim(),
+      });
+    } catch (e) {
+      console.error(`[review-reject] feedback record failed card=${params.id}:`, e instanceof Error ? e.message : e);
+    }
   }
 
   // Post-decision summary for the Matches confirmation screen; null for

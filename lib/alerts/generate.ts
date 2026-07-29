@@ -9,7 +9,7 @@ import type { Grant, ReviewCard, Client, Prospect } from "@/types/database";
 // client card (client_id set) or a prospect card (prospect_id set); the recipient
 // is resolved from whichever applies.
 
-type AlertClient = Pick<Client, "id" | "name" | "primary_contact_email" | "primary_contact_name" | "pipeline_stage">;
+type AlertClient = Pick<Client, "id" | "name" | "primary_contact_email" | "primary_contact_name" | "pipeline_stage" | "account_managed">;
 type AlertProspect = Pick<Prospect, "id" | "name" | "primary_contact_email" | "primary_contact_name">;
 
 export type AlertContext = {
@@ -56,7 +56,7 @@ export async function loadAlertContext(cardId: string): Promise<AlertContext | n
     ? (
         await db
           .from("clients")
-          .select("id, name, primary_contact_email, primary_contact_name, pipeline_stage")
+          .select("id, name, primary_contact_email, primary_contact_name, pipeline_stage, account_managed")
           .eq("id", card.client_id)
           .single<AlertClient>()
       ).data

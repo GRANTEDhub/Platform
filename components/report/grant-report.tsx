@@ -8,13 +8,13 @@ import { HeroBand } from "@/components/layout/hero-band";
 import { ScoreRing, FactorMark, Tag } from "./primitives";
 import { ConceptProposalReveal } from "./concept-proposal-reveal";
 import { PursuitChooser } from "./pursuit-chooser";
-import { factorDisplay, reportStats, type ReportItem } from "@/lib/report/shape";
+import { factorDisplay, reportStats, staffBucket, type ReportItem, type StaffBucket } from "@/lib/report/shape";
 
 type Filter =
-  | "all"
-  | "strong"
-  | "soon"
-  | "pursuing"
+  | "admin"
+  | "client"
+  | "pursued"
+  | "rejected"
   | "to_decide"
   | "in_progress"
   | "intellengine"
@@ -22,13 +22,16 @@ type Filter =
   | "in_house"
   | "archived";
 
-// Staff view: honest, data-backed filters (fit / deadline / decision). The Figma
-// mock's Federal/State/Foundation isn't derivable, so we substitute real fields.
+// Staff view (0059+): the review-queue lifecycle. "Admin" = still ours to review /
+// release; "Client" = released, now the client's to decide (whether it's sitting in
+// their Grant Alerts or their Grant Report); "Pursued" / "Rejected" = decided. The
+// default view is "Admin", so a released card leaves the working queue the moment
+// it's sent out. "Admin" is hidden for standard clients (no AM release gate).
 const STAFF_FILTERS: { key: Filter; label: string }[] = [
-  { key: "all", label: "All" },
-  { key: "strong", label: "Strong fit" },
-  { key: "soon", label: "Deadline soon" },
-  { key: "pursuing", label: "Pursuing" },
+  { key: "admin", label: "Admin" },
+  { key: "client", label: "Client" },
+  { key: "pursued", label: "Pursued" },
+  { key: "rejected", label: "Rejected" },
 ];
 
 // Client view: the report is a decision workflow (migration 0061). Default shows
@@ -44,14 +47,14 @@ const CLIENT_FILTERS: { key: Filter; label: string }[] = [
   { key: "archived", label: "Passed" },
 ];
 
-function matchesFilter(item: ReportItem, f: Filter): boolean {
+function matchesFilter(item: ReportItem, f: Filter, hasReleaseGate: boolean): boolean {
   switch (f) {
-    case "strong":
-      return item.fitScore === 3;
-    case "soon":
-      return item.deadlineSoon;
-    case "pursuing":
-      return item.decision === "approved";
+    // Staff lifecycle buckets: where the card sits in review → release → decision.
+    case "admin":
+    case "client":
+    case "pursued":
+    case "rejected":
+      return staffBucket(item, hasReleaseGate) === f;
     case "to_decide":
       // Awaiting a pursuit decision -- but a passed grant clears its path back to
       // null, so exclude passed here (it lives under "Passed" / the old Ledger).
@@ -78,6 +81,7 @@ export function GrantReport({
   basePath,
   clientName,
   tier,
+  hasReleaseGate,
 }: {
   items: ReportItem[];
   heading: string;
@@ -89,28 +93,49 @@ export function GrantReport({
   clientName?: string;
   // Set on the CLIENT report only — switches on the pursuit-decision workflow
   // (0061): pursuit filters, "to decide" default, and the per-row pursuit chooser.
-  // Absent on staff surfaces, which keep the plain fit/deadline/decision filters.
+  // Absent on staff surfaces, which use the lifecycle buckets instead.
   tier?: "premium" | "base";
+  // Staff surfaces only: true when this queue has an account-manager release gate
+  // (account-managed client or un-converted lead) -- staff hold cards before the
+  // client sees them, so the view defaults to "Admin" and shows the "Admin" chip.
+  // Standard-client staff views pass false: no gate, so the queue defaults to
+  // "Client". Ignored on the client portal (tier drives that side).
+  hasReleaseGate?: boolean;
 }) {
   const isClient = !!tier;
   const hasPassed = useMemo(() => items.some((i) => i.decision === "passed"), [items]);
-  // Hide the "Passed" chip until there's something to show under it.
+  // Hide the "Passed" chip (client) / "Admin" chip (gate-less staff) until relevant.
   const FILTERS = isClient
     ? CLIENT_FILTERS.filter((f) => f.key !== "archived" || hasPassed)
-    : STAFF_FILTERS;
+    : STAFF_FILTERS.filter((f) => f.key !== "admin" || hasReleaseGate);
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<Filter>(isClient ? "to_decide" : "all");
+  const [filter, setFilter] = useState<Filter>(
+    isClient ? "to_decide" : hasReleaseGate ? "admin" : "client",
+  );
   const stats = useMemo(() => reportStats(items), [items]);
   const inProgressCount = useMemo(() => items.filter((i) => i.pursuitPath !== null).length, [items]);
+  // Per-bucket counts for the staff chips (mirrors the header's awaiting/with-client
+  // split). Empty on the client side, which uses the in-progress badge instead.
+  const staffCounts = useMemo(() => {
+    const c: Record<StaffBucket, number> = { admin: 0, client: 0, pursued: 0, rejected: 0 };
+    if (!isClient) for (const i of items) c[staffBucket(i, !!hasReleaseGate)]++;
+    return c;
+  }, [items, isClient, hasReleaseGate]);
+  const chipCount = (key: Filter): number => {
+    if (key === "in_progress") return inProgressCount;
+    if (key === "admin" || key === "client" || key === "pursued" || key === "rejected")
+      return isClient ? 0 : staffCounts[key];
+    return 0;
+  };
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return items.filter((i) => {
-      if (!matchesFilter(i, filter)) return false;
+      if (!matchesFilter(i, filter, !!hasReleaseGate)) return false;
       if (!q) return true;
       return i.title.toLowerCase().includes(q) || (i.funder ?? "").toLowerCase().includes(q);
     });
-  }, [items, query, filter]);
+  }, [items, query, filter, hasReleaseGate]);
 
   return (
     <div>
@@ -158,7 +183,7 @@ export function GrantReport({
                   : "border border-brand-navy/15 text-muted-foreground hover:border-brand-navy/30 hover:text-brand-navy"
               }`}
             >
-              {f.key === "in_progress" && inProgressCount > 0 ? `${f.label} · ${inProgressCount}` : f.label}
+              {chipCount(f.key) > 0 ? `${f.label} · ${chipCount(f.key)}` : f.label}
             </button>
           );
         })}

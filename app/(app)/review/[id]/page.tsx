@@ -124,6 +124,11 @@ export default async function CardDetailPage({
     </div>
   );
 
+  // The body rail holds Who-Can-Apply (grant tab) or the prospect-contact editor
+  // (prospect cards). The match tab no longer has a rail card (the agree/flag box
+  // was removed), so drop the reserved column entirely when there's nothing to show.
+  const hasAside = (isAdmin && isProspect && !!card.prospects) || (tab === "grant" && !!g);
+
   return (
     <div className="min-h-full bg-brand-cream px-6 py-7 sm:px-8">
       {/* Top strip: narrowed navy banner (left) + review-actions box (right).
@@ -146,7 +151,7 @@ export default async function CardDetailPage({
 
       {/* Body below the strip: main content + rail. Same column template so the rail
           lines up under the review-actions box. */}
-      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-start">
+      <div className={`mt-6 grid grid-cols-1 gap-6 lg:items-start ${hasAside ? "lg:grid-cols-[minmax(0,1fr)_330px]" : ""}`}>
         <main className="min-w-0 space-y-6">
           {/* The Grant tab describes the grant, not the match -- What It Funds leads
               here. Match Score lives on the Match tab (wired in a later part). */}
@@ -166,24 +171,23 @@ export default async function CardDetailPage({
           )}
         </main>
 
-        <aside className="space-y-4">
-          {/* Rail beside the main column: its first card top-aligns with the main
-              column's first card (no sticky wrapper -> no stray leading margin).
-              ProspectContact edits the send recipient (prospect cards only). */}
-          {isAdmin && isProspect && card.prospects && (
-            <ProspectContact
-              prospectId={card.prospects.id}
-              initialEmail={card.prospects.primary_contact_email}
-              initialName={card.prospects.primary_contact_name}
-            />
-          )}
-          {/* Grant tab: Who Can Apply beside What It Funds. Match tab: the Agree/Flag
-              score-feedback box in its own card beside the merged Match Score box. */}
-          {tab === "grant" && g && <WhoCanApply grant={g} dense />}
-          {tab === "match" && (
-            <DecisionPanel variant="feedback" cardId={card.id} decision={card.decision} isAdmin={isAdmin} />
-          )}
-        </aside>
+        {hasAside && (
+          <aside className="space-y-4">
+            {/* Rail beside the main column: its first card top-aligns with the main
+                column's first card (no sticky wrapper -> no stray leading margin).
+                ProspectContact edits the send recipient (prospect cards only). */}
+            {isAdmin && isProspect && card.prospects && (
+              <ProspectContact
+                prospectId={card.prospects.id}
+                initialEmail={card.prospects.primary_contact_email}
+                initialName={card.prospects.primary_contact_name}
+              />
+            )}
+            {/* Grant tab: Who Can Apply beside What It Funds. (The match tab's rail
+                card was the Agree/Flag box, now removed -- reject-reason is the signal.) */}
+            {tab === "grant" && g && <WhoCanApply grant={g} dense />}
+          </aside>
+        )}
       </div>
     </div>
   );

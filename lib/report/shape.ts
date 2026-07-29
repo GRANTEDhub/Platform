@@ -239,6 +239,20 @@ export function toReportItems(cards: ReportCardRow[]): ReportItem[] {
   });
 }
 
+// The staff review-queue lifecycle bucket for a card (0059+). `hasReleaseGate` is
+// true for account-managed clients and un-converted leads -- staff hold the card
+// before the client/prospect ever sees it, so an undecided, un-released card is
+// "admin" (still ours to review/release). Standard clients have no release gate:
+// their queue is the client's the moment it's scored, so undecided cards read as
+// "client". A released card leaves "admin" for "client" the instant it's sent out.
+export type StaffBucket = "admin" | "client" | "pursued" | "rejected";
+export function staffBucket(item: ReportItem, hasReleaseGate: boolean): StaffBucket {
+  if (item.decision === "passed") return "rejected";
+  if (item.decision === "approved") return "pursued";
+  if (!hasReleaseGate) return "client";
+  return item.smeReleased ? "client" : "admin";
+}
+
 // Attribution label for a recorded decision: "you" when the viewer made it, the
 // client org name when the client side did, else "your GRANTED team". Null when
 // undecided. Pure — the page supplies viewerId + clientName.
