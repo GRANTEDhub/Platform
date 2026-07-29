@@ -17,13 +17,17 @@ export default async function NewClientPage({
   searchParams: { kind?: string };
 }) {
   await requireAdmin();
-  // The Prospecting landing's "Add prospect" entry links here with ?kind=prospect
-  // so the record-type starts on prospect; still user-changeable.
-  const defaultKind = searchParams.kind === "prospect" ? "prospect" : undefined;
+  // No record-type toggle anymore: the entry point fixes the kind. This is the
+  // "Add client" door (prospects have their own at /intel/prospects/new); a legacy
+  // ?kind=prospect link still resolves to a prospect.
+  const defaultKind: "client" | "prospect" = searchParams.kind === "prospect" ? "prospect" : "client";
 
   return (
     <div>
-      <PageHeader title="Add Client/Prospect" description="Create a new client or prospect record." />
+      <PageHeader
+        title={defaultKind === "prospect" ? "Add prospect" : "Add client"}
+        description={defaultKind === "prospect" ? "Create a new prospect record." : "Create a new client record."}
+      />
       {defaultKind !== "prospect" && (
         <div className="mx-8 mt-4 rounded-xl border border-brand-navy/[0.08] bg-brand-cream/40 px-4 py-3 text-sm text-muted-foreground">
           Prefer the client complete it themselves?{" "}
