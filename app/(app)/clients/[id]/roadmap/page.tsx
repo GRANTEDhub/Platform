@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { GrantReport } from "@/components/report/grant-report";
 import { ClientActivity, type ClientActivityItem } from "@/components/report/client-activity";
 import { HubShell } from "@/components/layout/hub-background";
-import { toReportItems, type ReportCardRow } from "@/lib/report/shape";
+import { toReportItems, staffBucket, type ReportCardRow, type StaffBucket } from "@/lib/report/shape";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import type { Client, PursuitPath } from "@/types/database";
 
@@ -47,11 +47,11 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
       "id, grant_id, fit_score, proposed_role, decision, factor_scores, sme_released_at, grants(title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate, focus_areas)",
     )
     .eq("client_id", params.id)
-    .neq("card_type", "prospect")
-    .neq("decision", "passed");
+    .neq("card_type", "prospect");
   // Managed client (single AM gate) and lead/prospect (no portal): staff's whole
-  // queue is every non-passed card. Standard client: unchanged -- the client's Grant
-  // Alerts gate (0057), promoted-only.
+  // queue. Standard client: unchanged -- the client's Grant Alerts gate (0057),
+  // promoted-only. Passed cards are now kept (they populate the "Rejected" bucket);
+  // the default "Admin" view filters them out client-side.
   query = managed || isLead ? query : query.not("interested_at", "is", null);
   const { data } = await query;
 
@@ -89,17 +89,19 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
       };
     });
 
-  const awaitingCount = items.filter((i) => !i.smeReleased).length;
+  // Lifecycle-bucket counts drive both the header and the chip badges. Managed
+  // clients and leads have the AM release gate; standard clients don't.
+  const gate = managed || isLead;
+  const counts: Record<StaffBucket, number> = { admin: 0, client: 0, pursued: 0, rejected: 0 };
+  for (const i of items) counts[staffBucket(i, gate)]++;
   const subtitle = isLead
     ? items.length === 0
       ? "No grants yet — generate this prospect's grant report from their dashboard."
-      : `${items.length} matched ${items.length === 1 ? "grant" : "grants"} · review each and send a one-pager`
+      : `${counts.admin} awaiting your review · send each a one-pager`
     : managed
       ? items.length === 0
         ? "Nothing in your queue right now."
-        : awaitingCount === 0
-          ? `${items.length} ${items.length === 1 ? "grant" : "grants"} released to the client — showing read-only`
-          : `${awaitingCount} awaiting your release · ${items.length - awaitingCount} already released to the client`
+        : `${counts.admin} awaiting your release · ${counts.client} with the client`
       : items.length === 0
         ? "No matched opportunities yet — they appear here as the engine surfaces them."
         : `${items.length} matched ${items.length === 1 ? "opportunity" : "opportunities"} · Ranked by fit · The client sees this exact view`;
@@ -127,6 +129,7 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
         }
         subtitle={subtitle}
         basePath={`/clients/${client.id}/roadmap`}
+        hasReleaseGate={gate}
       />
     </HubShell>
   );
