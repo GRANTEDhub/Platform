@@ -42,11 +42,7 @@ function grantOf(g: CardRow["grants"]) {
 }
 
 export default async function ClientDashboardPage({ params }: { params: { id: string } }) {
-  // Contractors see the client dashboard (grant work), but NOT Edit profile, which
-  // holds engagement/billing/contract/repository -- so the Edit link is admin-only
-  // and the Edit page itself stays requireAdmin as the hard backstop.
-  const profile = await requireUser();
-  const isAdmin = profile.role === "admin";
+  await requireUser();
   const supabase = createClient();
 
   const { data: client } = await supabase.from("clients").select("*").eq("id", params.id).single<Client>();
@@ -170,7 +166,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         actionItems={actionItems}
         activity={counts}
         bookingUrl={process.env.NEXT_PUBLIC_BOOKING_URL ?? null}
-        editHref={isAdmin ? `/clients/${client.id}/edit` : undefined}
+        editHref={`/clients/${client.id}/edit`}
         refresh={
           <GenerateReportButton
             clientId={client.id}
