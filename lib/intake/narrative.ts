@@ -17,11 +17,23 @@ export type NarrativeProgram = {
   status: "existing" | "prospective";
 };
 
+// A named partner + what the relationship actually provides -- the same shape the
+// concept proposal uses for its consortium table, so a captured partner is reusable
+// there instead of being re-typed out of a free-text blob.
+export type NarrativePartner = {
+  name: string;
+  role: string; // what the partnership entails / what they bring
+};
+
 export type NarrativeIntake = {
   funding_need: string;
   priority_areas: string[];
   mission: string;
   programs: NarrativeProgram[];
+  // Structured partners (current). `partnerships` is the LEGACY free-text field,
+  // still written on save (a formatted rendering of `partners`) so every existing
+  // reader -- the profile refiner, older rows -- keeps working unchanged.
+  partners: NarrativePartner[];
   partnerships: string;
   additional_info: string;
 };
@@ -31,6 +43,7 @@ export const EMPTY_NARRATIVE: NarrativeIntake = {
   priority_areas: [],
   mission: "",
   programs: [],
+  partners: [],
   partnerships: "",
   additional_info: "",
 };
@@ -79,26 +92,82 @@ export function parseNarrative(input: unknown): NarrativeIntake {
         .filter((p) => p.name || p.description || p.serves)
     : [];
 
+  const partnerships = cap(obj.partnerships, 2000);
+  let partners: NarrativePartner[] = Array.isArray(obj.partners)
+    ? obj.partners
+        .slice(0, 20) // bound the public endpoint
+        .map((p) => {
+          const r = (p ?? {}) as Record<string, unknown>;
+          return { name: cap(r.name, 200), role: cap(r.role, 1000) };
+        })
+        .filter((p) => p.name || p.role)
+    : [];
+  // Self-healing migration: a row saved BEFORE structured partners carries only the
+  // free-text `partnerships`. Surface it as one partner entry (details filled, name
+  // blank) so the text is never lost and can be split by hand on the next edit.
+  if (partners.length === 0 && partnerships) {
+    partners = [{ name: "", role: partnerships }];
+  }
+
   return {
     funding_need: cap(obj.funding_need, 2000),
     priority_areas,
     mission: cap(obj.mission, 2000),
     programs,
-    partnerships: cap(obj.partnerships, 2000),
+    partners,
+    partnerships,
     additional_info: cap(obj.additional_info, 2000),
   };
+}
+
+// Render structured partners into the legacy free-text shape, so `partnerships`
+// stays populated for every existing reader (profile refiner, prompts, old rows).
+export function formatPartnersAsText(partners: NarrativePartner[]): string {
+  return partners
+    .map((p) => {
+      const name = p.name.trim();
+      const role = p.role.trim();
+      if (!name && !role) return "";
+      if (!name) return role;
+      return role ? `${name} — ${role}` : name;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+// Render the partners list for the refiner's strategicDump. Reads the raw stored
+// value defensively so it is safe over any row (legacy string OR structured array).
+export function formatPartnersForDump(partners: unknown, legacy: unknown): string | null {
+  if (Array.isArray(partners) && partners.length) {
+    const lines = partners
+      .map((p) => {
+        const r = (p ?? {}) as Record<string, unknown>;
+        const name = typeof r.name === "string" ? r.name.trim() : "";
+        const role = typeof r.role === "string" ? r.role.trim() : "";
+        if (!name && !role) return null;
+        return `  - ${name || "(unnamed partner)"}${role ? ` -- ${role}` : ""}`;
+      })
+      .filter(Boolean);
+    if (lines.length) return lines.join("\n");
+  }
+  return typeof legacy === "string" && legacy.trim() ? legacy.trim() : null;
 }
 
 // The subset of keys written into clients.intake_data. Flat + stable so the
 // refiner reads them directly and an admin edit MERGES them without clobbering
 // non-narrative keys (phone, org_type_code, referral_source, submitted_at).
 export function narrativeToIntakeData(n: NarrativeIntake): Record<string, unknown> {
+  // partnerships is written as a rendering of the structured partners (falling back
+  // to whatever free text was already there), so both keys stay in sync and no
+  // existing reader of `partnerships` breaks.
+  const partnersText = formatPartnersAsText(n.partners);
   return {
     funding_need: n.funding_need || null,
     priority_areas: n.priority_areas,
     mission: n.mission || null,
     programs: n.programs,
-    partnerships: n.partnerships || null,
+    partners: n.partners,
+    partnerships: partnersText || n.partnerships || null,
     additional_info: n.additional_info || null,
   };
 }

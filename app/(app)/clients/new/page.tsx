@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 import { PageHeader } from "@/components/layout/page-header";
+import { FormExitGuard } from "@/components/clients/form-exit-guard";
 import { ClientForm } from "../client-form";
 import { createClientAction } from "../actions";
 
@@ -24,6 +25,12 @@ export default async function NewClientPage({
 
   return (
     <div>
+      <div className="px-8 pt-6">
+        <FormExitGuard
+          backHref={defaultKind === "prospect" ? "/intel" : "/clients"}
+          backLabel={defaultKind === "prospect" ? "Prospecting" : "Clients"}
+        />
+      </div>
       <PageHeader
         title={defaultKind === "prospect" ? "Add prospect" : "Add client"}
         description={defaultKind === "prospect" ? "Create a new prospect record." : "Create a new client record."}

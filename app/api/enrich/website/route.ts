@@ -42,8 +42,57 @@ const EXTRACT_TOOL = {
       ein: { type: "string", description: "9-digit IRS EIN if the site states one, else \"\"." },
       mission: { type: "string", description: "2-3 sentences: what the org does and who it serves." },
       funding_need: { type: "string", description: "1-2 sentences: what they might seek grant funding for." },
+      programs: {
+        type: "array",
+        description: "Programs/services the site describes. [] if the site does not describe any.",
+        items: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            description: { type: "string", description: "One sentence on what the program does." },
+            serves: { type: "string", description: "Who it serves, if stated, else \"\"." },
+            status: {
+              type: "string",
+              enum: ["existing", "prospective"],
+              description: "\"existing\" if it is running now; \"prospective\" only if the site describes it as planned/upcoming.",
+            },
+          },
+          required: ["name", "description", "serves", "status"],
+        },
+      },
+      partners: {
+        type: "array",
+        description: "Named partner organizations the site credits. [] if none are named.",
+        items: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Partner organization's name." },
+            role: { type: "string", description: "What the partnership provides, if stated, else \"\"." },
+          },
+          required: ["name", "role"],
+        },
+      },
+      service_area: {
+        type: "array",
+        description:
+          "Counties/regions/cities the org states it SERVES (e.g. \"serving Pulaski and Faulkner counties\"). Bare names, no the word County. [] if not stated.",
+        items: { type: "string" },
+      },
     },
-    required: ["name", "org_type", "address", "city", "county", "state", "zip", "mission", "funding_need"],
+    required: [
+      "name",
+      "org_type",
+      "address",
+      "city",
+      "county",
+      "state",
+      "zip",
+      "mission",
+      "funding_need",
+      "programs",
+      "partners",
+      "service_area",
+    ],
   },
 };
 
@@ -56,6 +105,9 @@ RULES:
 - org_type: pick from the allowed list only when the text clearly supports it, else "".
 - mission: 2-3 sentences on what the organization does and who it serves.
 - funding_need: 1-2 sentences on the kinds of projects/programs they might seek grant funding for, inferred conservatively from what they do. No dollar figures, no deadlines, no programs the text does not support.
+- programs: only programs the site actually describes, named as the site names them. Mark "prospective" ONLY when the site says it is planned/upcoming; otherwise "existing". Do not invent a program from a mission statement.
+- partners: only organizations the site NAMES as partners/collaborators/funders-in-partnership. Do not list an org merely mentioned in passing. "" for role when the relationship is unstated.
+- service_area: only places the org states it SERVES. Do not infer from where it is located.
 
 Return everything through the submit_org_profile tool.`;
 
@@ -138,7 +190,7 @@ export async function POST(req: NextRequest) {
     const client = getAnthropicClient();
     const msg = await client.messages.create({
       model: CHEAP_MODEL,
-      max_tokens: 1500,
+      max_tokens: 3000, // headroom for the programs + partners lists
       temperature: 0,
       system: EXTRACT_PROMPT,
       tools: [EXTRACT_TOOL],
@@ -174,6 +226,35 @@ export async function POST(req: NextRequest) {
       })(),
       mission: s("mission", 2000),
       funding_need: s("funding_need", 2000),
+      // Structured lists, defensively normalized: a malformed entry is dropped
+      // rather than trusted, and each list is bounded.
+      programs: (Array.isArray(out.programs) ? out.programs : [])
+        .slice(0, 20)
+        .map((p) => {
+          const r = (p ?? {}) as Record<string, unknown>;
+          const str = (k: string, max: number) =>
+            typeof r[k] === "string" ? (r[k] as string).trim().slice(0, max) : "";
+          return {
+            name: str("name", 200),
+            description: str("description", 1000),
+            serves: str("serves", 300),
+            status: r.status === "prospective" ? ("prospective" as const) : ("existing" as const),
+          };
+        })
+        .filter((p) => p.name || p.description),
+      partners: (Array.isArray(out.partners) ? out.partners : [])
+        .slice(0, 20)
+        .map((p) => {
+          const r = (p ?? {}) as Record<string, unknown>;
+          const str = (k: string, max: number) =>
+            typeof r[k] === "string" ? (r[k] as string).trim().slice(0, max) : "";
+          return { name: str("name", 200), role: str("role", 1000) };
+        })
+        .filter((p) => p.name),
+      service_area: (Array.isArray(out.service_area) ? out.service_area : [])
+        .filter((v): v is string => typeof v === "string" && v.trim() !== "")
+        .map((v) => v.trim().replace(/\s+County$/i, "").slice(0, 120))
+        .slice(0, 30),
     };
     // A total miss (no identity AND no narrative) is reported as a failure so the UI
     // can tell the admin to fill it in by hand instead of silently opening blank.

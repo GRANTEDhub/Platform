@@ -1,7 +1,6 @@
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { PageHeader } from "@/components/layout/page-header";
+import { FormExitGuard } from "@/components/clients/form-exit-guard";
 import { createClientAction } from "@/app/(app)/clients/actions";
 import { ClientForm } from "@/app/(app)/clients/client-form";
 
@@ -19,13 +18,9 @@ export default async function AddProspectPage() {
 
   return (
     <div className="p-6">
-      <Link
-        href="/intel"
-        className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-brand-navy"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Prospecting
-      </Link>
+      {/* Back + unsaved-changes guard (replaces the plain Link so a half-filled
+          profile isn't lost by navigating away). */}
+      <FormExitGuard backHref="/intel" backLabel="Prospecting" />
       <div className="mt-4">
         <PageHeader
           title="Add prospect"

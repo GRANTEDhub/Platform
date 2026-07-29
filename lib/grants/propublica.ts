@@ -83,6 +83,69 @@ export async function fetchNonprofitFinancials(einRaw: string): Promise<Nonprofi
   }
 }
 
+// ── EIN resolution by name ────────────────────────────────────────────────────
+// The 990 pull is keyed on an EIN, but a nonprofit's own website almost never
+// prints one -- so without this the budget chain dead-ends and "annual budget"
+// stays blank forever. This resolves an EIN from the org NAME (+ state) via the
+// ProPublica search endpoint.
+//
+// CONSERVATIVE BY DESIGN: it returns a match only when exactly one candidate
+// normalizes to the same name (and, when a state is known, sits in that state).
+// A fuzzy or ambiguous result returns null rather than guessing -- attaching the
+// wrong EIN would publish another organization's finances onto this client, which
+// is far worse than a blank field.
+
+function normalizeOrgName(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[.,'"()]/g, "")
+    .replace(/\b(inc|incorporated|llc|corp|corporation|co|the|a|of)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export type EinMatch = { ein: string; matchedName: string; state: string | null };
+
+export async function resolveEinByName(
+  orgName: string,
+  state?: string | null,
+): Promise<EinMatch | null> {
+  const q = (orgName ?? "").trim();
+  if (q.length < 4) return null; // too short to disambiguate
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const params = new URLSearchParams({ q });
+    if (state && state.trim()) params.set("state[id]", state.trim().toUpperCase());
+    const res = await fetch(`${PP_BASE}/search.json?${params.toString()}`, {
+      signal: controller.signal,
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { organizations?: Record<string, unknown>[] };
+    const orgs = Array.isArray(data.organizations) ? data.organizations : [];
+    const target = normalizeOrgName(q);
+    const exact = orgs.filter((o) => normalizeOrgName(String(o.name ?? "")) === target);
+    // Exactly one normalized-name match, or nothing. Two same-named orgs (a state
+    // chapter and a national, say) are ambiguous -> refuse.
+    if (exact.length !== 1) return null;
+    const o = exact[0];
+    const ein = normalizeEin(String(o.ein ?? ""));
+    if (!ein) return null;
+    return {
+      ein,
+      matchedName: String(o.name ?? "").trim(),
+      state: typeof o.state === "string" ? o.state : null,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 const usd = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 
 // One-line rendering for the profile's auto-pulled block and the form citation.

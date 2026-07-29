@@ -16,7 +16,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAnthropicClient, MODEL } from "@/lib/anthropic";
 import { formatStoredUSASpending } from "@/lib/grants/usaspending";
 import { formatStoredNonprofitFinance } from "@/lib/grants/propublica";
-import { formatProgramsForDump } from "@/lib/intake/narrative";
+import { formatProgramsForDump, formatPartnersForDump } from "@/lib/intake/narrative";
 import { buildCommunityContext } from "@/lib/geo/census";
 import type { Client, ClientProfile } from "@/types/database";
 
@@ -83,7 +83,8 @@ export function buildClientProfileInput(client: Client): ClientProfileInput {
     ["Programs", formatProgramsForDump(intake.programs)],
     ["What they're looking for", str(intake.funding_need)],
     ["Priority areas", list(intake.priority_areas) ?? list(client.primary_funding_needs)],
-    ["Partnerships", str(intake.partnerships)],
+    // Structured partners when present; falls back to the legacy free-text field.
+    ["Partnerships", formatPartnersForDump(intake.partners, intake.partnerships)],
     ["Additional context (client's words)", str(intake.additional_info)],
     ["Internal notes", str(client.notes)],
   ]
