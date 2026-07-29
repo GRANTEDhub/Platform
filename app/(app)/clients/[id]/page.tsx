@@ -161,6 +161,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         subLine={subLine}
         isStaff
         roadmapHref={base}
+        intellEngineHref={`/clients/${client.id}/intellengine`}
         stats={stats}
         actionItems={actionItems}
         activity={counts}
