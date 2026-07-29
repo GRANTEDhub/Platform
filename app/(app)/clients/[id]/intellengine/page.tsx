@@ -73,8 +73,14 @@ export default async function StaffIntellEngineHub({ params }: { params: { id: s
       const g = grantOf(c.grants);
       return { cardId: c.id, title: g?.title || "Untitled opportunity", funder: g?.funder ?? null };
     });
-  const routedCount = cards.filter((c) => c.pursuit_path === "intellengine").length;
-  const orbitCount = candidates.length + routedCount;
+  // Badge total: every non-passed matched grant with a live IntellEngine status --
+  // undecided-or-being-drafted (pursuit_path null) OR already routed. Counting the
+  // null bucket directly (rather than candidates + drafts) both credits an
+  // in-progress staff draft (draft-only mode never sets pursuit_path) and avoids
+  // double-counting a routed card that also has a draft.
+  const orbitCount = cards.filter(
+    (c) => c.decision !== "passed" && (c.pursuit_path === null || c.pursuit_path === "intellengine"),
+  ).length;
 
   return (
     <HubShell variant="texture">

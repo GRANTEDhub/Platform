@@ -52,6 +52,15 @@ export async function POST(req: NextRequest, { params }: { params: { cardId: str
   const ctx = await loadAlertContext(params.cardId);
   if (!ctx) return NextResponse.json({ error: "Card or grant not found" }, { status: 404 });
 
+  // BizDev boundary: COLD outreach to a prospect/lead (prospectSend/leadSend run
+  // service-role with no other role gate, and prospectSend also converts the org)
+  // stays ADMIN-only. Warm client alerts + account-managed releases (clientSend) are
+  // open to any staff -- that's the AM's job, and a standard-client approval is still
+  // backstopped by the guard_card_approval trigger.
+  if ((ctx.card.card_type === "prospect" || ctx.isLead) && profile?.role !== "admin") {
+    return NextResponse.json({ error: "Prospect/lead outreach is admin-only" }, { status: 403 });
+  }
+
   // Guard 1 -- a sent card stays sent. If this card already has a delivered
   // alert, refuse BEFORE (re)generating a draft or emailing, so the
   // Regenerate->Send path can't cold-email a client/prospect a second time.

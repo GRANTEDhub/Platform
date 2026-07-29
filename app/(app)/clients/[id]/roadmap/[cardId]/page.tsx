@@ -36,6 +36,7 @@ type DetailRow = ReportDetailCard & {
 // their own copy of this page, once staff releases it.
 export default async function ClientRoadmapDetail({ params }: { params: { id: string; cardId: string } }) {
   const profile = await requireUser();
+  const isAdmin = profile.role === "admin";
   const supabase = createClient();
 
   const { data } = await supabase
@@ -75,7 +76,9 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   // the paid concept). Shown to ALL staff (admin + contractor) -- concepts are core
   // AM work; the contractor IS the AM. Rendered on this staff surface, never on a
   // client's own copy.
-  const showConcept = !!client?.account_managed || isLead;
+  // Managed-client concept: any staff (the AM). Prospect/lead concept is BizDev
+  // prep, which stays admin-only alongside the cold-outreach controls.
+  const showConcept = !!client?.account_managed || (isLead && isAdmin);
   const conceptProposal = showConcept ? await getConceptProposal(params.cardId) : null;
 
   return (
@@ -96,10 +99,10 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
               released={!!card.sme_released_at}
               backHref={`/clients/${params.id}/roadmap`}
             />
-          ) : isLead ? (
+          ) : isLead && isAdmin ? (
             // Two actions, side by side: send the one-pager, or (internal) generate a
-            // concept proposal. The concept button generates in one click; the result
-            // renders in the panel below. It is never emailed to the prospect.
+            // concept proposal. Admin-only: this is prospect/lead BizDev outreach,
+            // which stays admin-only even though warm client work is open to the AM.
             <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <AlertSend
                 cardId={params.cardId}

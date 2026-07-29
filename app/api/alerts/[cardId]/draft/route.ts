@@ -23,6 +23,11 @@ async function adminCtx(cardId: string) {
   if (!profile) return { error: NextResponse.json({ error: "Staff only" }, { status: 403 }) };
   const ctx = await loadAlertContext(cardId);
   if (!ctx) return { error: NextResponse.json({ error: "Card or grant not found" }, { status: 404 }) };
+  // BizDev boundary: a COLD prospect/lead draft is admin-only (matches the send
+  // route). Warm client drafts are open to any staff (the AM).
+  if ((ctx.card.card_type === "prospect" || ctx.isLead) && profile.role !== "admin") {
+    return { error: NextResponse.json({ error: "Prospect/lead outreach is admin-only" }, { status: 403 }) };
+  }
   return { user, ctx };
 }
 
