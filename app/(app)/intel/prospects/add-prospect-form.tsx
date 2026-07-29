@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ORG_TYPES } from "@/lib/clients/org-types";
+import { WebsiteDraftButton } from "@/components/intake/website-draft-button";
 import { narrativeFromClient } from "@/lib/intake/narrative";
 import type { Client } from "@/types/database";
 
@@ -30,6 +31,8 @@ export function AddProspectForm({
   submitLabel?: string;
 }) {
   const [orgType, setOrgType] = useState(client?.org_type ?? "");
+  // Controlled so the "Draft from website" button sees the live URL.
+  const [website, setWebsite] = useState(client?.website ?? "");
   // Prefill "what they do" from the stored narrative mission (edit); empty on add.
   const [narrative, setNarrative] = useState(
     client ? narrativeFromClient(client).mission ?? "" : "",
@@ -65,7 +68,15 @@ export function AddProspectForm({
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-1.5">
           <label htmlFor="website" className={labelCls}>Website</label>
-          <input id="website" name="website" type="url" defaultValue={client?.website ?? ""} className={inputCls} placeholder="https://…" />
+          <input
+            id="website"
+            name="website"
+            type="url"
+            value={website}
+            onChange={(e) => setWebsite(e.target.value)}
+            className={inputCls}
+            placeholder="https://…"
+          />
         </div>
         <div className="space-y-1.5">
           <label htmlFor="org_type" className={labelCls}>Org type</label>
@@ -101,6 +112,10 @@ export function AddProspectForm({
         <label htmlFor="prospect_narrative" className={labelCls}>
           What they do / what they&apos;re looking to fund
         </label>
+        <WebsiteDraftButton
+          url={website}
+          onDraft={(d) => setNarrative([d.mission, d.funding_need].filter(Boolean).join("\n\n"))}
+        />
         <textarea
           id="prospect_narrative"
           value={narrative}

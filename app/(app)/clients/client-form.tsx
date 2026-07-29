@@ -84,6 +84,8 @@ export function ClientForm({
   // it appears only for the org types with a plausible research-applicant case.
   const [orgType, setOrgType] = useState(client?.org_type ?? "");
   const showResearchOptIn = orgType === "small_business" || orgType === "higher_education";
+  // Controlled so the narrative's "Draft from website" button sees the live URL.
+  const [website, setWebsite] = useState(client?.website ?? "");
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -169,6 +171,17 @@ export function ClientForm({
               ))}
             </select>
           </div>
+          <div className="space-y-2">
+            <Label htmlFor="website">Website</Label>
+            <Input
+              id="website"
+              name="website"
+              type="url"
+              value={website}
+              onChange={(e) => setWebsite(e.target.value)}
+              placeholder="https://…"
+            />
+          </div>
         </div>
 
         {/* Research-grants opt-in -- shown ONLY for small_business / higher_education,
@@ -235,7 +248,10 @@ export function ClientForm({
           Feeds the client profile (enrichment). Mission, programs + who they serve, priority
           areas, partnerships. Not used for seat/eligibility scoring.
         </p>
-        <NarrativeFields defaultValue={client ? narrativeFromClient(client) : undefined} />
+        <NarrativeFields
+          defaultValue={client ? narrativeFromClient(client) : undefined}
+          websiteForDraft={website}
+        />
       </section>
 
       {/* 4. Notes -- always shown (general CRM). */}
