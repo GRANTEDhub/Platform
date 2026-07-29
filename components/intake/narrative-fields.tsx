@@ -22,14 +22,22 @@ export function NarrativeFields({
   defaultValue,
   fundingNeedRequired,
   websiteForDraft,
+  variant = "full",
 }: {
   defaultValue?: NarrativeIntake;
   fundingNeedRequired?: boolean;
   // When provided (admin client form), shows a "Draft from website" button that
   // fills mission + funding_need from the org's site. Absent on the public intake.
   websiteForDraft?: string;
+  // "light" (prospect intake) shows only the matching-relevant core — intent
+  // ("what are you looking for"), identity (mission), and priority areas. "full"
+  // (clients + public intake) adds programs, partnerships, and "anything else".
+  // The hidden intake_narrative JSON still carries the whole shape either way, so
+  // an omitted section is preserved (empty), never dropped.
+  variant?: "full" | "light";
 }) {
   const [n, setN] = useState<NarrativeIntake>(defaultValue ?? EMPTY_NARRATIVE);
+  const full = variant !== "light";
 
   const set = <K extends keyof NarrativeIntake>(k: K, v: NarrativeIntake[K]) =>
     setN((prev) => ({ ...prev, [k]: v }));
@@ -91,6 +99,7 @@ export function NarrativeFields({
         />
       </Field>
 
+      {full && (
       <div>
         <Label>Programs</Label>
         <p className="mt-1 text-xs text-neutral-500">
@@ -140,6 +149,7 @@ export function NarrativeFields({
           </Button>
         </div>
       </div>
+      )}
 
       <div>
         <Label>Priority funding areas</Label>
@@ -157,26 +167,30 @@ export function NarrativeFields({
         </div>
       </div>
 
-      <Field label="Partnerships">
-        <textarea
-          className={AREA}
-          rows={3}
-          maxLength={2000}
-          value={n.partnerships}
-          onChange={(e) => set("partnerships", e.target.value)}
-          placeholder="Key partners and the nature of each relationship."
-        />
-      </Field>
+      {full && (
+        <>
+          <Field label="Partnerships">
+            <textarea
+              className={AREA}
+              rows={3}
+              maxLength={2000}
+              value={n.partnerships}
+              onChange={(e) => set("partnerships", e.target.value)}
+              placeholder="Key partners and the nature of each relationship."
+            />
+          </Field>
 
-      <Field label="Anything else we should know?">
-        <textarea
-          className={AREA}
-          rows={3}
-          maxLength={2000}
-          value={n.additional_info}
-          onChange={(e) => set("additional_info", e.target.value)}
-        />
-      </Field>
+          <Field label="Anything else we should know?">
+            <textarea
+              className={AREA}
+              rows={3}
+              maxLength={2000}
+              value={n.additional_info}
+              onChange={(e) => set("additional_info", e.target.value)}
+            />
+          </Field>
+        </>
+      )}
     </div>
   );
 }

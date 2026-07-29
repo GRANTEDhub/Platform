@@ -4,16 +4,14 @@ import { useState } from "react";
 import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ChipInput } from "@/components/ui/chip-input";
-import { MatchingConfig } from "./matching-config";
 import { NarrativeFields } from "@/components/intake/narrative-fields";
 import { narrativeFromClient } from "@/lib/intake/narrative";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import { ORG_TYPES } from "@/lib/clients/org-types";
 import type { Client } from "@/types/database";
 
-// Client-only statuses. Prospect/lead state is driven by the kind toggle (a
-// prospect is written status='lead' + pipeline_stage='discovery_pending' server-
-// side), so it is not an option here.
+// Client-only statuses. Prospect/lead state is written server-side
+// (status='lead' + pipeline_stage='discovery_pending'), never chosen here.
 const CLIENT_STATUSES = ["active", "paused", "closed"];
 
 function Field({
@@ -44,11 +42,18 @@ function Field({
 }
 
 /**
- * Shared create/edit form for a client OR a prospect. The `kind` radio is the
- * first field and drives conditional UI (engagement section shows for clients
- * only); the server action (actions.ts) is authoritative for the prospect-safe
- * write (status='lead', pipeline_stage='discovery_pending', engagement_tier=null).
- * The page wires `action` to createClientAction / updateClientAction.
+ * The single create/edit form for a client OR a prospect. There is no record-type
+ * toggle: `kind` comes from the entry point (defaultKind on create) or is derived
+ * from the row on edit (an un-converted lead is a prospect). Both kinds share the
+ * same opening — website, org, contact, location, narrative — and the client-only
+ * sections (engagement, grant-matching profile, matcher note) render only for a
+ * client. The server action (actions.ts) stays authoritative for the prospect-safe
+ * write (status='lead', pipeline_stage='discovery_pending', account_managed=false).
+ *
+ * Fields dropped from the UI in the redesign (next step, internal notes, project
+ * stage, hard constraints, advisory constraints) are carried as hidden passthroughs
+ * so the decluttered form never NULLs a stored value on save — parse() writes every
+ * column it reads, so an absent field would otherwise wipe it (incl. matcher gates).
  */
 export function ClientForm({
   client,
@@ -57,31 +62,22 @@ export function ClientForm({
   defaultKind,
 }: {
   client?: Client;
-  // Mirrors actions.ts ClientActionResult: an expected validation failure resolves
-  // to { error } (rendered inline below); success redirects, so it never resolves
-  // to a value. Awaiting the action here -- rather than passing it straight to
-  // <form action> -- is what lets a duplicate-name error surface on the form
-  // instead of as a 500 page.
   action: (formData: FormData) => Promise<{ error: string } | undefined>;
   submitLabel: string;
-  // Preselect the record type on CREATE (e.g. the "Add prospect" entry from the
-  // Prospecting landing passes "prospect"). Still user-changeable; ignored on EDIT.
+  // The record type for a NEW record, set by the entry point (/clients/new →
+  // "client", /intel/prospects/new → "prospect"). Ignored on edit (derived below).
   defaultKind?: "client" | "prospect";
 }) {
-  // Record type gates the whole form on CREATE (Option A): a NEW record starts with
-  // NO kind selected (null) unless a defaultKind is passed, so the user must choose
-  // client or prospect before the rest of the form appears -- no silent 'client'
-  // default to overlook. On EDIT the type is known, so derive it from the stored row
-  // (an un-converted lead is a prospect; otherwise a client) and show it immediately.
-  const initialKind: "client" | "prospect" | null = !client
-    ? defaultKind ?? null
+  // No toggle: kind is fixed for the life of the form. New → defaultKind (default
+  // "client"); edit → derived from the stored row.
+  const kind: "client" | "prospect" = !client
+    ? defaultKind ?? "client"
     : isUnconvertedLead(client.pipeline_stage)
       ? "prospect"
       : "client";
-  const [kind, setKind] = useState<"client" | "prospect" | null>(initialKind);
   const isClient = kind === "client";
-  // Org type is controlled so the research-grants opt-in can show/hide reactively --
-  // it appears only for the org types with a plausible research-applicant case.
+
+  // Org type is controlled so the research-grants opt-in can show/hide reactively.
   const [orgType, setOrgType] = useState(client?.org_type ?? "");
   const showResearchOptIn = orgType === "small_business" || orgType === "higher_education";
   // Controlled so the narrative's "Draft from website" button sees the live URL.
@@ -90,68 +86,51 @@ export function ClientForm({
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(formData: FormData) {
-    // Guard the double-submit: one intent must never fire two POSTs. Without this,
-    // a successful create (which redirects) gave no pending feedback, so the user
-    // thought it failed and resubmitted -- the second POST then collided with the
-    // row the first one created, surfacing as a phantom duplicate-name error. The
-    // disabled button covers the hydrated case; this early return guards re-entry.
     if (submitting) return;
     setSubmitting(true);
     setFormError(null);
     const result = await action(formData);
-    // A successful create redirects to the new record's dashboard and unmounts this
-    // form, so we reach here ONLY on an expected validation failure: show it and
-    // RE-ENABLE so the user can correct and retry. On success the button stays
-    // disabled through the navigation -- no window for a phantom second submit, and
-    // the typed input is preserved on error.
+    // A successful create/update redirects and unmounts this form, so we reach here
+    // only on an expected validation failure: show it and re-enable to retry.
     if (result?.error) {
       setFormError(result.error);
       setSubmitting(false);
     }
   }
 
+  const kindLabel = isClient ? "client" : "prospect";
+
   return (
     <form action={handleSubmit} className="max-w-3xl space-y-8">
-      {/* 1. Kind -- required, first, drives the conditional UI below. */}
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          Record type
-        </h2>
-        <div className="flex gap-6">
-          {(["client", "prospect"] as const).map((k) => (
-            <label key={k} className="flex items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name="kind"
-                value={k}
-                checked={kind === k}
-                onChange={() => setKind(k)}
-                required
-              />
-              {k === "client" ? "Client" : "Prospect"}
-            </label>
-          ))}
-        </div>
+      {/* Record type is fixed by the entry point (no toggle) and written server-side. */}
+      <input type="hidden" name="kind" value={kind} />
+
+      <p className="text-sm text-muted-foreground">
+        {client ? `Editing ${kindLabel}` : `New ${kindLabel}`}
+        {!isClient && " — staff-only, no client login, no daily matching (matched on demand)."}
+      </p>
+
+      {/* 1. Website — the opening. The profile can be drafted from the site via the
+          "Draft from website" button in the narrative section below. */}
+      <section className="space-y-2">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Website</h2>
+        <Input
+          id="website"
+          name="website"
+          type="url"
+          value={website}
+          onChange={(e) => setWebsite(e.target.value)}
+          placeholder="https://…"
+        />
         <p className="text-xs text-muted-foreground">
-          {kind === null
-            ? "Choose a record type to continue — this can't be skipped."
-            : isClient
-              ? "An active client the matcher scores against live grants."
-              : "An outreach target — never scored by the matcher until converted to a client."}
+          Start here — with a URL, use <span className="font-medium">Draft from website</span> under
+          the narrative to prefill from the site. Everything stays editable.
         </p>
       </section>
 
-      {/* Everything below is GATED on an explicit record-type choice (Option A): it
-          renders only once the user picks client or prospect, so the type can't be
-          skipped. On edit `kind` is pre-set, so the full form shows immediately. */}
-      {kind !== null && (
-        <>
-
-      {/* 2. Organization + contact + location -- always shown (parity with public intake). */}
+      {/* 2. Organization. */}
       <section className="space-y-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          Organization
-        </h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Organization</h2>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Name" name="name" defaultValue={client?.name} />
           <div className="space-y-2">
@@ -171,26 +150,12 @@ export function ClientForm({
               ))}
             </select>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="website">Website</Label>
-            <Input
-              id="website"
-              name="website"
-              type="url"
-              value={website}
-              onChange={(e) => setWebsite(e.target.value)}
-              placeholder="https://…"
-            />
-          </div>
         </div>
 
-        {/* Research-grants opt-in -- shown ONLY for small_business / higher_education,
-            the org types with a plausible research-applicant case. Default OFF: GRANTED
-            excludes research funders (NIH) from matching + the forecast horizon for
-            everyone; checking this overrides that for this client (flows to
-            isResearchExcludedFunder via the horizon call). An unchecked box submits
-            nothing -> parse() reads it as false. */}
-        {showResearchOptIn && (
+        {/* Research-grants opt-in — clients only, and only for the org types with a
+            plausible research-applicant case. Default OFF (GRANTED excludes research
+            funders from matching + the horizon). An unchecked/hidden box → false. */}
+        {isClient && showResearchOptIn && (
           <label className="flex items-start gap-2 rounded-md border border-input bg-muted/30 px-3 py-2.5 text-sm">
             <input
               type="checkbox"
@@ -210,21 +175,21 @@ export function ClientForm({
         )}
       </section>
 
+      {/* 3. Primary contact. */}
       <section className="space-y-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          Primary contact
-        </h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Primary contact</h2>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Name" name="primary_contact_name" defaultValue={client?.primary_contact_name} />
           <Field label="Email" name="primary_contact_email" type="email" defaultValue={client?.primary_contact_email} />
-          <Field label="Phone" name="primary_contact_phone" defaultValue={client?.primary_contact_phone} />
+          {isClient && (
+            <Field label="Phone" name="primary_contact_phone" defaultValue={client?.primary_contact_phone} />
+          )}
         </div>
       </section>
 
+      {/* 4. Location. */}
       <section className="space-y-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          Location
-        </h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Location</h2>
         <Field
           label="Street address"
           name="location_street"
@@ -239,42 +204,21 @@ export function ClientForm({
         </div>
       </section>
 
-      {/* 3. Narrative -- 1:1 with the public intake (shared component). */}
+      {/* 5. Narrative — the matching-relevant signal. Prospects get the light set
+          (intent + mission + priority areas); clients get the full set. */}
       <section className="space-y-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          Narrative
-        </h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Narrative</h2>
         <p className="text-xs text-muted-foreground">
-          Feeds the client profile (enrichment). Mission, programs + who they serve, priority
-          areas, partnerships. Not used for seat/eligibility scoring.
+          Feeds the profile (enrichment) and grounds matching. Not used for seat/eligibility scoring.
         </p>
         <NarrativeFields
           defaultValue={client ? narrativeFromClient(client) : undefined}
           websiteForDraft={website}
+          variant={isClient ? "full" : "light"}
         />
       </section>
 
-      {/* 4. Notes -- always shown (general CRM). */}
-      <section className="space-y-4">
-        <Field label="Next step" name="next_step" defaultValue={client?.next_step} placeholder="What's next for this record?" />
-        <div className="space-y-2">
-          <Label htmlFor="notes">Internal notes</Label>
-          <textarea
-            id="notes"
-            name="notes"
-            defaultValue={client?.notes ?? undefined}
-            rows={4}
-            className="flex w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
-          />
-          <p className="text-xs text-muted-foreground">
-            Not used for seat/eligibility scoring. Shown internally and distilled into the client
-            profile narrative.
-          </p>
-        </div>
-      </section>
-
-      {/* 5. Engagement -- CLIENTS ONLY. Hidden for prospects; the server writes the
-          prospect-safe status/stage/tier regardless of what is (not) submitted here. */}
+      {/* 6. Engagement — CLIENTS ONLY. */}
       {isClient && (
         <section className="space-y-4">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
@@ -303,10 +247,8 @@ export function ClientForm({
             <Field label="Contract start" name="contract_start" type="date" defaultValue={client?.contract_start} />
             <Field label="Contract end" name="contract_end" type="date" defaultValue={client?.contract_end} />
           </div>
-          {/* Account-managed (migration 0059): premium tier gate. When checked, an
-              account manager reviews + releases each match (Grant Alerts, then Grant
-              Report) BEFORE the client ever sees it. Unchecked (default): the client
-              goes straight to their own Grant Alerts/Report, no staff pass. */}
+          {/* Account-managed (migration 0059): premium gate. When checked, an account
+              manager reviews + releases each match before the client sees it. */}
           <label className="flex items-start gap-2 rounded-md border border-input bg-muted/30 px-3 py-2.5 text-sm">
             <input
               type="checkbox"
@@ -326,35 +268,55 @@ export function ClientForm({
         </section>
       )}
 
-      {/* 6. Grant-matching profile -- admin-only, optional. Scoring-relevant raw fields. */}
-      <section className="space-y-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          Grant-matching profile{" "}
-          <span className="font-normal normal-case text-muted-foreground">(optional)</span>
-        </h2>
-        <p className="text-xs text-muted-foreground">
-          Used by the matching engine. Not financial data — visible to contractors.
-        </p>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Match / cost-share capacity" name="match_cost_share_capacity" defaultValue={client?.match_cost_share_capacity} />
-          <Field label="Annual budget" name="annual_budget" defaultValue={client?.annual_budget} />
-          <Field label="Project stage" name="project_stage" defaultValue={client?.project_stage} placeholder="e.g. planning, implementation" />
-          <Field label="RUCC codes" name="rucc_codes" defaultValue={client?.rucc_codes} />
-        </div>
-        <ChipInput
-          name="service_area"
-          label="Service area"
-          defaultValue={client?.service_area ?? undefined}
-          placeholder="Type a county or region, press Enter"
-        />
-      </section>
+      {/* 7. Grant-matching profile — CLIENTS ONLY, optional. Recorded data the matcher
+          reads; project stage dropped from the UI (preserved via passthrough below). */}
+      {isClient && (
+        <section className="space-y-4">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            Grant-matching profile{" "}
+            <span className="font-normal normal-case text-muted-foreground">(optional)</span>
+          </h2>
+          <p className="text-xs text-muted-foreground">Recorded for matching context. Not financial data — visible to contractors.</p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Match / cost-share capacity" name="match_cost_share_capacity" defaultValue={client?.match_cost_share_capacity} />
+            <Field label="Annual budget" name="annual_budget" defaultValue={client?.annual_budget} />
+            <Field label="RUCC codes" name="rucc_codes" defaultValue={client?.rucc_codes} />
+          </div>
+          <ChipInput
+            name="service_area"
+            label="Service area"
+            defaultValue={client?.service_area ?? undefined}
+            placeholder="Type a county or region, press Enter"
+          />
+        </section>
+      )}
 
-      {/* 7. Matching config -- admin-only, optional. */}
-      <MatchingConfig
-        defaultConstraints={client?.hard_constraints ?? []}
-        defaultMatchingRules={client?.matching_rules}
-        defaultKnownConstraints={client?.known_constraints}
-      />
+      {/* 8. Note to the matcher — CLIENTS ONLY. The single retained matcher control
+          (the hard-constraint picker + advisory box are preserved via passthrough). */}
+      {isClient && (
+        <section className="space-y-2">
+          <Label htmlFor="matching_rules">Note to the matcher (optional)</Label>
+          <textarea
+            id="matching_rules"
+            name="matching_rules"
+            defaultValue={client?.matching_rules ?? undefined}
+            rows={4}
+            className="flex w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
+            placeholder={'Authoritative guidance the model applies. e.g. "Only pursue rural health grants." / "Never recommend as prime on research-heavy programs."'}
+          />
+          <p className="text-xs text-muted-foreground">Read by the model as authoritative guidance for this client.</p>
+        </section>
+      )}
+
+      {/* Preserved-but-hidden: dropped from the UI in the redesign but NOT wiped —
+          parse() writes every column it reads, so an absent field would null the
+          stored value (incl. code-enforced matcher gates). Pass the stored value
+          through so a save leaves them untouched. Empty on create (new record). */}
+      <input type="hidden" name="next_step" value={client?.next_step ?? ""} readOnly />
+      <input type="hidden" name="notes" value={client?.notes ?? ""} readOnly />
+      <input type="hidden" name="project_stage" value={client?.project_stage ?? ""} readOnly />
+      <input type="hidden" name="hard_constraints" value={JSON.stringify(client?.hard_constraints ?? [])} readOnly />
+      <input type="hidden" name="known_constraints" value={client?.known_constraints ?? ""} readOnly />
 
       {formError && (
         <div
@@ -370,8 +332,6 @@ export function ClientForm({
           {submitting ? "Saving…" : submitLabel}
         </Button>
       </div>
-        </>
-      )}
     </form>
   );
 }

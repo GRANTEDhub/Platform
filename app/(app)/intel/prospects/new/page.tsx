@@ -3,7 +3,7 @@ import { ArrowLeft } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { PageHeader } from "@/components/layout/page-header";
 import { createClientAction } from "@/app/(app)/clients/actions";
-import { AddProspectForm } from "../add-prospect-form";
+import { ClientForm } from "@/app/(app)/clients/client-form";
 
 // createClientAction runs enrichClient in a background waitUntil (the one-time
 // prospect match is NOT run here -- it happens on demand via Generate report). The
@@ -33,7 +33,7 @@ export default async function AddProspectPage() {
         />
       </div>
       <div className="mt-6">
-        <AddProspectForm action={createClientAction} />
+        <ClientForm action={createClientAction} submitLabel="Add prospect" defaultKind="prospect" />
       </div>
     </div>
   );
