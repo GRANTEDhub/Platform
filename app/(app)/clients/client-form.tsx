@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { ChipInput } from "@/components/ui/chip-input";
 import { NarrativeFields } from "@/components/intake/narrative-fields";
 import { AddressAutocomplete } from "@/components/clients/address-autocomplete";
-import { narrativeFromClient } from "@/lib/intake/narrative";
+import { narrativeFromClient, EMPTY_NARRATIVE } from "@/lib/intake/narrative";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import { ORG_TYPES } from "@/lib/clients/org-types";
 import type { Client } from "@/types/database";
@@ -14,6 +14,25 @@ import type { Client } from "@/types/database";
 // Client-only statuses. Prospect/lead state is written server-side
 // (status='lead' + pipeline_stage='discovery_pending'), never chosen here.
 const CLIENT_STATUSES = ["active", "paused", "closed"];
+
+// What POST /api/enrich/website returns: everything it could extract from the org's
+// site, with "" for anything the page did not support (never guessed). Consumed as
+// the form's default values in the URL-first flow.
+type Crafted = {
+  name: string;
+  org_type: string;
+  address: string;
+  city: string;
+  county: string;
+  state: string;
+  zip: string;
+  primary_contact_name: string;
+  primary_contact_email: string;
+  primary_contact_phone: string;
+  ein: string;
+  mission: string;
+  funding_need: string;
+};
 
 function Field({
   label,
@@ -86,6 +105,61 @@ export function ClientForm({
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // ── URL-first flow (CREATE only) ──────────────────────────────────────────
+  // A new record opens with ONLY the website field: paste a URL, click Craft
+  // profile, and the rest of the form appears already filled in with whatever the
+  // site yielded. "No website" opens the same form blank. On EDIT everything is
+  // revealed immediately (the record already exists, nothing to craft).
+  const [revealed, setRevealed] = useState(!!client);
+  const [crafted, setCrafted] = useState<Crafted | null>(null);
+  const [crafting, setCrafting] = useState(false);
+  const [craftError, setCraftError] = useState<string | null>(null);
+  const [craftNote, setCraftNote] = useState<string | null>(null);
+
+  const validUrl = (() => {
+    try {
+      const u = new URL(website.trim());
+      return u.protocol === "http:" || u.protocol === "https:";
+    } catch {
+      return false;
+    }
+  })();
+
+  async function craftProfile() {
+    setCrafting(true);
+    setCraftError(null);
+    setCraftNote(null);
+    try {
+      const res = await fetch("/api/enrich/website", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: website.trim() }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Couldn't read that site.");
+      const c = d as Crafted;
+      setCrafted(c);
+      if (c.org_type) setOrgType(c.org_type);
+      // Name what the site did NOT yield, so the blanks read as "not found" rather
+      // than "the tool is broken".
+      const missing = [
+        !c.name && "name",
+        !c.address && "address",
+        !c.primary_contact_email && "contact email",
+      ].filter(Boolean) as string[];
+      setCraftNote(
+        missing.length
+          ? `Filled in what the site supported. Not found: ${missing.join(", ")} — add by hand.`
+          : "Filled in from the site. Review everything before saving.",
+      );
+      setRevealed(true);
+    } catch (e) {
+      setCraftError(e instanceof Error ? e.message : "Couldn't read that site.");
+    } finally {
+      setCrafting(false);
+    }
+  }
+
   async function handleSubmit(formData: FormData) {
     if (submitting) return;
     setSubmitting(true);
@@ -111,8 +185,8 @@ export function ClientForm({
         {!isClient && " — staff-only, no client login, no daily matching (matched on demand)."}
       </p>
 
-      {/* 1. Website — the opening. The profile can be drafted from the site via the
-          "Draft from website" button in the narrative section below. */}
+      {/* 1. Website — the opening, and on CREATE the only thing shown until the
+          profile is crafted (or "no website" is chosen). */}
       <section className="space-y-2">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Website</h2>
         <Input
@@ -123,17 +197,69 @@ export function ClientForm({
           onChange={(e) => setWebsite(e.target.value)}
           placeholder="https://…"
         />
-        <p className="text-xs text-muted-foreground">
-          Start here — with a URL, use <span className="font-medium">Draft from website</span> under
-          the narrative to prefill from the site. Everything stays editable.
-        </p>
+        {!revealed ? (
+          <>
+            <p className="text-xs text-muted-foreground">
+              <span className="font-medium">Start here.</span> Paste the organization&apos;s website and
+              craft the profile — the rest of the form opens prefilled with whatever the site supports.
+              Everything stays editable.
+            </p>
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              <Button type="button" disabled={!validUrl || crafting} onClick={craftProfile}>
+                {crafting ? "Reading the site…" : "Craft profile"}
+              </Button>
+              <button
+                type="button"
+                disabled={crafting}
+                onClick={() => {
+                  setCraftError(null);
+                  setCraftNote(null);
+                  setRevealed(true);
+                }}
+                className="text-sm font-medium text-brand-orange hover:underline disabled:opacity-50"
+              >
+                Don&apos;t have a website? Fill it in manually →
+              </button>
+            </div>
+            {crafting && (
+              <p className="text-xs text-muted-foreground">
+                Fetching the site and extracting the profile — usually a few seconds.
+              </p>
+            )}
+            {craftError && (
+              <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                {craftError} You can still{" "}
+                <button type="button" onClick={() => setRevealed(true)} className="font-medium underline">
+                  fill the form in manually
+                </button>
+                .
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            Used for enrichment and to craft the profile. Everything below stays editable.
+          </p>
+        )}
       </section>
+
+      {/* Everything below is GATED on the URL-first step (create): it renders once the
+          profile is crafted or the admin opts to fill it in by hand. On edit it shows
+          immediately. The crafted values are the mount-time defaults, so the fields
+          appear prefilled and fully editable. */}
+      {revealed && (
+        <>
+      {craftNote && (
+        <p className="rounded-md border border-input bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          {craftNote}
+        </p>
+      )}
 
       {/* 2. Organization. */}
       <section className="space-y-4">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Organization</h2>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Name" name="name" defaultValue={client?.name} />
+          <Field label="Name" name="name" defaultValue={client?.name ?? crafted?.name} />
           <div className="space-y-2">
             <Label htmlFor="org_type">Org type</Label>
             <select
@@ -180,10 +306,10 @@ export function ClientForm({
       <section className="space-y-4">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Primary contact</h2>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Name" name="primary_contact_name" defaultValue={client?.primary_contact_name} />
-          <Field label="Email" name="primary_contact_email" type="email" defaultValue={client?.primary_contact_email} />
+          <Field label="Name" name="primary_contact_name" defaultValue={client?.primary_contact_name ?? crafted?.primary_contact_name} />
+          <Field label="Email" name="primary_contact_email" type="email" defaultValue={client?.primary_contact_email ?? crafted?.primary_contact_email} />
           {isClient && (
-            <Field label="Phone" name="primary_contact_phone" defaultValue={client?.primary_contact_phone} />
+            <Field label="Phone" name="primary_contact_phone" defaultValue={client?.primary_contact_phone ?? crafted?.primary_contact_phone} />
           )}
         </div>
       </section>
@@ -194,10 +320,11 @@ export function ClientForm({
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Location</h2>
         <AddressAutocomplete
           defaultStreet={client?.location_street}
-          defaultCity={client?.location_city}
-          defaultCounty={client?.location_county}
-          defaultState={client?.location_state}
-          defaultZip={client?.location_zip}
+          defaultCity={client?.location_city ?? crafted?.city}
+          defaultCounty={client?.location_county ?? crafted?.county}
+          defaultState={client?.location_state ?? crafted?.state}
+          defaultZip={client?.location_zip ?? crafted?.zip}
+          defaultLine={crafted?.address}
         />
       </section>
 
@@ -209,7 +336,13 @@ export function ClientForm({
           Feeds the profile (enrichment) and grounds matching. Not used for seat/eligibility scoring.
         </p>
         <NarrativeFields
-          defaultValue={client ? narrativeFromClient(client) : undefined}
+          defaultValue={
+            client
+              ? narrativeFromClient(client)
+              : crafted
+                ? { ...EMPTY_NARRATIVE, mission: crafted.mission, funding_need: crafted.funding_need }
+                : undefined
+          }
           websiteForDraft={website}
           variant={isClient ? "full" : "light"}
         />
@@ -278,7 +411,7 @@ export function ClientForm({
             <Field label="Match / cost-share capacity" name="match_cost_share_capacity" defaultValue={client?.match_cost_share_capacity} />
             <Field label="Annual budget" name="annual_budget" defaultValue={client?.annual_budget} />
             <Field label="RUCC codes" name="rucc_codes" defaultValue={client?.rucc_codes} placeholder="Blank = auto-fill from county (USDA ERS 2023)" />
-            <Field label="IRS EIN" name="ein" defaultValue={client?.ein} placeholder="e.g. 71-0236875 — pulls annual budget from the IRS 990" />
+            <Field label="IRS EIN" name="ein" defaultValue={client?.ein ?? crafted?.ein} placeholder="e.g. 71-0236875 — pulls annual budget from the IRS 990" />
           </div>
           {/* Sourced budget citation from the org's latest IRS 990 (ProPublica),
               pulled in the background after an EIN is saved. A flag/citation, never a
@@ -343,6 +476,8 @@ export function ClientForm({
           {submitting ? "Saving…" : submitLabel}
         </Button>
       </div>
+        </>
+      )}
     </form>
   );
 }
