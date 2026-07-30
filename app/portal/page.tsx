@@ -74,6 +74,7 @@ export default async function PortalHome() {
     cards: allCards,
     managed,
     nextStep: client?.next_step ?? null,
+    profileConfirmed: !!client?.profile_confirmed_at,
   });
 
   // Upcoming deadlines (real) among live matches -- drives the deadline stat + the
