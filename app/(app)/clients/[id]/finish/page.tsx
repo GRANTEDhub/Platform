@@ -41,6 +41,14 @@ export default async function FinishClientPage({ params }: { params: { id: strin
           clientName={client.name}
           contactEmail={client.primary_contact_email}
           action={action}
+          current={{
+            status: client.status,
+            engagement_tier: client.engagement_tier,
+            retainer_hours: client.retainer_hours,
+            contract_start: client.contract_start,
+            contract_end: client.contract_end,
+            account_managed: !!client.account_managed,
+          }}
         />
 
         <p className="text-xs text-muted-foreground">

@@ -25,16 +25,31 @@ const CLIENT_STATUSES = ["active", "paused", "closed"];
 // than a checkbox buried in the form. These records are usually built for clients who
 // already work with us, and a surprise "welcome, set up your account" email is the
 // kind of mistake you cannot take back. Default off.
+// Fields are PREFILLED from the record, not left blank. This page is reachable by
+// URL, not only from the intake flow -- and completing it writes the engagement
+// columns unconditionally. Blank defaults would therefore let a revisit on an
+// established client silently wipe a real tier, retainer and contract dates. Same
+// class of mistake the edit form's hidden passthroughs exist to prevent: never let a
+// partial form null a stored value.
 export function CompleteProfile({
   clientId,
   clientName,
   contactEmail,
   action,
+  current,
 }: {
   clientId: string;
   clientName: string;
   contactEmail: string | null;
   action: (formData: FormData) => Promise<CompleteProfileState>;
+  current: {
+    status: string | null;
+    engagement_tier: string | null;
+    retainer_hours: number | null;
+    contract_start: string | null;
+    contract_end: string | null;
+    account_managed: boolean;
+  };
 }) {
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
@@ -98,7 +113,9 @@ export function CompleteProfile({
             <select
               id="status"
               name="status"
-              defaultValue="active"
+              defaultValue={
+                current.status && CLIENT_STATUSES.includes(current.status) ? current.status : "active"
+              }
               className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
             >
               {CLIENT_STATUSES.map((s) => (
@@ -110,25 +127,25 @@ export function CompleteProfile({
           </div>
           <div className="space-y-2">
             <Label htmlFor="engagement_tier">Engagement tier</Label>
-            <Input id="engagement_tier" name="engagement_tier" />
+            <Input id="engagement_tier" name="engagement_tier" defaultValue={current.engagement_tier ?? undefined} />
           </div>
         </div>
         <div className="grid gap-4 sm:grid-cols-3">
           <div className="space-y-2">
             <Label htmlFor="retainer_hours">Retainer hours</Label>
-            <Input id="retainer_hours" name="retainer_hours" type="number" />
+            <Input id="retainer_hours" name="retainer_hours" type="number" defaultValue={current.retainer_hours ?? undefined} />
           </div>
           <div className="space-y-2">
             <Label htmlFor="contract_start">Contract start</Label>
-            <Input id="contract_start" name="contract_start" type="date" />
+            <Input id="contract_start" name="contract_start" type="date" defaultValue={current.contract_start ?? undefined} />
           </div>
           <div className="space-y-2">
             <Label htmlFor="contract_end">Contract end</Label>
-            <Input id="contract_end" name="contract_end" type="date" />
+            <Input id="contract_end" name="contract_end" type="date" defaultValue={current.contract_end ?? undefined} />
           </div>
         </div>
         <label className="flex items-start gap-2 rounded-md border border-input bg-muted/30 px-3 py-2.5 text-sm">
-          <input type="checkbox" name="account_managed" value="true" className="mt-0.5" />
+          <input type="checkbox" name="account_managed" value="true" defaultChecked={current.account_managed} className="mt-0.5" />
           <span>
             <span className="font-medium">Account-managed (premium)</span>
             <span className="block text-xs text-muted-foreground">
