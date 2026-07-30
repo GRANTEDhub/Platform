@@ -13,6 +13,7 @@ import {
   type DashStat,
 } from "@/components/clients/client-dashboard";
 import { deadlineDaysLeft } from "@/lib/report/shape";
+import { deriveEnrichmentSteps } from "@/lib/clients/enrichment-status";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import type { Client, CardDecision, Grant } from "@/types/database";
 
@@ -53,6 +54,17 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   // to review on the roadmap list — the "to review" action links there, not to the
   // client-alerts triage swipe.
   const isLead = isUnconvertedLead(client.pipeline_stage);
+
+  // Seated portal members. Clients only -- a prospect has no portal, so the query is
+  // skipped rather than returning a zero that would prompt a seat invite for a record
+  // that cannot have one.
+  const { count: memberCountRaw } = isLead
+    ? { count: null }
+    : await supabase
+        .from("client_members")
+        .select("id", { count: "exact", head: true })
+        .eq("client_id", params.id);
+  const memberCount = memberCountRaw ?? 0;
 
   const { data: cardRows } = await supabase
     .from("review_cards")
@@ -96,6 +108,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
 
   const base = `/clients/${client.id}/roadmap`;
   const alertsHref = `${base}/triage`;
+  const apiDataHref = `/clients/${client.id}/api-data`;
   // Action items: staff's own review queue, then the client's next step. For an
   // account-managed client the review is a SINGLE gate (the roadmap review list at
   // `base`, where why-it-matches + manual concept generate/edit + release live), so
@@ -107,6 +120,44 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   const confirmRerun = matchStatus === "complete" || matchStatus === "error" || cards.length > 0;
 
   const actionItems: DashActionItem[] = [];
+
+  // Setup-first ordering: connect the data pulls -> seat the client in the portal ->
+  // start matching. That is the real dependency order, not just a visual preference:
+  // the pulls feed the citations a match cites, and a seated client is who the
+  // resulting report is FOR. Matching still works without either -- these never gate
+  // it -- so each is a prompt, not a block.
+  const enrichmentSteps = deriveEnrichmentSteps(client);
+  const unresolved = enrichmentSteps.filter((s) => s.state === "needs_input");
+  const stillPending = enrichmentSteps.filter((s) => s.state === "pending");
+  if (unresolved.length > 0) {
+    actionItems.push({
+      id: "connect-apis",
+      title:
+        unresolved.length === 1
+          ? `${unresolved[0].label}: ${unresolved[0].resolveField === "ein" ? "add the EIN to pull it" : "add the county to derive it"}`
+          : `${unresolved.length} data pulls need a value before they can run`,
+      tag: "API data",
+      href: apiDataHref,
+      priority: "high",
+    });
+  } else if (stillPending.length > 0) {
+    actionItems.push({
+      id: "connect-apis",
+      title: `${stillPending.length} data pull${stillPending.length === 1 ? "" : "s"} haven't reported back`,
+      tag: "API data",
+      href: apiDataHref,
+    });
+  }
+  // Portal seats: clients only (a prospect has no portal by design).
+  if (!isLead && memberCount === 0) {
+    actionItems.push({
+      id: "portal-seats",
+      title: "Invite the client to their portal",
+      tag: "No one is seated yet",
+      href: `/clients/${client.id}/edit`,
+      priority: "high",
+    });
+  }
   // A fresh record with no report yet: prompt to run matching (the button, top
   // right). Matching is MANUAL-ONLY by design -- auto-enqueuing on create once left
   // records stuck behind the 10-min cron with the manual button disabled, so nothing
@@ -174,6 +225,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         activity={counts}
         bookingUrl={process.env.NEXT_PUBLIC_BOOKING_URL ?? null}
         editHref={`/clients/${client.id}/edit`}
+        apiDataHref={apiDataHref}
         refresh={
           <GenerateReportButton
             clientId={client.id}

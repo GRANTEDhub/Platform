@@ -186,7 +186,12 @@ export async function createClientAction(formData: FormData): Promise<ClientActi
   revalidatePath("/clients");
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/clients");
-  redirect(`/clients/${clientId}`);
+  // Land on the API-data CONFIRM step rather than the dashboard. The pulls above are
+  // fire-and-forget, so this is the one moment a human is present to see what they
+  // returned -- and the EIN name lookup deliberately refuses ambiguous matches, so
+  // "no result" is a normal outcome that needs a person, not an error to bury. The
+  // screen reports observed state only and never blocks: "continue" is always there.
+  redirect(`/clients/${clientId}/api-data?new=1`);
 }
 
 export async function updateClientAction(
