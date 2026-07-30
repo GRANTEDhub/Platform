@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Loader2 } from "lucide-react";
+import { SamRegistration } from "@/app/(app)/clients/sam-registration";
+import type { Client } from "@/types/database";
 import {
   PENDING_GRACE_MS,
   type EnrichmentStep,
@@ -30,12 +33,14 @@ import {
 const POLL_MS = 2500;
 
 export function EnrichmentPanel({
+  client,
   clientId,
   kindLabel,
   initialSteps,
   mode,
   editHref,
   dashboardHref,
+  continueLabel,
 }: {
   clientId: string;
   kindLabel: string;
@@ -43,6 +48,13 @@ export function EnrichmentPanel({
   mode: "ceremony" | "tab";
   editHref: string;
   dashboardHref: string;
+  // Names what comes NEXT rather than implying the intake is over. Intake continues
+  // to engagement after this step for a client; a prospect ends here.
+  continueLabel?: string;
+  // Passed through so the SAM resolve tool can render INSIDE its own step row,
+  // mirroring the EIN picker. There used to be a second SAM card lower down plus an
+  // anchor link to it -- two affordances for one job, which read as a duplicate.
+  client: Client;
 }) {
   const [steps, setSteps] = useState(initialSteps);
   const [rerunning, setRerunning] = useState(false);
@@ -53,8 +65,13 @@ export function EnrichmentPanel({
   const startedAt = useRef<number>(Date.now());
   const [graceExpired, setGraceExpired] = useState(false);
 
-  const pending = steps.filter((s) => s.state === "pending");
+  // Background steps (the LLM distillation) deliberately do NOT hold the screen: they
+  // take ~6x longer than the API pulls and nothing downstream waits on them.
+  const pending = steps.filter((s) => s.state === "pending" && !s.background);
   const settled = pending.length === 0;
+  // Polling still continues while ANY step is unresolved, so a background step that
+  // lands while you are still reading updates in place.
+  const anyPending = steps.some((s) => s.state === "pending");
   const attention = steps.filter((s) => s.state === "needs_input");
 
   const load = useCallback(async () => {
@@ -71,10 +88,10 @@ export function EnrichmentPanel({
 
   // Poll only in ceremony mode, and only while something is actually pending.
   useEffect(() => {
-    if (mode !== "ceremony" || settled) return;
+    if (mode !== "ceremony" || !anyPending) return;
     const t = setInterval(load, POLL_MS);
     return () => clearInterval(t);
-  }, [mode, settled, load]);
+  }, [mode, anyPending, load]);
 
   useEffect(() => {
     if (mode !== "ceremony" || settled) return;
@@ -124,26 +141,11 @@ export function EnrichmentPanel({
             graceExpired={graceExpired}
             editHref={editHref}
             clientId={clientId}
+            client={client}
             onEinBound={load}
           />
         ))}
       </ul>
-
-      {attention.length > 0 && (
-        <div className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900 ring-1 ring-amber-200">
-          <p className="font-medium">
-            {attention.length} pull{attention.length === 1 ? "" : "s"} need{attention.length === 1 ? "s" : ""} a
-            value from you.
-          </p>
-          <p className="mt-0.5 text-xs">
-            These aren&apos;t failures — the lookup refuses a guess rather than attaching the wrong
-            organization&apos;s numbers. Add the field and re-run.
-          </p>
-          <Link href={editHref} className="mt-2 inline-block text-xs font-medium underline">
-            Edit the {kindLabel} →
-          </Link>
-        </div>
-      )}
 
       {error && (
         <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-800 ring-1 ring-red-200">
@@ -157,7 +159,7 @@ export function EnrichmentPanel({
         </Button>
         {mode === "ceremony" && (
           <Link href={dashboardHref} className={buttonVariants()}>
-            {settled ? "Looks right — continue" : "Skip ahead"}
+            {continueLabel ?? (settled ? "Looks right — continue" : "Skip ahead")}
           </Link>
         )}
         <span className="text-xs text-muted-foreground">
@@ -184,11 +186,15 @@ type EinCandidate = {
 // In-place EIN resolution: fetch ranked candidates, show the EVIDENCE behind each,
 // bind the chosen one. Mirrors the SAM.gov resolve/confirm flow.
 //
-// Why candidates rather than a silent auto-fill: a wrong EIN pulls another
-// organization's 990, and that figure then travels into client-facing work as a
-// sourced citation. A confident guess is offered (ranked first, labelled), but the
-// commit stays a human keystroke -- the cost of being wrong is much higher than the
-// cost of one click.
+// AUTO-BINDS WHEN UNAMBIGUOUS. If the server reports exactly one candidate agreeing
+// on city+state (or, failing that, exactly one in the state), it is taken without
+// asking: presenting a single plausible option in the client's own state is a
+// confirmation request with no decision in it, and the reviewer has nothing to add.
+//
+// Genuine ambiguity still stops here, because a wrong EIN pulls another
+// organization's 990 and that figure travels into client-facing work as a sourced
+// citation. Two same-named orgs in one state is a real question for a human; one
+// obvious match is not.
 function EinPicker({ clientId, onBound }: { clientId: string; onBound: () => void }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -206,6 +212,13 @@ function EinPicker({ clientId, onBound }: { clientId: string; onBound: () => voi
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || "Lookup failed.");
       setCandidates((d.candidates ?? []) as EinCandidate[]);
+      // If the server says one candidate is unambiguous, take it instead of asking.
+      // Presenting a single plausible option in the client's own state is a
+      // confirmation request with no decision in it -- the reviewer has nothing to
+      // add. Ambiguous results still stop and ask, with the evidence shown.
+      if (typeof d.autoBindable === "string" && d.autoBindable) {
+        await bind(d.autoBindable, { auto: true });
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Lookup failed.");
     } finally {
@@ -213,7 +226,7 @@ function EinPicker({ clientId, onBound }: { clientId: string; onBound: () => voi
     }
   }
 
-  async function bind(ein: string) {
+  async function bind(ein: string, opts?: { auto: boolean }) {
     setBusy(ein);
     setErr(null);
     try {
@@ -227,7 +240,11 @@ function EinPicker({ clientId, onBound }: { clientId: string; onBound: () => voi
       // Report the real outcome: a saved EIN that matched no filings is a different
       // result from one that pulled a 990, and the reviewer needs to know which.
       if (!d.pulled) {
-        setErr("Saved, but no IRS 990 filings came back for that EIN. Worth double-checking it.");
+        setErr(
+          opts?.auto
+            ? "Matched an EIN automatically, but no IRS 990 filings came back for it. Pick another below or enter one."
+            : "Saved, but no IRS 990 filings came back for that EIN. Worth double-checking it.",
+        );
       }
       onBound();
       if (d.pulled) setOpen(false);
@@ -317,12 +334,14 @@ function StepRow({
   graceExpired,
   editHref,
   clientId,
+  client,
   onEinBound,
 }: {
   step: EnrichmentStep;
   graceExpired: boolean;
   editHref: string;
   clientId: string;
+  client: Client;
   onEinBound?: () => void;
 }) {
   // A pending step past the grace period is reported as an unknown outcome, not as
@@ -333,8 +352,10 @@ function StepRow({
   const meta: Record<string, { icon: string; cls: string; note: string | null }> = {
     done: { icon: "✓", cls: "text-emerald-700 bg-emerald-50 ring-emerald-200", note: null },
     skipped: { icon: "–", cls: "text-neutral-600 bg-neutral-50 ring-neutral-200", note: "Not applicable" },
-    needs_input: { icon: "!", cls: "text-amber-800 bg-amber-50 ring-amber-200", note: "Needs a value" },
-    pending: { icon: "…", cls: "text-brand-navy bg-brand-orange/10 ring-brand-orange/30", note: "Working" },
+    // "Stopped" states say so outright. A row that will not change on its own must
+    // never be mistaken for one that still might.
+    needs_input: { icon: "!", cls: "text-amber-800 bg-amber-50 ring-amber-200", note: "Stopped — needs a value" },
+    pending: { icon: "", cls: "text-brand-navy bg-brand-orange/10 ring-brand-orange/30", note: "Still running" },
     unknown: { icon: "?", cls: "text-neutral-700 bg-neutral-50 ring-neutral-200", note: "No result yet" },
   };
   const m = meta[state];
@@ -345,14 +366,17 @@ function StepRow({
         aria-hidden="true"
         className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ring-1 ${m.cls}`}
       >
-        {m.icon}
+        {state === "pending" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : m.icon}
       </span>
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium text-brand-navy">
           {step.label}
           {m.note && <span className="ml-2 text-xs font-normal text-muted-foreground">{m.note}</span>}
         </p>
-        <p className="text-xs text-muted-foreground">{step.source}</p>
+        <p className="text-xs text-muted-foreground">
+          {step.source}
+          {step.provenance && <span> · {step.provenance}</span>}
+        </p>
         {step.detail && <p className="mt-1 text-sm">{step.detail}</p>}
         {state === "unknown" && (
           <p className="mt-1 text-sm text-muted-foreground">
@@ -371,10 +395,13 @@ function StepRow({
             Add the county →
           </Link>
         )}
-        {step.state === "needs_input" && step.resolveField === "sam" && (
-          <Link href={editHref} className="mt-1 inline-block text-xs font-medium underline">
-            Resolve SAM.gov registration →
-          </Link>
+        {/* Resolved IN PLACE, like the EIN picker. Earlier versions linked to /edit
+            (which threw away the confirm context and left Back on the dashboard), then
+            anchored to a second SAM card lower down -- two boxes for one job. */}
+        {step.resolveField === "sam" && (
+          <div className="mt-2">
+            <SamRegistration client={client} />
+          </div>
         )}
       </div>
     </li>

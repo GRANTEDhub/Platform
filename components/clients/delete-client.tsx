@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 
 // Permanent delete for a client / prospect, built for test-data churn.
@@ -16,6 +17,12 @@ import { Button } from "@/components/ui/button";
 // It does NOT block a delete on those counts. The whole point is unblocking test
 // churn, and a hard block would just send Shannon back to hand-written SQL -- the
 // thing this replaces. The counts inform the decision instead of overriding it.
+//
+// PRESENTED AS A CENTRED MODAL, portaled to document.body. It used to reveal inline
+// below the button, which sits at the very bottom of a long edit page -- so the
+// confirmation could open off-screen and read as "the button did nothing". A
+// destructive confirmation that can be missed is worse than none, because it trains
+// you to expect no prompt.
 export function DeleteClient({
   name,
   kindLabel,
@@ -31,6 +38,8 @@ export function DeleteClient({
   const [typed, setTyped] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
   const matches = norm(typed) === norm(name) && norm(name) !== "";
@@ -62,8 +71,17 @@ export function DeleteClient({
     );
   }
 
-  return (
-    <form action={onSubmit} className="space-y-3 rounded-xl bg-red-50 p-4 ring-1 ring-red-200">
+  if (!mounted) return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-brand-navy/60 p-6">
+      <form
+        action={onSubmit}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Delete ${name}`}
+        className="w-full max-w-lg space-y-3 rounded-xl bg-white p-5 shadow-xl ring-1 ring-red-200"
+      >
       <p className="text-sm font-semibold text-red-900">
         Delete {name} permanently?
       </p>
@@ -135,6 +153,8 @@ export function DeleteClient({
           Cancel
         </Button>
       </div>
-    </form>
+      </form>
+    </div>,
+    document.body,
   );
 }
