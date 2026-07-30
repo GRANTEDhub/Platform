@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { ChipInput } from "@/components/ui/chip-input";
 import { NarrativeFields } from "@/components/intake/narrative-fields";
 import { AddressAutocomplete } from "@/components/clients/address-autocomplete";
+import { CreateTransition } from "@/components/clients/create-transition";
 import {
   narrativeFromClient,
   EMPTY_NARRATIVE,
@@ -185,6 +186,11 @@ export function ClientForm({
 
   return (
     <form action={handleSubmit} className="max-w-3xl space-y-8">
+      {/* Full-screen transition while a NEW record is being created (the save kicks
+          the enrichment chain, then redirects to the dashboard). Create only: on edit
+          the destination already exists, so an overlay would just be in the way. */}
+      {submitting && !client && <CreateTransition kindLabel={kindLabel} />}
+
       {/* Record type is fixed by the entry point (no toggle) and written server-side. */}
       <input type="hidden" name="kind" value={kind} />
 

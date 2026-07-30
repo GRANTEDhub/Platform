@@ -107,12 +107,19 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   const confirmRerun = matchStatus === "complete" || matchStatus === "error" || cards.length > 0;
 
   const actionItems: DashActionItem[] = [];
-  // A fresh prospect with no report yet: prompt the AM to run matching (the button,
-  // top right). Once cards land, the "to review" item below takes over.
-  if (isLead && cards.length === 0 && !matchInProgress) {
+  // A fresh record with no report yet: prompt to run matching (the button, top
+  // right). Matching is MANUAL-ONLY by design -- auto-enqueuing on create once left
+  // records stuck behind the 10-min cron with the manual button disabled, so nothing
+  // could start at all (see createClientAction). This prompt is what makes the manual
+  // step discoverable; without it a newly created record just looks empty.
+  // Applies to CLIENTS as well as prospects -- a new client showed no matches and no
+  // prompt, which read as "the platform isn't working" rather than "click here".
+  if (cards.length === 0 && !matchInProgress) {
     actionItems.push({
       id: "run-matches",
-      title: "Run grant matches to surface opportunities",
+      title: isLead
+        ? "Run grant matches to surface opportunities"
+        : "Run the first grant match for this client",
       tag: "Use the button, top right",
       priority: "high",
     });
