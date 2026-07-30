@@ -39,7 +39,6 @@ export default async function FinishClientPage({ params }: { params: { id: strin
         <CompleteProfile
           clientId={client.id}
           clientName={client.name}
-          contactEmail={client.primary_contact_email}
           action={action}
           current={{
             status: client.status,
