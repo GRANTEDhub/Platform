@@ -146,6 +146,127 @@ export async function resolveEinByName(
   }
 }
 
+// ── EIN best-guess: ranked candidates with the evidence behind each ──────────
+//
+// resolveEinByName above is intentionally all-or-nothing: exactly one normalized
+// name match or null. That is the right contract for the UNATTENDED refresh (it must
+// never silently attach the wrong org's tax filings), but it discards useful work --
+// two same-named orgs in different states are trivially separable once you look at
+// location, and a human staring at the confirm screen can settle what a background
+// job must not guess at.
+//
+// So this returns a RANKED shortlist with a confidence tier and the reasons for it,
+// leaving the accept/reject decision to its caller. Same shape as the SAM.gov resolve
+// flow, which solves the identical org-identity problem: propose candidates with
+// facts, store nothing until a human (or a high-confidence rule) commits.
+//
+// SIGNALS. The search endpoint returns name, city and state per organization, so
+// those are what can corroborate. Street address, contacts and services are NOT in
+// the search payload -- matching on those would need a per-candidate detail fetch,
+// deliberately not done here (N extra round trips inside an enrichment step).
+
+export type EinConfidence = "high" | "medium" | "low";
+
+export type EinCandidate = {
+  ein: string;
+  matchedName: string;
+  city: string | null;
+  state: string | null;
+  confidence: EinConfidence;
+  // Human-readable evidence, so the confirm screen can justify the ranking rather
+  // than presenting a bare score the reviewer has to trust blindly.
+  reasons: string[];
+};
+
+export type EinResolution = {
+  candidates: EinCandidate[];
+  // Safe to write without asking: exactly one candidate, name AND state AND city all
+  // agreeing. Anything less is proposed, never auto-bound.
+  autoBind: EinCandidate | null;
+};
+
+const normalizeCity = (s: string | null | undefined) =>
+  (s ?? "").toLowerCase().replace(/[^a-z\s]/g, "").replace(/\s+/g, " ").trim();
+
+export async function resolveEinCandidates(signals: {
+  name: string | null | undefined;
+  city?: string | null;
+  state?: string | null;
+}): Promise<EinResolution> {
+  const q = (signals.name ?? "").trim();
+  if (q.length < 4) return { candidates: [], autoBind: null };
+
+  const wantState = (signals.state ?? "").trim().toUpperCase() || null;
+  const wantCity = normalizeCity(signals.city);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const params = new URLSearchParams({ q });
+    // Deliberately NOT filtering by state in the query. A client whose mailing state
+    // differs from its IRS registration state (common for a fiscally sponsored or
+    // recently relocated org) would be filtered out entirely, and a zero-result
+    // "no match" is far more misleading than a ranked list.
+    const res = await fetch(`${PP_BASE}/search.json?${params.toString()}`, {
+      signal: controller.signal,
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) return { candidates: [], autoBind: null };
+    const data = (await res.json()) as { organizations?: Record<string, unknown>[] };
+    const orgs = Array.isArray(data.organizations) ? data.organizations : [];
+    const target = normalizeOrgName(q);
+
+    const scored: EinCandidate[] = [];
+    for (const o of orgs) {
+      const ein = normalizeEin(String(o.ein ?? ""));
+      if (!ein) continue;
+      const rawName = String(o.name ?? "").trim();
+      const norm = normalizeOrgName(rawName);
+      const city = typeof o.city === "string" ? o.city : null;
+      const state = typeof o.state === "string" ? o.state : null;
+
+      const nameExact = norm === target;
+      // Containment catches "Ozark Regional Transit" vs "Ozark Regional Transit
+      // Authority" -- a real naming difference between a trade name and the
+      // registered legal name, not a different organization.
+      const nameContains = !nameExact && (norm.includes(target) || target.includes(norm));
+      if (!nameExact && !nameContains) continue;
+
+      const stateMatch = !!wantState && !!state && state.toUpperCase() === wantState;
+      const cityMatch = !!wantCity && !!city && normalizeCity(city) === wantCity;
+
+      const reasons: string[] = [];
+      reasons.push(nameExact ? "Name matches exactly" : "Name is a close variant");
+      if (stateMatch) reasons.push(`State matches (${state})`);
+      else if (wantState && state) reasons.push(`State differs (IRS: ${state}, on file: ${wantState})`);
+      if (cityMatch) reasons.push(`City matches (${city})`);
+      else if (wantCity && city) reasons.push(`City differs (IRS: ${city})`);
+
+      let confidence: EinConfidence = "low";
+      if (nameExact && stateMatch && cityMatch) confidence = "high";
+      else if (nameExact && stateMatch) confidence = "medium";
+      else if (nameExact || stateMatch) confidence = "low";
+
+      scored.push({ ein, matchedName: rawName, city, state, confidence, reasons });
+    }
+
+    const rank: Record<EinConfidence, number> = { high: 0, medium: 1, low: 2 };
+    scored.sort((a, b) => rank[a.confidence] - rank[b.confidence]);
+    const top = scored.slice(0, 5);
+
+    // Auto-bind demands a UNIQUE high-confidence hit. Two orgs that both match name,
+    // city and state are genuinely indistinguishable from here, so the human decides.
+    const highs = top.filter((c) => c.confidence === "high");
+    const autoBind = highs.length === 1 ? highs[0] : null;
+
+    return { candidates: top, autoBind };
+  } catch {
+    return { candidates: [], autoBind: null };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 const usd = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 
 // One-line rendering for the profile's auto-pulled block and the form citation.

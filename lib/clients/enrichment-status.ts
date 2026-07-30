@@ -1,4 +1,5 @@
 import type { Client } from "@/types/database";
+import { samExpiryFlag } from "@/lib/sam/expiry";
 
 // Per-step status for the post-create enrichment run.
 //
@@ -30,14 +31,19 @@ export type EnrichmentStepState =
   | "pending";
 
 export type EnrichmentStep = {
-  key: "usaspending" | "irs990" | "rucc" | "profile";
+  key: "usaspending" | "irs990" | "sam" | "rucc" | "profile";
   label: string;
   source: string;
   state: EnrichmentStepState;
   detail: string | null;
   // Which field on the client form resolves a needs_input step, so the confirm
   // screen can point at the fix instead of just naming the problem.
-  resolveField?: "ein" | "location_county";
+  resolveField?: "ein" | "location_county" | "sam";
+  // Registration health, for the steps where "we have a value" and "the value is
+  // still good" are different questions. A SAM registration that expired last month
+  // is present AND useless -- reporting only "found it" would hide the thing that
+  // actually blocks a submission.
+  alert?: "expired" | "soon";
 };
 
 // How long a `pending` step is reported as "working" before it is reported as
@@ -129,6 +135,49 @@ export function deriveEnrichmentSteps(client: Client): EnrichmentStep[] {
       source: "IRS Form 990 (ProPublica)",
       state: "pending",
       detail: null,
+    });
+  }
+
+  // ── SAM.gov registration ─────────────────────────────────────────────────
+  // Not a background pull like the others: binding a UEI is an explicit human
+  // decision through the existing SAM resolve/bind flow (two orgs can share a name,
+  // and binding the wrong UEI misreports submission readiness). So "unregistered"
+  // here means "nobody has bound one yet", which is a to-do, not a failed fetch.
+  //
+  // Registration STATE matters as much as presence, so expiry is derived at read
+  // time from sam_expiration_date -- the same no-stored-flag approach samExpiryFlag
+  // already uses for the dashboard.
+  const samStatus = (client.sam_registration_status ?? "").trim();
+  const samUei = (client.uei ?? "").trim();
+  const samExp = (client.sam_expiration_date ?? "").trim();
+  if (!samUei && !samStatus) {
+    steps.push({
+      key: "sam",
+      label: "SAM.gov registration",
+      source: "SAM.gov",
+      state: "needs_input",
+      detail: "Unregistered — no UEI bound yet. Required before any federal submission.",
+      resolveField: "sam",
+    });
+  } else {
+    const flag = samExpiryFlag(samExp || null);
+    const expiredNow = flag?.level === "expired";
+    steps.push({
+      key: "sam",
+      label: "SAM.gov registration",
+      source: "SAM.gov",
+      // An expired registration is reported as needing attention rather than "done":
+      // it is on file, but it will not carry a submission.
+      state: expiredNow ? "needs_input" : "done",
+      detail: [
+        expiredNow ? "EXPIRED" : samStatus || "Registered",
+        samUei ? `UEI ${samUei}` : null,
+        samExp ? (expiredNow ? `expired ${samExp}` : `expires ${samExp}`) : null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      resolveField: expiredNow ? "sam" : undefined,
+      alert: flag?.level,
     });
   }
 

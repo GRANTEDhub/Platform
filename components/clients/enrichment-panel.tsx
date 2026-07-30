@@ -118,7 +118,14 @@ export function EnrichmentPanel({
 
       <ul className="space-y-2">
         {steps.map((s) => (
-          <StepRow key={s.key} step={s} graceExpired={graceExpired} editHref={editHref} />
+          <StepRow
+            key={s.key}
+            step={s}
+            graceExpired={graceExpired}
+            editHref={editHref}
+            clientId={clientId}
+            onEinBound={load}
+          />
         ))}
       </ul>
 
@@ -165,14 +172,158 @@ export function EnrichmentPanel({
   );
 }
 
+type EinCandidate = {
+  ein: string;
+  matchedName: string;
+  city: string | null;
+  state: string | null;
+  confidence: "high" | "medium" | "low";
+  reasons: string[];
+};
+
+// In-place EIN resolution: fetch ranked candidates, show the EVIDENCE behind each,
+// bind the chosen one. Mirrors the SAM.gov resolve/confirm flow.
+//
+// Why candidates rather than a silent auto-fill: a wrong EIN pulls another
+// organization's 990, and that figure then travels into client-facing work as a
+// sourced citation. A confident guess is offered (ranked first, labelled), but the
+// commit stays a human keystroke -- the cost of being wrong is much higher than the
+// cost of one click.
+function EinPicker({ clientId, onBound }: { clientId: string; onBound: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [candidates, setCandidates] = useState<EinCandidate[] | null>(null);
+  const [manual, setManual] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function find() {
+    setOpen(true);
+    setLoading(true);
+    setErr(null);
+    try {
+      const res = await fetch(`/api/clients/${clientId}/ein`, { cache: "no-store" });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Lookup failed.");
+      setCandidates((d.candidates ?? []) as EinCandidate[]);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Lookup failed.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function bind(ein: string) {
+    setBusy(ein);
+    setErr(null);
+    try {
+      const res = await fetch(`/api/clients/${clientId}/ein`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ein }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Couldn't save that EIN.");
+      // Report the real outcome: a saved EIN that matched no filings is a different
+      // result from one that pulled a 990, and the reviewer needs to know which.
+      if (!d.pulled) {
+        setErr("Saved, but no IRS 990 filings came back for that EIN. Worth double-checking it.");
+      }
+      onBound();
+      if (d.pulled) setOpen(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Couldn't save that EIN.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button type="button" onClick={find} className="mt-1 text-xs font-medium underline">
+        Look up the EIN →
+      </button>
+    );
+  }
+
+  const CONF: Record<EinCandidate["confidence"], string> = {
+    high: "Best guess",
+    medium: "Likely",
+    low: "Possible",
+  };
+
+  return (
+    <div className="mt-2 space-y-2 rounded-lg border border-input bg-muted/30 p-3">
+      {loading && <p className="text-xs text-muted-foreground">Searching the IRS 990 index…</p>}
+
+      {candidates?.length === 0 && !loading && (
+        <p className="text-xs text-muted-foreground">
+          No candidate matched on name, city or state. Enter the EIN directly below.
+        </p>
+      )}
+
+      {candidates?.map((c, i) => (
+        <div key={c.ein} className="flex flex-wrap items-start justify-between gap-2 border-b border-brand-navy/[0.06] pb-2 last:border-0 last:pb-0">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">
+              {c.matchedName}
+              {i === 0 && (
+                <span className="ml-2 rounded-full bg-brand-orange/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-orange">
+                  {CONF[c.confidence]}
+                </span>
+              )}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              EIN {c.ein}
+              {[c.city, c.state].filter(Boolean).length > 0 && ` · ${[c.city, c.state].filter(Boolean).join(", ")}`}
+            </p>
+            <ul className="mt-0.5 text-[11px] text-muted-foreground">
+              {c.reasons.map((r) => (
+                <li key={r}>· {r}</li>
+              ))}
+            </ul>
+          </div>
+          <Button type="button" size="sm" variant="outline" disabled={busy !== null} onClick={() => bind(c.ein)}>
+            {busy === c.ein ? "Saving…" : "Use this"}
+          </Button>
+        </div>
+      ))}
+
+      <div className="flex flex-wrap items-center gap-2 pt-1">
+        <input
+          value={manual}
+          onChange={(e) => setManual(e.target.value)}
+          placeholder="Or type the EIN (71-0236875)"
+          className="h-9 flex-1 rounded-md border border-input bg-white px-2 text-sm"
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={busy !== null || !manual.trim()}
+          onClick={() => bind(manual)}
+        >
+          Save
+        </Button>
+      </div>
+
+      {err && <p className="text-xs font-medium text-amber-800">{err}</p>}
+    </div>
+  );
+}
+
 function StepRow({
   step,
   graceExpired,
   editHref,
+  clientId,
+  onEinBound,
 }: {
   step: EnrichmentStep;
   graceExpired: boolean;
   editHref: string;
+  clientId: string;
+  onEinBound?: () => void;
 }) {
   // A pending step past the grace period is reported as an unknown outcome, not as
   // continuing progress -- the distinction the derivation cannot make, made here.
@@ -209,9 +360,20 @@ function StepRow({
             get a definite answer.
           </p>
         )}
-        {step.state === "needs_input" && step.resolveField && (
+        {/* The EIN is resolvable in place -- ranked candidates with their evidence --
+            rather than only pointing at the edit form. The other fields have no
+            equivalent lookup, so they still link out. */}
+        {step.state === "needs_input" && step.resolveField === "ein" && onEinBound && (
+          <EinPicker clientId={clientId} onBound={onEinBound} />
+        )}
+        {step.state === "needs_input" && step.resolveField === "location_county" && (
           <Link href={editHref} className="mt-1 inline-block text-xs font-medium underline">
-            Add {step.resolveField === "ein" ? "the EIN" : "the county"} →
+            Add the county →
+          </Link>
+        )}
+        {step.state === "needs_input" && step.resolveField === "sam" && (
+          <Link href={editHref} className="mt-1 inline-block text-xs font-medium underline">
+            Resolve SAM.gov registration →
           </Link>
         )}
       </div>

@@ -37,6 +37,16 @@ type CardRow = {
     | null;
 };
 
+// What to actually DO about a data source that needs a human, phrased per field.
+// "sam" covers both never-registered and expired -- either way the fix is the same
+// SAM resolve/bind flow.
+const RESOLVE_HINT: Record<string, string> = {
+  ein: "look up the EIN to pull the 990",
+  location_county: "add the county to derive rurality",
+  sam: "resolve the SAM.gov registration",
+  other: "needs a value",
+};
+
 function grantOf(g: CardRow["grants"]) {
   if (!g) return null;
   return Array.isArray(g) ? g[0] ?? null : g;
@@ -134,8 +144,8 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
       id: "connect-apis",
       title:
         unresolved.length === 1
-          ? `${unresolved[0].label}: ${unresolved[0].resolveField === "ein" ? "add the EIN to pull it" : "add the county to derive it"}`
-          : `${unresolved.length} data pulls need a value before they can run`,
+          ? `${unresolved[0].label}: ${RESOLVE_HINT[unresolved[0].resolveField ?? "other"]}`
+          : `${unresolved.length} data sources need attention`,
       tag: "API data",
       href: apiDataHref,
       priority: "high",

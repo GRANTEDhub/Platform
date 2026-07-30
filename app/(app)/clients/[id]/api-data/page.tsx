@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EnrichmentPanel } from "@/components/clients/enrichment-panel";
 import { deriveEnrichmentSteps } from "@/lib/clients/enrichment-status";
+import { samExpiryFlag } from "@/lib/sam/expiry";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import type { Client } from "@/types/database";
 
@@ -45,6 +46,15 @@ export default async function ClientApiDataPage({
   const steps = deriveEnrichmentSteps(client);
   const dashboardHref = `/clients/${client.id}`;
   const editHref = `/clients/${client.id}/edit`;
+
+  // active / expired / unregistered, derived at read time rather than stored -- an
+  // "active" flag written last year would still read active today.
+  const samFlag = samExpiryFlag(client.sam_expiration_date);
+  const samLabel = !client.uei && !client.sam_registration_status
+    ? "Unregistered"
+    : samFlag?.level === "expired"
+      ? "Expired"
+      : client.sam_registration_status || "Registered";
 
   const RAIL = "rounded-2xl border-0 bg-white shadow-[0_1px_3px_rgba(11,30,58,0.05)] ring-1 ring-brand-navy/[0.06]";
 
@@ -98,6 +108,15 @@ export default async function ClientApiDataPage({
               label="Federal award history"
               value={client.federal_history_verified ? "Self-reported (verified)" : client.usaspending_checked_at ? "Pulled" : "—"}
               note={`USASpending.gov · checked ${fmtWhen(client.usaspending_checked_at)}`}
+            />
+            <Row
+              label="SAM.gov registration"
+              value={samLabel}
+              note={
+                client.uei
+                  ? `UEI ${client.uei}${client.sam_matched_name ? ` · ${client.sam_matched_name}` : ""} · checked ${fmtWhen(client.sam_checked_at)}`
+                  : "Required before any federal submission. Bind a UEI on the edit page."
+              }
             />
             <Row label="RUCC codes" value={client.rucc_codes || "—"} note="Derived from county + state (USDA ERS 2023)." />
             <Row label="County" value={client.location_county || "—"} note="Drives the RUCC lookup." />
