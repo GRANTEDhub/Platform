@@ -9,10 +9,11 @@ import { formatCurrency } from "@/lib/utils";
 import { PortalAccess, type PortalMember } from "@/components/clients/portal-access";
 import { ClientRepository } from "@/components/clients/client-repository";
 import { FormExitGuard } from "@/components/clients/form-exit-guard";
+import { DeleteClient } from "@/components/clients/delete-client";
 import { signedUrl } from "@/lib/storage";
 import { ClientForm } from "../../client-form";
 import { SamRegistration } from "../../sam-registration";
-import { updateClientAction } from "../../actions";
+import { updateClientAction, deleteClientAction } from "../../actions";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import type { Client, Invoice, ClientOverview } from "@/types/database";
 
@@ -24,6 +25,38 @@ export const dynamic = "force-dynamic";
 // everything accessible in the meantime so the dashboard stays client-clean.)
 function fmtDate(d: string | null) {
   return d ? format(parseISO(d), "MMM d, yyyy") : "—";
+}
+
+// Blast radius for the delete confirmation: what actually hangs off this record.
+// Counted with head:true so nothing is transferred -- these are shown to make a
+// mis-selected record obvious, not to gate the delete.
+async function deleteCounts(
+  supabase: ReturnType<typeof createClient>,
+  id: string,
+  includeEngagement: boolean,
+): Promise<{ label: string; n: number }[]> {
+  const count = async (table: string) => {
+    const { count: n } = await supabase
+      .from(table)
+      .select("id", { count: "exact", head: true })
+      .eq("client_id", id);
+    return n ?? 0;
+  };
+  const [cards, alerts, concepts, docs] = await Promise.all([
+    count("review_cards"),
+    count("grant_alerts"),
+    count("concept_proposals"),
+    count("client_documents"),
+  ]);
+  const rows = [
+    { label: "matched grant", n: cards },
+    { label: "generated grant alert", n: alerts },
+    { label: "concept proposal", n: concepts },
+    { label: "stored document", n: docs },
+  ];
+  if (!includeEngagement) return rows;
+  const [members, bills] = await Promise.all([count("client_members"), count("invoices")]);
+  return [...rows, { label: "portal member", n: members }, { label: "invoice", n: bills }];
 }
 
 function Detail({ label, value }: { label: string; value: React.ReactNode }) {
@@ -52,6 +85,8 @@ export default async function EditClientPage({ params }: { params: { id: string 
   // queries are skipped.
   if (isUnconvertedLead(client.pipeline_stage)) {
     const prospectAction = updateClientAction.bind(null, client.id);
+    const prospectDelete = deleteClientAction.bind(null, client.id);
+    const prospectCounts = await deleteCounts(supabase, client.id, false);
     return (
       <div>
         <div className="px-8 pt-6">
@@ -60,6 +95,17 @@ export default async function EditClientPage({ params }: { params: { id: string 
         <PageHeader title={`Edit ${client.name}`} />
         <div className="max-w-2xl space-y-8 p-8">
           <ClientForm client={client} action={prospectAction} submitLabel="Save changes" />
+          {isAdmin && (
+            <div className="space-y-3 border-t border-brand-navy/[0.08] pt-8">
+              <h2 className="font-serif text-lg font-semibold text-brand-navy">Danger zone</h2>
+              <DeleteClient
+                name={client.name}
+                kindLabel="prospect"
+                action={prospectDelete}
+                counts={prospectCounts}
+              />
+            </div>
+          )}
         </div>
       </div>
     );
@@ -183,6 +229,20 @@ export default async function EditClientPage({ params }: { params: { id: string 
               <CardHeader><CardTitle>Notes</CardTitle></CardHeader>
               <CardContent className="whitespace-pre-wrap text-sm text-muted-foreground">{client.notes}</CardContent>
             </Card>
+          )}
+
+          {/* Admin-only, and last on the page on purpose -- a destructive control
+              should not sit next to the fields you edit routinely. */}
+          {isAdmin && (
+            <div className="space-y-3 border-t border-brand-navy/[0.08] pt-6">
+              <h2 className="font-serif text-lg font-semibold text-brand-navy">Danger zone</h2>
+              <DeleteClient
+                name={client.name}
+                kindLabel="client"
+                action={deleteClientAction.bind(null, client.id)}
+                counts={await deleteCounts(supabase, client.id, true)}
+              />
+            </div>
           )}
         </div>
       </div>

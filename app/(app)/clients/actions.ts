@@ -9,6 +9,7 @@ import { validateConstraint } from "@/lib/grants/constraints";
 import { enrichClient } from "@/lib/clients/enrich";
 import { parseNarrative, narrativeToIntakeData, parseChipList } from "@/lib/intake/narrative";
 import { isUnconvertedLead } from "@/lib/leads/stage";
+import { removeObjects } from "@/lib/storage";
 import type { HardConstraint } from "@/types/database";
 
 // Parse + validate the hard_constraints hidden field (JSON from the picker).
@@ -287,4 +288,102 @@ export async function updateClientAction(
   revalidatePath(`/clients/${id}`);
   revalidatePath("/clients");
   redirect(`/clients/${id}`);
+}
+
+// ── Delete a client or prospect, permanently ──────────────────────────────────
+//
+// Built for TEST-DATA CHURN: creating and discarding throwaway records without
+// hand-written SQL. It is a real delete, not an archive flag, so the guardrails are
+// the typed-name confirmation and the impact counts shown next to the button.
+//
+// WHAT THE DATABASE DOES FOR US. 12 client-owned tables declare
+// `on delete cascade` (review_cards, match_attempts, match_feedback,
+// match_pair_locks, client_members, client_documents, contracts, invoices,
+// time_entries, lead_grant_hooks, forecast_rejections, intellengine_drafts), so one
+// delete clears them atomically -- no migration, and no hand-maintained list to fall
+// out of date as tables are added.
+//
+// WHAT IT DOESN'T. Three tables are `on delete set null`: grant_alerts,
+// concept_proposals and pipeline_events. Those rows SURVIVE with a null client_id.
+//   - grant_alerts + concept_proposals are deleted explicitly here. Once the client
+//     is gone they are unreachable litter, and grant_alerts also owns a stored PDF.
+//     They must go FIRST -- after the client row is deleted, client_id is null and
+//     they can no longer be found by it.
+//   - pipeline_events is left alone on purpose: it is the audit trail, it carries no
+//     storage, and "this record existed and was removed" is worth keeping.
+//
+// ORDER. Storage paths are collected first, the database delete runs second, and the
+// file removal runs last using the already-collected paths. Deleting files first
+// would leave rows pointing at missing objects if the delete then failed; deleting
+// the rows first without collecting paths would lose the pointers forever (the
+// client_documents rows cascade away). This order means a failed delete changes
+// nothing, and a failed file cleanup leaks only files -- logged, and recoverable.
+export async function deleteClientAction(
+  id: string,
+  formData: FormData,
+): Promise<ClientActionResult> {
+  // Admin-only, matching createClientAction. Deleting is strictly more dangerous
+  // than creating, so it is never loosened to the contractor/AM role that may edit.
+  await requireAdmin();
+
+  const service = createServiceClient();
+  const { data: row } = await service
+    .from("clients")
+    .select("id, name, pipeline_stage")
+    .eq("id", id)
+    .single<{ id: string; name: string | null; pipeline_stage: string | null }>();
+  if (!row) return { error: "That record no longer exists." };
+
+  const kindLabel = isUnconvertedLead(row.pipeline_stage) ? "prospect" : "client";
+
+  // Type-the-name confirmation. Compared case- and whitespace-insensitively: the
+  // point is to prove you know WHICH record you are deleting, not to test typing.
+  const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+  const typed = String(formData.get("confirm_name") ?? "");
+  if (!norm(typed) || norm(typed) !== norm(row.name ?? "")) {
+    return { error: `Type the ${kindLabel}'s exact name to confirm deletion.` };
+  }
+
+  // Collect storage objects BEFORE anything is deleted (client_documents cascades,
+  // so its pointers vanish with the client row).
+  const [{ data: docRows }, { data: alertRows }] = await Promise.all([
+    service.from("client_documents").select("storage_bucket, storage_path").eq("client_id", id),
+    service.from("grant_alerts").select("storage_bucket, storage_path").eq("client_id", id),
+  ]);
+  const objects = [...(docRows ?? []), ...(alertRows ?? [])] as {
+    storage_bucket: string | null;
+    storage_path: string | null;
+  }[];
+
+  // The two set-null tables that should not outlive their client.
+  await service.from("grant_alerts").delete().eq("client_id", id);
+  await service.from("concept_proposals").delete().eq("client_id", id);
+
+  const { error: delErr } = await service.from("clients").delete().eq("id", id);
+  if (delErr) {
+    console.error(`[client-delete] failed id=${id}:`, delErr.message);
+    return { error: `Couldn't delete this ${kindLabel}: ${delErr.message}` };
+  }
+
+  // Best-effort file cleanup. The record is already gone, so a storage failure must
+  // not surface as "delete failed" -- it is logged and leaves only orphaned bytes.
+  const byBucket = new Map<string, string[]>();
+  for (const o of objects) {
+    if (!o.storage_bucket || !o.storage_path) continue;
+    byBucket.set(o.storage_bucket, [...(byBucket.get(o.storage_bucket) ?? []), o.storage_path]);
+  }
+  for (const [bucket, paths] of byBucket) {
+    try {
+      await removeObjects(bucket, paths);
+    } catch (err) {
+      console.error(
+        `[client-delete] storage cleanup failed bucket=${bucket} count=${paths.length}:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  revalidatePath("/clients");
+  revalidatePath("/intel/prospects");
+  redirect("/clients");
 }
