@@ -43,10 +43,12 @@ function FullScreen({ children }: { children: React.ReactNode }) {
   );
 }
 
-// The invite is a DELIBERATE per-completion choice, surfaced as a confirm step rather
-// than a checkbox buried in the form. These records are usually built for clients who
-// already work with us, and a surprise "welcome, set up your account" email is the
-// kind of mistake you cannot take back. Default off.
+// THIS SCREEN NEVER INVITES. It used to offer an "email an account invitation"
+// checkbox, which contradicted the onboarding sequence: the invite is step 3 of that
+// sequence and must wait until the grants have been reviewed, because it is what
+// releases them to the client. Two paths meant the earlier one could fire first, which
+// is exactly what happened in testing. The dashboard's "Invite client to portal" button
+// is now the only way a client is invited.
 // Fields are PREFILLED from the record, not left blank. This page is reachable by
 // URL, not only from the intake flow -- and completing it writes the engagement
 // columns unconditionally. Blank defaults would therefore let a revisit on an
@@ -56,13 +58,11 @@ function FullScreen({ children }: { children: React.ReactNode }) {
 export function CompleteProfile({
   clientId,
   clientName,
-  contactEmail,
   action,
   current,
 }: {
   clientId: string;
   clientName: string;
-  contactEmail: string | null;
   action: (formData: FormData) => Promise<CompleteProfileState>;
   current: {
     status: string | null;
@@ -74,8 +74,6 @@ export function CompleteProfile({
   };
 }) {
   const router = useRouter();
-  const [confirming, setConfirming] = useState(false);
-  const [sendInvite, setSendInvite] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<CompleteProfileState | null>(null);
@@ -87,8 +85,6 @@ export function CompleteProfile({
   const finishLaterRef = useRef(false);
   const formRef = useRef<HTMLFormElement>(null);
 
-  const hasEmail = !!contactEmail;
-
   async function onSubmit(formData: FormData) {
     if (busy) return;
     // "Save and finish later" writes the engagement fields and leaves. It never
@@ -98,23 +94,12 @@ export function CompleteProfile({
     const laterOnly = finishLaterRef.current;
     finishLaterRef.current = false;
 
-    // An IMPLICIT submit (Enter in a field) reaches here with no intent and no
-    // confirmation shown. Treat it as "Complete profile" was clicked -- open the
-    // confirm step -- rather than writing anything. Enter must never be the thing
-    // that commits a completion or an invitation.
-    if (!laterOnly && !confirming) {
-      setConfirming(true);
-      return;
-    }
-
     setBusy(true);
     setError(null);
-    formData.set("send_invite", !laterOnly && sendInvite ? "true" : "false");
     const res = await action(formData);
     if (!res.ok) {
       setError(res.error ?? "Couldn't complete the profile.");
       setBusy(false);
-      setConfirming(false);
       return;
     }
     // The completion screen appears AFTER the work, reporting what actually happened,
@@ -140,16 +125,6 @@ export function CompleteProfile({
 
         <p className="text-sm text-muted-foreground">Redirecting to Dashboard</p>
 
-        {/* Kept ONLY when an invitation was actually attempted. On the common path
-            (no invite) this stays out of the way, but a send that was blocked must
-            still say so -- this screen is the only place that reports it. */}
-        {done.invited && (
-          <p className="max-w-md text-xs text-muted-foreground">
-            {done.emailed
-              ? `Account invitation sent to ${done.recipient}.`
-              : `Portal account created, but the invitation email was not sent — ${done.emailSkippedReason ?? "sending is disabled here"}.`}
-          </p>
-        )}
         {done.error && <p className="max-w-md text-xs font-medium text-amber-700">{done.error}</p>}
       </FullScreen>
     );
@@ -216,59 +191,32 @@ export function CompleteProfile({
         </p>
       )}
 
-      {!confirming ? (
-        <div className="flex flex-wrap items-center gap-3">
-          <Button type="button" onClick={() => setConfirming(true)}>
-            Complete profile
-          </Button>
-          {/* An explicit way OUT that keeps your work. Leaving via the nav used to
-              silently discard whatever was typed here, with no hint that the client
-              record itself was already safe. */}
-          <Button
-            type="button"
-            variant="outline"
-            disabled={busy}
-            onClick={() => {
-              finishLaterRef.current = true;
-              formRef.current?.requestSubmit();
-            }}
-          >
-            {busy ? "Saving…" : "Save and finish later"}
-          </Button>
-          <span className="text-xs text-muted-foreground">
-            The {clientName ? "client" : "record"} is already created — this step is the engagement terms.
-          </span>
-        </div>
-      ) : (
-        <div className="space-y-3 rounded-xl border border-input bg-muted/40 p-4">
-          <p className="text-sm font-semibold text-brand-navy">Complete {clientName}&apos;s profile?</p>
-          <label className="flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={sendInvite}
-              disabled={!hasEmail}
-              onChange={(e) => setSendInvite(e.target.checked)}
-              className="mt-0.5"
-            />
-            <span>
-              <span className="font-medium">Email an account invitation to the client</span>
-              <span className="block text-xs text-muted-foreground">
-                {hasEmail
-                  ? `Sends a "set up your account" email to ${contactEmail}. Leave unchecked for a record you're building on an existing client's behalf — their portal login can be created later from Edit.`
-                  : "No primary contact email on file, so there's nobody to invite. Add one on the edit page if you want to send this later."}
-              </span>
-            </span>
-          </label>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="submit" disabled={busy} aria-busy={busy}>
-              {busy ? "Completing…" : sendInvite ? "Complete and send invitation" : "Complete profile"}
-            </Button>
-            <Button type="button" variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>
-              Back
-            </Button>
-          </div>
-        </div>
-      )}
+      <div className="flex flex-wrap items-center gap-3">
+        {/* A plain submit, and FIRST in the form, so an implicit submit (Enter in a
+            field) performs the primary action rather than something surprising. */}
+        <Button type="submit" disabled={busy} aria-busy={busy}>
+          {busy ? "Completing…" : "Complete profile"}
+        </Button>
+        {/* An explicit way OUT that keeps your work. Leaving via the nav used to
+            silently discard whatever was typed here, with no hint that the client
+            record itself was already safe. type="button" + requestSubmit so it is
+            never the implicit-submit target. */}
+        <Button
+          type="button"
+          variant="outline"
+          disabled={busy}
+          onClick={() => {
+            finishLaterRef.current = true;
+            formRef.current?.requestSubmit();
+          }}
+        >
+          {busy ? "Saving…" : "Save and finish later"}
+        </Button>
+        <span className="text-xs text-muted-foreground">
+          The client is already created — this step is the engagement terms. You&apos;ll invite them
+          from the dashboard once their grants are reviewed.
+        </span>
+      </div>
     </form>
   );
 }

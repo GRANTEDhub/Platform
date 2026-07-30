@@ -522,19 +522,13 @@ export async function completeClientProfileAction(
       primary_contact_email: string | null;
     }>();
 
-  // Inviting the client is OPT-IN per completion, not implied by finishing the
-  // profile -- these records are usually built FOR existing clients who should not
-  // receive a "welcome, set up your account" email out of nowhere. Unchecked is the
-  // default and the common case.
-  const wantsInvite = formData.get("send_invite") === "true";
-  if (!wantsInvite || !client) {
-    revalidatePath(`/clients/${id}`);
-    return { ok: true, invited: false };
-  }
-
-  const result = await seatAndInvite(admin, client);
+  // NO INVITE FROM HERE. Completing the profile used to offer an opt-in invitation,
+  // which contradicted the onboarding sequence: the invite is its LAST step and must
+  // wait for the grants to be reviewed, because it is what releases them to the client.
+  // Two entry points meant the earlier one could fire first -- which is what happened
+  // in testing. inviteClientToPortalAction (the dashboard button) is now the only path.
   revalidatePath(`/clients/${id}`);
-  return result;
+  return { ok: true, invited: false };
 }
 
 // ── Invite the client to their portal ─────────────────────────────────────────
