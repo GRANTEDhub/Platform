@@ -7,21 +7,23 @@
 //    advance nonprofit_finance_checked_at, so it retries on the next refresh.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { fetchNonprofitFinancials, resolveEinByName } from "@/lib/grants/propublica";
+import { fetchNonprofitFinancials, resolveEinCandidates } from "@/lib/grants/propublica";
 
 export interface FinanceRefreshableClient {
   id: string;
   ein: string | null;
   name?: string | null;
   org_type?: string | null;
+  location_city?: string | null;
   location_state?: string | null;
 }
 
 // Resolve and store an EIN when none is on file, so the 990 pull has a key to work
 // with -- a nonprofit's own site almost never prints its EIN, which otherwise leaves
 // annual budget permanently blank. Nonprofit-only (a city or a business has no 990),
-// fill-if-empty, and conservative: resolveEinByName refuses ambiguous matches, so a
-// null result just leaves the field for a human. Returns the EIN to use, if any.
+// fill-if-empty, and conservative: only a UNIQUE name+city+state agreement is
+// auto-bound, so a null result just leaves the field for a human. Returns the EIN to
+// use, if any.
 async function ensureEin(
   db: SupabaseClient,
   client: FinanceRefreshableClient,
@@ -34,14 +36,24 @@ async function ensureEin(
   if (orgType && orgType !== "nonprofit" && orgType !== "higher_education") return null;
   if (!client.name || !client.name.trim()) return null;
 
-  const match = await resolveEinByName(client.name, client.location_state ?? null);
-  if (!match) return null;
-  const { error } = await db.from("clients").update({ ein: match.ein }).eq("id", client.id);
+  // Best guess from name + city + state, rather than the older name+state
+  // all-or-nothing. autoBind is only ever set for a UNIQUE candidate whose name, city
+  // AND state all agree -- so this widens what resolves automatically (a same-named
+  // org in another state no longer blocks the real one) WITHOUT widening what gets
+  // written on a coin flip. Everything short of that is left for the confirm screen,
+  // where a human sees the ranked candidates and the evidence for each.
+  const { autoBind } = await resolveEinCandidates({
+    name: client.name,
+    city: client.location_city ?? null,
+    state: client.location_state ?? null,
+  });
+  if (!autoBind) return null;
+  const { error } = await db.from("clients").update({ ein: autoBind.ein }).eq("id", client.id);
   if (error) {
     console.error("EIN auto-resolve write failed for client", client.id, error.message);
     return null;
   }
-  return match.ein;
+  return autoBind.ein;
 }
 
 // Returns true if the cache was written, false if skipped (no EIN) or the lookup
@@ -80,7 +92,7 @@ export async function refreshClientNonprofitFinanceById(
 ): Promise<boolean> {
   const { data } = await db
     .from("clients")
-    .select("id, ein, name, org_type, location_state")
+    .select("id, ein, name, org_type, location_city, location_state")
     .eq("id", clientId)
     .single<FinanceRefreshableClient>();
   if (!data) return false;

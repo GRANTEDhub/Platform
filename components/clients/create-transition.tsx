@@ -1,38 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { BRAND } from "@/lib/brand";
 
 // Full-screen transition shown while a client/prospect record is being created, so
 // the click has a visible consequence instead of a frozen button followed by an
 // abrupt dashboard.
 //
-// HONEST BY DESIGN: every line describes work that is really happening on the
-// server during this window -- the insert, then the background enrichment chain
-// (enrichClient: USASpending -> IRS 990 -> RUCC -> the profile refine + community
-// context). No invented steps, and no artificial delay: the overlay lives exactly as
-// long as the request does, and the redirect tears it down whenever the save
-// finishes. If that is fast, the user simply sees fewer lines -- which is the
-// truthful outcome, not a padded one.
-const PHRASES = [
-  "Saving the organization profile…",
-  "Kicking off enrichment — federal award history, IRS 990 financials…",
-  "Deriving rurality and community context…",
-  "Preparing the dashboard…",
-];
-
-const PHRASE_MS = 1600;
-
+// SCOPE OF THE CLAIM: this window covers the INSERT and nothing else. It used to
+// rotate four phrases on a 1600ms timer, narrating the enrichment chain (USASpending
+// -> IRS 990 -> RUCC -> profile refine) as though it were finishing here. It was not:
+// enrichClient is dispatched via waitUntil and runs AFTER the response, so those
+// lines described work that had merely been kicked off, advanced on a clock that was
+// not measuring anything, and could not report a failure. The real per-step status
+// now has its own screen (the API-data confirm step this redirects to), driven by
+// observed artifacts.
+//
+// So: one honest line, and an indeterminate bar -- which promises motion, not a
+// percentage we cannot compute. The overlay lives exactly as long as the request.
 export function CreateTransition({ kindLabel }: { kindLabel: string }) {
-  const [i, setI] = useState(0);
-
-  useEffect(() => {
-    // Advance through the phrases, holding on the last one until the redirect
-    // unmounts this (never loop back -- a restarting list reads as a hang).
-    const t = setInterval(() => setI((n) => (n < PHRASES.length - 1 ? n + 1 : n)), PHRASE_MS);
-    return () => clearInterval(t);
-  }, []);
-
   return (
     <div
       role="status"
@@ -51,12 +36,11 @@ export function CreateTransition({ kindLabel }: { kindLabel: string }) {
       </div>
 
       <h2 className="mt-8 font-serif text-2xl font-semibold text-white">
-        Building the {kindLabel} dashboard
+        Saving the {kindLabel}
       </h2>
 
-      {/* Cross-fade the current line; keyed so each phrase re-runs the animation. */}
-      <p key={i} className="ct-fade mt-3 max-w-md text-sm text-white/70">
-        {PHRASES[i]}
+      <p className="ct-fade mt-3 max-w-md text-sm text-white/70">
+        Next you&apos;ll review what the public data sources return.
       </p>
 
       <div className="mt-8 h-1 w-56 overflow-hidden rounded-full bg-white/15">
