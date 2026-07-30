@@ -44,6 +44,11 @@ export type EnrichmentStep = {
   // is present AND useless -- reporting only "found it" would hide the thing that
   // actually blocks a submission.
   alert?: "expired" | "soon";
+  // The stored value + when it was checked, on the STEP rather than in a second
+  // table. There used to be a separate "What's on file" card repeating every row
+  // with its provenance, which meant reading the same eight facts twice and left two
+  // places to disagree. One row per source, carrying its own evidence.
+  provenance?: string;
 };
 
 // How long a `pending` step is reported as "working" before it is reported as
@@ -59,6 +64,20 @@ const NINETY_NINETY_ORG_TYPES = new Set(["nonprofit", "higher_education"]);
 
 function moneyish(n: number | null | undefined): string | null {
   return typeof n === "number" ? `$${n.toLocaleString("en-US")}` : null;
+}
+
+// "checked <date>" / "never checked", for the provenance line.
+function checked(iso: string | null | undefined): string {
+  if (!iso) return "never checked";
+  try {
+    return `checked ${new Date(iso).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    })}`;
+  } catch {
+    return "never checked";
+  }
 }
 
 export function deriveEnrichmentSteps(client: Client): EnrichmentStep[] {
@@ -84,6 +103,7 @@ export function deriveEnrichmentSteps(client: Client): EnrichmentStep[] {
       detail: client.usaspending_checked_at
         ? summarizeUsaspending(client.usaspending_summary)
         : null,
+      provenance: checked(client.usaspending_checked_at),
     });
   }
 
@@ -115,6 +135,9 @@ export function deriveEnrichmentSteps(client: Client): EnrichmentStep[] {
         rev ? `revenue ${rev}` : null,
         exp ? `expenses ${exp}` : null,
       ]
+        .filter(Boolean)
+        .join(" · "),
+      provenance: [client.ein ? `EIN ${client.ein}` : null, checked(client.nonprofit_finance_checked_at)]
         .filter(Boolean)
         .join(" · "),
     });
@@ -178,6 +201,13 @@ export function deriveEnrichmentSteps(client: Client): EnrichmentStep[] {
         .join(" · "),
       resolveField: expiredNow ? "sam" : undefined,
       alert: flag?.level,
+      provenance: [
+        samUei ? `UEI ${samUei}` : null,
+        client.sam_matched_name || null,
+        checked(client.sam_checked_at),
+      ]
+        .filter(Boolean)
+        .join(" · "),
     });
   }
 
@@ -193,6 +223,7 @@ export function deriveEnrichmentSteps(client: Client): EnrichmentStep[] {
       source: "USDA ERS 2023 crosswalk",
       state: "done",
       detail: `RUCC ${rucc}`,
+      provenance: county ? `From ${county} County` : undefined,
     });
   } else if (!county) {
     steps.push({
@@ -220,6 +251,7 @@ export function deriveEnrichmentSteps(client: Client): EnrichmentStep[] {
     source: "GRANTED matcher context",
     state: client.client_profile ? "done" : "pending",
     detail: client.client_profile ? "Narrative context built for matching." : null,
+    provenance: "Citation + narrative only — never affects occupancy.",
   });
 
   return steps;

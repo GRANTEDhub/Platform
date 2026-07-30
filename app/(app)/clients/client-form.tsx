@@ -702,8 +702,10 @@ export function ClientForm({
               Next
             </Button>
           ) : (
+            // Reads "Next", not the create label: two steps still follow this one, so
+            // naming the write here implied the intake ended at page 5.
             <Button key="wizard-save" type="submit" disabled={submitting} aria-busy={submitting}>
-              {submitting ? "Saving…" : submitLabel}
+              {submitting ? "Saving…" : "Next"}
             </Button>
           )}
           <span className="text-xs text-muted-foreground">

@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { SamRegistration } from "@/app/(app)/clients/sam-registration";
+import type { Client } from "@/types/database";
 import {
   PENDING_GRACE_MS,
   type EnrichmentStep,
@@ -30,6 +32,7 @@ import {
 const POLL_MS = 2500;
 
 export function EnrichmentPanel({
+  client,
   clientId,
   kindLabel,
   initialSteps,
@@ -47,6 +50,10 @@ export function EnrichmentPanel({
   // Names what comes NEXT rather than implying the intake is over. Intake continues
   // to engagement after this step for a client; a prospect ends here.
   continueLabel?: string;
+  // Passed through so the SAM resolve tool can render INSIDE its own step row,
+  // mirroring the EIN picker. There used to be a second SAM card lower down plus an
+  // anchor link to it -- two affordances for one job, which read as a duplicate.
+  client: Client;
 }) {
   const [steps, setSteps] = useState(initialSteps);
   const [rerunning, setRerunning] = useState(false);
@@ -128,26 +135,11 @@ export function EnrichmentPanel({
             graceExpired={graceExpired}
             editHref={editHref}
             clientId={clientId}
+            client={client}
             onEinBound={load}
           />
         ))}
       </ul>
-
-      {attention.length > 0 && (
-        <div className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900 ring-1 ring-amber-200">
-          <p className="font-medium">
-            {attention.length} pull{attention.length === 1 ? "" : "s"} need{attention.length === 1 ? "s" : ""} a
-            value from you.
-          </p>
-          <p className="mt-0.5 text-xs">
-            These aren&apos;t failures — the lookup refuses a guess rather than attaching the wrong
-            organization&apos;s numbers. Add the field and re-run.
-          </p>
-          <Link href={editHref} className="mt-2 inline-block text-xs font-medium underline">
-            Edit the {kindLabel} →
-          </Link>
-        </div>
-      )}
 
       {error && (
         <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-800 ring-1 ring-red-200">
@@ -336,12 +328,14 @@ function StepRow({
   graceExpired,
   editHref,
   clientId,
+  client,
   onEinBound,
 }: {
   step: EnrichmentStep;
   graceExpired: boolean;
   editHref: string;
   clientId: string;
+  client: Client;
   onEinBound?: () => void;
 }) {
   // A pending step past the grace period is reported as an unknown outcome, not as
@@ -371,7 +365,10 @@ function StepRow({
           {step.label}
           {m.note && <span className="ml-2 text-xs font-normal text-muted-foreground">{m.note}</span>}
         </p>
-        <p className="text-xs text-muted-foreground">{step.source}</p>
+        <p className="text-xs text-muted-foreground">
+          {step.source}
+          {step.provenance && <span> · {step.provenance}</span>}
+        </p>
         {step.detail && <p className="mt-1 text-sm">{step.detail}</p>}
         {state === "unknown" && (
           <p className="mt-1 text-sm text-muted-foreground">
@@ -390,14 +387,13 @@ function StepRow({
             Add the county →
           </Link>
         )}
-        {/* An in-page anchor, NOT a link to the edit form. Sending the reviewer to
-            /edit to resolve SAM threw away the whole confirm context and left Back
-            pointing at the dashboard. The resolve tool is rendered further down this
-            same page instead. */}
-        {step.state === "needs_input" && step.resolveField === "sam" && (
-          <a href="#sam-registration" className="mt-1 inline-block text-xs font-medium underline">
-            Resolve SAM.gov registration below →
-          </a>
+        {/* Resolved IN PLACE, like the EIN picker. Earlier versions linked to /edit
+            (which threw away the confirm context and left Back on the dashboard), then
+            anchored to a second SAM card lower down -- two boxes for one job. */}
+        {step.resolveField === "sam" && (
+          <div className="mt-2">
+            <SamRegistration client={client} />
+          </div>
         )}
       </div>
     </li>
