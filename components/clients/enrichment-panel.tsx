@@ -65,8 +65,13 @@ export function EnrichmentPanel({
   const startedAt = useRef<number>(Date.now());
   const [graceExpired, setGraceExpired] = useState(false);
 
-  const pending = steps.filter((s) => s.state === "pending");
+  // Background steps (the LLM distillation) deliberately do NOT hold the screen: they
+  // take ~6x longer than the API pulls and nothing downstream waits on them.
+  const pending = steps.filter((s) => s.state === "pending" && !s.background);
   const settled = pending.length === 0;
+  // Polling still continues while ANY step is unresolved, so a background step that
+  // lands while you are still reading updates in place.
+  const anyPending = steps.some((s) => s.state === "pending");
   const attention = steps.filter((s) => s.state === "needs_input");
 
   const load = useCallback(async () => {
@@ -83,10 +88,10 @@ export function EnrichmentPanel({
 
   // Poll only in ceremony mode, and only while something is actually pending.
   useEffect(() => {
-    if (mode !== "ceremony" || settled) return;
+    if (mode !== "ceremony" || !anyPending) return;
     const t = setInterval(load, POLL_MS);
     return () => clearInterval(t);
-  }, [mode, settled, load]);
+  }, [mode, anyPending, load]);
 
   useEffect(() => {
     if (mode !== "ceremony" || settled) return;

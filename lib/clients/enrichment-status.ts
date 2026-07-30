@@ -49,6 +49,12 @@ export type EnrichmentStep = {
   // with its provenance, which meant reading the same eight facts twice and left two
   // places to disagree. One row per source, carrying its own evidence.
   provenance?: string;
+  // True for a step nobody should wait on. The profile distillation is an LLM call
+  // (~1 min, vs ~10s for the four API/table lookups) and matching does not depend on
+  // it -- occupancy is profile-free, so a pair scored before it lands simply falls
+  // back to the Phase-1 narrative. Treating it as blocking held the whole screen in
+  // "Pulling public data" for a minute after everything actionable was already done.
+  background?: boolean;
 };
 
 // How long a `pending` step is reported as "working" before it is reported as
@@ -250,8 +256,11 @@ export function deriveEnrichmentSteps(client: Client): EnrichmentStep[] {
     label: "Profile distillation",
     source: "GRANTED matcher context",
     state: client.client_profile ? "done" : "pending",
-    detail: client.client_profile ? "Narrative context built for matching." : null,
+    detail: client.client_profile
+      ? "Narrative context built for matching."
+      : "Building in the background — no need to wait for this one.",
     provenance: "Citation + narrative only — never affects occupancy.",
+    background: true,
   });
 
   return steps;
@@ -270,10 +279,12 @@ function summarizeUsaspending(summary: Record<string, unknown> | null): string {
   return parts.length ? parts.join(" · ") : "Checked — no federal award history found.";
 }
 
-// True when nothing is left to wait for: every step has reached a terminal state.
-// needs_input IS terminal -- waiting longer will not resolve it, only a human will.
+// True when nothing WORTH WAITING FOR is outstanding: every non-background step has
+// reached a terminal state. needs_input IS terminal -- waiting longer will not resolve
+// it, only a human will. Background steps (the LLM distillation) are excluded: they
+// keep running either way and nothing downstream is gated on them.
 export function allSettled(steps: EnrichmentStep[]): boolean {
-  return steps.every((s) => s.state !== "pending");
+  return steps.every((s) => s.background || s.state !== "pending");
 }
 
 export function needsAttention(steps: EnrichmentStep[]): EnrichmentStep[] {

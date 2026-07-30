@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,27 @@ type CompleteProfileState = {
 };
 
 const CLIENT_STATUSES = ["active", "paused", "closed"];
+
+// Full-screen overlay, PORTALED to document.body. The app shell's root div carries
+// padding and its own stacking context, so a `fixed inset-0` overlay rendered inside
+// <main> aligned to that padding box rather than the viewport -- leaving a strip of
+// nav and page backdrop showing along the top. A portal escapes every ancestor
+// containing block, which fixes it without depending on which property caused it.
+function FullScreen({ children }: { children: React.ReactNode }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+  return createPortal(
+    <div
+      role="status"
+      aria-live="polite"
+      className="fixed inset-0 z-[100] flex flex-col items-center justify-center gap-6 bg-white px-6 text-center"
+    >
+      {children}
+    </div>,
+    document.body,
+  );
+}
 
 // The invite is a DELIBERATE per-completion choice, surfaced as a confirm step rather
 // than a checkbox buried in the form. These records are usually built for clients who
@@ -84,11 +106,7 @@ export function CompleteProfile({
     // means "for light backgrounds") and carries no wordmark, which is what makes it
     // safe to rotate -- spinning a lockup would put the word upside down.
     return (
-      <div
-        role="status"
-        aria-live="polite"
-        className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-6 bg-white px-6 text-center"
-      >
+      <FullScreen>
         <h2 className="font-serif text-2xl font-semibold text-brand-navy">Profile Created</h2>
 
         {/* eslint-disable-next-line @next/next/no-img-element -- plain <img> keeps the
@@ -135,7 +153,7 @@ export function CompleteProfile({
             }
           }
         `}</style>
-      </div>
+      </FullScreen>
     );
   }
 
