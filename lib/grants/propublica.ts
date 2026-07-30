@@ -176,6 +176,10 @@ export type EinCandidate = {
   // Human-readable evidence, so the confirm screen can justify the ranking rather
   // than presenting a bare score the reviewer has to trust blindly.
   reasons: string[];
+  // Kept on the candidate (not just folded into `confidence`) because auto-bind
+  // reasons about UNIQUENESS WITHIN A LOCALITY, which needs the raw signals.
+  cityMatch: boolean;
+  stateMatch: boolean;
 };
 
 export type EinResolution = {
@@ -247,17 +251,31 @@ export async function resolveEinCandidates(signals: {
       else if (nameExact && stateMatch) confidence = "medium";
       else if (nameExact || stateMatch) confidence = "low";
 
-      scored.push({ ein, matchedName: rawName, city, state, confidence, reasons });
+      scored.push({ ein, matchedName: rawName, city, state, confidence, reasons, cityMatch, stateMatch });
     }
 
     const rank: Record<EinConfidence, number> = { high: 0, medium: 1, low: 2 };
     scored.sort((a, b) => rank[a.confidence] - rank[b.confidence]);
     const top = scored.slice(0, 5);
 
-    // Auto-bind demands a UNIQUE high-confidence hit. Two orgs that both match name,
-    // city and state are genuinely indistinguishable from here, so the human decides.
-    const highs = top.filter((c) => c.confidence === "high");
-    const autoBind = highs.length === 1 ? highs[0] : null;
+    // AUTO-BIND ON UNIQUENESS, not on an exact name.
+    //
+    // Requiring an exact name match was too strict in the common case: an org's trade
+    // name rarely equals its registered name ("Jones Center" vs "Jones Center for
+    // Families"), so a single obvious candidate in the right city was graded merely
+    // "likely" and pushed to a human -- who then had one plausible option in the
+    // client's own state and no way to add information. That is a confirmation
+    // request with no decision in it.
+    //
+    // Uniqueness within a locality is the real signal. Two tiers, most specific first:
+    //   1. Exactly one candidate agreeing on BOTH city and state.
+    //   2. Otherwise, exactly one candidate agreeing on state.
+    // Ambiguity still refuses: two same-named orgs in one state, or a name that only
+    // matched loosely with no location agreement, go to the human with the evidence.
+    const inCityAndState = top.filter((c) => c.cityMatch && c.stateMatch);
+    const inState = top.filter((c) => c.stateMatch);
+    const autoBind =
+      inCityAndState.length === 1 ? inCityAndState[0] : inState.length === 1 ? inState[0] : null;
 
     return { candidates: top, autoBind };
   } catch {

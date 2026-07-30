@@ -36,6 +36,7 @@ export function EnrichmentPanel({
   mode,
   editHref,
   dashboardHref,
+  continueLabel,
 }: {
   clientId: string;
   kindLabel: string;
@@ -43,6 +44,9 @@ export function EnrichmentPanel({
   mode: "ceremony" | "tab";
   editHref: string;
   dashboardHref: string;
+  // Names what comes NEXT rather than implying the intake is over. Intake continues
+  // to engagement after this step for a client; a prospect ends here.
+  continueLabel?: string;
 }) {
   const [steps, setSteps] = useState(initialSteps);
   const [rerunning, setRerunning] = useState(false);
@@ -157,7 +161,7 @@ export function EnrichmentPanel({
         </Button>
         {mode === "ceremony" && (
           <Link href={dashboardHref} className={buttonVariants()}>
-            {settled ? "Looks right — continue" : "Skip ahead"}
+            {continueLabel ?? (settled ? "Looks right — continue" : "Skip ahead")}
           </Link>
         )}
         <span className="text-xs text-muted-foreground">
@@ -184,11 +188,15 @@ type EinCandidate = {
 // In-place EIN resolution: fetch ranked candidates, show the EVIDENCE behind each,
 // bind the chosen one. Mirrors the SAM.gov resolve/confirm flow.
 //
-// Why candidates rather than a silent auto-fill: a wrong EIN pulls another
-// organization's 990, and that figure then travels into client-facing work as a
-// sourced citation. A confident guess is offered (ranked first, labelled), but the
-// commit stays a human keystroke -- the cost of being wrong is much higher than the
-// cost of one click.
+// AUTO-BINDS WHEN UNAMBIGUOUS. If the server reports exactly one candidate agreeing
+// on city+state (or, failing that, exactly one in the state), it is taken without
+// asking: presenting a single plausible option in the client's own state is a
+// confirmation request with no decision in it, and the reviewer has nothing to add.
+//
+// Genuine ambiguity still stops here, because a wrong EIN pulls another
+// organization's 990 and that figure travels into client-facing work as a sourced
+// citation. Two same-named orgs in one state is a real question for a human; one
+// obvious match is not.
 function EinPicker({ clientId, onBound }: { clientId: string; onBound: () => void }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -206,6 +214,13 @@ function EinPicker({ clientId, onBound }: { clientId: string; onBound: () => voi
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || "Lookup failed.");
       setCandidates((d.candidates ?? []) as EinCandidate[]);
+      // If the server says one candidate is unambiguous, take it instead of asking.
+      // Presenting a single plausible option in the client's own state is a
+      // confirmation request with no decision in it -- the reviewer has nothing to
+      // add. Ambiguous results still stop and ask, with the evidence shown.
+      if (typeof d.autoBindable === "string" && d.autoBindable) {
+        await bind(d.autoBindable, { auto: true });
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Lookup failed.");
     } finally {
@@ -213,7 +228,7 @@ function EinPicker({ clientId, onBound }: { clientId: string; onBound: () => voi
     }
   }
 
-  async function bind(ein: string) {
+  async function bind(ein: string, opts?: { auto: boolean }) {
     setBusy(ein);
     setErr(null);
     try {
@@ -227,7 +242,11 @@ function EinPicker({ clientId, onBound }: { clientId: string; onBound: () => voi
       // Report the real outcome: a saved EIN that matched no filings is a different
       // result from one that pulled a 990, and the reviewer needs to know which.
       if (!d.pulled) {
-        setErr("Saved, but no IRS 990 filings came back for that EIN. Worth double-checking it.");
+        setErr(
+          opts?.auto
+            ? "Matched an EIN automatically, but no IRS 990 filings came back for it. Pick another below or enter one."
+            : "Saved, but no IRS 990 filings came back for that EIN. Worth double-checking it.",
+        );
       }
       onBound();
       if (d.pulled) setOpen(false);
@@ -371,10 +390,14 @@ function StepRow({
             Add the county →
           </Link>
         )}
+        {/* An in-page anchor, NOT a link to the edit form. Sending the reviewer to
+            /edit to resolve SAM threw away the whole confirm context and left Back
+            pointing at the dashboard. The resolve tool is rendered further down this
+            same page instead. */}
         {step.state === "needs_input" && step.resolveField === "sam" && (
-          <Link href={editHref} className="mt-1 inline-block text-xs font-medium underline">
-            Resolve SAM.gov registration →
-          </Link>
+          <a href="#sam-registration" className="mt-1 inline-block text-xs font-medium underline">
+            Resolve SAM.gov registration below →
+          </a>
         )}
       </div>
     </li>

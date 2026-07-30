@@ -4,8 +4,10 @@ import { format, parseISO } from "date-fns";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
+import { WizardProgress } from "@/components/clients/wizard-progress";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EnrichmentPanel } from "@/components/clients/enrichment-panel";
+import { SamRegistration } from "../../sam-registration";
 import { deriveEnrichmentSteps } from "@/lib/clients/enrichment-status";
 import { samExpiryFlag } from "@/lib/sam/expiry";
 import { isUnconvertedLead } from "@/lib/leads/stage";
@@ -46,6 +48,10 @@ export default async function ClientApiDataPage({
   const steps = deriveEnrichmentSteps(client);
   const dashboardHref = `/clients/${client.id}`;
   const editHref = `/clients/${client.id}/edit`;
+  const isProspect = kindLabel === "prospect";
+  // Where "continue" goes from the confirm step: a client still owes engagement
+  // terms (step 7); a prospect has none, so its intake ends here at the dashboard.
+  const continueHref = isNew && !isProspect ? `/clients/${client.id}/finish` : dashboardHref;
 
   // active / expired / unregistered, derived at read time rather than stored -- an
   // "active" flag written last year would still read active today.
@@ -69,13 +75,22 @@ export default async function ClientApiDataPage({
       )}
       <PageHeader title={isNew ? client.name : `${client.name} — API data`} />
       <div className="max-w-3xl space-y-8 p-8">
+        {isNew && (
+          <WizardProgress
+            step={isProspect ? 4 : 6}
+            total={isProspect ? 4 : 7}
+            title="Public data"
+            kindLabel={kindLabel}
+          />
+        )}
         <EnrichmentPanel
           clientId={client.id}
           kindLabel={kindLabel}
           initialSteps={steps}
           mode={isNew ? "ceremony" : "tab"}
           editHref={editHref}
-          dashboardHref={dashboardHref}
+          dashboardHref={continueHref}
+          continueLabel={isNew && !isProspect ? "Next: engagement" : undefined}
         />
 
         {/* Provenance. Every value here is a citation with a date, never a matcher
@@ -115,7 +130,7 @@ export default async function ClientApiDataPage({
               note={
                 client.uei
                   ? `UEI ${client.uei}${client.sam_matched_name ? ` · ${client.sam_matched_name}` : ""} · checked ${fmtWhen(client.sam_checked_at)}`
-                  : "Required before any federal submission. Bind a UEI on the edit page."
+                  : "Required before any federal submission. Resolve it below."
               }
             />
             <Row label="RUCC codes" value={client.rucc_codes || "—"} note="Derived from county + state (USDA ERS 2023)." />
@@ -125,6 +140,19 @@ export default async function ClientApiDataPage({
               value={client.client_profile ? "Built" : "—"}
               note="Narrative context for matching. Never affects occupancy."
             />
+          </CardContent>
+        </Card>
+
+        {/* SAM.gov is resolved HERE, not on the edit form. Binding a UEI is a
+            human decision (two orgs can share a name), and this component already
+            owns that resolve/confirm flow and persists independently of any form --
+            so it belongs on the screen where the gap is reported. */}
+        <Card className={RAIL} id="sam-registration">
+          <CardHeader>
+            <CardTitle>SAM.gov registration</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <SamRegistration client={client} />
           </CardContent>
         </Card>
 

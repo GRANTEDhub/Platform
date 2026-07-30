@@ -10,7 +10,14 @@ import { enrichClient } from "@/lib/clients/enrich";
 import { parseNarrative, narrativeToIntakeData, parseChipList } from "@/lib/intake/narrative";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import { removeObjects } from "@/lib/storage";
+import { canSendOutreach } from "@/lib/email/guard";
+import { sendClientInviteEmail } from "@/lib/email/send";
+import { resolveOrCreateAuthUser, generateClientSetupLink } from "@/lib/clients/portal-login";
 import type { HardConstraint } from "@/types/database";
+
+// Allowed client statuses + a recipient shape check, for the narrow engagement write.
+const CLIENT_STATUS_VALUES = ["active", "paused", "closed"];
+const EMAIL_SHAPE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 // Parse + validate the hard_constraints hidden field (JSON from the picker).
 // Reject-on-save: a malformed constraint throws with a specific message rather
@@ -386,4 +393,146 @@ export async function deleteClientAction(
   revalidatePath("/clients");
   revalidatePath("/intel/prospects");
   redirect("/clients");
+}
+
+// ── Step 7 of intake: engagement + finish ─────────────────────────────────────
+//
+// The intake wizard now creates the record at the end of the profile pages, so the
+// data-pull confirm and the engagement terms are steps 6 and 7 against a REAL row.
+// This is the final commit.
+//
+// NARROW ON PURPOSE: it writes ONLY the engagement columns. It must never route
+// through parse(), which builds a payload of every column it reads -- a form that
+// carries only engagement fields would null the name, narrative, address and matcher
+// config on its way past. (Same trap the hidden-passthrough inputs exist to avoid on
+// the edit form.)
+//
+// The result shape is deliberately NOT exported: a "use server" module may only
+// export async functions, so the client component mirrors it -- same reason
+// ClientActionResult above is unexported.
+interface CompleteProfileState {
+  ok: boolean;
+  error?: string;
+  invited?: boolean;
+  emailed?: boolean;
+  emailSkippedReason?: string;
+  recipient?: string;
+}
+
+export async function completeClientProfileAction(
+  id: string,
+  formData: FormData,
+): Promise<CompleteProfileState> {
+  await requireAdmin();
+  const admin = createServiceClient();
+
+  const get = (k: string) => {
+    const v = formData.get(k);
+    return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
+  };
+
+  const status = get("status");
+  const engagement = {
+    status: status && CLIENT_STATUS_VALUES.includes(status) ? status : "active",
+    engagement_tier: get("engagement_tier"),
+    retainer_hours: get("retainer_hours") ? Number(get("retainer_hours")) : 0,
+    contract_start: get("contract_start"),
+    contract_end: get("contract_end"),
+    account_managed: get("account_managed") === "true",
+  };
+
+  const { error: upErr } = await admin.from("clients").update(engagement).eq("id", id);
+  if (upErr) return { ok: false, error: `Couldn't save the engagement: ${upErr.message}` };
+
+  const { data: client } = await admin
+    .from("clients")
+    .select("id, name, primary_contact_name, primary_contact_email")
+    .eq("id", id)
+    .single<{
+      id: string;
+      name: string;
+      primary_contact_name: string | null;
+      primary_contact_email: string | null;
+    }>();
+
+  // Inviting the client is OPT-IN per completion, not implied by finishing the
+  // profile -- these records are usually built FOR existing clients who should not
+  // receive a "welcome, set up your account" email out of nowhere. Unchecked is the
+  // default and the common case.
+  const wantsInvite = formData.get("send_invite") === "true";
+  if (!wantsInvite || !client) {
+    revalidatePath(`/clients/${id}`);
+    return { ok: true, invited: false };
+  }
+
+  const email = (client.primary_contact_email ?? "").trim().toLowerCase();
+  if (!EMAIL_SHAPE.test(email)) {
+    // Not a failure of the completion: the engagement is saved. Report it so the
+    // screen can say the invite did not go and why.
+    return { ok: true, invited: false, error: "No valid primary contact email — invitation not sent." };
+  }
+
+  // Seat the contact and provision their login, mirroring inviteClientAction:
+  // membership BEFORE the auth user so the on_auth_user_created trigger links it
+  // rather than creating a staff profile. Idempotent -- a contact already seated is
+  // left as-is rather than erroring.
+  const { data: existing } = await admin
+    .from("client_members")
+    .select("id, user_id")
+    .eq("client_id", id)
+    .eq("email", email)
+    .maybeSingle<{ id: string; user_id: string | null }>();
+  if (!existing) {
+    const { error: mErr } = await admin
+      .from("client_members")
+      .insert({ client_id: id, email, role: "primary" });
+    if (mErr) return { ok: true, invited: false, error: `Couldn't seat the contact: ${mErr.message}` };
+  }
+
+  let userId: string | null = existing?.user_id ?? null;
+  if (!userId) {
+    try {
+      userId = await resolveOrCreateAuthUser(admin, email);
+    } catch {
+      return { ok: true, invited: false, error: "Couldn't create the client's login." };
+    }
+    if (userId) {
+      await admin
+        .from("client_members")
+        .update({ user_id: userId, activated_at: new Date().toISOString() })
+        .eq("client_id", id)
+        .eq("email", email);
+    }
+  }
+
+  // The email itself goes through the SAME gate as every outreach send (production +
+  // enabled + allowlisted). A gated send is reported as skipped WITH the reason --
+  // never as sent -- because in preview it silently would not go, and "invitation
+  // sent" would be a lie on the one screen that exists to confirm it.
+  const gate = canSendOutreach(email);
+  if (!gate.ok) {
+    revalidatePath(`/clients/${id}`);
+    return { ok: true, invited: true, emailed: false, emailSkippedReason: gate.reason, recipient: email };
+  }
+  try {
+    const url = await generateClientSetupLink(admin, email);
+    await sendClientInviteEmail({
+      to: email,
+      contactName: client.primary_contact_name,
+      orgName: client.name,
+      url,
+    });
+  } catch (e) {
+    console.error("[complete-profile] invite email failed:", e instanceof Error ? e.message : e);
+    return {
+      ok: true,
+      invited: true,
+      emailed: false,
+      emailSkippedReason: "the send failed — see logs",
+      recipient: email,
+    };
+  }
+
+  revalidatePath(`/clients/${id}`);
+  return { ok: true, invited: true, emailed: true, recipient: email };
 }

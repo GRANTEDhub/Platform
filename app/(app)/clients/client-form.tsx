@@ -160,7 +160,6 @@ export function ClientForm({
         { key: "needs", title: "What you need funded" },
         { key: "partnerships", title: "Partnerships" },
         { key: "anything", title: "Anything else" },
-        { key: "engagement", title: "Engagement" },
       ]
     : [
         { key: "start", title: "Website" },
@@ -169,6 +168,9 @@ export function ClientForm({
       ];
   const lastStep = steps.length - 1;
   const hasStep = (key: string) => steps.some((s) => s.key === key);
+  // Steps continue past this form: 6 = the data-pull confirm, 7 = engagement (both
+  // post-create, on their own routes). A prospect stops at the data-pull confirm.
+  const totalSteps = steps.length + (isClient ? 2 : 1);
 
   const validUrl = (() => {
     try {
@@ -292,14 +294,14 @@ export function ClientForm({
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span className="font-medium uppercase tracking-wide">
-              Step {step + 1} of {steps.length} · {steps[step].title}
+              Step {step + 1} of {totalSteps} · {steps[step].title}
             </span>
             <span>New {kindLabel}</span>
           </div>
           <div className="flex gap-1.5">
-            {steps.map((s, i) => (
+            {Array.from({ length: totalSteps }, (_, i) => (
               <span
-                key={s.key}
+                key={i}
                 className={`h-1 flex-1 rounded-full transition-colors ${
                   i <= step ? "bg-brand-orange" : "bg-brand-navy/10"
                 }`}
@@ -705,7 +707,9 @@ export function ClientForm({
             </Button>
           )}
           <span className="text-xs text-muted-foreground">
-            {step < lastStep ? "Nothing saves until the last step." : "This creates the record and starts enrichment."}
+            {step < lastStep
+              ? "Nothing saves until you finish these pages."
+              : "Saves the record and starts the data pulls — two steps left."}
           </span>
         </div>
       )}
