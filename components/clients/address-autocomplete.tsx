@@ -223,7 +223,17 @@ export function AddressAutocomplete({
             : isBadKey
               ? `Address lookup failed: ${msg} — the key value looks wrong, or production hasn't been redeployed since it was added (the key is baked in at build time). Re-copy it into Vercel and redeploy.`
               : is403
-                ? `Address lookup failed: ${msg} — the key is recognized but not permitted here: check its Websites restriction covers this domain and its API restrictions include Places API (New).`
+                // The overwhelmingly common cause of a 403 is browsing a
+                // *.vercel.app deployment/preview host instead of the custom domain:
+                // the key's Websites restriction lists app.grantedco.com, so Google
+                // rejects the raw deploy URL by design. Name that FIRST, because
+                // "check your key restrictions" sends people to reconfigure a key
+                // that is actually set up correctly.
+                ? `Address lookup failed: ${msg} — ${
+                    /vercel\.app$/.test(window.location.hostname)
+                      ? `you're on ${window.location.hostname}, which the API key's Websites restriction doesn't cover. Open app.grantedco.com instead — the key is fine.`
+                      : "the key is recognized but not permitted here: check its Websites restriction covers this domain and its API restrictions include Places API (New)."
+                  }`
                 : `Address lookup failed: ${msg}`,
         );
         setFailures((n) => n + 1);

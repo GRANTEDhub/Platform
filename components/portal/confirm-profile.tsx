@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { SpinningMark } from "@/components/ui/spinning-mark";
 import {
   useNarrative,
   NarrativeHiddenInput,
@@ -75,28 +76,8 @@ export function ConfirmProfile({
         className="fixed inset-0 z-[100] flex flex-col items-center justify-center gap-6 bg-white px-6 text-center"
       >
         <h2 className="font-serif text-2xl font-semibold text-brand-navy">Profile confirmed</h2>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/granted-mark-light.svg" alt="" aria-hidden="true" className="cp-spin h-16 w-auto" />
+        <SpinningMark />
         <p className="text-sm text-muted-foreground">Preparing your grant matches</p>
-        <style jsx>{`
-          .cp-spin {
-            transform-origin: 50% 50%;
-            animation: cp-spin 1.4s linear infinite;
-          }
-          @keyframes cp-spin {
-            from {
-              transform: rotate(0deg);
-            }
-            to {
-              transform: rotate(360deg);
-            }
-          }
-          @media (prefers-reduced-motion: reduce) {
-            .cp-spin {
-              animation: none;
-            }
-          }
-        `}</style>
       </div>,
       document.body,
     );
