@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2 } from "lucide-react";
 import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
@@ -80,23 +79,62 @@ export function CompleteProfile({
   }
 
   if (done) {
+    // Solid white, one centred flex column, three stacked elements: label, spinning
+    // logomark, redirect note. granted-mark-light.svg is the navy-fill mark (the name
+    // means "for light backgrounds") and carries no wordmark, which is what makes it
+    // safe to rotate -- spinning a lockup would put the word upside down.
     return (
       <div
         role="status"
         aria-live="polite"
-        className="fixed inset-0 z-[60] flex flex-col items-center justify-center bg-brand-navy px-6 text-center"
+        className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-6 bg-white px-6 text-center"
       >
-        <CheckCircle2 className="h-14 w-14 text-emerald-400" aria-hidden="true" />
-        <h2 className="mt-6 font-serif text-2xl font-semibold text-white">Profile completed</h2>
-        <p className="mt-2 max-w-md text-sm text-white/70">
-          {!done.invited
-            ? `${clientName} is set up. No account invitation was sent.`
-            : done.emailed
+        <h2 className="font-serif text-2xl font-semibold text-brand-navy">Profile Created</h2>
+
+        {/* eslint-disable-next-line @next/next/no-img-element -- plain <img> keeps the
+            spin transform on a single element; next/image wraps it in a sized span. */}
+        <img
+          src="/granted-mark-light.svg"
+          alt=""
+          aria-hidden="true"
+          className="cp-spin h-16 w-auto"
+        />
+
+        <p className="text-sm text-muted-foreground">Redirecting to Dashboard</p>
+
+        {/* Kept ONLY when an invitation was actually attempted. On the common path
+            (no invite) this stays out of the way, but a send that was blocked must
+            still say so -- this screen is the only place that reports it. */}
+        {done.invited && (
+          <p className="max-w-md text-xs text-muted-foreground">
+            {done.emailed
               ? `Account invitation sent to ${done.recipient}.`
-              : `${clientName}'s portal account was created, but the invitation email was not sent — ${done.emailSkippedReason ?? "sending is disabled here"}.`}
-        </p>
-        {done.error && <p className="mt-2 max-w-md text-sm text-amber-300">{done.error}</p>}
-        <p className="mt-6 text-xs text-white/50">Taking you to the dashboard…</p>
+              : `Portal account created, but the invitation email was not sent — ${done.emailSkippedReason ?? "sending is disabled here"}.`}
+          </p>
+        )}
+        {done.error && <p className="max-w-md text-xs font-medium text-amber-700">{done.error}</p>}
+
+        <style jsx>{`
+          .cp-spin {
+            /* Centre the origin explicitly so the mark pivots on itself rather than
+               orbiting a corner. */
+            transform-origin: 50% 50%;
+            animation: cp-spin 1.4s linear infinite;
+          }
+          @keyframes cp-spin {
+            from {
+              transform: rotate(0deg);
+            }
+            to {
+              transform: rotate(360deg);
+            }
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .cp-spin {
+              animation: none;
+            }
+          }
+        `}</style>
       </div>
     );
   }
