@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ChipInput } from "@/components/ui/chip-input";
@@ -145,6 +145,8 @@ export function ClientForm({
   // mounted (hidden) so its values survive navigation.
   const [step, setStep] = useState(0);
   const [maxStep, setMaxStep] = useState(0);
+  const [stepError, setStepError] = useState<string | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
 
   // A PROSPECT intake stays deliberately light: website -> general -> needs. The
   // partnership / anything-else / engagement depth is for a signed client, not an
@@ -228,13 +230,27 @@ export function ClientForm({
     }
   }
 
+  // Name is the one field the server hard-requires. Catch it while its step is on
+  // screen -- submitting happens on the LAST step, so a server-side rejection would
+  // otherwise surface an error several steps away from the field that caused it.
   function goNext() {
+    if (steps[step].key === "general") {
+      const el = formRef.current?.elements.namedItem("name");
+      const value = el instanceof HTMLInputElement ? el.value.trim() : "";
+      if (!value) {
+        setStepError(`A ${kindLabel} name is required before continuing.`);
+        (el as HTMLInputElement | null)?.focus();
+        return;
+      }
+    }
+    setStepError(null);
     const next = Math.min(step + 1, lastStep);
     setStep(next);
     setMaxStep((m) => Math.max(m, next));
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
   function goBack() {
+    setStepError(null);
     setStep((s) => Math.max(0, s - 1));
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -245,7 +261,14 @@ export function ClientForm({
   const stepClass = (i: number) => (isEdit || i === step ? "space-y-8" : "hidden");
 
   return (
-    <form action={handleSubmit} className="max-w-3xl space-y-8">
+    // noValidate on the WIZARD only. Steps are hidden with CSS while still mounted,
+    // and the browser refuses to submit a form containing an invalid control it
+    // cannot focus (e.g. a malformed primary_contact_email on an off-screen step) --
+    // it aborts with a console warning and NO visible error, so the Save button just
+    // appears dead. Validation is the server's job here; the one hard requirement
+    // (name) is caught by goNext while its step is on screen. Edit shows everything
+    // at once, so native validation is safe and useful there.
+    <form ref={formRef} action={handleSubmit} noValidate={!isEdit} className="max-w-3xl space-y-8">
       {submitting && !isEdit && <CreateTransition kindLabel={kindLabel} />}
 
       <input type="hidden" name="kind" value={kind} />
@@ -602,6 +625,15 @@ export function ClientForm({
           <input type="hidden" name="contract_start" value={client?.contract_start ?? ""} readOnly />
           <input type="hidden" name="contract_end" value={client?.contract_end ?? ""} readOnly />
         </>
+      )}
+
+      {stepError && (
+        <div
+          role="alert"
+          className="flex items-center gap-2 rounded-xl bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900 ring-1 ring-amber-200"
+        >
+          {stepError}
+        </div>
       )}
 
       {formError && (
