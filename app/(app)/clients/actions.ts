@@ -511,22 +511,16 @@ export async function completeClientProfileAction(
   const { error: upErr } = await admin.from("clients").update(engagement).eq("id", id);
   if (upErr) return { ok: false, error: `Couldn't save the engagement: ${upErr.message}` };
 
-  const { data: client } = await admin
-    .from("clients")
-    .select("id, name, primary_contact_name, primary_contact_email")
-    .eq("id", id)
-    .single<{
-      id: string;
-      name: string;
-      primary_contact_name: string | null;
-      primary_contact_email: string | null;
-    }>();
-
   // NO INVITE FROM HERE. Completing the profile used to offer an opt-in invitation,
   // which contradicted the onboarding sequence: the invite is its LAST step and must
   // wait for the grants to be reviewed, because it is what releases them to the client.
   // Two entry points meant the earlier one could fire first -- which is what happened
   // in testing. inviteClientToPortalAction (the dashboard button) is now the only path.
+  //
+  // The client SELECT that used to sit here went with it: its only consumer was the
+  // invite call, so it had become a wasted round-trip on a hot path (every intake
+  // completion). tsc does not flag it -- noUnusedLocals is off, so an assigned-never-read
+  // destructured binding is not a type error.
   revalidatePath(`/clients/${id}`);
   return { ok: true, invited: false };
 }
