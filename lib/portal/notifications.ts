@@ -76,7 +76,6 @@ export function deriveClientNotifications({
           id: "confirm-profile",
           title: "Confirm your organization's profile",
           tag: "Takes a minute — it sharpens your matches",
-          priority: "high",
           href: "/portal/profile",
         },
       ],
@@ -100,7 +99,7 @@ export function deriveClientNotifications({
     });
   }
   if (nextStep) {
-    items.push({ id: "next-step", title: nextStep, tag: "From your team", priority: "high", href: null });
+    items.push({ id: "next-step", title: nextStep, tag: "From your team", href: null });
   }
 
   return { count: newAlerts + pending, items, newAlerts, pending };

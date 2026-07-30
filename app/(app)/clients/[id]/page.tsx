@@ -162,21 +162,22 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
       actionItems.push({
         id: "matching",
         title: "Matching grants — nothing to do while this runs",
-        tag: "In progress",
+        busy: true,
+        stage: null,
       });
     } else if (cards.length === 0) {
       actionItems.push({
         id: "run-matches",
         title: "Run grant matches to surface opportunities",
         tag: "Use the button, top right",
-        priority: "high",
+        stage: { step: 1, total: 3 },
       });
     } else if (toReview > 0) {
       actionItems.push({
         id: "to-review",
         title: `Review ${toReview} matched grant${toReview === 1 ? "" : "s"}`,
         href: managed ? base : alertsHref,
-        priority: "high",
+        stage: { step: 2, total: 3 },
       });
     } else {
       // Reviewed and decided. The invite is the release: it seats the client AND is
@@ -186,7 +187,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         id: "invite-client",
         title: "Invite the client to their portal",
         tag: "Grants are reviewed — this releases them",
-        priority: "high",
+        stage: { step: 3, total: 3 },
       });
     }
   }
@@ -225,7 +226,6 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         ? "Run grant matches to surface opportunities"
         : "Run the first grant match for this client",
       tag: "Use the button, top right",
-      priority: "high",
     });
   }
   if (!inOnboarding && toReview > 0) {
@@ -249,19 +249,16 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
     });
   }
   if (!inOnboarding && client.next_step) {
-    actionItems.push({ id: "next-step", title: client.next_step, tag: "From your team", priority: "high" });
+    actionItems.push({ id: "next-step", title: client.next_step, tag: "From your team" });
   }
 
   const subLine =
     [client.org_type?.replace(/_/g, " "), client.location_city, client.location_state].filter(Boolean).join(" · ") || null;
 
-  const matchNote = matchInProgress ? (
-    <div className="mt-4 flex items-center gap-2 rounded-xl bg-brand-orange/10 px-4 py-3 text-sm font-medium text-brand-navy ring-1 ring-brand-orange/30">
-      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-brand-orange" />
-      Matching in progress — results refresh automatically.
-      <AutoRefresh enabled />
-    </div>
-  ) : null;
+  // No visible banner: the action item carries the spinner and the message now, and
+  // saying it twice on one screen read as clutter. AutoRefresh still mounts, because
+  // results appearing without a manual reload is behaviour, not decoration.
+  const matchNote = matchInProgress ? <AutoRefresh enabled /> : null;
 
   return (
     <div className="relative min-h-full">
