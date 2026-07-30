@@ -55,7 +55,7 @@ export default async function ClientApiDataPage({
         </div>
       )}
       <PageHeader title={isNew ? client.name : `${client.name} — API data`} />
-      <div className="max-w-3xl space-y-8 p-8">
+      <div className="max-w-5xl space-y-8 p-8">
         {isNew && (
           <WizardProgress
             step={isProspect ? 4 : 6}

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Loader2 } from "lucide-react";
 import { SamRegistration } from "@/app/(app)/clients/sam-registration";
 import type { Client } from "@/types/database";
 import {
@@ -346,8 +347,10 @@ function StepRow({
   const meta: Record<string, { icon: string; cls: string; note: string | null }> = {
     done: { icon: "✓", cls: "text-emerald-700 bg-emerald-50 ring-emerald-200", note: null },
     skipped: { icon: "–", cls: "text-neutral-600 bg-neutral-50 ring-neutral-200", note: "Not applicable" },
-    needs_input: { icon: "!", cls: "text-amber-800 bg-amber-50 ring-amber-200", note: "Needs a value" },
-    pending: { icon: "…", cls: "text-brand-navy bg-brand-orange/10 ring-brand-orange/30", note: "Working" },
+    // "Stopped" states say so outright. A row that will not change on its own must
+    // never be mistaken for one that still might.
+    needs_input: { icon: "!", cls: "text-amber-800 bg-amber-50 ring-amber-200", note: "Stopped — needs a value" },
+    pending: { icon: "", cls: "text-brand-navy bg-brand-orange/10 ring-brand-orange/30", note: "Still running" },
     unknown: { icon: "?", cls: "text-neutral-700 bg-neutral-50 ring-neutral-200", note: "No result yet" },
   };
   const m = meta[state];
@@ -358,7 +361,7 @@ function StepRow({
         aria-hidden="true"
         className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ring-1 ${m.cls}`}
       >
-        {m.icon}
+        {state === "pending" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : m.icon}
       </span>
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium text-brand-navy">

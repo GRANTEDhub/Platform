@@ -30,7 +30,7 @@ export default async function FinishClientPage({ params }: { params: { id: strin
   return (
     <div>
       <PageHeader title={client.name} />
-      <div className="max-w-3xl space-y-8 p-8">
+      <div className="max-w-5xl space-y-8 p-8">
         <WizardProgress step={7} total={7} title="Engagement" kindLabel="client" />
         <p className="text-sm text-muted-foreground">
           Last step. Set the engagement terms, then complete the profile.

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { refreshClientUSASpendingById } from "@/lib/grants/usaspending-refresh";
 import { refreshClientNonprofitFinanceById } from "@/lib/clients/nonprofit-finance-refresh";
+import { refreshClientSamById } from "@/lib/clients/sam-refresh";
 import { refreshClientRuccById } from "@/lib/clients/rucc-refresh";
 import { refreshClientProfileById } from "@/lib/clients/profile";
 
@@ -35,6 +36,19 @@ export async function enrichClient(db: SupabaseClient, clientId: string): Promis
   } catch (err) {
     console.error(
       "enrichClient: nonprofit-finance refresh failed for client",
+      clientId,
+      err instanceof Error ? err.message : err,
+    );
+  }
+  // SAM.gov registration, auto-bound only on an unambiguous name+state match. Was
+  // the one source that needed a button pressed before anything happened, which read
+  // as broken next to four rows that filled themselves in. Independently guarded and
+  // fill-if-empty, so a human-confirmed UEI is never replaced by a name search.
+  try {
+    await refreshClientSamById(db, clientId);
+  } catch (err) {
+    console.error(
+      "enrichClient: SAM auto-bind failed for client",
       clientId,
       err instanceof Error ? err.message : err,
     );
