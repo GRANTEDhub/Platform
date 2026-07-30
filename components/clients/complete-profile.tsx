@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { SpinningMark } from "@/components/ui/spinning-mark";
 
 // Step 7 of intake: engagement terms, then the explicit finish.
 //
@@ -85,7 +86,12 @@ export function CompleteProfile({
     if (busy) return;
     setBusy(true);
     setError(null);
-    formData.set("send_invite", sendInvite ? "true" : "false");
+    // "Save and finish later" writes the engagement fields and leaves. It never
+    // invites and never shows the completion receipt, because nothing has been
+    // completed -- the point is to stop without losing what you typed. The record
+    // itself was already created at step 5, so there is nothing else at risk.
+    const laterOnly = formData.get("finish_later") === "true";
+    formData.set("send_invite", !laterOnly && sendInvite ? "true" : "false");
     const res = await action(formData);
     if (!res.ok) {
       setError(res.error ?? "Couldn't complete the profile.");
@@ -96,27 +102,23 @@ export function CompleteProfile({
     // The completion screen appears AFTER the work, reporting what actually happened,
     // then dwells so it can be read before moving on. It is a receipt, not a progress
     // bar -- nothing is being narrated while it is up.
+    if (laterOnly) {
+      router.push(`/clients/${clientId}`);
+      return;
+    }
     setDone(res);
     setTimeout(() => router.push(`/clients/${clientId}`), 3000);
   }
 
   if (done) {
     // Solid white, one centred flex column, three stacked elements: label, spinning
-    // logomark, redirect note. granted-mark-light.svg is the navy-fill mark (the name
-    // means "for light backgrounds") and carries no wordmark, which is what makes it
-    // safe to rotate -- spinning a lockup would put the word upside down.
+    // logomark, redirect note. See components/ui/spinning-mark for why the mark is
+    // rendered in a square box.
     return (
       <FullScreen>
         <h2 className="font-serif text-2xl font-semibold text-brand-navy">Profile Created</h2>
 
-        {/* eslint-disable-next-line @next/next/no-img-element -- plain <img> keeps the
-            spin transform on a single element; next/image wraps it in a sized span. */}
-        <img
-          src="/granted-mark-light.svg"
-          alt=""
-          aria-hidden="true"
-          className="cp-spin h-16 w-auto"
-        />
+        <SpinningMark />
 
         <p className="text-sm text-muted-foreground">Redirecting to Dashboard</p>
 
@@ -131,28 +133,6 @@ export function CompleteProfile({
           </p>
         )}
         {done.error && <p className="max-w-md text-xs font-medium text-amber-700">{done.error}</p>}
-
-        <style jsx>{`
-          .cp-spin {
-            /* Centre the origin explicitly so the mark pivots on itself rather than
-               orbiting a corner. */
-            transform-origin: 50% 50%;
-            animation: cp-spin 1.4s linear infinite;
-          }
-          @keyframes cp-spin {
-            from {
-              transform: rotate(0deg);
-            }
-            to {
-              transform: rotate(360deg);
-            }
-          }
-          @media (prefers-reduced-motion: reduce) {
-            .cp-spin {
-              animation: none;
-            }
-          }
-        `}</style>
       </FullScreen>
     );
   }
@@ -223,7 +203,21 @@ export function CompleteProfile({
           <Button type="button" onClick={() => setConfirming(true)}>
             Complete profile
           </Button>
-          <span className="text-xs text-muted-foreground">Last step.</span>
+          {/* An explicit way OUT that keeps your work. Leaving via the nav used to
+              silently discard whatever was typed here, with no hint that the client
+              record itself was already safe. */}
+          <Button
+            type="submit"
+            name="finish_later"
+            value="true"
+            variant="outline"
+            disabled={busy}
+          >
+            {busy ? "Saving…" : "Save and finish later"}
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            The {clientName ? "client" : "record"} is already created — this step is the engagement terms.
+          </span>
         </div>
       ) : (
         <div className="space-y-3 rounded-xl border border-input bg-muted/40 p-4">
