@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { CheckCircle2 } from "lucide-react";
 import { Input, Label } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ChipInput } from "@/components/ui/chip-input";
@@ -212,6 +213,11 @@ export function ClientForm({
           ? `Filled in what the site supported. Not found: ${missing.join(", ")} — add by hand.`
           : "Filled in from the site. Review each step before saving.",
       );
+      // Advance on its own after a beat, so the confirmation is legible before the
+      // page changes under you. goNext (not setStep) so the mounted-once-reached
+      // high-water mark advances too -- otherwise step 2 never mounts and its
+      // crafted prefill is lost.
+      window.setTimeout(() => goNext(), 1000);
     } catch (e) {
       setCraftError(e instanceof Error ? e.message : "Couldn't read that site.");
     } finally {
@@ -221,6 +227,12 @@ export function ClientForm({
 
   async function handleSubmit(formData: FormData) {
     if (submitting) return;
+    // BACKSTOP: in the wizard, a save is only ever legitimate from the last step.
+    // Anything else is a stray submit (a focused button, an Enter keypress, a
+    // type-flipped node) and must not create the record halfway through the intake.
+    // Deliberately independent of the DOM/React fix above -- this one cannot be
+    // defeated by a reconciliation detail.
+    if (!isEdit && step !== lastStep) return;
     setSubmitting(true);
     setFormError(null);
     const result = await action(formData);
@@ -333,10 +345,22 @@ export function ClientForm({
                 craft the profile — the following steps open prefilled with whatever the site supports.
                 No website? Just continue and fill it in by hand.
               </p>
+              {/* Once the craft lands the button becomes a settled confirmation, not
+                  another thing to click -- the old version only signalled success by
+                  relabelling itself "Re-craft profile", which reads as "nothing
+                  happened". It then advances on its own, because the whole point of
+                  crafting is to go review the result. */}
               <div className="flex flex-wrap items-center gap-3 pt-1">
-                <Button type="button" variant="outline" disabled={!validUrl || crafting} onClick={craftProfile}>
-                  {crafting ? "Reading the site…" : crafted ? "Re-craft profile" : "Craft profile"}
-                </Button>
+                {crafted ? (
+                  <span className="inline-flex items-center gap-2 rounded-md bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 ring-1 ring-emerald-200">
+                    <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    Profile created
+                  </span>
+                ) : (
+                  <Button type="button" variant="outline" disabled={!validUrl || crafting} onClick={craftProfile}>
+                    {crafting ? "Reading the site…" : "Craft profile"}
+                  </Button>
+                )}
               </div>
               {crafting && (
                 <p className="text-xs text-muted-foreground">
@@ -431,6 +455,9 @@ export function ClientForm({
               title="Programs they run today"
               help="Programs already operating. What each does and who it serves."
               addLabel="+ Add existing program"
+              // A crafted site often yields many existing programs; folded by default
+              // so they don't bury the rest of this step.
+              collapsible
             />
           </section>
         </div>
@@ -660,12 +687,20 @@ export function ClientForm({
               Back
             </Button>
           )}
+          {/* DISTINCT KEYS ARE LOAD-BEARING. Without them these two occupy the same
+              slot, so React patches `type` on the SAME DOM node instead of replacing
+              it -- and because React flushes click handlers synchronously, the node
+              had already become type="submit" by the time the browser performed the
+              click's default action. Clicking "Next" INTO the last step therefore
+              submitted the form in that same click, skipping the last page entirely.
+              Separate keys make React swap the node, so the in-flight click has no
+              submit button to act on. handleSubmit also guards on step. */}
           {step < lastStep ? (
-            <Button type="button" onClick={goNext} disabled={crafting}>
+            <Button key="wizard-next" type="button" onClick={goNext} disabled={crafting}>
               Next
             </Button>
           ) : (
-            <Button type="submit" disabled={submitting} aria-busy={submitting}>
+            <Button key="wizard-save" type="submit" disabled={submitting} aria-busy={submitting}>
               {submitting ? "Saving…" : submitLabel}
             </Button>
           )}

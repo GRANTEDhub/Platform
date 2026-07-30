@@ -124,16 +124,24 @@ export function ProgramsSection({
   title = "Programs",
   help = "Each program: what it does and who it serves. Mark existing vs. planned.",
   addLabel = "+ Add program",
+  collapsible = false,
 }: {
   c: NarrativeController;
   status?: NarrativeProgram["status"];
   title?: string;
   help?: string;
   addLabel?: string;
+  // Start folded behind a count. A crafted profile can carry a dozen programs, which
+  // buries the rest of the step under boilerplate the reviewer usually just accepts.
+  // Only collapses when there is something to collapse -- an empty list stays open so
+  // the Add button is reachable without an extra click.
+  collapsible?: boolean;
 }) {
   const rows = c.n.programs
     .map((p, i) => ({ p, i }))
     .filter(({ p }) => (status ? p.status === status : true));
+  const foldable = collapsible && rows.length > 0;
+  const [open, setOpen] = useState(!foldable);
 
   const setProgram = (i: number, patch: Partial<NarrativeProgram>) =>
     c.set("programs", c.n.programs.map((p, idx) => (idx === i ? { ...p, ...patch } : p)));
@@ -147,9 +155,32 @@ export function ProgramsSection({
 
   return (
     <div>
-      <Label>{title}</Label>
-      <p className="mt-1 text-xs text-neutral-500">{help}</p>
-      <div className="mt-2 space-y-4">
+      {foldable ? (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex w-full items-center justify-between gap-3 rounded-md border border-input bg-muted/30 px-3 py-2.5 text-left"
+        >
+          <span>
+            <span className="text-sm font-medium text-brand-navy">{title}</span>
+            <span className="ml-2 text-xs text-neutral-500">
+              {rows.length} program{rows.length === 1 ? "" : "s"} identified
+            </span>
+          </span>
+          <span aria-hidden="true" className="text-xs text-neutral-500">
+            {open ? "Hide" : "Review / edit"}
+          </span>
+        </button>
+      ) : (
+        <>
+          <Label>{title}</Label>
+          <p className="mt-1 text-xs text-neutral-500">{help}</p>
+        </>
+      )}
+      {/* Hidden with CSS, never unmounted: these are controlled inputs feeding the
+          single narrative JSON, and a collapsed section must keep contributing. */}
+      <div className={open ? "mt-2 space-y-4" : "hidden"}>
         {rows.map(({ p, i }) => (
           <div key={i} className="space-y-2 rounded-md border border-input p-3">
             <div className="flex flex-wrap items-center gap-2">
