@@ -40,10 +40,15 @@ export function deriveClientNotifications({
   cards,
   managed,
   nextStep,
+  profileConfirmed = true,
 }: {
   cards: NotificationCard[];
   managed: boolean;
   nextStep: string | null;
+  // clients.profile_confirmed_at (migration 0065). Until the client has confirmed
+  // their profile, that is their ONLY action item -- grants stay counted but unlisted.
+  // Defaults true so every existing caller keeps its current behaviour.
+  profileConfirmed?: boolean;
 }): ClientNotifications {
   // Account-managed clients (0059) must never be alerted to a card staff hasn't
   // released yet — the same sme_released_at gate the dashboard applies before it
@@ -57,6 +62,28 @@ export function deriveClientNotifications({
   const pending = visible.filter((c) => c.interested_at !== null && c.decision === "pending").length;
 
   const items: ClientNotificationItem[] = [];
+
+  // FIRST LOGIN: confirming the profile is the only thing on the list. Everything the
+  // client could otherwise click leads to grants matched against a profile they have
+  // not yet vouched for, so asking them to review those first inverts the order the
+  // work actually depends on. The COUNT below is unaffected -- the bell still reflects
+  // reality; this only decides what is asked of them now.
+  if (!profileConfirmed) {
+    return {
+      count: newAlerts + pending,
+      items: [
+        {
+          id: "confirm-profile",
+          title: "Confirm your organization's profile",
+          tag: "Takes a minute — it sharpens your matches",
+          href: "/portal/profile",
+        },
+      ],
+      newAlerts,
+      pending,
+    };
+  }
+
   if (newAlerts > 0) {
     items.push({
       id: "grant-alerts",
@@ -72,7 +99,7 @@ export function deriveClientNotifications({
     });
   }
   if (nextStep) {
-    items.push({ id: "next-step", title: nextStep, tag: "From your team", priority: "high", href: null });
+    items.push({ id: "next-step", title: nextStep, tag: "From your team", href: null });
   }
 
   return { count: newAlerts + pending, items, newAlerts, pending };

@@ -7,6 +7,8 @@ import { AutoRefresh } from "@/components/ui/auto-refresh";
 import { PageBackdrop } from "@/components/layout/page-backdrop";
 import { GenerateReportButton } from "@/components/clients/generate-report-button";
 import { CheckGrant } from "@/components/clients/check-grant";
+import { InviteClientButton } from "@/components/clients/invite-client-button";
+import { inviteClientToPortalAction } from "../actions";
 import {
   ClientDashboard,
   type DashActionItem,
@@ -130,16 +132,75 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   const confirmRerun = matchStatus === "complete" || matchStatus === "error" || cards.length > 0;
 
   const actionItems: DashActionItem[] = [];
+  // The invite control appears only at the sequence's final stage, so it and the
+  // action item can never disagree about whether it is time.
 
-  // Setup-first ordering: connect the data pulls -> seat the client in the portal ->
-  // start matching. That is the real dependency order, not just a visual preference:
-  // the pulls feed the citations a match cites, and a seated client is who the
-  // resulting report is FOR. Matching still works without either -- these never gate
-  // it -- so each is a prompt, not a block.
+  // ── ONBOARDING SEQUENCE (clients only, pre-invite) ────────────────────────
+  //
+  // Until the client has a portal seat, the dashboard shows exactly ONE action item:
+  // whichever stage the record is actually at. Run matches -> (matching) -> review
+  // the grants -> invite the client. One thing to do at a time, because this screen
+  // is the account manager's script for a brand-new client and a list of four
+  // simultaneous prompts does not tell you what to do first.
+  //
+  // NOTE this supersedes the earlier setup-first ordering (connect APIs -> portal
+  // seats -> start matching). Portal seats deliberately moved to LAST: the invite is
+  // what releases the client's report to them, so it belongs after the grants have
+  // been reviewed, not before they exist. The API-data prompts are not dropped --
+  // they return once the client is invited (below), where they read as maintenance
+  // rather than competing with the sequence.
   const enrichmentSteps = deriveEnrichmentSteps(client);
   const unresolved = enrichmentSteps.filter((s) => s.state === "needs_input");
-  const stillPending = enrichmentSteps.filter((s) => s.state === "pending");
-  if (unresolved.length > 0) {
+  const stillPending = enrichmentSteps.filter((s) => s.state === "pending" && !s.background);
+  const inOnboarding = !isLead && memberCount === 0;
+  const showInvite = inOnboarding && !matchInProgress && cards.length > 0 && toReview === 0;
+
+  if (inOnboarding) {
+    if (matchInProgress) {
+      // Mirrors the button's own state so the two never disagree about whether
+      // anything is happening.
+      actionItems.push({
+        id: "matching",
+        title: "Matching grants — nothing to do while this runs",
+        busy: true,
+        stage: null,
+      });
+    } else if (cards.length === 0) {
+      actionItems.push({
+        id: "run-matches",
+        title: "Run grant matches to surface opportunities",
+        tag: "Use the button, top right",
+        stage: { step: 1, total: 3 },
+      });
+    } else if (toReview > 0) {
+      actionItems.push({
+        id: "to-review",
+        title: `Review ${toReview} matched grant${toReview === 1 ? "" : "s"}`,
+        href: managed ? base : alertsHref,
+        stage: { step: 2, total: 3 },
+      });
+    } else {
+      // Reviewed and decided. The invite is the release: it seats the client AND is
+      // what lets their alerts reach them (client-facing sends are held until a seat
+      // exists), so it is deliberately the last step rather than the first.
+      actionItems.push({
+        id: "invite-client",
+        title: "Invite the client to their portal",
+        tag: "Grants are reviewed — this releases them",
+        stage: { step: 3, total: 3 },
+      });
+    }
+  }
+
+  // A fresh record with no report yet: prompt to run matching (the button, top
+  // right). Matching is MANUAL-ONLY by design -- auto-enqueuing on create once left
+  // records stuck behind the 10-min cron with the manual button disabled, so nothing
+  // could start at all (see createClientAction). This prompt is what makes the manual
+  // step discoverable; without it a newly created record just looks empty.
+  // Applies to CLIENTS as well as prospects -- a new client showed no matches and no
+  // prompt, which read as "the platform isn't working" rather than "click here".
+  // Data-source gaps, once the sequence is done. Maintenance, not onboarding.
+  if (!inOnboarding && unresolved.length > 0) {
     actionItems.push({
       id: "connect-apis",
       title:
@@ -148,9 +209,8 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
           : `${unresolved.length} data sources need attention`,
       tag: "API data",
       href: apiDataHref,
-      priority: "high",
     });
-  } else if (stillPending.length > 0) {
+  } else if (!inOnboarding && stillPending.length > 0) {
     actionItems.push({
       id: "connect-apis",
       title: `${stillPending.length} data pull${stillPending.length === 1 ? "" : "s"} haven't reported back`,
@@ -158,41 +218,24 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
       href: apiDataHref,
     });
   }
-  // Portal seats: clients only (a prospect has no portal by design).
-  if (!isLead && memberCount === 0) {
-    actionItems.push({
-      id: "portal-seats",
-      title: "Invite the client to their portal",
-      tag: "No one is seated yet",
-      href: `/clients/${client.id}/edit`,
-      priority: "high",
-    });
-  }
-  // A fresh record with no report yet: prompt to run matching (the button, top
-  // right). Matching is MANUAL-ONLY by design -- auto-enqueuing on create once left
-  // records stuck behind the 10-min cron with the manual button disabled, so nothing
-  // could start at all (see createClientAction). This prompt is what makes the manual
-  // step discoverable; without it a newly created record just looks empty.
-  // Applies to CLIENTS as well as prospects -- a new client showed no matches and no
-  // prompt, which read as "the platform isn't working" rather than "click here".
-  if (cards.length === 0 && !matchInProgress) {
+
+  if (!inOnboarding && cards.length === 0 && !matchInProgress) {
     actionItems.push({
       id: "run-matches",
       title: isLead
         ? "Run grant matches to surface opportunities"
         : "Run the first grant match for this client",
       tag: "Use the button, top right",
-      priority: "high",
     });
   }
-  if (toReview > 0) {
+  if (!inOnboarding && toReview > 0) {
     actionItems.push({
       id: "to-review",
       title: `You have ${toReview} grant${toReview === 1 ? "" : "s"} to review`,
       href: managed || isLead ? base : alertsHref,
     });
   }
-  if (counts.pending > 0) {
+  if (!inOnboarding && counts.pending > 0) {
     actionItems.push({
       id: "grant-report-pending",
       title: managed
@@ -205,20 +248,17 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
       href: managed ? null : base,
     });
   }
-  if (client.next_step) {
-    actionItems.push({ id: "next-step", title: client.next_step, tag: "From your team", priority: "high" });
+  if (!inOnboarding && client.next_step) {
+    actionItems.push({ id: "next-step", title: client.next_step, tag: "From your team" });
   }
 
   const subLine =
     [client.org_type?.replace(/_/g, " "), client.location_city, client.location_state].filter(Boolean).join(" · ") || null;
 
-  const matchNote = matchInProgress ? (
-    <div className="mt-4 flex items-center gap-2 rounded-xl bg-brand-orange/10 px-4 py-3 text-sm font-medium text-brand-navy ring-1 ring-brand-orange/30">
-      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-brand-orange" />
-      Matching in progress — results refresh automatically.
-      <AutoRefresh enabled />
-    </div>
-  ) : null;
+  // No visible banner: the action item carries the spinner and the message now, and
+  // saying it twice on one screen read as clutter. AutoRefresh still mounts, because
+  // results appearing without a manual reload is behaviour, not decoration.
+  const matchNote = matchInProgress ? <AutoRefresh enabled /> : null;
 
   return (
     <div className="relative min-h-full">
@@ -237,13 +277,25 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         editHref={`/clients/${client.id}/edit`}
         apiDataHref={apiDataHref}
         refresh={
-          <GenerateReportButton
-            clientId={client.id}
-            inProgress={matchInProgress}
-            confirmRerun={confirmRerun}
-            idleLabel={isLead ? "Run Grant Matches" : "Refresh matches"}
-            tone="dark"
-          />
+          <>
+            <GenerateReportButton
+              clientId={client.id}
+              inProgress={matchInProgress}
+              confirmRerun={confirmRerun}
+              idleLabel={cards.length === 0 ? "Run Grant Matches" : "Refresh matches"}
+              tone="dark"
+            />
+            {/* Only at the end of the onboarding sequence: grants matched AND reviewed,
+                client not yet seated. Showing it earlier would invite the client to a
+                portal with nothing in it. */}
+            {showInvite && (
+              <InviteClientButton
+                clientName={client.name}
+                contactEmail={client.primary_contact_email}
+                action={inviteClientToPortalAction.bind(null, client.id)}
+              />
+            )}
+          </>
         }
         matchNote={matchNote}
         staffTools={isLead ? undefined : <CheckGrant clientId={client.id} clientName={client.name} />}

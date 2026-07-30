@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CalendarPlus, Flag, LifeBuoy, MessageSquare, Sparkles, Target, type LucideIcon } from "lucide-react";
+import { CalendarPlus, LifeBuoy, Loader2, MessageSquare, Sparkles, Target, type LucideIcon } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ClientMatchChart } from "@/components/clients/client-match-chart";
 import { HeroBand } from "@/components/layout/hero-band";
@@ -28,6 +28,14 @@ export interface DashActionItem {
   date?: string | null;
   priority?: "high" | "medium" | null;
   href?: string | null;
+  // Live work: renders a spinner + label on the right instead of a static chip, so
+  // "something is running" lives ON the item rather than in a separate banner that
+  // repeats it.
+  busy?: boolean;
+  // Where this sits in the onboarding sequence. A more useful right-hand slot than a
+  // priority flag: it says how far along the record is, which is the question the
+  // sequence exists to answer. Priorities are not a concept we have defined yet.
+  stage?: { step: number; total: number } | null;
 }
 
 export function ClientDashboard({
@@ -108,7 +116,7 @@ export function ClientDashboard({
           {actionItems.length === 0 ? (
             <p className="mt-4 text-sm text-muted-foreground">Nothing needs your attention right now.</p>
           ) : (
-            <ul className="mt-4 divide-y divide-brand-navy/[0.06]">
+            <ul className="mt-4 space-y-2">
               {actionItems.map((it) => (
                 <ActionRow key={it.id} item={it} />
               ))}
@@ -144,29 +152,44 @@ export function ClientDashboard({
   );
 }
 
+// Each item gets its OWN bordered box: text left, status right.
+//
+// The right slot deliberately does NOT show a priority flag -- priorities are not a
+// concept we have defined, so "High" on everything was decoration pretending to be
+// information. It carries, in order of preference: live progress (spinner), the
+// onboarding stage, a date, or an open affordance for a navigable item.
 function ActionRow({ item }: { item: DashActionItem }) {
   const body = (
-    <div className="flex items-center justify-between gap-4 py-3">
+    <div className="flex items-center justify-between gap-4 rounded-xl bg-white px-4 py-3 ring-1 ring-brand-navy/[0.08] transition-shadow hover:shadow-[0_1px_3px_rgba(11,30,58,0.08)]">
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-brand-navy">{item.title}</p>
+        <p className="text-sm font-medium text-brand-navy">{item.title}</p>
         {item.tag && (
           <span className="mt-1 inline-block rounded-full bg-brand-navy/[0.06] px-2.5 py-0.5 text-[11px] font-medium text-brand-navy">
             {item.tag}
           </span>
         )}
       </div>
-      <div className="flex shrink-0 flex-col items-end gap-0.5 text-right">
-        {item.date && <span className="text-xs text-muted-foreground">{item.date}</span>}
-        {item.priority && (
-          <span className={`inline-flex items-center gap-1 text-xs font-medium ${item.priority === "high" ? "text-brand-orange" : "text-muted-foreground"}`}>
-            <Flag className="h-3 w-3" />
-            {item.priority === "high" ? "High" : "Medium"}
+      <div className="flex shrink-0 items-center gap-2 text-right">
+        {item.busy ? (
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-brand-orange">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            In progress
           </span>
-        )}
+        ) : item.stage ? (
+          <span className="text-xs font-medium text-muted-foreground">
+            Step {item.stage.step} of {item.stage.total}
+          </span>
+        ) : item.date ? (
+          <span className="text-xs text-muted-foreground">{item.date}</span>
+        ) : item.href ? (
+          <span aria-hidden="true" className="text-sm text-brand-orange">
+            →
+          </span>
+        ) : null}
       </div>
     </div>
   );
-  return <li>{item.href ? <Link href={item.href} className="block hover:opacity-80">{body}</Link> : body}</li>;
+  return <li>{item.href ? <Link href={item.href} className="block">{body}</Link> : body}</li>;
 }
 
 function QuickAction({

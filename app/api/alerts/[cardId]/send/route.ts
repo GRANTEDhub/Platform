@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { appBaseUrl } from "@/lib/site-url";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { canSendOutreach } from "@/lib/email/guard";
+import { canNotifyClient } from "@/lib/clients/portal-gate";
 import { sendGrantAlertEmail, isDeliverableEmail } from "@/lib/email/send";
 import { loadAlertContext, alertRecipient, type AlertContext } from "@/lib/alerts/generate";
 import {
@@ -337,9 +338,19 @@ async function clientSend(a: {
   let sent = false;
   let send_status: string;
   let reason: string | undefined;
+  // HELD until the client has a portal seat. Applies to THIS path only -- the
+  // prospect and lead paths above are deliberately cold outreach to people with no
+  // portal, so a seat gate there would block their whole purpose. A serviced client
+  // is different: the alert links into their portal, and the invite is the release.
+  const seat = await canNotifyClient(createServiceClient(), ctx.client!.id);
   if (!isDeliverableEmail(recipient)) {
     send_status = `${verb} — no deliverable email, alert not sent`;
     reason = "no deliverable email on file";
+  } else if (!seat.ok) {
+    // The DECISION is still recorded above; only the email is held. So a reviewed
+    // grant waits for the client rather than being lost.
+    send_status = `${verb}, alert held (${seat.reason})`;
+    reason = seat.reason;
   } else {
     const gate = canSendOutreach(recipient);
     if (!gate.ok) {

@@ -419,6 +419,73 @@ interface CompleteProfileState {
   recipient?: string;
 }
 
+
+// Seat the primary contact, provision their login, and send the welcome email if the
+// outreach gate allows it. Shared by the step-7 opt-in and the dashboard's invite
+// button.
+//
+// Membership is inserted BEFORE the auth user so the on_auth_user_created trigger
+// links it rather than creating a staff profile. Idempotent: a contact already seated
+// is left alone rather than erroring. The email goes through the SAME gate as every
+// other outreach send, and a blocked send is reported as skipped WITH the reason --
+// never as sent.
+async function seatAndInvite(
+  admin: ReturnType<typeof createServiceClient>,
+  client: { id: string; name: string; primary_contact_name: string | null; primary_contact_email: string | null },
+): Promise<CompleteProfileState> {
+  const email = (client.primary_contact_email ?? "").trim().toLowerCase();
+  if (!EMAIL_SHAPE.test(email)) {
+    return { ok: true, invited: false, error: "No valid primary contact email — invitation not sent." };
+  }
+
+  const { data: existing } = await admin
+    .from("client_members")
+    .select("id, user_id")
+    .eq("client_id", client.id)
+    .eq("email", email)
+    .maybeSingle<{ id: string; user_id: string | null }>();
+  if (!existing) {
+    const { error: mErr } = await admin
+      .from("client_members")
+      .insert({ client_id: client.id, email, role: "primary" });
+    if (mErr) return { ok: true, invited: false, error: `Couldn't seat the contact: ${mErr.message}` };
+  }
+
+  let userId: string | null = existing?.user_id ?? null;
+  if (!userId) {
+    try {
+      userId = await resolveOrCreateAuthUser(admin, email);
+    } catch {
+      return { ok: true, invited: false, error: "Couldn't create the client's login." };
+    }
+    if (userId) {
+      await admin
+        .from("client_members")
+        .update({ user_id: userId, activated_at: new Date().toISOString() })
+        .eq("client_id", client.id)
+        .eq("email", email);
+    }
+  }
+
+  const gate = canSendOutreach(email);
+  if (!gate.ok) {
+    return { ok: true, invited: true, emailed: false, emailSkippedReason: gate.reason, recipient: email };
+  }
+  try {
+    const url = await generateClientSetupLink(admin, email);
+    await sendClientInviteEmail({
+      to: email,
+      contactName: client.primary_contact_name,
+      orgName: client.name,
+      url,
+    });
+  } catch (e) {
+    console.error("[invite] welcome email failed:", e instanceof Error ? e.message : e);
+    return { ok: true, invited: true, emailed: false, emailSkippedReason: "the send failed — see logs", recipient: email };
+  }
+  return { ok: true, invited: true, emailed: true, recipient: email };
+}
+
 export async function completeClientProfileAction(
   id: string,
   formData: FormData,
@@ -465,74 +532,36 @@ export async function completeClientProfileAction(
     return { ok: true, invited: false };
   }
 
-  const email = (client.primary_contact_email ?? "").trim().toLowerCase();
-  if (!EMAIL_SHAPE.test(email)) {
-    // Not a failure of the completion: the engagement is saved. Report it so the
-    // screen can say the invite did not go and why.
-    return { ok: true, invited: false, error: "No valid primary contact email — invitation not sent." };
-  }
-
-  // Seat the contact and provision their login, mirroring inviteClientAction:
-  // membership BEFORE the auth user so the on_auth_user_created trigger links it
-  // rather than creating a staff profile. Idempotent -- a contact already seated is
-  // left as-is rather than erroring.
-  const { data: existing } = await admin
-    .from("client_members")
-    .select("id, user_id")
-    .eq("client_id", id)
-    .eq("email", email)
-    .maybeSingle<{ id: string; user_id: string | null }>();
-  if (!existing) {
-    const { error: mErr } = await admin
-      .from("client_members")
-      .insert({ client_id: id, email, role: "primary" });
-    if (mErr) return { ok: true, invited: false, error: `Couldn't seat the contact: ${mErr.message}` };
-  }
-
-  let userId: string | null = existing?.user_id ?? null;
-  if (!userId) {
-    try {
-      userId = await resolveOrCreateAuthUser(admin, email);
-    } catch {
-      return { ok: true, invited: false, error: "Couldn't create the client's login." };
-    }
-    if (userId) {
-      await admin
-        .from("client_members")
-        .update({ user_id: userId, activated_at: new Date().toISOString() })
-        .eq("client_id", id)
-        .eq("email", email);
-    }
-  }
-
-  // The email itself goes through the SAME gate as every outreach send (production +
-  // enabled + allowlisted). A gated send is reported as skipped WITH the reason --
-  // never as sent -- because in preview it silently would not go, and "invitation
-  // sent" would be a lie on the one screen that exists to confirm it.
-  const gate = canSendOutreach(email);
-  if (!gate.ok) {
-    revalidatePath(`/clients/${id}`);
-    return { ok: true, invited: true, emailed: false, emailSkippedReason: gate.reason, recipient: email };
-  }
-  try {
-    const url = await generateClientSetupLink(admin, email);
-    await sendClientInviteEmail({
-      to: email,
-      contactName: client.primary_contact_name,
-      orgName: client.name,
-      url,
-    });
-  } catch (e) {
-    console.error("[complete-profile] invite email failed:", e instanceof Error ? e.message : e);
-    return {
-      ok: true,
-      invited: true,
-      emailed: false,
-      emailSkippedReason: "the send failed — see logs",
-      recipient: email,
-    };
-  }
-
+  const result = await seatAndInvite(admin, client);
   revalidatePath(`/clients/${id}`);
-  return { ok: true, invited: true, emailed: true, recipient: email };
+  return result;
+}
+
+// ── Invite the client to their portal ─────────────────────────────────────────
+//
+// The LAST step of onboarding, and the release gate. Seating the client is what lets
+// their reviewed grants reach them: client-facing sends are held until a seat exists
+// (see lib/clients/portal-gate.ts), so this action is what turns the tap on.
+//
+// Shares its body with completeClientProfileAction's opt-in invite -- one
+// implementation, so the two entry points cannot drift on seat/login/gating order.
+export async function inviteClientToPortalAction(clientId: string): Promise<CompleteProfileState> {
+  await requireAdmin();
+  const admin = createServiceClient();
+
+  const { data: client } = await admin
+    .from("clients")
+    .select("id, name, primary_contact_name, primary_contact_email")
+    .eq("id", clientId)
+    .single<{
+      id: string;
+      name: string;
+      primary_contact_name: string | null;
+      primary_contact_email: string | null;
+    }>();
+  if (!client) return { ok: false, error: "That client no longer exists." };
+
+  const result = await seatAndInvite(admin, client);
+  revalidatePath(`/clients/${clientId}`);
+  return result;
 }

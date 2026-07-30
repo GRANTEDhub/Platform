@@ -5,6 +5,7 @@ import { computeGrantSummary } from "@/lib/review/summary";
 import { recordCardFeedback } from "@/lib/feedback/record";
 import { canSendOutreach } from "@/lib/email/guard";
 import { sendGrantReleaseEmail } from "@/lib/email/send";
+import { canNotifyClient } from "@/lib/clients/portal-gate";
 import { appBaseUrl } from "@/lib/site-url";
 import type { CardDecision, PursuitPath } from "@/types/database";
 
@@ -225,6 +226,15 @@ async function notifyClientOfRelease(cardId: string, clientId: string, grantId: 
     ]);
 
     const to = client?.primary_contact_email ?? null;
+    // HOLD until the client actually has a portal seat. The onboarding sequence now
+    // matches and reviews grants BEFORE the client is invited, so a release firing in
+    // that window would email a link to a portal they cannot log into. The invite is
+    // the release.
+    const seat = await canNotifyClient(db, clientId);
+    if (!seat.ok) {
+      console.log(`[release-notify] held card=${cardId}: ${seat.reason}`);
+      return;
+    }
     // Same combined gate as every outreach send: prod + enabled + key + on the
     // testing allowlist. A blocked send logs why and returns cleanly.
     const gate = canSendOutreach(to);
