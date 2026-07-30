@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Input, Label } from "@/components/ui/input";
@@ -79,18 +79,36 @@ export function CompleteProfile({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<CompleteProfileState | null>(null);
+  // Intent is carried in a REF, not in FormData, and set only by a real click on
+  // "Save and finish later". Encoding it as that button's name/value made it the
+  // form's implicit-submit target -- so Enter in any engagement field saved and left,
+  // skipping the confirmation entirely. A ref cannot be triggered by implicit
+  // submission, and is read synchronously (unlike state) right when the action runs.
+  const finishLaterRef = useRef(false);
+  const formRef = useRef<HTMLFormElement>(null);
 
   const hasEmail = !!contactEmail;
 
   async function onSubmit(formData: FormData) {
     if (busy) return;
-    setBusy(true);
-    setError(null);
     // "Save and finish later" writes the engagement fields and leaves. It never
     // invites and never shows the completion receipt, because nothing has been
     // completed -- the point is to stop without losing what you typed. The record
     // itself was already created at step 5, so there is nothing else at risk.
-    const laterOnly = formData.get("finish_later") === "true";
+    const laterOnly = finishLaterRef.current;
+    finishLaterRef.current = false;
+
+    // An IMPLICIT submit (Enter in a field) reaches here with no intent and no
+    // confirmation shown. Treat it as "Complete profile" was clicked -- open the
+    // confirm step -- rather than writing anything. Enter must never be the thing
+    // that commits a completion or an invitation.
+    if (!laterOnly && !confirming) {
+      setConfirming(true);
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
     formData.set("send_invite", !laterOnly && sendInvite ? "true" : "false");
     const res = await action(formData);
     if (!res.ok) {
@@ -138,7 +156,7 @@ export function CompleteProfile({
   }
 
   return (
-    <form action={onSubmit} className="space-y-8">
+    <form ref={formRef} action={onSubmit} className="space-y-8">
       <section className="space-y-4">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
           Engagement <span className="font-normal normal-case">(optional)</span>
@@ -207,11 +225,13 @@ export function CompleteProfile({
               silently discard whatever was typed here, with no hint that the client
               record itself was already safe. */}
           <Button
-            type="submit"
-            name="finish_later"
-            value="true"
+            type="button"
             variant="outline"
             disabled={busy}
+            onClick={() => {
+              finishLaterRef.current = true;
+              formRef.current?.requestSubmit();
+            }}
           >
             {busy ? "Saving…" : "Save and finish later"}
           </Button>
