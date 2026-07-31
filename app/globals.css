@@ -77,4 +77,28 @@
 
   /* bg-drift is gone with the page texture it animated. The page background is a
      flat fill now, so there is nothing to drift. */
+
+  /* Dropdown / popover entrance: a fade plus a 4px settle, on the one entrance
+     curve. Nothing slides in from off-screen.
+     HAND-WRITTEN because tailwindcss-animate is not a dependency here -- its
+     animate-in / fade-in / slide-in-from-top-1 utilities emit NO CSS in this build,
+     so reaching for them would have shipped a silently missing animation. */
+  @keyframes menu-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  .animate-menu-in {
+    animation: menu-in 140ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .animate-menu-in {
+      animation: none;
+    }
+  }
 }
