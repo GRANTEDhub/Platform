@@ -49,13 +49,22 @@ export interface DashStat {
 }
 
 // The trailing control on an attention row, which encodes urgency rather than repeating
-// it in words: a filled pill for work you can start now, a chevron for something to
-// look at, the flat word "Blocked" for what is waiting on a prerequisite. A blocked row
-// gets NO control at all — an affordance you cannot act on is the failure this
-// dashboard keeps being cleaned up for.
+// it in words. An affordance you cannot act on is the failure this dashboard keeps being
+// cleaned up for, so there are FOUR states and not three:
+//
+//   pill      work can start here, now — and the label must name where it goes
+//   chevron   there is somewhere to look
+//   none      nothing to click: either the action lives in a top-right control (the row
+//             says so) or the row is purely informational, like a note from the team
+//   blocked   genuinely waiting on a prerequisite
+//
+// `none` and `blocked` are deliberately distinct. Collapsing them -- defaulting any row
+// with no href to "Blocked" -- put the word "Blocked" on a row whose own description read
+// "Use the button, top right", which is a row contradicting itself.
 export type DashAffordance =
   | { kind: "pill"; label: string }
   | { kind: "chevron" }
+  | { kind: "none" }
   | { kind: "blocked" };
 
 export interface DashActionItem {
@@ -97,6 +106,7 @@ export function ClientDashboard({
   community,
   deadlines,
   scorer,
+  attentionNote,
   bookingUrl,
   editHref,
   refresh,
@@ -130,6 +140,12 @@ export function ClientDashboard({
   // Rail, console-only: the grant scorer. Passed as a node because it is a client
   // component with its own state and the console only needs to place it.
   scorer?: React.ReactNode;
+  // Console-only. The design's header line is "Grant Alerts opens from here only", which
+  // is not true for every actor: for an account-managed client or an unconverted lead the
+  // review gate is the roadmap list, not the Grant Alerts swipe. The page knows which,
+  // so it supplies the sentence rather than this component asserting a platform-wide
+  // invariant it cannot check.
+  attentionNote?: string | null;
   bookingUrl: string | null;
   // Staff-only: Edit profile.
   editHref?: string | null;
@@ -152,6 +168,7 @@ export function ClientDashboard({
           community={community}
           deadlines={deadlines}
           scorer={scorer}
+          attentionNote={attentionNote}
           roadmapHref={roadmapHref}
           intellEngineHref={intellEngineHref}
         />
@@ -211,6 +228,7 @@ function ConsoleBody({
   community,
   deadlines,
   scorer,
+  attentionNote,
   roadmapHref,
   intellEngineHref,
 }: {
@@ -220,13 +238,14 @@ function ConsoleBody({
   community?: CommunityView;
   deadlines?: DashDeadline[];
   scorer?: React.ReactNode;
+  attentionNote?: string | null;
   roadmapHref: string;
   intellEngineHref?: string;
 }) {
   return (
     <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_318px] xl:items-start">
       <div className="flex flex-col gap-4">
-        <AttentionCard items={actionItems} />
+        <AttentionCard items={actionItems} note={attentionNote} />
 
         {/* Side by side, equal width, equal height. IntellEngine is the shorter of the
             two by content: it stretches, its content stays top-aligned, and the slack
@@ -268,12 +287,12 @@ function ConsoleBody({
 // trailing control. THE CARD NEVER DISAPPEARS: when the queue clears it keeps its frame
 // and shows a caught-up row instead. A card that vanishes makes the page collapse to a
 // different shape, which is the instability this redesign exists to remove.
-function AttentionCard({ items }: { items: DashActionItem[] }) {
+function AttentionCard({ items, note }: { items: DashActionItem[]; note?: string | null }) {
   return (
     <section className="overflow-hidden rounded-2xl bg-white shadow-card">
       <div
         className="flex items-center gap-2.5 border-b px-5 py-3"
-        style={{ backgroundColor: STAGE.triage.tint, borderColor: "rgba(228,118,31,0.14)" }}
+        style={{ backgroundColor: STAGE.triage.tint, borderColor: STAGE.triage.border }}
       >
         <h2 className="font-serif text-base font-bold text-brand-navy">Needs your attention</h2>
         {items.length > 0 ? (
@@ -287,7 +306,7 @@ function AttentionCard({ items }: { items: DashActionItem[] }) {
             style={{ backgroundColor: STAGE.pursuit.color }}
           />
         )}
-        <span className="ml-auto text-[11.5px] text-ink-subtle">Grant Alerts opens from here only</span>
+        {note && <span className="ml-auto text-[11.5px] text-ink-subtle">{note}</span>}
       </div>
 
       {items.length === 0 ? (
@@ -309,7 +328,7 @@ function AttentionCard({ items }: { items: DashActionItem[] }) {
 function AttentionRow({ item, last }: { item: DashActionItem; last: boolean }) {
   const Icon = item.icon;
   const tone = item.tone ?? "triage";
-  const affordance = item.affordance ?? (item.href ? { kind: "chevron" as const } : { kind: "blocked" as const });
+  const affordance = item.affordance ?? (item.href ? { kind: "chevron" as const } : { kind: "none" as const });
 
   const row = (
     <div className={`flex items-center gap-[13px] px-5 py-3 ${last ? "" : "border-b border-hairline"}`}>
@@ -343,9 +362,9 @@ function AttentionRow({ item, last }: { item: DashActionItem; last: boolean }) {
         </span>
       ) : affordance.kind === "chevron" ? (
         <ChevronRight className="h-4 w-4 shrink-0 text-ink-faint" />
-      ) : (
+      ) : affordance.kind === "blocked" ? (
         <span className="shrink-0 text-xs font-medium text-ink-subtle">Blocked</span>
-      )}
+      ) : null}
     </div>
   );
 

@@ -141,7 +141,7 @@ function ConsoleDraftPanel({
       <div
         aria-hidden="true"
         className="pointer-events-none absolute -right-10 -top-[70px] h-[210px] w-[210px] rounded-full"
-        style={{ background: "radial-gradient(circle, rgba(228,118,31,0.32), transparent 70%)" }}
+        style={{ background: `radial-gradient(circle, ${BRAND.orangeGlow}, transparent 70%)` }}
       />
       <div className="relative flex flex-1 flex-col">
         <div className="flex items-center gap-[7px]">

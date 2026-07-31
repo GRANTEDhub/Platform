@@ -298,16 +298,24 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   // `pill` is set only where there is somewhere to go AND the work can start now.
   const ATTENTION_STYLE: Record<
     string,
-    { icon: LucideIcon; tone: PipelineStageKey; pill?: string }
+    { icon: LucideIcon; tone: PipelineStageKey; pill?: boolean }
   > = {
     matching: { icon: Loader2, tone: "triage" },
     "run-matches": { icon: Play, tone: "triage" },
-    "to-review": { icon: Layers, tone: "triage", pill: "Open Grant Alerts" },
+    "to-review": { icon: Layers, tone: "triage", pill: true },
     "invite-client": { icon: Mail, tone: "passed" },
     "connect-apis": { icon: Plug, tone: "client" },
     "grant-report-pending": { icon: Clock, tone: "client" },
     "next-step": { icon: MessageSquareText, tone: "passed" },
   };
+
+  // The pill's LABEL is derived from the href, not stored beside the icon. It used to be
+  // a static string ("Open Grant Alerts") in the table above while the href was computed
+  // per-actor at the push site -- so for an account-managed client or a lead, whose review
+  // gate is the roadmap list rather than the alerts swipe, the button named a destination
+  // it did not go to. Two independent code paths keyed off the same id with nothing tying
+  // them together. Reading the label off the href is what makes them unable to disagree.
+  const pillLabel = (href: string) => (href === alertsHref ? "Open Grant Alerts" : "Open review");
 
   const consoleActionItems: DashActionItem[] = actionItems.map((it) => {
     const style = ATTENTION_STYLE[it.id];
@@ -321,13 +329,27 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
       description,
       icon: style?.icon,
       tone: style?.tone,
-      affordance: style?.pill
-        ? { kind: "pill", label: style.pill }
+      // A pill REQUIRES an href -- a filled button that navigates nowhere is the exact
+      // thing this card is meant to stop. And a row with no href falls to "none", not
+      // "blocked": these rows have no link for three different reasons, and only one of
+      // them is a prerequisite. `run-matches` and `invite-client` are actioned by the
+      // top-right control (their own description says so); `next-step` is a note from the
+      // team; `grant-report-pending` on a managed client is a status readout. Defaulting
+      // those to "Blocked" put that word next to a description reading "Use the button,
+      // top right" -- a row arguing with itself.
+      affordance: style?.pill && it.href
+        ? { kind: "pill", label: pillLabel(it.href) }
         : it.href
           ? { kind: "chevron" }
-          : { kind: "blocked" },
+          : { kind: "none" },
     };
   });
+
+  // See ClientDashboard's attentionNote prop: the design's line names Grant Alerts, which
+  // is only where this card leads for a standard client. Managed clients and leads review
+  // on the roadmap list, so they are told that instead.
+  const attentionNote =
+    managed || isLead ? "The review list opens from here only" : "Grant Alerts opens from here only";
 
   const subLine =
     [client.org_type?.replace(/_/g, " "), client.location_city, client.location_state].filter(Boolean).join(" · ") || null;
@@ -514,6 +536,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         // Pure read of the community_context already on the record -- no fetch here.
         community={buildCommunityView(client)}
         deadlines={deadlines}
+        attentionNote={attentionNote}
         // The scorer moves INTO the rail. It used to sit under the hero as `staffTools`,
         // where it was the loudest thing on the page for a tool that is not daily-use;
         // the design makes it a compact rail card instead.

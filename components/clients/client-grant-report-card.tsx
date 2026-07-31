@@ -189,7 +189,7 @@ function ConsoleReportCard({
         <>
           <div
             className="flex items-center justify-between gap-2.5 border-y px-5 py-[7px]"
-            style={{ backgroundColor: STAGE.approved.tint, borderColor: "rgba(46,125,145,0.13)" }}
+            style={{ backgroundColor: STAGE.approved.tint, borderColor: STAGE.approved.border }}
           >
             <p
               className="text-[10px] font-bold uppercase tracking-[0.11em]"
@@ -236,7 +236,14 @@ function Metric({ value, label }: { value: string; label: string }) {
 function ConsoleReportRow({ row }: { row: DashReportRow }) {
   const stage = row.stage ?? "triage";
   const meta = [row.funder, row.amount, row.stageLabel?.toLowerCase()].filter(Boolean).join(" · ");
-  const urgent = row.days !== null && row.days !== undefined && row.days <= URGENT_DAYS;
+  // Overdue is its own state, not a negative countdown. This card lists every OPEN card
+  // including ones whose deadline has passed -- staff still need to see them, so the row
+  // is not dropped the way it is from the rail and the pipeline header (where an overdue
+  // date presented as the "next deadline" would be wrong). But "-3 days" is not a
+  // duration, so it is named instead of counted.
+  const days = row.days ?? null;
+  const overdue = days !== null && days < 0;
+  const urgent = days !== null && days <= URGENT_DAYS;
   const body = (
     <div className="flex items-center gap-3 border-b border-hairline px-5 py-[11px]">
       <span
@@ -250,12 +257,12 @@ function ConsoleReportRow({ row }: { row: DashReportRow }) {
       </div>
       <div className="shrink-0 text-right">
         <p className="text-[13px] font-semibold tabular-nums text-brand-navy">{row.fitScore}</p>
-        {row.days !== null && row.days !== undefined && (
+        {days !== null && (
           <p
             className="mt-0.5 text-[11px] tabular-nums"
             style={{ color: urgent ? STAGE.triage.color : INK.subtle, fontWeight: urgent ? 500 : 400 }}
           >
-            {row.days} {row.days === 1 ? "day" : "days"}
+            {overdue ? "Overdue" : `${days} ${days === 1 ? "day" : "days"}`}
           </p>
         )}
       </div>
