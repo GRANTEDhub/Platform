@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { format, parseISO } from "date-fns";
-import { Loader2 } from "lucide-react";
+import { Clock, Layers, Loader2, Mail, MessageSquareText, Plug, Play, type LucideIcon } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { AutoRefresh } from "@/components/ui/auto-refresh";
@@ -11,11 +11,12 @@ import { InviteClientButton } from "@/components/clients/invite-client-button";
 import { ClientContextBar } from "@/components/clients/client-context-bar";
 import { GrantPipeline } from "@/components/clients/grant-pipeline";
 import { Badge } from "@/components/ui/badge";
-import { derivePipeline } from "@/lib/clients/pipeline";
+import { derivePipeline, stageOf, type PipelineStageKey } from "@/lib/clients/pipeline";
 import { inviteClientToPortalAction } from "../actions";
 import { ClientDashboard, type DashActionItem } from "@/components/clients/client-dashboard";
 import { type DashReportRow } from "@/components/clients/client-grant-report-card";
 import { type DashDraft } from "@/components/clients/client-draft-progress";
+import { type DashDeadline } from "@/components/clients/upcoming-deadlines";
 import { buildCommunityView } from "@/lib/clients/community";
 import { deriveEnrichmentSteps } from "@/lib/clients/enrichment-status";
 import { isUnconvertedLead } from "@/lib/leads/stage";
@@ -107,6 +108,10 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   >[]).map((d) => ({ id: d.id, title: d.title, status: d.status }));
 
   const cards = ((cardRows ?? []) as CardRow[]).map((r) => ({ ...r, grant: grantOf(r.grants) }));
+  // The row shape everything downstream actually works with: CardRow plus the embedded
+  // grant flattened to one object. Named so the derivations below can be typed against
+  // it instead of against CardRow, which no longer describes them.
+  type DashCard = (typeof cards)[number];
   // "In review" now means interested-but-undecided (sitting in the Grant Report,
   // past the Grant Alerts gate) -- not-yet-triaged cards are a separate bucket
   // (newAlerts, below), not part of this count. See migration 0057.
@@ -259,6 +264,48 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
     actionItems.push({ id: "next-step", title: client.next_step, tag: "From your team" });
   }
 
+  // Console presentation for the attention rows, keyed by the item id the pushes above
+  // already set. Done as a decoration pass rather than inline at each push so the
+  // WHAT (which items exist, and when) stays in one readable sequence and the HOW IT
+  // LOOKS stays in one table -- nine call sites each carrying an icon and a tint is how
+  // those two concerns drift apart.
+  //
+  // `tone` reuses the pipeline stage scale on purpose: an attention row about triage
+  // and the pipeline's triage column should read as the same thing, not two palettes.
+  // `pill` is set only where there is somewhere to go AND the work can start now.
+  const ATTENTION_STYLE: Record<
+    string,
+    { icon: LucideIcon; tone: PipelineStageKey; pill?: string }
+  > = {
+    matching: { icon: Loader2, tone: "triage" },
+    "run-matches": { icon: Play, tone: "triage" },
+    "to-review": { icon: Layers, tone: "triage", pill: "Open Grant Alerts" },
+    "invite-client": { icon: Mail, tone: "passed" },
+    "connect-apis": { icon: Plug, tone: "client" },
+    "grant-report-pending": { icon: Clock, tone: "client" },
+    "next-step": { icon: MessageSquareText, tone: "passed" },
+  };
+
+  const consoleActionItems: DashActionItem[] = actionItems.map((it) => {
+    const style = ATTENTION_STYLE[it.id];
+    // The design gives each row a second line. The existing `tag` is that sentence, and
+    // the onboarding step is appended when there is one -- so "step 3 of 3" moves off
+    // the right-hand slot (now the affordance's) without being lost.
+    const description =
+      [it.tag, it.stage ? `step ${it.stage.step} of ${it.stage.total}` : null].filter(Boolean).join(" · ") || null;
+    return {
+      ...it,
+      description,
+      icon: style?.icon,
+      tone: style?.tone,
+      affordance: style?.pill
+        ? { kind: "pill", label: style.pill }
+        : it.href
+          ? { kind: "chevron" }
+          : { kind: "blocked" },
+    };
+  });
+
   const subLine =
     [client.org_type?.replace(/_/g, " "), client.location_city, client.location_state].filter(Boolean).join(" · ") || null;
 
@@ -284,6 +331,25 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
       .filter((d): d is string => Boolean(d) && (deadlineDaysLeft(d) ?? -1) >= 0)
       .sort()
       .map((d) => format(parseISO(d), "MMM d"))[0] ?? null;
+
+  // Rail: the next three real deadlines, soonest first. Same source and same exclusions
+  // as the header date above -- open cards only, nothing overdue -- so the two can never
+  // tell different stories about which deadline is next. The stage label is read off the
+  // pipeline's own stage list rather than re-derived, for the same reason.
+  const DEADLINE_ROWS = 3;
+  const stageLabel = new Map(pipeline.stages.map((s) => [s.key, s.label]));
+  const deadlines: DashDeadline[] = liveCards
+    .map((c) => ({ card: c, days: deadlineDaysLeft(c.grant?.submission_deadline) }))
+    .filter((x): x is { card: DashCard; days: number } => x.days !== null && x.days >= 0)
+    .sort((a, b) => a.days - b.days)
+    .slice(0, DEADLINE_ROWS)
+    .map(({ card, days }) => ({
+      id: card.id,
+      title: card.grant?.title || "Untitled opportunity",
+      meta: [card.grant?.funder, stageLabel.get(stageOf(card))?.toLowerCase()].filter(Boolean).join(" · ") || null,
+      days,
+      href: `${base}/${card.id}`,
+    }));
 
   // Grant Report card: the strongest live matches, highest fit first, then soonest
   // deadline as the tiebreak (among equal fits, the one with a clock on it is the one
@@ -385,7 +451,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         roadmapHref={base}
         intellEngineHref={`/clients/${client.id}/intellengine`}
         hero={<GrantPipeline pipeline={pipeline} nextDeadlineLabel={nextDeadlineLabel} />}
-        actionItems={actionItems}
+        actionItems={consoleActionItems}
         activity={counts}
         report={{
           rows: reportRows,
@@ -400,9 +466,13 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         }}
         // Pure read of the community_context already on the record -- no fetch here.
         community={buildCommunityView(client)}
+        deadlines={deadlines}
+        // The scorer moves INTO the rail. It used to sit under the hero as `staffTools`,
+        // where it was the loudest thing on the page for a tool that is not daily-use;
+        // the design makes it a compact rail card instead.
+        scorer={isLead ? undefined : <CheckGrant clientId={client.id} clientName={client.name} />}
         bookingUrl={process.env.NEXT_PUBLIC_BOOKING_URL ?? null}
         matchNote={matchNote}
-        staffTools={isLead ? undefined : <CheckGrant clientId={client.id} clientName={client.name} />}
         />
       </div>
     </div>

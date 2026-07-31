@@ -22,6 +22,12 @@ export const BRAND = {
   slate: "#334867",       // grey-navy — secondary accent (e.g. charts)
   taupe: "#c9c2b8",       // warm neutral — low-emphasis (e.g. charts)
   success: "#059669",     // status green — a functional signal, NOT the brand palette
+  // Completion green for use ON the navy IntellEngine gradient (its checklist ticks).
+  // Deliberately NOT `success` (#059669): that value is tuned for dark-on-light and
+  // does not clear contrast against navy, so the two are different tokens for
+  // different backgrounds rather than one reused in a place it fails. The only colour
+  // in the approved design that was not already in this file.
+  successOnDark: "#4ADE80",
 } as const;
 
 // ── Surfaces ────────────────────────────────────────────────────────────────
