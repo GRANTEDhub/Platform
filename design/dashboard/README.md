@@ -1,0 +1,52 @@
+# Client dashboard — approved design reference
+
+Source of truth for the client dashboard's visual design. Exported from Claude Design
+(`SaaS Platform UI Design Direction`). **`Client Dashboard - Final.dc.html` is the
+approved mockup** — open it in a browser (`support.js` must sit alongside it) to render
+at its native 1440×900.
+
+`Claude Code Handoff.md` carries the design intent and alignment/empty-state rules.
+`github.md` records which codebase files the design was drawn against.
+
+## Why this lives in the repo
+
+Two prior implementation passes were driven from screenshots plus prose and drifted from
+the approved design. Every value in the mockup is inline, so the file itself is the spec —
+read it rather than approximating from an image.
+
+## Token authority
+
+Where the mockup and `lib/brand.ts` disagree, **the mockup wins** and `lib/brand.ts` is
+updated as the single source. In practice they already agree: `SURFACE.page` (`#F1EEE8`),
+`navy`, `navyHover` (the IntellEngine gradient end), `orange`, the full `STAGE` scale and
+tints, `INK`, `LINE`, `ELEVATION.card`, and all three `RADIUS` values match the mockup
+exactly, as do the DM Sans / Libre Baskerville faces in `tailwind.config.ts`.
+
+The only genuine addition is a green for the IntellEngine checklist check (`#4ADE80`),
+which needs to clear contrast on the navy gradient — `BRAND.success` (`#059669`) is a
+light-surface signal and is too dark there.
+
+A handful of the mockup's inline rgba values sit within one or two hundredths of an
+existing token (`rgba(11,30,58,.07)` / `.08` / `.14` against `LINE`, `#A9AFB8` against
+`INK.faint`). Those snap to the existing token — the differences are sub-perceptual and
+new near-duplicate tints are what the single-source rule exists to prevent.
+
+## Where the mockup is not implementable as drawn
+
+The mockup's numbers are sample data; the real page renders real client data. Three
+elements have no honest backing, so the layout is matched while the behavior is not
+invented:
+
+| Element | Resolution |
+|---|---|
+| Global search (`⌘K`) | Omitted. No search backend. Right-cluster spacing preserved so the band's proportions still match. |
+| Notification bell | Rendered as a static icon — faithful, since the mockup shows no badge on it. `lib/portal/notifications.ts` is client-portal-scoped and semantically wrong for a staff bell. |
+| "triage window closes Aug 4" | Not shipped as drawn — no triage-window field exists, and unverified dates must not appear on a client-facing surface. The slot carries the nearest real `deadline` among the client's pipeline grants, labeled for what it is, and drops when there is none. |
+
+Pipeline stage columns keep the mockup's spacing, widths, and type but are not clickable —
+no per-stage filter route exists yet. The hover/cursor affordance is dropped so they do not
+advertise themselves as links.
+
+**"Not wired" is never a licence to change the layout.** Structure, spacing, and type scale
+follow the mockup regardless of what is interactive. Both prior passes changed layout while
+removing controls, which is the actual reason they read as unfaithful.
