@@ -43,7 +43,7 @@ export function ClientContextBar({
 
       <span
         aria-hidden="true"
-        className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-md bg-brand-navy text-[11px] font-semibold text-white"
+        className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-pill bg-brand-navy text-[11.5px] font-semibold text-white"
       >
         {monogram}
       </span>
