@@ -1,4 +1,6 @@
 import type { Client, ClientProfile, CommunityContext, ShortageDesignation } from "@/types/database";
+import { ruccShortLabel } from "@/lib/geo/rucc";
+import { samExpiryFlag } from "@/lib/sam/expiry";
 
 // Pure view-model for the dashboard's community-context rail card. It reads the
 // community_context already stored on clients.client_profile (built by
@@ -36,6 +38,25 @@ export interface ShortageView {
   lines: string[];
 }
 
+export interface RuralityView {
+  state: Availability;
+  // "2 · metro" -- the USDA code and the band it falls in. The code alone is jargon and
+  // the band alone loses the specificity a grant writer cites, so it is both.
+  label: string | null;
+  // The full stored string, including its provenance ("auto-derived from X (USDA ERS
+  // 2023)"). Surfaced as a tooltip rather than inline: the card has room for the verdict,
+  // not the citation, but the citation must not be unreachable.
+  detail: string | null;
+}
+
+export interface SamView {
+  state: Availability;
+  label: string | null;
+  // Whether this reads as a cleared requirement or an outstanding one. Drives the dot
+  // colour, so it is decided here (where the expiry rules live) rather than in the card.
+  ok: boolean;
+}
+
 export interface CommunityView {
   // Location label for the map tile. Null only when the client record carries no
   // location at all, in which case the caller drops the tile rather than captioning
@@ -43,6 +64,11 @@ export interface CommunityView {
   placeLabel: string | null;
   income: IncomeView;
   shortage: ShortageView;
+  rurality: RuralityView;
+  // Submission readiness rather than geography, strictly speaking -- but the approved
+  // design groups it into this card because the card answers "can this org receive this
+  // money", and an unregistered SAM stops that as surely as failing an eligibility test.
+  sam: SamView;
   // Provenance line: ACS vintage + which sources actually answered.
   vintage: string | null;
   checkedAt: string | null;
@@ -117,8 +143,51 @@ function buildShortage(cc: CommunityContext | null): ShortageView {
   return { state: "value", lines };
 }
 
+// rucc_codes is a FREE-TEXT column. The refresh job writes
+// "{code} ({label}) -- auto-derived from {county} (USDA ERS 2023)", but the intake form
+// also lets a human type into it, so this parses defensively rather than assuming the
+// machine format: a leading 1-9 is treated as the code and the band is re-derived from
+// ruccShortLabel (never trusting a hand-typed band), and anything else non-empty is shown
+// as-is instead of being discarded. A value we cannot parse is still a value someone
+// entered on purpose.
+function buildRurality(raw: string | null | undefined): RuralityView {
+  const text = (raw ?? "").trim();
+  if (!text) return { state: "unchecked", label: null, detail: null };
+  const code = Number(text.match(/^\s*([1-9])\b/)?.[1]);
+  if (Number.isFinite(code)) {
+    return { state: "value", label: `${code} · ${ruccShortLabel(code).toLowerCase()}`, detail: text };
+  }
+  return { state: "value", label: text, detail: text };
+}
+
+// SAM readiness, reusing samExpiryFlag so the card cannot disagree with the expiry
+// warnings shown elsewhere. Four outcomes, and the distinction that matters is between
+// "nobody has bound a UEI yet" (a to-do) and "bound and lapsed" (a different, more urgent
+// to-do) -- collapsing them into "unresolved" would hide which one you are looking at.
+function buildSam(
+  client: Pick<Client, "uei" | "sam_registration_status" | "sam_expiration_date">,
+): SamView {
+  const status = (client.sam_registration_status ?? "").trim();
+  const uei = (client.uei ?? "").trim();
+  const exp = (client.sam_expiration_date ?? "").trim();
+  if (!uei && !status) return { state: "none", label: "Unresolved", ok: false };
+  const flag = samExpiryFlag(exp || null);
+  if (flag?.level === "expired") return { state: "value", label: "Expired", ok: false };
+  if (flag) return { state: "value", label: flag.label, ok: false };
+  return { state: "value", label: status || "Registered", ok: true };
+}
+
 export function buildCommunityView(
-  client: Pick<Client, "location_county" | "location_city" | "location_state"> & {
+  client: Pick<
+    Client,
+    | "location_county"
+    | "location_city"
+    | "location_state"
+    | "rucc_codes"
+    | "uei"
+    | "sam_registration_status"
+    | "sam_expiration_date"
+  > & {
     client_profile: ClientProfile | null;
   },
 ): CommunityView {
@@ -127,6 +196,8 @@ export function buildCommunityView(
     placeLabel: placeLabelFor(client),
     income: buildIncome(cc),
     shortage: buildShortage(cc),
+    rurality: buildRurality(client.rucc_codes),
+    sam: buildSam(client),
     vintage: cc?.vintage ?? null,
     checkedAt: cc?.checked_at ?? null,
     unpulled: !cc,
