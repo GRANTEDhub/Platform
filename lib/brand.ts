@@ -22,6 +22,16 @@ export const BRAND = {
   slate: "#334867",       // grey-navy — secondary accent (e.g. charts)
   taupe: "#c9c2b8",       // warm neutral — low-emphasis (e.g. charts)
   success: "#059669",     // status green — a functional signal, NOT the brand palette
+  // Brand orange at the alpha the IntellEngine panel's radial bloom fades from. Here
+  // rather than inline at the call site so the glow cannot drift into a second orange:
+  // the gradient geometry belongs to the component, the COLOUR belongs to this file.
+  orangeGlow: "rgba(228,118,31,0.32)",
+  // Completion green for use ON the navy IntellEngine gradient (its checklist ticks).
+  // Deliberately NOT `success` (#059669): that value is tuned for dark-on-light and
+  // does not clear contrast against navy, so the two are different tokens for
+  // different backgrounds rather than one reused in a place it fails. The only colour
+  // in the approved design that was not already in this file.
+  successOnDark: "#4ADE80",
 } as const;
 
 // ── Surfaces ────────────────────────────────────────────────────────────────
@@ -66,10 +76,16 @@ export const LINE = {
 //
 // `client.text` exists because #C9962B does not clear contrast on white. Use it for
 // warning-state label text; never render the raw stage color as small type.
+//
+// `border` is a SEPARATE token from `tint`, not a tidier way of spelling it. A tint is a
+// fill covering an area; a 1px rule in the same hue disappears at that alpha, so a
+// tinted panel header needs roughly double to read as an edge. Both stage headers in the
+// approved design pair the two, so the pairing is named here rather than reinvented as a
+// one-off rgba at each call site -- which is how a second, undocumented orange gets in.
 export const STAGE = {
-  triage: { color: "#E4761F", tint: "rgba(228,118,31,0.07)" },
+  triage: { color: "#E4761F", tint: "rgba(228,118,31,0.07)", border: "rgba(228,118,31,0.14)" },
   client: { color: "#C9962B", tint: "rgba(201,150,43,0.14)", text: "#A87A1B" },
-  approved: { color: "#2E7D91", tint: "rgba(46,125,145,0.06)" },
+  approved: { color: "#2E7D91", tint: "rgba(46,125,145,0.06)", border: "rgba(46,125,145,0.13)" },
   pursuit: { color: "#0B7A5A", tint: "rgba(11,122,90,0.10)" },
   passed: { color: "#C9C2B8", tint: "rgba(11,30,58,0.06)" },
 } as const;

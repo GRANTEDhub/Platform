@@ -2,6 +2,8 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { FIT_BAND } from "@/lib/report/shape";
+import { INK, STAGE } from "@/lib/brand";
+import type { PipelineStageKey } from "@/lib/clients/pipeline";
 
 // The Grant Report card — the top of the client's scored matches, on the dashboard
 // itself rather than behind a shortcut tile.
@@ -14,8 +16,15 @@ import { FIT_BAND } from "@/lib/report/shape";
 //
 // Fit is the engine's 1–3 ORDINAL, never a percentage and never a decimal — a seat
 // ceiling (prime → 3, supporting → 2, adjacency → 1) with strength placed inside it.
-// Labels come from FIT_BAND, the same map the Grant Report and the staff review
-// bands read, so a score reads as the same word everywhere in the product.
+// The approved design shows fit values like "3.4"; those are not representable and are
+// NOT reproduced. Per-row fit stays an integer. The one legitimate decimal is the
+// header's mean across rows, which is an average of ordinals and is labelled as one.
+//
+// TWO VARIANTS, for the same reason ClientDashboard has two bodies: this card renders in
+// the staff console AND in the client portal. "console" is the approved design;
+// "portal" is what the portal has been shipping. The portal's chip carries the score AND
+// the word from FIT_BAND, because a bare numeral is meaningless to a client who has not
+// been told the scale — the console can assume its reader knows it.
 
 export interface DashReportRow {
   cardId: string;
@@ -26,6 +35,26 @@ export interface DashReportRow {
   // expectations); null when the grant carries no deadline.
   deadline: string | null;
   href: string | null;
+  // ── console only ──
+  // Award range, pre-formatted AND already estimate-labelled by the caller. Award
+  // figures are estimates unless the NOFO is explicit, and an unlabelled figure on a
+  // staff surface is one that gets quoted to a client as fact.
+  amount?: string | null;
+  // Which funnel stage this card sits at — drives the row's dot colour so the card and
+  // the pipeline above it agree.
+  stage?: PipelineStageKey;
+  stageLabel?: string | null;
+  // Whole days to the deadline. Null when undated. Drives the ≤7-day urgency colour,
+  // which a pre-formatted date string cannot.
+  days?: number | null;
+}
+
+export interface DashReportMetrics {
+  open: number;
+  decided: number;
+  // Mean fit across the live set, to one decimal. Null when there is nothing to average
+  // — "0.0 avg fit" would read as "we scored everything at zero".
+  avgFit: string | null;
 }
 
 // Ordinal chip: the score AND the word. The number alone is meaningless to a client
@@ -36,11 +65,15 @@ const TONE: Record<"strong" | "good" | "fair", string> = {
   fair: "bg-ink-subtle/10 text-ink-subtle",
 };
 
+const URGENT_DAYS = 7;
+
 export function ClientGrantReportCard({
   rows,
   total,
   reportHref,
   emptyNote,
+  variant = "portal",
+  metrics,
 }: {
   // Already sorted and truncated by the caller — it knows the audience's visibility
   // rules (an account-managed client must not see unreleased cards at all).
@@ -52,9 +85,24 @@ export function ClientGrantReportCard({
   // What to say when there is nothing yet — differs by actor ("run matches" for
   // staff vs. "your team is working on it" for the client), so the caller supplies it.
   emptyNote: string;
+  variant?: "console" | "portal";
+  // Console only. Omitted when there is nothing to count.
+  metrics?: DashReportMetrics;
 }) {
+  if (variant === "console") {
+    return (
+      <ConsoleReportCard
+        rows={rows}
+        total={total}
+        reportHref={reportHref}
+        emptyNote={emptyNote}
+        metrics={metrics}
+      />
+    );
+  }
+
   return (
-    <Card className="p-6 shadow-grounded sm:p-7">
+    <Card className="p-6 shadow-card sm:p-7">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Grant Report</h2>
         {total > 0 && (
@@ -85,6 +133,142 @@ export function ClientGrantReportCard({
       )}
     </Card>
   );
+}
+
+// ── Console variant — the approved design ───────────────────────────────────
+//
+// A 3px approved-stage top edge is the ONE border this card carries (no ring, no second
+// shadow): the two-step elevation scale allows a deliberate accent edge, not a general
+// border. "STANDING WORKSPACE" says what the surface IS — the place staff live all day —
+// which is why it shows real rows rather than a counter.
+//
+// The design's strip also reads "Updated {n}h ago" on the right. review_cards has no
+// updated_at column, so there is nothing honest to put there and the slot is left empty
+// rather than filled with the page's render time, which would only ever say "now".
+function ConsoleReportCard({
+  rows,
+  total,
+  reportHref,
+  emptyNote,
+  metrics,
+}: {
+  rows: DashReportRow[];
+  total: number;
+  reportHref: string;
+  emptyNote: string;
+  metrics?: DashReportMetrics;
+}) {
+  const remaining = Math.max(0, total - rows.length);
+  return (
+    <section
+      className="flex flex-col overflow-hidden rounded-2xl border-t-[3px] bg-white shadow-card"
+      style={{ borderTopColor: STAGE.approved.color }}
+    >
+      <div className="flex items-start justify-between gap-3.5 px-5 pb-3 pt-4">
+        <div>
+          <p
+            className="text-[10px] font-bold uppercase tracking-[0.13em]"
+            style={{ color: STAGE.approved.color }}
+          >
+            Standing workspace
+          </p>
+          <h2 className="mt-[7px] font-serif text-[18px] font-bold text-brand-navy">Grant Report</h2>
+        </div>
+        {metrics && (
+          <div className="flex shrink-0 gap-4 text-right">
+            <Metric value={String(metrics.open)} label="open" />
+            <Metric value={String(metrics.decided)} label="decided" />
+            {metrics.avgFit && <Metric value={metrics.avgFit} label="avg fit" />}
+          </div>
+        )}
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="px-5 pb-5 text-sm text-ink-subtle">{emptyNote}</p>
+      ) : (
+        <>
+          <div
+            className="flex items-center justify-between gap-2.5 border-y px-5 py-[7px]"
+            style={{ backgroundColor: STAGE.approved.tint, borderColor: STAGE.approved.border }}
+          >
+            <p
+              className="text-[10px] font-bold uppercase tracking-[0.11em]"
+              style={{ color: STAGE.approved.color }}
+            >
+              Highest fit right now
+            </p>
+          </div>
+          <ul>
+            {rows.map((r) => (
+              <ConsoleReportRow key={r.cardId} row={r} />
+            ))}
+          </ul>
+          {/* mt-auto: this card is the taller of the side-by-side pair, but if the other
+              one ever wins, the footer stays pinned to the bottom instead of floating. */}
+          <div className="mt-auto flex items-center justify-between gap-2.5 px-5 py-3">
+            <p className="text-[11.5px] text-ink-subtle">
+              {remaining > 0 ? `${remaining} more in the full report` : "That is the full report"}
+            </p>
+            <Link
+              href={reportHref}
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-pill px-3.5 text-[12.5px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+              style={{ backgroundColor: STAGE.approved.color }}
+            >
+              Open report
+              <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+            </Link>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function Metric({ value, label }: { value: string; label: string }) {
+  return (
+    <div>
+      <p className="text-[18px] font-semibold leading-none tabular-nums text-brand-navy">{value}</p>
+      <p className="mt-[3px] text-[10.5px] text-ink-subtle">{label}</p>
+    </div>
+  );
+}
+
+function ConsoleReportRow({ row }: { row: DashReportRow }) {
+  const stage = row.stage ?? "triage";
+  const meta = [row.funder, row.amount, row.stageLabel?.toLowerCase()].filter(Boolean).join(" · ");
+  // Overdue is its own state, not a negative countdown. This card lists every OPEN card
+  // including ones whose deadline has passed -- staff still need to see them, so the row
+  // is not dropped the way it is from the rail and the pipeline header (where an overdue
+  // date presented as the "next deadline" would be wrong). But "-3 days" is not a
+  // duration, so it is named instead of counted.
+  const days = row.days ?? null;
+  const overdue = days !== null && days < 0;
+  const urgent = days !== null && days <= URGENT_DAYS;
+  const body = (
+    <div className="flex items-center gap-3 border-b border-hairline px-5 py-[11px]">
+      <span
+        aria-hidden="true"
+        className="h-[7px] w-[7px] shrink-0 rounded-[2px]"
+        style={{ backgroundColor: STAGE[stage].color }}
+      />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[13.5px] font-semibold text-brand-navy">{row.title}</p>
+        {meta && <p className="mt-0.5 truncate text-[11.5px] text-ink-subtle">{meta}</p>}
+      </div>
+      <div className="shrink-0 text-right">
+        <p className="text-[13px] font-semibold tabular-nums text-brand-navy">{row.fitScore}</p>
+        {days !== null && (
+          <p
+            className="mt-0.5 text-[11px] tabular-nums"
+            style={{ color: urgent ? STAGE.triage.color : INK.subtle, fontWeight: urgent ? 500 : 400 }}
+          >
+            {overdue ? "Overdue" : `${days} ${days === 1 ? "day" : "days"}`}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+  return <li>{row.href ? <Link href={row.href} className="block hover:bg-page/60">{body}</Link> : body}</li>;
 }
 
 function ReportRow({ row }: { row: DashReportRow }) {

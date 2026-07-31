@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { format, parseISO } from "date-fns";
-import { Loader2 } from "lucide-react";
+import { Clock, Layers, Loader2, Mail, MessageSquareText, Plug, Play, type LucideIcon } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { AutoRefresh } from "@/components/ui/auto-refresh";
@@ -11,15 +11,17 @@ import { InviteClientButton } from "@/components/clients/invite-client-button";
 import { ClientContextBar } from "@/components/clients/client-context-bar";
 import { GrantPipeline } from "@/components/clients/grant-pipeline";
 import { Badge } from "@/components/ui/badge";
-import { derivePipeline } from "@/lib/clients/pipeline";
+import { derivePipeline, stageOf, type PipelineStageKey } from "@/lib/clients/pipeline";
 import { inviteClientToPortalAction } from "../actions";
 import { ClientDashboard, type DashActionItem } from "@/components/clients/client-dashboard";
 import { type DashReportRow } from "@/components/clients/client-grant-report-card";
 import { type DashDraft } from "@/components/clients/client-draft-progress";
+import { type DashDeadline } from "@/components/clients/upcoming-deadlines";
 import { buildCommunityView } from "@/lib/clients/community";
 import { deriveEnrichmentSteps } from "@/lib/clients/enrichment-status";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import { deadlineDaysLeft } from "@/lib/report/shape";
+import { formatAwardRange } from "@/lib/grants/format";
 import type { Client, CardDecision, Grant, IntellEngineDraft, PursuitPath } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -29,6 +31,14 @@ export const dynamic = "force-dynamic";
 // Staff-internal detail (contact / engagement / billing / portal access / repository
 // / notes) lives on Edit profile, not here. Ledger click-throughs are gone — grant
 // ops live in the Ledger only.
+// The grant columns this page reads. award_range_* feed the Grant Report card's amount,
+// which must carry an estimate marker when award_range_is_estimate is set -- an
+// unlabelled figure on a staff surface is one that gets quoted to a client as fact.
+type GrantEmbed = Pick<
+  Grant,
+  "id" | "title" | "funder" | "submission_deadline" | "award_range_min" | "award_range_max" | "award_range_is_estimate"
+>;
+
 type CardRow = {
   id: string;
   fit_score: 1 | 2 | 3;
@@ -41,10 +51,7 @@ type CardRow = {
   // Also the pipeline's: null on an approved card means the decision is recorded but
   // the pursuit path is still open, which is the Approved stage rather than In pursuit.
   pursuit_path: PursuitPath | null;
-  grants:
-    | Pick<Grant, "id" | "title" | "funder" | "submission_deadline">
-    | Pick<Grant, "id" | "title" | "funder" | "submission_deadline">[]
-    | null;
+  grants: GrantEmbed | GrantEmbed[] | null;
 };
 
 // What to actually DO about a data source that needs a human, phrased per field.
@@ -60,6 +67,23 @@ const RESOLVE_HINT: Record<string, string> = {
 function grantOf(g: CardRow["grants"]) {
   if (!g) return null;
   return Array.isArray(g) ? g[0] ?? null : g;
+}
+
+// Award figure for a Grant Report row, or null when the grant carries no range.
+//
+// formatAwardRange returns "—" for "no figure at all"; that is a placeholder, not a
+// value, so it becomes null here and the row simply omits the segment rather than
+// printing a dash between two real facts.
+//
+// The "est." suffix is not cosmetic: award amounts are estimates unless the NOFO states
+// otherwise, and an unlabelled figure on a staff surface is one that gets read out to a
+// client as fact. The flag is already on the record, so the only way to get this wrong
+// is to not look at it.
+function awardLabel(g: GrantEmbed | null | undefined): string | null {
+  if (!g) return null;
+  const range = formatAwardRange(g.award_range_min, g.award_range_max);
+  if (range === "—") return null;
+  return g.award_range_is_estimate ? `${range} est.` : range;
 }
 
 export default async function ClientDashboardPage({ params }: { params: { id: string } }) {
@@ -88,7 +112,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
 
   const { data: cardRows } = await supabase
     .from("review_cards")
-    .select("id, fit_score, decision, interested_at, sme_interested_at, sme_released_at, sent_at, pursuit_path, grants(id, title, funder, submission_deadline)")
+    .select("id, fit_score, decision, interested_at, sme_interested_at, sme_released_at, sent_at, pursuit_path, grants(id, title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate)")
     .eq("client_id", params.id)
     .neq("card_type", "prospect");
 
@@ -107,6 +131,10 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   >[]).map((d) => ({ id: d.id, title: d.title, status: d.status }));
 
   const cards = ((cardRows ?? []) as CardRow[]).map((r) => ({ ...r, grant: grantOf(r.grants) }));
+  // The row shape everything downstream actually works with: CardRow plus the embedded
+  // grant flattened to one object. Named so the derivations below can be typed against
+  // it instead of against CardRow, which no longer describes them.
+  type DashCard = (typeof cards)[number];
   // "In review" now means interested-but-undecided (sitting in the Grant Report,
   // past the Grant Alerts gate) -- not-yet-triaged cards are a separate bucket
   // (newAlerts, below), not part of this count. See migration 0057.
@@ -259,6 +287,70 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
     actionItems.push({ id: "next-step", title: client.next_step, tag: "From your team" });
   }
 
+  // Console presentation for the attention rows, keyed by the item id the pushes above
+  // already set. Done as a decoration pass rather than inline at each push so the
+  // WHAT (which items exist, and when) stays in one readable sequence and the HOW IT
+  // LOOKS stays in one table -- nine call sites each carrying an icon and a tint is how
+  // those two concerns drift apart.
+  //
+  // `tone` reuses the pipeline stage scale on purpose: an attention row about triage
+  // and the pipeline's triage column should read as the same thing, not two palettes.
+  // `pill` is set only where there is somewhere to go AND the work can start now.
+  const ATTENTION_STYLE: Record<
+    string,
+    { icon: LucideIcon; tone: PipelineStageKey; pill?: boolean }
+  > = {
+    matching: { icon: Loader2, tone: "triage" },
+    "run-matches": { icon: Play, tone: "triage" },
+    "to-review": { icon: Layers, tone: "triage", pill: true },
+    "invite-client": { icon: Mail, tone: "passed" },
+    "connect-apis": { icon: Plug, tone: "client" },
+    "grant-report-pending": { icon: Clock, tone: "client" },
+    "next-step": { icon: MessageSquareText, tone: "passed" },
+  };
+
+  // The pill's LABEL is derived from the href, not stored beside the icon. It used to be
+  // a static string ("Open Grant Alerts") in the table above while the href was computed
+  // per-actor at the push site -- so for an account-managed client or a lead, whose review
+  // gate is the roadmap list rather than the alerts swipe, the button named a destination
+  // it did not go to. Two independent code paths keyed off the same id with nothing tying
+  // them together. Reading the label off the href is what makes them unable to disagree.
+  const pillLabel = (href: string) => (href === alertsHref ? "Open Grant Alerts" : "Open review");
+
+  const consoleActionItems: DashActionItem[] = actionItems.map((it) => {
+    const style = ATTENTION_STYLE[it.id];
+    // The design gives each row a second line. The existing `tag` is that sentence, and
+    // the onboarding step is appended when there is one -- so "step 3 of 3" moves off
+    // the right-hand slot (now the affordance's) without being lost.
+    const description =
+      [it.tag, it.stage ? `step ${it.stage.step} of ${it.stage.total}` : null].filter(Boolean).join(" · ") || null;
+    return {
+      ...it,
+      description,
+      icon: style?.icon,
+      tone: style?.tone,
+      // A pill REQUIRES an href -- a filled button that navigates nowhere is the exact
+      // thing this card is meant to stop. And a row with no href falls to "none", not
+      // "blocked": these rows have no link for three different reasons, and only one of
+      // them is a prerequisite. `run-matches` and `invite-client` are actioned by the
+      // top-right control (their own description says so); `next-step` is a note from the
+      // team; `grant-report-pending` on a managed client is a status readout. Defaulting
+      // those to "Blocked" put that word next to a description reading "Use the button,
+      // top right" -- a row arguing with itself.
+      affordance: style?.pill && it.href
+        ? { kind: "pill", label: pillLabel(it.href) }
+        : it.href
+          ? { kind: "chevron" }
+          : { kind: "none" },
+    };
+  });
+
+  // See ClientDashboard's attentionNote prop: the design's line names Grant Alerts, which
+  // is only where this card leads for a standard client. Managed clients and leads review
+  // on the roadmap list, so they are told that instead.
+  const attentionNote =
+    managed || isLead ? "The review list opens from here only" : "Grant Alerts opens from here only";
+
   const subLine =
     [client.org_type?.replace(/_/g, " "), client.location_city, client.location_state].filter(Boolean).join(" · ") || null;
 
@@ -285,6 +377,25 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
       .sort()
       .map((d) => format(parseISO(d), "MMM d"))[0] ?? null;
 
+  // Rail: the next three real deadlines, soonest first. Same source and same exclusions
+  // as the header date above -- open cards only, nothing overdue -- so the two can never
+  // tell different stories about which deadline is next. The stage label is read off the
+  // pipeline's own stage list rather than re-derived, for the same reason.
+  const DEADLINE_ROWS = 3;
+  const stageLabel = new Map(pipeline.stages.map((s) => [s.key, s.label]));
+  const deadlines: DashDeadline[] = liveCards
+    .map((c) => ({ card: c, days: deadlineDaysLeft(c.grant?.submission_deadline) }))
+    .filter((x): x is { card: DashCard; days: number } => x.days !== null && x.days >= 0)
+    .sort((a, b) => a.days - b.days)
+    .slice(0, DEADLINE_ROWS)
+    .map(({ card, days }) => ({
+      id: card.id,
+      title: card.grant?.title || "Untitled opportunity",
+      meta: [card.grant?.funder, stageLabel.get(stageOf(card))?.toLowerCase()].filter(Boolean).join(" · ") || null,
+      days,
+      href: `${base}/${card.id}`,
+    }));
+
   // Grant Report card: the strongest live matches, highest fit first, then soonest
   // deadline as the tiebreak (among equal fits, the one with a clock on it is the one
   // to look at). Passed cards are excluded -- they are a closed decision, and the card
@@ -309,7 +420,30 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         ? format(parseISO(c.grant.submission_deadline), "MMM d")
         : null,
       href: `${base}/${c.id}`,
+      // Console row extras.
+      amount: awardLabel(c.grant),
+      stage: stageOf(c),
+      stageLabel: stageLabel.get(stageOf(c)) ?? null,
+      days: deadlineDaysLeft(c.grant?.submission_deadline),
     }));
+
+  // Header metrics. Definitions kept narrow and separately checkable rather than
+  // clever: `open` is what still awaits a decision, `decided` is what has been
+  // committed to. Passed is in neither -- it is a closed decision, and counting it as
+  // "decided" would make the pair read as though most of the roster had been actioned.
+  //
+  // avgFit is the ONE legitimate decimal on this card. Per-row fit is a 1-3 ordinal and
+  // stays an integer (the design shows values like "3.4", which are not representable
+  // and are not reproduced); a mean ACROSS rows is a different quantity and is labelled
+  // as an average. Null when there is nothing to average -- "0.0 avg fit" would read as
+  // though everything scored zero.
+  const reportMetrics = {
+    open: liveCards.filter((c) => c.decision === "pending").length,
+    decided: cards.filter((c) => c.decision === "approved").length,
+    avgFit: liveCards.length
+      ? (liveCards.reduce((n, c) => n + c.fit_score, 0) / liveCards.length).toFixed(1)
+      : null,
+  };
 
   // "Client since" only when there IS a contract start. Otherwise this reports when the
   // record was created and says so -- those are different facts, and labelling a
@@ -385,10 +519,11 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         roadmapHref={base}
         intellEngineHref={`/clients/${client.id}/intellengine`}
         hero={<GrantPipeline pipeline={pipeline} nextDeadlineLabel={nextDeadlineLabel} />}
-        actionItems={actionItems}
+        actionItems={consoleActionItems}
         activity={counts}
         report={{
           rows: reportRows,
+          metrics: reportMetrics,
           total: liveCards.length,
           emptyNote: matchInProgress
             ? "Matching is running — opportunities will appear here as they are scored."
@@ -400,9 +535,14 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         }}
         // Pure read of the community_context already on the record -- no fetch here.
         community={buildCommunityView(client)}
+        deadlines={deadlines}
+        attentionNote={attentionNote}
+        // The scorer moves INTO the rail. It used to sit under the hero as `staffTools`,
+        // where it was the loudest thing on the page for a tool that is not daily-use;
+        // the design makes it a compact rail card instead.
+        scorer={isLead ? undefined : <CheckGrant clientId={client.id} clientName={client.name} />}
         bookingUrl={process.env.NEXT_PUBLIC_BOOKING_URL ?? null}
         matchNote={matchNote}
-        staffTools={isLead ? undefined : <CheckGrant clientId={client.id} clientName={client.name} />}
         />
       </div>
     </div>
