@@ -212,6 +212,25 @@ export function TopNav({
                 <MoreItems items={more} pathname={pathname} />
               </>
             )}
+            {/* The account block lives here TOO, not only in the lg-and-up avatar
+                menu. The avatar menu is `hidden lg:block`, so without this there is
+                no way to sign out on any viewport under 1024px -- which the old
+                sidebar always had. A nav that can be entered but not exited is worse
+                than a cramped one. */}
+            <div className="my-1 h-px bg-hairline-strong" />
+            <div className="px-3 py-2">
+              <p className="truncate text-[13px] font-semibold text-brand-navy">{user.name}</p>
+              <p className="text-[11.5px] capitalize text-ink-subtle">{user.role}</p>
+            </div>
+            <form action="/auth/signout" method="post">
+              <button
+                type="submit"
+                role="menuitem"
+                className="w-full px-3 py-2 text-left text-[13px] text-ink-muted transition-colors hover:bg-page hover:text-brand-navy"
+              >
+                Sign out
+              </button>
+            </form>
           </div>
         )}
       </div>
