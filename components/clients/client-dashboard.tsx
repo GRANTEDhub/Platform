@@ -11,7 +11,11 @@ import {
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ClientMatchChart } from "@/components/clients/client-match-chart";
-import { ClientGrantReportCard, type DashReportRow } from "@/components/clients/client-grant-report-card";
+import {
+  ClientGrantReportCard,
+  type DashReportRow,
+  type DashReportMetrics,
+} from "@/components/clients/client-grant-report-card";
 import { ClientDraftProgress, type DashDraft } from "@/components/clients/client-draft-progress";
 import { ClientCommunityContext } from "@/components/clients/client-community-context";
 import { UpcomingDeadlines, type DashDeadline } from "@/components/clients/upcoming-deadlines";
@@ -117,7 +121,7 @@ export function ClientDashboard({
   // Left-column cards. Both are optional, and when one is absent its old shortcut
   // tile renders in the bottom row instead -- so a caller that passes neither gets
   // exactly the previous dashboard rather than a gap where a card should be.
-  report?: { rows: DashReportRow[]; total: number; emptyNote: string };
+  report?: { rows: DashReportRow[]; total: number; emptyNote: string; metrics?: DashReportMetrics };
   drafts?: { list: DashDraft[]; emptyNote: string };
   // Rail: community need-context read from client_profile.community_context.
   community?: CommunityView;
@@ -211,7 +215,7 @@ function ConsoleBody({
   intellEngineHref,
 }: {
   actionItems: DashActionItem[];
-  report?: { rows: DashReportRow[]; total: number; emptyNote: string };
+  report?: { rows: DashReportRow[]; total: number; emptyNote: string; metrics?: DashReportMetrics };
   drafts?: { list: DashDraft[]; emptyNote: string };
   community?: CommunityView;
   deadlines?: DashDeadline[];
@@ -230,14 +234,17 @@ function ConsoleBody({
         <div className="grid gap-4 lg:grid-cols-2 lg:items-stretch">
           {report && (
             <ClientGrantReportCard
+              variant="console"
               rows={report.rows}
               total={report.total}
               reportHref={roadmapHref}
               emptyNote={report.emptyNote}
+              metrics={report.metrics}
             />
           )}
           {drafts && intellEngineHref && (
             <ClientDraftProgress
+              variant="console"
               drafts={drafts.list}
               intellEngineHref={intellEngineHref}
               emptyNote={drafts.emptyNote}
@@ -361,7 +368,7 @@ function PortalBody({
 }: {
   actionItems: DashActionItem[];
   activity: { pending: number; approved: number; passed: number };
-  report?: { rows: DashReportRow[]; total: number; emptyNote: string };
+  report?: { rows: DashReportRow[]; total: number; emptyNote: string; metrics?: DashReportMetrics };
   drafts?: { list: DashDraft[]; emptyNote: string };
   community?: CommunityView;
   roadmapHref: string;

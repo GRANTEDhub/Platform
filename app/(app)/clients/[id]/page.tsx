@@ -21,6 +21,7 @@ import { buildCommunityView } from "@/lib/clients/community";
 import { deriveEnrichmentSteps } from "@/lib/clients/enrichment-status";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import { deadlineDaysLeft } from "@/lib/report/shape";
+import { formatAwardRange } from "@/lib/grants/format";
 import type { Client, CardDecision, Grant, IntellEngineDraft, PursuitPath } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +31,14 @@ export const dynamic = "force-dynamic";
 // Staff-internal detail (contact / engagement / billing / portal access / repository
 // / notes) lives on Edit profile, not here. Ledger click-throughs are gone — grant
 // ops live in the Ledger only.
+// The grant columns this page reads. award_range_* feed the Grant Report card's amount,
+// which must carry an estimate marker when award_range_is_estimate is set -- an
+// unlabelled figure on a staff surface is one that gets quoted to a client as fact.
+type GrantEmbed = Pick<
+  Grant,
+  "id" | "title" | "funder" | "submission_deadline" | "award_range_min" | "award_range_max" | "award_range_is_estimate"
+>;
+
 type CardRow = {
   id: string;
   fit_score: 1 | 2 | 3;
@@ -42,10 +51,7 @@ type CardRow = {
   // Also the pipeline's: null on an approved card means the decision is recorded but
   // the pursuit path is still open, which is the Approved stage rather than In pursuit.
   pursuit_path: PursuitPath | null;
-  grants:
-    | Pick<Grant, "id" | "title" | "funder" | "submission_deadline">
-    | Pick<Grant, "id" | "title" | "funder" | "submission_deadline">[]
-    | null;
+  grants: GrantEmbed | GrantEmbed[] | null;
 };
 
 // What to actually DO about a data source that needs a human, phrased per field.
@@ -61,6 +67,23 @@ const RESOLVE_HINT: Record<string, string> = {
 function grantOf(g: CardRow["grants"]) {
   if (!g) return null;
   return Array.isArray(g) ? g[0] ?? null : g;
+}
+
+// Award figure for a Grant Report row, or null when the grant carries no range.
+//
+// formatAwardRange returns "—" for "no figure at all"; that is a placeholder, not a
+// value, so it becomes null here and the row simply omits the segment rather than
+// printing a dash between two real facts.
+//
+// The "est." suffix is not cosmetic: award amounts are estimates unless the NOFO states
+// otherwise, and an unlabelled figure on a staff surface is one that gets read out to a
+// client as fact. The flag is already on the record, so the only way to get this wrong
+// is to not look at it.
+function awardLabel(g: GrantEmbed | null | undefined): string | null {
+  if (!g) return null;
+  const range = formatAwardRange(g.award_range_min, g.award_range_max);
+  if (range === "—") return null;
+  return g.award_range_is_estimate ? `${range} est.` : range;
 }
 
 export default async function ClientDashboardPage({ params }: { params: { id: string } }) {
@@ -89,7 +112,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
 
   const { data: cardRows } = await supabase
     .from("review_cards")
-    .select("id, fit_score, decision, interested_at, sme_interested_at, sme_released_at, sent_at, pursuit_path, grants(id, title, funder, submission_deadline)")
+    .select("id, fit_score, decision, interested_at, sme_interested_at, sme_released_at, sent_at, pursuit_path, grants(id, title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate)")
     .eq("client_id", params.id)
     .neq("card_type", "prospect");
 
@@ -375,7 +398,30 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         ? format(parseISO(c.grant.submission_deadline), "MMM d")
         : null,
       href: `${base}/${c.id}`,
+      // Console row extras.
+      amount: awardLabel(c.grant),
+      stage: stageOf(c),
+      stageLabel: stageLabel.get(stageOf(c)) ?? null,
+      days: deadlineDaysLeft(c.grant?.submission_deadline),
     }));
+
+  // Header metrics. Definitions kept narrow and separately checkable rather than
+  // clever: `open` is what still awaits a decision, `decided` is what has been
+  // committed to. Passed is in neither -- it is a closed decision, and counting it as
+  // "decided" would make the pair read as though most of the roster had been actioned.
+  //
+  // avgFit is the ONE legitimate decimal on this card. Per-row fit is a 1-3 ordinal and
+  // stays an integer (the design shows values like "3.4", which are not representable
+  // and are not reproduced); a mean ACROSS rows is a different quantity and is labelled
+  // as an average. Null when there is nothing to average -- "0.0 avg fit" would read as
+  // though everything scored zero.
+  const reportMetrics = {
+    open: liveCards.filter((c) => c.decision === "pending").length,
+    decided: cards.filter((c) => c.decision === "approved").length,
+    avgFit: liveCards.length
+      ? (liveCards.reduce((n, c) => n + c.fit_score, 0) / liveCards.length).toFixed(1)
+      : null,
+  };
 
   // "Client since" only when there IS a contract start. Otherwise this reports when the
   // record was created and says so -- those are different facts, and labelling a
@@ -455,6 +501,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         activity={counts}
         report={{
           rows: reportRows,
+          metrics: reportMetrics,
           total: liveCards.length,
           emptyNote: matchInProgress
             ? "Matching is running — opportunities will appear here as they are scored."
