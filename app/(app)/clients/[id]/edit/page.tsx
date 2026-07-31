@@ -1,5 +1,4 @@
 import { notFound } from "next/navigation";
-import { format, parseISO } from "date-fns";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
@@ -10,22 +9,30 @@ import { PortalAccess, type PortalMember } from "@/components/clients/portal-acc
 import { ClientRepository } from "@/components/clients/client-repository";
 import { FormExitGuard } from "@/components/clients/form-exit-guard";
 import { DeleteClient } from "@/components/clients/delete-client";
+import { EnrichmentPanel } from "@/components/clients/enrichment-panel";
+import { deriveEnrichmentSteps } from "@/lib/clients/enrichment-status";
 import { signedUrl } from "@/lib/storage";
 import { ClientForm } from "../../client-form";
-import { SamRegistration } from "../../sam-registration";
 import { updateClientAction, deleteClientAction } from "../../actions";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import type { Client, Invoice, ClientOverview } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
-// Edit profile — now also the home for the client's staff-internal detail that used
-// to clutter the dashboard: contact, engagement/billing, portal access, repository,
-// notes. (The whole page is due a proper redesign later; this relocation keeps
-// everything accessible in the meantime so the dashboard stays client-clean.)
-function fmtDate(d: string | null) {
-  return d ? format(parseISO(d), "MMM d, yyyy") : "—";
-}
+// Edit profile — the SAME stepped pages as intake, navigated by clicking the section
+// bar at the top rather than walking Back/Next. You come here to change one thing, so
+// the bar is the navigation, not a progress read-out. See ClientForm's header comment.
+//
+// It also hosts the two surfaces that used to be separate destinations:
+//   · API data — was its own route plus a hero button next to "Edit profile". Same
+//     question ("what did the public sources give us?"), so it is a section here now.
+//     The route survives only as the post-create confirm step (?new=1).
+//   · Client admin — portal seats, contract repository, notes, delete. Staff-internal,
+//     kept off the client-clean dashboard.
+//
+// Both are passed as `extras`: panes that share the section bar but sit OUTSIDE the
+// <form>, because both contain their own <form> elements (portal seats, delete) and a
+// nested form is dropped by the browser.
 
 // Blast radius for the delete confirmation: what actually hangs off this record.
 // Counted with head:true so nothing is transferred -- these are shown to make a
@@ -68,7 +75,36 @@ function Detail({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-export default async function EditClientPage({ params }: { params: { id: string } }) {
+const RAIL = "rounded-2xl border-0 bg-white shadow-[0_1px_3px_rgba(11,30,58,0.05)] ring-1 ring-brand-navy/[0.06]";
+
+function DangerZone({
+  name,
+  kindLabel,
+  action,
+  counts,
+}: {
+  name: string;
+  kindLabel: string;
+  action: (formData: FormData) => Promise<{ error: string } | undefined>;
+  counts: { label: string; n: number }[];
+}) {
+  return (
+    <div className="space-y-3 border-t border-brand-navy/[0.08] pt-6">
+      <h2 className="font-serif text-lg font-semibold text-brand-navy">Danger zone</h2>
+      <DeleteClient name={name} kindLabel={kindLabel} action={action} counts={counts} />
+    </div>
+  );
+}
+
+export default async function EditClientPage({
+  params,
+  searchParams,
+}: {
+  params: { id: string };
+  // Deep-links AT a section, now that these are panes rather than routes
+  // (?section=api from the dashboard's data-source action items).
+  searchParams: { section?: string };
+}) {
   // Any staff (admin OR contractor/AM) may edit a client/prospect profile. Billing
   // detail (Outstanding + invoices, and the signed-contract Repository) is gated to
   // admins below -- the AM edits the profile but never sees what we bill.
@@ -79,33 +115,71 @@ export default async function EditClientPage({ params }: { params: { id: string 
   const { data: client } = await supabase.from("clients").select("*").eq("id", params.id).single<Client>();
   if (!client) notFound();
 
+  const action = updateClientAction.bind(null, client.id);
+  const isProspect = isUnconvertedLead(client.pipeline_stage);
+  const kindLabel = isProspect ? "prospect" : "client";
+  // The county resolve link inside the API-data pane. A same-page link rather than a
+  // client-side jump, because the pane is server-rendered -- it lands on the General
+  // section, which is where the county field is.
+  const editHref = `/clients/${client.id}/edit?section=general`;
+  const dashboardHref = `/clients/${client.id}`;
+
+  const apiPane = (
+    <div className="space-y-6">
+      <EnrichmentPanel
+        client={client}
+        clientId={client.id}
+        kindLabel={kindLabel}
+        initialSteps={deriveEnrichmentSteps(client)}
+        mode="tab"
+        editHref={editHref}
+        dashboardHref={dashboardHref}
+      />
+      <p className="text-xs text-muted-foreground">
+        These are citations, not gates. Nothing here hides a grant or lowers a score — a missing value
+        means a caveat on the match, not a filtered result.
+      </p>
+    </div>
+  );
+
   // A prospect (un-converted lead) edits through the SAME unified form (which renders
   // its prospect variant — derived from pipeline_stage), without the client-only admin
   // rail (billing / portal / repository don't apply). Early-return so those client-only
   // queries are skipped.
-  if (isUnconvertedLead(client.pipeline_stage)) {
-    const prospectAction = updateClientAction.bind(null, client.id);
-    const prospectDelete = deleteClientAction.bind(null, client.id);
-    const prospectCounts = await deleteCounts(supabase, client.id, false);
+  if (isProspect) {
+    const prospectExtras = [
+      { key: "api", title: "API data", node: apiPane },
+      ...(isAdmin
+        ? [
+            {
+              key: "admin",
+              title: "Admin",
+              node: (
+                <DangerZone
+                  name={client.name}
+                  kindLabel="prospect"
+                  action={deleteClientAction.bind(null, client.id)}
+                  counts={await deleteCounts(supabase, client.id, false)}
+                />
+              ),
+            },
+          ]
+        : []),
+    ];
     return (
       <div>
         <div className="px-8 pt-6">
-          <FormExitGuard backHref={`/clients/${client.id}`} backLabel="Back to profile" />
+          <FormExitGuard backHref={dashboardHref} backLabel="Back to profile" />
         </div>
         <PageHeader title={`Edit ${client.name}`} />
-        <div className="max-w-2xl space-y-8 p-8">
-          <ClientForm client={client} action={prospectAction} submitLabel="Save changes" />
-          {isAdmin && (
-            <div className="space-y-3 border-t border-brand-navy/[0.08] pt-8">
-              <h2 className="font-serif text-lg font-semibold text-brand-navy">Danger zone</h2>
-              <DeleteClient
-                name={client.name}
-                kindLabel="prospect"
-                action={prospectDelete}
-                counts={prospectCounts}
-              />
-            </div>
-          )}
+        <div className="p-8">
+          <ClientForm
+            client={client}
+            action={action}
+            submitLabel="Save changes"
+            extras={prospectExtras}
+            initialSection={searchParams.section}
+          />
         </div>
       </div>
     );
@@ -150,101 +224,102 @@ export default async function EditClientPage({ params }: { params: { id: string 
     })),
   );
 
-  const action = updateClientAction.bind(null, client.id);
-  const RAIL = "rounded-2xl border-0 bg-white shadow-[0_1px_3px_rgba(11,30,58,0.05)] ring-1 ring-brand-navy/[0.06]";
+  // The admin pane deliberately does NOT restate contact / status / tier / contract
+  // dates: those are editable fields two sections away, and a read-only copy of a
+  // field you can edit here is just a second version to disagree with. What survives
+  // is what the form does not hold -- derived hours, what we bill, seats, documents.
+  const adminPane = (
+    <div className="space-y-6">
+      <Card className={RAIL}>
+        <CardHeader>
+          <CardTitle>Retainer &amp; billing</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm">
+          <Detail
+            label="Hours remaining"
+            value={hoursRemaining !== null ? Number(hoursRemaining).toFixed(1) : "—"}
+          />
+          {/* What we bill the client -- admin-only (hidden from the contractor/AM). */}
+          {isAdmin && (
+            <div className="border-t border-brand-navy/[0.06] pt-4">
+              <Detail label="Outstanding" value={formatCurrency(owedCents / 100)} />
+              {bills.length === 0 ? (
+                <p className="mt-2 text-muted-foreground">No invoices yet.</p>
+              ) : (
+                <ul className="mt-2 divide-y">
+                  {bills.map((i) => (
+                    <li key={i.id} className="flex justify-between py-2">
+                      <Badge variant="secondary">{i.status}</Badge>
+                      <span className="tabular-nums">{formatCurrency(i.amount_cents / 100)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className={RAIL}>
+        <CardHeader>
+          <CardTitle>Portal access</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <PortalAccess clientId={client.id} seatLimit={client.seat_limit ?? 1} members={members} />
+        </CardContent>
+      </Card>
+
+      {/* Repository holds signed contracts (the amount we charge) -- admin-only. */}
+      {isAdmin && (
+        <Card className={RAIL}>
+          <CardHeader>
+            <CardTitle>Repository</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ClientRepository documents={documents} />
+          </CardContent>
+        </Card>
+      )}
+
+      {client.notes && (
+        <Card className={RAIL}>
+          <CardHeader>
+            <CardTitle>Notes</CardTitle>
+          </CardHeader>
+          <CardContent className="whitespace-pre-wrap text-sm text-muted-foreground">{client.notes}</CardContent>
+        </Card>
+      )}
+
+      {/* Admin-only, and last in this pane on purpose -- a destructive control should
+          not sit next to the fields you edit routinely. */}
+      {isAdmin && (
+        <DangerZone
+          name={client.name}
+          kindLabel="client"
+          action={deleteClientAction.bind(null, client.id)}
+          counts={await deleteCounts(supabase, client.id, true)}
+        />
+      )}
+    </div>
+  );
 
   return (
     <div>
       <div className="px-8 pt-6">
-        <FormExitGuard backHref={`/clients/${client.id}`} backLabel="Back to profile" />
+        <FormExitGuard backHref={dashboardHref} backLabel="Back to profile" />
       </div>
       <PageHeader title={`Edit ${client.name}`} />
-      <div className="max-w-3xl space-y-8 p-8">
-        <ClientForm client={client} action={action} submitLabel="Save changes" />
-        <SamRegistration client={client} />
-
-        <div className="space-y-6 border-t border-brand-navy/[0.08] pt-8">
-          <h2 className="font-serif text-lg font-semibold text-brand-navy">Client admin</h2>
-
-          <Card className={RAIL}>
-            <CardHeader><CardTitle>Contact</CardTitle></CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              <Detail label="Name" value={client.primary_contact_name || "—"} />
-              <Detail label="Email" value={client.primary_contact_email || "—"} />
-              <Detail label="Phone" value={client.primary_contact_phone || "—"} />
-            </CardContent>
-          </Card>
-
-          <Card className={RAIL}>
-            <CardHeader><CardTitle>Engagement &amp; billing</CardTitle></CardHeader>
-            <CardContent className="space-y-4 text-sm">
-              <div className="grid grid-cols-2 gap-4">
-                <Detail label="Status" value={<Badge variant="secondary">{client.status}</Badge>} />
-                <Detail label="Tier" value={client.engagement_tier || "—"} />
-                <Detail label="Contract start" value={fmtDate(client.contract_start)} />
-                <Detail label="Contract end" value={fmtDate(client.contract_end)} />
-                <Detail label="Retainer hours" value={String(client.retainer_hours ?? 0)} />
-                <Detail label="Hours remaining" value={hoursRemaining !== null ? Number(hoursRemaining).toFixed(1) : "—"} />
-              </div>
-              {/* What we bill the client -- admin-only (hidden from the contractor/AM). */}
-              {isAdmin && (
-                <div className="border-t border-brand-navy/[0.06] pt-4">
-                  <Detail label="Outstanding" value={formatCurrency(owedCents / 100)} />
-                  {bills.length === 0 ? (
-                    <p className="mt-2 text-muted-foreground">No invoices yet.</p>
-                  ) : (
-                    <ul className="mt-2 divide-y">
-                      {bills.map((i) => (
-                        <li key={i.id} className="flex justify-between py-2">
-                          <Badge variant="secondary">{i.status}</Badge>
-                          <span className="tabular-nums">{formatCurrency(i.amount_cents / 100)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className={RAIL}>
-            <CardHeader><CardTitle>Portal access</CardTitle></CardHeader>
-            <CardContent>
-              <PortalAccess clientId={client.id} seatLimit={client.seat_limit ?? 1} members={members} />
-            </CardContent>
-          </Card>
-
-          {/* Repository holds signed contracts (the amount we charge) -- admin-only. */}
-          {isAdmin && (
-            <Card className={RAIL}>
-              <CardHeader><CardTitle>Repository</CardTitle></CardHeader>
-              <CardContent>
-                <ClientRepository documents={documents} />
-              </CardContent>
-            </Card>
-          )}
-
-          {client.notes && (
-            <Card className={RAIL}>
-              <CardHeader><CardTitle>Notes</CardTitle></CardHeader>
-              <CardContent className="whitespace-pre-wrap text-sm text-muted-foreground">{client.notes}</CardContent>
-            </Card>
-          )}
-
-          {/* Admin-only, and last on the page on purpose -- a destructive control
-              should not sit next to the fields you edit routinely. */}
-          {isAdmin && (
-            <div className="space-y-3 border-t border-brand-navy/[0.08] pt-6">
-              <h2 className="font-serif text-lg font-semibold text-brand-navy">Danger zone</h2>
-              <DeleteClient
-                name={client.name}
-                kindLabel="client"
-                action={deleteClientAction.bind(null, client.id)}
-                counts={await deleteCounts(supabase, client.id, true)}
-              />
-            </div>
-          )}
-        </div>
+      <div className="p-8">
+        <ClientForm
+          client={client}
+          action={action}
+          submitLabel="Save changes"
+          extras={[
+            { key: "api", title: "API data", node: apiPane },
+            { key: "admin", title: "Client admin", short: "Admin", node: adminPane },
+          ]}
+          initialSection={searchParams.section}
+        />
       </div>
     </div>
   );
