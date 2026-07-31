@@ -14,9 +14,12 @@ import { Badge } from "@/components/ui/badge";
 import { derivePipeline } from "@/lib/clients/pipeline";
 import { inviteClientToPortalAction } from "../actions";
 import { ClientDashboard, type DashActionItem } from "@/components/clients/client-dashboard";
+import { type DashReportRow } from "@/components/clients/client-grant-report-card";
+import { type DashDraft } from "@/components/clients/client-draft-progress";
 import { deriveEnrichmentSteps } from "@/lib/clients/enrichment-status";
 import { isUnconvertedLead } from "@/lib/leads/stage";
-import type { Client, CardDecision, Grant } from "@/types/database";
+import { deadlineDaysLeft } from "@/lib/report/shape";
+import type { Client, CardDecision, Grant, IntellEngineDraft } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -84,6 +87,20 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
     .select("id, fit_score, decision, interested_at, sme_interested_at, sme_released_at, sent_at, grants(id, title, funder, submission_deadline)")
     .eq("client_id", params.id)
     .neq("card_type", "prospect");
+
+  // The client's proposals in flight (migration 0062). Staff read every draft for
+  // this client under the staff RLS policy; ordered the same way the IntellEngine hub
+  // orders them, so the dashboard card leads with the same draft the hub does.
+  const { data: draftRows } = await supabase
+    .from("intellengine_drafts")
+    .select("id, title, status, updated_at")
+    .eq("client_id", params.id)
+    .order("updated_at", { ascending: false });
+
+  const drafts: DashDraft[] = ((draftRows ?? []) as Pick<
+    IntellEngineDraft,
+    "id" | "title" | "status" | "updated_at"
+  >[]).map((d) => ({ id: d.id, title: d.title, status: d.status }));
 
   const cards = ((cardRows ?? []) as CardRow[]).map((r) => ({ ...r, grant: grantOf(r.grants) }));
   // "In review" now means interested-but-undecided (sitting in the Grant Report,
@@ -246,6 +263,33 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   // the five the design asked for.
   const pipeline = derivePipeline(cards);
 
+  // Grant Report card: the strongest live matches, highest fit first, then soonest
+  // deadline as the tiebreak (among equal fits, the one with a clock on it is the one
+  // to look at). Passed cards are excluded -- they are a closed decision, and the card
+  // is about what is still open. Staff see every non-passed card including ones not
+  // yet released to the client, which is exactly what their own roadmap list shows.
+  const REPORT_ROWS = 3;
+  const liveCards = cards.filter((c) => c.decision !== "passed");
+  const reportRows: DashReportRow[] = [...liveCards]
+    .sort((a, b) => {
+      if (b.fit_score !== a.fit_score) return b.fit_score - a.fit_score;
+      const da = deadlineDaysLeft(a.grant?.submission_deadline);
+      const db = deadlineDaysLeft(b.grant?.submission_deadline);
+      // No deadline sorts last rather than first -- null is "unknown", not "urgent".
+      return (da ?? Number.POSITIVE_INFINITY) - (db ?? Number.POSITIVE_INFINITY);
+    })
+    .slice(0, REPORT_ROWS)
+    .map((c) => ({
+      cardId: c.id,
+      title: c.grant?.title || "Untitled opportunity",
+      funder: c.grant?.funder ?? null,
+      fitScore: c.fit_score,
+      deadline: c.grant?.submission_deadline
+        ? format(parseISO(c.grant.submission_deadline), "MMM d")
+        : null,
+      href: `${base}/${c.id}`,
+    }));
+
   // "Client since" only when there IS a contract start. Otherwise this reports when the
   // record was created and says so -- those are different facts, and labelling a
   // created_at as "client since" would overstate the relationship by however long the
@@ -322,6 +366,17 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         hero={<GrantPipeline pipeline={pipeline} />}
         actionItems={actionItems}
         activity={counts}
+        report={{
+          rows: reportRows,
+          total: liveCards.length,
+          emptyNote: matchInProgress
+            ? "Matching is running — opportunities will appear here as they are scored."
+            : "No matches yet. Run grant matches to surface opportunities.",
+        }}
+        drafts={{
+          list: drafts,
+          emptyNote: "No proposals started yet. IntellEngine is where a matched grant becomes a draft.",
+        }}
         bookingUrl={process.env.NEXT_PUBLIC_BOOKING_URL ?? null}
         matchNote={matchNote}
         staffTools={isLead ? undefined : <CheckGrant clientId={client.id} clientName={client.name} />}
