@@ -1,19 +1,19 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { format, parseISO } from "date-fns";
-import { Loader2, TrendingUp, Eye, Target, CalendarClock } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { AutoRefresh } from "@/components/ui/auto-refresh";
 import { GenerateReportButton } from "@/components/clients/generate-report-button";
 import { CheckGrant } from "@/components/clients/check-grant";
 import { InviteClientButton } from "@/components/clients/invite-client-button";
+import { ClientContextBar } from "@/components/clients/client-context-bar";
+import { GrantPipeline } from "@/components/clients/grant-pipeline";
+import { Badge } from "@/components/ui/badge";
+import { derivePipeline } from "@/lib/clients/pipeline";
 import { inviteClientToPortalAction } from "../actions";
-import {
-  ClientDashboard,
-  type DashActionItem,
-  type DashStat,
-} from "@/components/clients/client-dashboard";
-import { deadlineDaysLeft } from "@/lib/report/shape";
+import { ClientDashboard, type DashActionItem } from "@/components/clients/client-dashboard";
 import { deriveEnrichmentSteps } from "@/lib/clients/enrichment-status";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import type { Client, CardDecision, Grant } from "@/types/database";
@@ -32,6 +32,8 @@ type CardRow = {
   interested_at: string | null;
   sme_interested_at: string | null;
   sme_released_at: string | null;
+  // Read by the pipeline derivation: the alert email physically went out.
+  sent_at: string | null;
   grants:
     | Pick<Grant, "id" | "title" | "funder" | "submission_deadline">
     | Pick<Grant, "id" | "title" | "funder" | "submission_deadline">[]
@@ -79,7 +81,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
 
   const { data: cardRows } = await supabase
     .from("review_cards")
-    .select("id, fit_score, decision, interested_at, sme_interested_at, sme_released_at, grants(id, title, funder, submission_deadline)")
+    .select("id, fit_score, decision, interested_at, sme_interested_at, sme_released_at, sent_at, grants(id, title, funder, submission_deadline)")
     .eq("client_id", params.id)
     .neq("card_type", "prospect");
 
@@ -99,23 +101,6 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   const toReview = managed
     ? cards.filter((c) => c.sme_released_at === null && c.decision !== "passed").length
     : cards.filter((c) => c.interested_at === null && c.decision !== "passed").length;
-  const nonPassed = cards.filter((c) => c.decision !== "passed");
-
-  // Upcoming deadlines (real) among live matches — drives the deadline stat + the
-  // action-items list.
-  const upcoming = nonPassed
-    .map((c) => ({ c, days: deadlineDaysLeft(c.grant?.submission_deadline), date: c.grant?.submission_deadline ?? null }))
-    .filter((x): x is { c: (typeof nonPassed)[number]; days: number; date: string } => x.days !== null && x.days >= 0)
-    .sort((a, b) => a.days - b.days);
-  const dueSoon = upcoming.filter((x) => x.days <= 30).length;
-  const nextDeadline = upcoming[0] ? format(parseISO(upcoming[0].date), "MMM d") : "—";
-
-  const stats: DashStat[] = [
-    { label: "Active grants", value: String(counts.approved), sub: dueSoon ? `${dueSoon} due in 30 days` : "being pursued", icon: TrendingUp },
-    { label: "In review", value: String(counts.pending), sub: "awaiting decision", icon: Eye },
-    { label: "Matched", value: String(nonPassed.length), sub: "opportunities", icon: Target },
-    { label: "Next deadline", value: nextDeadline, sub: null, icon: CalendarClock, accent: true },
-  ];
 
   const base = `/clients/${client.id}/roadmap`;
   const alertsHref = `${base}/triage`;
@@ -256,13 +241,77 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   const subLine =
     [client.org_type?.replace(/_/g, " "), client.location_city, client.location_state].filter(Boolean).join(" · ") || null;
 
+  // The pipeline replaces the four stat tiles. Same rows the page already loaded, one
+  // pure cascade over them -- see lib/clients/pipeline.ts for why four stages and not
+  // the five the design asked for.
+  const pipeline = derivePipeline(cards);
+
+  // "Client since" only when there IS a contract start. Otherwise this reports when the
+  // record was created and says so -- those are different facts, and labelling a
+  // created_at as "client since" would overstate the relationship by however long the
+  // record sat unsigned.
+  const since = client.contract_start
+    ? `Client since ${format(parseISO(client.contract_start), "MMM yyyy")}`
+    : `Added ${format(parseISO(client.created_at), "MMM yyyy")}`;
+  const contextMeta = [
+    client.org_type?.replace(/_/g, " "),
+    [client.location_city, client.location_state].filter(Boolean).join(", ") || null,
+    since,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const monogram = (() => {
+    const parts = client.name.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return "—";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  })();
+
   // No visible banner: the action item carries the spinner and the message now, and
   // saying it twice on one screen read as clutter. AutoRefresh still mounts, because
   // results appearing without a manual reload is behaviour, not decoration.
   const matchNote = matchInProgress ? <AutoRefresh enabled /> : null;
 
+  const actions = (
+    <>
+      <Link
+        href={editHref}
+        className="rounded-md border border-edge px-3 py-1.5 text-[12.5px] font-semibold text-ink-muted transition-colors hover:bg-page hover:text-brand-navy"
+      >
+        Edit profile
+      </Link>
+      <GenerateReportButton
+        clientId={client.id}
+        inProgress={matchInProgress}
+        confirmRerun={confirmRerun}
+        idleLabel={cards.length === 0 ? "Run Grant Matches" : "Refresh matches"}
+      />
+      {/* Only at the end of the onboarding sequence: grants matched AND reviewed,
+          client not yet seated. Showing it earlier would invite the client to a portal
+          with nothing in it. */}
+      {showInvite && (
+        <InviteClientButton
+          clientName={client.name}
+          contactEmail={client.primary_contact_email}
+          action={inviteClientToPortalAction.bind(null, client.id)}
+        />
+      )}
+    </>
+  );
+
   return (
     <div className="relative min-h-full">
+      {/* Full-bleed, so it sits OUTSIDE the dashboard's max-w content column -- it is
+          chrome continuous with the command band above it, not page content. */}
+      <ClientContextBar
+        name={client.name}
+        monogram={monogram}
+        statusChip={<Badge variant="secondary">{isLead ? "prospect" : client.status}</Badge>}
+        meta={contextMeta}
+        actions={actions}
+        backHref="/clients"
+        backLabel="Portfolio"
+      />
       <div className="relative">
         <ClientDashboard
         name={client.name}
@@ -270,32 +319,10 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         isStaff
         roadmapHref={base}
         intellEngineHref={`/clients/${client.id}/intellengine`}
-        stats={stats}
+        hero={<GrantPipeline pipeline={pipeline} />}
         actionItems={actionItems}
         activity={counts}
         bookingUrl={process.env.NEXT_PUBLIC_BOOKING_URL ?? null}
-        editHref={editHref}
-        refresh={
-          <>
-            <GenerateReportButton
-              clientId={client.id}
-              inProgress={matchInProgress}
-              confirmRerun={confirmRerun}
-              idleLabel={cards.length === 0 ? "Run Grant Matches" : "Refresh matches"}
-              tone="dark"
-            />
-            {/* Only at the end of the onboarding sequence: grants matched AND reviewed,
-                client not yet seated. Showing it earlier would invite the client to a
-                portal with nothing in it. */}
-            {showInvite && (
-              <InviteClientButton
-                clientName={client.name}
-                contactEmail={client.primary_contact_email}
-                action={inviteClientToPortalAction.bind(null, client.id)}
-              />
-            )}
-          </>
-        }
         matchNote={matchNote}
         staffTools={isLead ? undefined : <CheckGrant clientId={client.id} clientName={client.name} />}
         />

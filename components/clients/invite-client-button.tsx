@@ -14,7 +14,11 @@ type InviteState = {
   recipient?: string;
 };
 
-// The last step of onboarding, in the hero next to the match button.
+// The last step of onboarding, in the client context bar next to the match button.
+//
+// Styled for a LIGHT surface. It used to be white-on-navy because its only home was
+// the navy hero band; that band is gone, and this has exactly one caller, so there is
+// no dark variant to keep -- a `tone` prop here would be a switch with one position.
 //
 // This is the RELEASE, not just an invite: client-facing alert sends are held until a
 // portal seat exists, so pressing this both seats the client and opens the tap on the
@@ -46,7 +50,7 @@ export function InviteClientButton({
     // Reports what actually happened. A held or failed email is never rendered as
     // "sent" -- this is the only feedback the action gives.
     return (
-      <span className="rounded-full bg-white/10 px-4 py-2 text-sm font-medium text-white ring-1 ring-white/25">
+      <span className="rounded-full bg-page px-4 py-2 text-sm font-medium text-ink-muted ring-1 ring-edge">
         {!result.ok
           ? result.error ?? "Couldn't invite the client."
           : result.emailed
@@ -71,8 +75,8 @@ export function InviteClientButton({
   }
 
   return (
-    <span className="flex flex-wrap items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 ring-1 ring-white/25">
-      <span className="text-xs text-white/80">
+    <span className="flex flex-wrap items-center gap-2 rounded-full bg-page px-3 py-1.5 ring-1 ring-edge">
+      <span className="text-xs text-ink-muted">
         {contactEmail
           ? `Email ${contactEmail} and release their reviewed grants?`
           : `No contact email on file for ${clientName} — add one first.`}
@@ -92,7 +96,7 @@ export function InviteClientButton({
         variant="ghost"
         disabled={busy}
         onClick={() => setConfirming(false)}
-        className="text-white hover:bg-white/10"
+        className="text-ink-muted hover:bg-brand-navy/[0.06]"
       >
         Cancel
       </Button>

@@ -44,6 +44,7 @@ export function ClientDashboard({
   isStaff,
   roadmapHref,
   intellEngineHref,
+  hero,
   stats,
   actionItems,
   activity,
@@ -61,7 +62,15 @@ export function ClientDashboard({
   // (IntellEngine). Renders a shortcut tile only when provided (client portal
   // passes it; the staff dashboard doesn't).
   intellEngineHref?: string;
-  stats: DashStat[];
+  // Replaces the HeroBand + stat-tile block entirely when provided. The staff console
+  // passes the grant pipeline here; the client portal passes nothing and keeps the
+  // hero. Two audiences, and the pipeline speaks in internal terms ("GRANTED
+  // Review"), so this is a genuine fork rather than a style toggle -- but it stays ONE
+  // component so the action items, activity chart and shortcuts can't drift apart.
+  hero?: React.ReactNode;
+  // Optional because a `hero` replaces them. Required-but-ignored would have meant the
+  // staff page computing four tiles nothing renders.
+  stats?: DashStat[];
   actionItems: DashActionItem[];
   activity: { pending: number; approved: number; passed: number };
   bookingUrl: string | null;
@@ -76,26 +85,28 @@ export function ClientDashboard({
   const scheduleHref = bookingUrl || `mailto:${SUPPORT}?subject=Schedule%20a%20strategy%20call`;
   return (
     <div className="mx-auto max-w-7xl px-8 py-8">
-      <HeroBand
-        title={name}
-        subtitle={subLine ?? undefined}
-        right={
-          isStaff && (editHref || refresh) ? (
-            <div className="flex items-center gap-3">
-              {editHref && (
-                <Link
-                  href={editHref}
-                  className="rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
-                >
-                  Edit profile
-                </Link>
-              )}
-              {refresh}
-            </div>
-          ) : undefined
-        }
-        stats={stats.map((s) => ({ value: s.value, label: s.label, sub: s.sub, accent: s.accent }))}
-      />
+      {hero ?? (
+        <HeroBand
+          title={name}
+          subtitle={subLine ?? undefined}
+          right={
+            isStaff && (editHref || refresh) ? (
+              <div className="flex items-center gap-3">
+                {editHref && (
+                  <Link
+                    href={editHref}
+                    className="rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
+                  >
+                    Edit profile
+                  </Link>
+                )}
+                {refresh}
+              </div>
+            ) : undefined
+          }
+          stats={(stats ?? []).map((s) => ({ value: s.value, label: s.label, sub: s.sub, accent: s.accent }))}
+        />
+      )}
       {isStaff && matchNote}
       {isStaff && staffTools}
 
