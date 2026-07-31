@@ -1,36 +1,42 @@
 import { requireUser } from "@/lib/auth";
-import { Sidebar, type NavItem } from "@/components/layout/sidebar";
+import { TopNav, type NavItem } from "@/components/layout/top-nav";
 
-// Admins see the full firm. Contractors are scoped to grant work only -- no
-// clients, time, invoices, contracts, sales, or settings.
+// The nav is the console's frame. It holds the modules the firm runs on, but it is
+// now split by HOW OFTEN a destination is used rather than listing all eleven at
+// equal weight:
 //
-// The nav is the admin dashboard's frame: it intentionally holds every module
-// the firm runs on -- the opportunity feed, the two match tracks (client +
-// prospect), CRM, time, invoicing, contracts, and sales -- even where a module
-// is still a placeholder. We fill rooms in one at a time; the house is framed
-// for all of them from the start.
+//   BAND — the daily path. Portfolio (clients) -> Ledger (opportunities) -> Matches
+//          (the two match tracks) -> Prospecting -> Pipeline.
+//   MORE — live but occasional (Feedback, Invoices, Contracts, Settings), then
+//          genuinely unshipped (Time, Sales) below a divider, as disabled rows.
 //
-// Two tracks read from one shred: Grant Matches (Track 1, active clients) and
-// Grant Intel (Track 2, prospects / BizDev -- stub until the prospect engine).
-const ADMIN_NAV: NavItem[] = [
+// The unshipped pair is Time and Sales — verified against which pages actually still
+// render ComingSoon. Invoices and Contracts went live (#255) and are real
+// destinations now, so they are clickable; burying live pages behind a "Soon" label
+// would understate what the platform does.
+const ADMIN_BAND: NavItem[] = [
   { href: "/clients", label: "Portfolio", icon: "portfolio" },
   { href: "/grants", label: "Ledger", icon: "grants" },
   { href: "/matches", label: "Matches", icon: "matching" },
-  { href: "/feedback", label: "Feedback", icon: "feedback" },
   { href: "/intel", label: "Prospecting", icon: "intel" },
   { href: "/leads", label: "Pipeline", icon: "leads" },
-  { href: "/time", label: "Time", icon: "time" },
+];
+
+const ADMIN_MORE: NavItem[] = [
+  { href: "/feedback", label: "Feedback", icon: "feedback" },
   { href: "/invoices", label: "Invoices", icon: "invoices" },
   { href: "/contracts", label: "Contracts", icon: "contracts" },
-  { href: "/sales", label: "Sales", icon: "sales" },
   { href: "/settings", label: "Settings", icon: "settings" },
+  { href: "/time", label: "Time", icon: "time", soon: true },
+  { href: "/sales", label: "Sales", icon: "sales", soon: true },
 ];
 
 // Contractors get grant work AND the client console: Portfolio -> a client's
 // dashboard / Grant Report / IntellEngine. Invoicing & contract surfaces stay
 // admin-only (Edit profile, Invoices, Contracts, the Portfolio money footer, and
-// concept proposals). Grant Intel (prospect / BizDev) remains admin-only.
-const CONTRACTOR_NAV: NavItem[] = [
+// concept proposals). Prospecting / Pipeline (BizDev) remain admin-only. Nothing is
+// folded into More for them — three items need no overflow.
+const CONTRACTOR_BAND: NavItem[] = [
   { href: "/clients", label: "Portfolio", icon: "portfolio" },
   { href: "/grants", label: "Ledger", icon: "grants" },
   { href: "/matches", label: "Matches", icon: "matching" },
@@ -42,18 +48,27 @@ export default async function AppLayout({
   children: React.ReactNode;
 }) {
   const profile = await requireUser();
-  const items = profile.role === "admin" ? ADMIN_NAV : CONTRACTOR_NAV;
+  const isAdmin = profile.role === "admin";
 
   return (
+    // COLUMN, not row: the band spans the full width edge-to-edge, so the shell's old
+    // p-3/gap-3 inset (which framed the floating sidebar) is gone. Pages carry their
+    // own gutters, so nothing loses padding.
+    //
     // isolate: without it, this div's own bg paints in front of any descendant's
-    // fixed + negative-z-index backdrop (MapBackdrop, the one that remains) -- an ordinary
-    // box's background always outranks a negative z-index descendant UNLESS the
-    // box establishes its own stacking context. Confirmed by direct reproduction:
+    // fixed + negative-z-index backdrop (MapBackdrop, the one that remains) -- an
+    // ordinary box's background always outranks a negative z-index descendant UNLESS
+    // the box establishes its own stacking context. Confirmed by direct reproduction:
     // the same fixed/-z-10 backdrop rendered invisible nested under a bg-painted
     // ancestor, and rendered fine once the ancestor had no background of its own.
-    <div className="isolate flex h-screen gap-3 overflow-hidden bg-page p-3">
-      <Sidebar
-        items={items}
+    //
+    // h-screen + overflow-hidden on the shell with the scroll on <main> keeps the band
+    // pinned without position:fixed — so it never overlaps content and needs no
+    // compensating top padding.
+    <div className="isolate flex h-screen flex-col overflow-hidden bg-page">
+      <TopNav
+        items={isAdmin ? ADMIN_BAND : CONTRACTOR_BAND}
+        more={isAdmin ? ADMIN_MORE : []}
         user={{
           name: profile.full_name || profile.email || "User",
           role: profile.role,
