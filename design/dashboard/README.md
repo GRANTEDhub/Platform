@@ -25,34 +25,24 @@ Two prior implementation passes were driven from screenshots plus prose and drif
 the approved design. Every value in the mockup is inline, so the file itself is the spec —
 read it rather than approximating from an image.
 
-## What is built, and what is left
+## What is built
 
-Landed: the command band (#263), the pipeline card (#264), and the console body with the
-attention card, deadlines rail, Grant Report and IntellEngine treatments (#265).
+The whole approved design is implemented: the command band (#263), the pipeline card
+(#264), the console body with the attention card, deadlines rail, Grant Report and
+IntellEngine treatments (#265), and the two rail cards — Score a grant and Eligibility
+geography.
 
-**Still to do — the two rail cards:**
+**The console and the portal are separate layouts.** `ClientDashboard` is mounted by both
+`app/(app)/clients/[id]/page.tsx` (`isStaff`) and `app/portal/page.tsx`
+(`isStaff={false}`), and this design describes only the staff console. So `ConsoleBody` is
+the design and `PortalBody` is what the portal has always shipped; the Grant Report,
+IntellEngine and geography cards each take a `variant` for the same reason. Converging the
+two is a deliberate decision someone should make on purpose, not a side effect of a
+styling pass.
 
-1. **Score a grant** (`components/clients/check-grant.tsx`). Needs the design's compact
-   form: a `⌘/` hint chip, a 36px `SURFACE.sunken` inset field, a 3px orange left edge,
-   and a footer reading "Fit checked against {client}". Results must open in an overlay
-   using `ELEVATION.overlay` — **the card must not expand in place**, because growing it
-   breaks the two columns' level ending. The component currently expands inline, so this
-   is a restructure rather than a restyle.
-2. **Eligibility geography** (`components/clients/client-community-context.tsx`). The
-   76px map tile is already the right height; the gap is the row set. The design shows
-   **four** rows — rurality (RUCC), HRSA shortage area, median household income, SAM.gov
-   — and `CommunityView` (`lib/clients/community.ts`) carries only the middle two. The
-   data exists on the client record (`rucc_codes`, `sam_registration_status`,
-   `sam_uei_status`, migration 0023), so this needs `buildCommunityView` extended with
-   two more `Availability` states, not a new fetch.
-
-Both render in the portal as well as the console, so both take the same `variant`
-treatment the Grant Report and IntellEngine cards use — see the note in
-`components/clients/client-dashboard.tsx` about why the two surfaces are kept apart.
-
-**Zero-scroll at 1440×900 is not yet verifiable.** The design notes the geography card's
-76px image height is load-bearing for the left column and the rail ending level, so the
-check only becomes meaningful once both rail cards are final.
+**Zero-scroll at 1440×900 is now checkable.** The geography card's 76px map tile and the
+scorer's overlay-not-expand behaviour are both load-bearing for the rail ending level with
+the left column. If you change either, re-check the page still fits without scrolling.
 
 ## Token authority
 
@@ -73,14 +63,14 @@ new near-duplicate tints are what the single-source rule exists to prevent.
 
 ## Where the mockup is not implementable as drawn
 
-The mockup's numbers are sample data; the real page renders real client data. Three
-elements have no honest backing, so the layout is matched while the behavior is not
-invented:
+The mockup's numbers are sample data; the real page renders real client data. These
+elements have no honest backing behind them as drawn, so the layout is matched while the
+behaviour is not invented:
 
 | Element | Resolution |
 |---|---|
 | Global search (`⌘K`) | Omitted. No search backend. Right-cluster spacing preserved so the band's proportions still match. |
-| Notification bell | Rendered as a static icon — faithful, since the mockup shows no badge on it. `lib/portal/notifications.ts` is client-portal-scoped and semantically wrong for a staff bell. |
+| Notification bell | Shipped as a real control that opens and says there is no staff feed yet — an inert icon would be the same failure as the "Soon" nav links this band removed. The mockup shows no badge on it, so no count is faked. `lib/portal/notifications.ts` is client-portal-scoped and semantically wrong for a staff bell. |
 | "triage window closes Aug 4" | Not shipped as drawn — no triage-window field exists, and unverified dates must not appear on a client-facing surface. The slot carries the nearest real `deadline` among the client's pipeline grants, labeled for what it is, and drops when there is none. |
 
 Pipeline stage columns keep the mockup's spacing, widths, and type but are not clickable —

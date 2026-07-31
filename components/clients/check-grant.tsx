@@ -1,11 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Search, Loader2, ArrowLeft, CheckCircle2, AlertTriangle, XCircle, Info } from "lucide-react";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Loader2, Link2, X, CheckCircle2, AlertTriangle, XCircle, Info } from "lucide-react";
+import { STAGE, SURFACE } from "@/lib/brand";
 
 // Staff-only "Check a grant" widget on the client dashboard: drop in a grant name or a
 // Grants.gov/Simpler link, confirm the right grant, and get a fit verdict against THIS
@@ -15,6 +14,17 @@ import { Button } from "@/components/ui/button";
 // SCORE (POST /api/clients/[id]/check-grant). A genuine fit is auto-added to the roadmap;
 // a weak/no answer just reports. Confirm-before-score is deliberate — never analyze a
 // grant the user didn't confirm.
+//
+// AT REST IT IS A COMPACT RAIL CARD, and everything past the first keystroke happens in an
+// OVERLAY. This is a layout constraint, not a preference: the card lives in a 318px rail
+// that has to end level with the left column for the page to fit 1440x900 without
+// scrolling, and a card that grows to hold candidate lists and a full verdict would break
+// that every time it was used. It also used to be the loudest element on the page for a
+// tool that is not daily-use.
+//
+// The overlay is a real modal (backdrop, Escape, click-outside) rather than a popover
+// because the verdict is long-form — why-this-org, concept, caveats — and a 318px-anchored
+// popover would either clip it or run off-screen.
 
 type Candidate = {
   grantId: string;
@@ -62,6 +72,7 @@ export function CheckGrant({ clientId, clientName }: { clientId: string; clientN
   const [message, setMessage] = useState<string | null>(null);
   const [result, setResult] = useState<RunResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   async function resolve(e?: React.FormEvent) {
     e?.preventDefault();
@@ -118,93 +129,161 @@ export function CheckGrant({ clientId, clientName }: { clientId: string; clientN
     setQuery("");
   }
 
+  // The overlay owns every phase past the input. `resolving` deliberately stays on the
+  // card (the button spins) so a fast search does not flash a modal open and shut.
+  const open = phase === "candidates" || phase === "scoring" || phase === "result";
+
+  // Cmd/Ctrl-/ focuses the field from anywhere on the page, as the design's hint chip
+  // promises. Registered on the window rather than the card because the whole point of
+  // advertising a shortcut is that you do not have to reach the control first.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "/") {
+        e.preventDefault();
+        inputRef.current?.focus();
+      }
+      if (e.key === "Escape" && open) reset();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
   return (
-    <Card className="mt-6 p-6 shadow-grounded sm:p-7">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Check a grant</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Drop in a grant name or link, or describe what {clientName} needs (e.g. &ldquo;improve our
-            emergency services facilities&rdquo;) — we&apos;ll find matches and check the fit.
-          </p>
+    <>
+      <section
+        className="rounded-2xl border-l-[3px] bg-white px-[18px] pb-3.5 pt-3 shadow-card"
+        style={{ borderLeftColor: STAGE.triage.color }}
+      >
+        <div className="flex items-center justify-between gap-2.5">
+          <h2 className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-subtle">Score a grant</h2>
+          <span
+            aria-hidden="true"
+            className="rounded border border-edge px-[5px] py-px font-mono text-[11px] text-ink-faint"
+          >
+            ⌘/
+          </span>
         </div>
-        {phase !== "idle" && (
-          <Button variant="ghost" size="sm" onClick={reset}>
-            <ArrowLeft className="h-3.5 w-3.5" /> New check
-          </Button>
-        )}
-      </div>
 
-      {/* Step 1: input */}
-      {(phase === "idle" || phase === "resolving") && (
-        <form onSubmit={resolve} className="mt-4 flex gap-2">
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Grant name, link, or what you're looking for…"
-            className="flex-1 rounded-lg border border-brand-navy/15 bg-white px-3 py-2 text-sm text-brand-navy outline-none ring-brand-orange/30 focus:ring-2"
-          />
-          <Button type="submit" disabled={phase === "resolving" || !query.trim()}>
-            {phase === "resolving" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-            {phase === "resolving" ? "Searching…" : "Check"}
-          </Button>
-        </form>
-      )}
+        <form onSubmit={resolve} className="mt-2.5">
+          <label className="sr-only" htmlFor="score-a-grant">
+            Paste a NOFO link or name a program
+          </label>
+          <div
+            className="flex h-9 items-center gap-2 rounded-pill border border-edge px-[11px] focus-within:border-brand-orange/60"
+            style={{ backgroundColor: SURFACE.sunken }}
+          >
+            <Link2 className="h-3.5 w-3.5 shrink-0 text-ink-faint" aria-hidden="true" />
+            <input
+              id="score-a-grant"
+              ref={inputRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Paste a NOFO link or name a program"
+              className="min-w-0 flex-1 bg-transparent text-[12.5px] text-brand-navy outline-none placeholder:text-ink-faint"
+            />
+          </div>
 
-      {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
-
-      {/* Step 2: confirm a candidate */}
-      {phase === "candidates" && (
-        <div className="mt-4 space-y-2">
-          {candidates.length > 0 && (
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Confirm the grant to score
-            </p>
-          )}
-          {candidates.map((c) => (
+          <div className="mt-2.5 flex items-center justify-between gap-2.5">
+            <p className="min-w-0 truncate text-[11px] text-ink-subtle">Fit checked against {clientName}</p>
             <button
-              key={c.grantId}
-              onClick={() => score(c.grantId)}
-              className="flex w-full items-center justify-between gap-4 rounded-lg border border-brand-navy/10 bg-white px-4 py-3 text-left transition hover:border-brand-navy/25"
+              type="submit"
+              disabled={phase === "resolving" || !query.trim()}
+              className="inline-flex h-[29px] shrink-0 items-center gap-1.5 rounded-md bg-brand-orange px-[13px] text-[12.5px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
             >
+              {phase === "resolving" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {phase === "resolving" ? "Checking…" : "Check fit"}
+            </button>
+          </div>
+        </form>
+
+        {/* A resolve failure returns to idle, so its message belongs on the card — there is
+            no overlay open to carry it. */}
+        {error && !open && <p className="mt-2 text-[11.5px] text-destructive">{error}</p>}
+      </section>
+
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8">
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={reset}
+            className="fixed inset-0 cursor-default bg-brand-navy/40"
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Grant fit check"
+            className="relative z-10 my-auto w-full max-w-xl rounded-2xl bg-white shadow-overlay"
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-hairline px-5 py-3.5">
               <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className="truncate text-sm font-medium text-brand-navy">{c.title ?? "Untitled grant"}</p>
-                  {c.onRoadmap && (
-                    <span className="shrink-0 rounded-full bg-brand-navy/[0.06] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-navy">
-                      On roadmap
-                    </span>
+                <h3 className="font-serif text-[16px] font-bold text-brand-navy">
+                  {phase === "result" ? "Fit check" : "Confirm the grant to score"}
+                </h3>
+                <p className="mt-0.5 truncate text-[11.5px] text-ink-subtle">Against {clientName}</p>
+              </div>
+              <button
+                type="button"
+                onClick={reset}
+                aria-label="Close"
+                className="-mr-1 shrink-0 rounded-md p-1 text-ink-faint transition-colors hover:text-brand-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="max-h-[70vh] overflow-y-auto px-5 py-4">
+              {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
+
+              {phase === "candidates" && (
+                <div className="space-y-2">
+                  {candidates.map((c) => (
+                    <button
+                      key={c.grantId}
+                      onClick={() => score(c.grantId)}
+                      className="flex w-full items-center justify-between gap-4 rounded-md border border-hairline-strong bg-white px-4 py-3 text-left transition-colors hover:border-brand-navy/25"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="truncate text-sm font-medium text-brand-navy">{c.title ?? "Untitled grant"}</p>
+                          {c.onRoadmap && (
+                            <span className="shrink-0 rounded-full bg-brand-navy/[0.06] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-navy">
+                              On roadmap
+                            </span>
+                          )}
+                        </div>
+                        <p className="truncate text-xs text-ink-subtle">
+                          {c.funder ?? "Unknown funder"}
+                          {c.submission_deadline ? ` · due ${c.submission_deadline}` : ""}
+                          {!c.ready ? ` · still processing (${c.status})` : ""}
+                        </p>
+                        {c.reason && <p className="mt-1 text-xs text-brand-navy/70">{c.reason}</p>}
+                      </div>
+                      <span className="shrink-0 text-xs font-semibold text-brand-orange">Check fit →</span>
+                    </button>
+                  ))}
+                  {message && (
+                    <p className="flex items-start gap-2 rounded-md bg-brand-navy/[0.04] px-4 py-3 text-sm text-ink-muted">
+                      <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                      {message}
+                    </p>
                   )}
                 </div>
-                <p className="truncate text-xs text-muted-foreground">
-                  {c.funder ?? "Unknown funder"}
-                  {c.submission_deadline ? ` · due ${c.submission_deadline}` : ""}
-                  {!c.ready ? ` · still processing (${c.status})` : ""}
+              )}
+
+              {phase === "scoring" && (
+                <p className="flex items-center gap-2 text-sm text-brand-navy">
+                  <Loader2 className="h-4 w-4 animate-spin text-brand-orange" aria-hidden="true" /> Scoring fit against{" "}
+                  {clientName}…
                 </p>
-                {c.reason && <p className="mt-1 text-xs text-brand-navy/70">{c.reason}</p>}
-              </div>
-              <span className="shrink-0 text-xs font-medium text-brand-orange">Check fit →</span>
-            </button>
-          ))}
-          {message && (
-            <p className="flex items-start gap-2 rounded-lg bg-brand-navy/[0.04] px-4 py-3 text-sm text-muted-foreground">
-              <Info className="mt-0.5 h-4 w-4 shrink-0" />
-              {message}
-            </p>
-          )}
+              )}
+
+              {phase === "result" && result && <Result result={result} clientId={clientId} />}
+            </div>
+          </div>
         </div>
       )}
-
-      {/* scoring */}
-      {phase === "scoring" && (
-        <p className="mt-4 flex items-center gap-2 text-sm text-brand-navy">
-          <Loader2 className="h-4 w-4 animate-spin text-brand-orange" /> Scoring fit against {clientName}…
-        </p>
-      )}
-
-      {/* Step 3: verdict */}
-      {phase === "result" && result && <Result result={result} clientId={clientId} />}
-    </Card>
+    </>
   );
 }
 
@@ -212,7 +291,7 @@ function Result({ result, clientId }: { result: RunResult; clientId: string }) {
   const meta = VERDICT_META[result.verdict];
   const Icon = meta.icon;
   return (
-    <div className="mt-4 space-y-4">
+    <div className="space-y-4">
       <div className={`flex items-start gap-3 rounded-xl px-4 py-3 ring-1 ${meta.ring}`}>
         <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${meta.text}`} />
         <div className="min-w-0">

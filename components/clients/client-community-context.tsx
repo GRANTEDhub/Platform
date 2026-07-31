@@ -1,5 +1,6 @@
 import { Card } from "@/components/ui/card";
 import { formatIncome, type Availability, type CommunityView } from "@/lib/clients/community";
+import { INK, STAGE } from "@/lib/brand";
 
 // Community context — the rail's standing reference: where this org sits, what the
 // community's median household income is, and whether the address falls inside a
@@ -17,8 +18,16 @@ import { formatIncome, type Availability, type CommunityView } from "@/lib/clien
 // nothing here should be reworded to imply that it does. The location fact lives in
 // the text; the photo is the surface it sits on.
 
-export function ClientCommunityContext({ view }: { view: CommunityView }) {
+export function ClientCommunityContext({
+  view,
+  variant = "portal",
+}: {
+  view: CommunityView;
+  variant?: "console" | "portal";
+}) {
   const { placeLabel, income, shortage, vintage, unpulled } = view;
+
+  if (variant === "console") return <ConsoleGeographyCard view={view} />;
 
   return (
     <Card className="overflow-hidden shadow-grounded">
@@ -135,6 +144,128 @@ function Row({
             {state === "none" ? noneNote : uncheckedNote}
           </p>
         )}
+      </dd>
+    </div>
+  );
+}
+
+// ── Console variant — the approved design ───────────────────────────────────
+//
+// "Eligibility geography": the 76px county tile over four evidence rows. THE 76px IS
+// LOAD-BEARING -- the design sizes it so this rail and the left column end level at
+// 1440x900 with no page scroll. Changing it means re-checking that.
+//
+// ALL FOUR ROWS ALWAYS RENDER, even when empty, for two reasons. One, they now come from
+// two different sources: income and shortage are read from client_profile.community_context
+// (a geo pull), while rurality and SAM.gov live on the client record itself -- so the
+// portal card's single "not pulled yet" line would be wrong here, hiding two facts that
+// may well be present. Two, a card whose height depends on how much data resolved cannot
+// hold a column alignment.
+//
+// The scrim over the image is left as an inline gradient rather than a brand token: its
+// opacities are tuned to the photograph's luminance so white caption text clears
+// contrast, which is a property of the image, not a value the palette should own.
+function ConsoleGeographyCard({ view }: { view: CommunityView }) {
+  const { placeLabel, income, shortage, rurality, sam } = view;
+  return (
+    <section className="overflow-hidden rounded-2xl bg-white shadow-card">
+      <div className="relative h-[76px]">
+        <div
+          aria-hidden="true"
+          className="absolute inset-0"
+          style={{
+            backgroundImage: "url('/map-bg.jpg')",
+            backgroundSize: "cover",
+            backgroundPosition: "38% 42%",
+            filter: "grayscale(0.5) contrast(1.05)",
+          }}
+        />
+        <div
+          aria-hidden="true"
+          className="absolute inset-0"
+          style={{ background: "linear-gradient(180deg, rgba(11,30,58,0.18), rgba(11,30,58,0.72))" }}
+        />
+        <div className="absolute bottom-3 left-[18px] right-[18px]">
+          <p className="text-[9.5px] font-bold uppercase tracking-[0.13em] text-white/60">
+            Eligibility geography
+          </p>
+          {/* The caption is a TEXT LABEL of the client's stored county -- not a claim that
+              the photograph depicts it. Do not reword this to imply otherwise. */}
+          <p className="mt-[3px] truncate text-[14px] font-semibold text-white">
+            {placeLabel ?? "Location not set"}
+          </p>
+        </div>
+      </div>
+
+      <dl className="px-[18px] pb-3 pt-2.5">
+        <GeoRow
+          label="Rurality (RUCC)"
+          state={rurality.state}
+          value={rurality.label}
+          title={rurality.detail}
+        />
+        <GeoRow
+          label="HRSA shortage area"
+          state={shortage.state}
+          // A real negative is a finding, not a blank: the address WAS tested against the
+          // polygons and falls in none, so it says so rather than showing a dash.
+          value={shortage.state === "value" ? "Qualifies" : shortage.state === "none" ? "Not designated" : null}
+          dot={shortage.state === "value" ? STAGE.pursuit.color : undefined}
+          valueColor={shortage.state === "value" ? STAGE.pursuit.color : undefined}
+          title={shortage.lines.join(" · ") || null}
+        />
+        <GeoRow
+          label="Median household income"
+          state={income.state}
+          value={income.amount != null ? formatIncome(income.amount) : null}
+          title={income.geographyName}
+        />
+        <GeoRow
+          label="SAM.gov"
+          state={sam.state}
+          value={sam.label}
+          dot={sam.ok ? STAGE.pursuit.color : STAGE.client.color}
+          // stage-client's raw hue fails contrast as small type, so its text companion is
+          // used for the label while the dot keeps the true stage colour.
+          valueColor={sam.ok ? STAGE.pursuit.color : STAGE.client.text}
+          last
+        />
+      </dl>
+    </section>
+  );
+}
+
+function GeoRow({
+  label,
+  state,
+  value,
+  dot,
+  valueColor,
+  title,
+  last,
+}: {
+  label: string;
+  state: Availability;
+  value: string | null;
+  dot?: string;
+  valueColor?: string;
+  title?: string | null;
+  last?: boolean;
+}) {
+  const resolved = state !== "unchecked" && value !== null;
+  return (
+    <div className={`flex items-center justify-between gap-3 py-1.5 ${last ? "" : "border-b border-hairline"}`}>
+      <dt className="text-[12px] text-ink-muted">{label}</dt>
+      <dd
+        className="flex min-w-0 items-center gap-[5px] text-[12px] font-semibold"
+        style={{ color: resolved ? valueColor ?? INK.DEFAULT : INK.faint }}
+        title={resolved ? title ?? undefined : undefined}
+      >
+        {resolved && dot && (
+          <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: dot }} />
+        )}
+        <span className="truncate">{resolved ? value : "\u2014"}</span>
+        {!resolved && <span className="sr-only">not available</span>}
       </dd>
     </div>
   );

@@ -277,7 +277,7 @@ function ConsoleBody({
       <div className="flex flex-col gap-4">
         {scorer}
         {deadlines && deadlines.length > 0 && <UpcomingDeadlines deadlines={deadlines} />}
-        {community && <ClientCommunityContext view={community} />}
+        {community && <ClientCommunityContext variant="console" view={community} />}
       </div>
     </div>
   );
