@@ -20,7 +20,7 @@ import { buildCommunityView } from "@/lib/clients/community";
 import { deriveEnrichmentSteps } from "@/lib/clients/enrichment-status";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import { deadlineDaysLeft } from "@/lib/report/shape";
-import type { Client, CardDecision, Grant, IntellEngineDraft } from "@/types/database";
+import type { Client, CardDecision, Grant, IntellEngineDraft, PursuitPath } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +38,9 @@ type CardRow = {
   sme_released_at: string | null;
   // Read by the pipeline derivation: the alert email physically went out.
   sent_at: string | null;
+  // Also the pipeline's: null on an approved card means the decision is recorded but
+  // the pursuit path is still open, which is the Approved stage rather than In pursuit.
+  pursuit_path: PursuitPath | null;
   grants:
     | Pick<Grant, "id" | "title" | "funder" | "submission_deadline">
     | Pick<Grant, "id" | "title" | "funder" | "submission_deadline">[]
@@ -85,7 +88,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
 
   const { data: cardRows } = await supabase
     .from("review_cards")
-    .select("id, fit_score, decision, interested_at, sme_interested_at, sme_released_at, sent_at, grants(id, title, funder, submission_deadline)")
+    .select("id, fit_score, decision, interested_at, sme_interested_at, sme_released_at, sent_at, pursuit_path, grants(id, title, funder, submission_deadline)")
     .eq("client_id", params.id)
     .neq("card_type", "prospect");
 
@@ -259,10 +262,28 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   const subLine =
     [client.org_type?.replace(/_/g, " "), client.location_city, client.location_state].filter(Boolean).join(" · ") || null;
 
+  // Everything still open. Passed is a closed decision, so it is out of both the Grant
+  // Report rows and the deadline reads below -- though it IS still a pipeline column.
+  const liveCards = cards.filter((c) => c.decision !== "passed");
+
   // The pipeline replaces the four stat tiles. Same rows the page already loaded, one
-  // pure cascade over them -- see lib/clients/pipeline.ts for why four stages and not
-  // the five the design asked for.
+  // pure cascade over them -- see lib/clients/pipeline.ts for the five stages and how
+  // each is derived.
   const pipeline = derivePipeline(cards);
+
+  // The date in the pipeline header. The design reads "triage window closes {date}";
+  // there is no triage-window field, and a placeholder date must never ship on a
+  // surface staff quote to a client. So the slot carries the nearest REAL deadline
+  // across this client's still-open grants, labelled for what it is. Passed cards are
+  // excluded (a closed decision's deadline is not upcoming) and so are dates already
+  // behind us -- an overdue date presented as the "next deadline" would be its own
+  // small lie. Null when nothing qualifies, and the clause drops entirely.
+  const nextDeadlineLabel =
+    liveCards
+      .map((c) => c.grant?.submission_deadline)
+      .filter((d): d is string => Boolean(d) && (deadlineDaysLeft(d) ?? -1) >= 0)
+      .sort()
+      .map((d) => format(parseISO(d), "MMM d"))[0] ?? null;
 
   // Grant Report card: the strongest live matches, highest fit first, then soonest
   // deadline as the tiebreak (among equal fits, the one with a clock on it is the one
@@ -270,7 +291,6 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   // is about what is still open. Staff see every non-passed card including ones not
   // yet released to the client, which is exactly what their own roadmap list shows.
   const REPORT_ROWS = 3;
-  const liveCards = cards.filter((c) => c.decision !== "passed");
   const reportRows: DashReportRow[] = [...liveCards]
     .sort((a, b) => {
       if (b.fit_score !== a.fit_score) return b.fit_score - a.fit_score;
@@ -364,7 +384,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         isStaff
         roadmapHref={base}
         intellEngineHref={`/clients/${client.id}/intellengine`}
-        hero={<GrantPipeline pipeline={pipeline} />}
+        hero={<GrantPipeline pipeline={pipeline} nextDeadlineLabel={nextDeadlineLabel} />}
         actionItems={actionItems}
         activity={counts}
         report={{
