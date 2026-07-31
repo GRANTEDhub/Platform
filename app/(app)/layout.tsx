@@ -46,12 +46,12 @@ export default async function AppLayout({
 
   return (
     // isolate: without it, this div's own bg paints in front of any descendant's
-    // fixed + negative-z-index backdrop (PageBackdrop/MapBackdrop) -- an ordinary
+    // fixed + negative-z-index backdrop (MapBackdrop, the one that remains) -- an ordinary
     // box's background always outranks a negative z-index descendant UNLESS the
     // box establishes its own stacking context. Confirmed by direct reproduction:
     // the same fixed/-z-10 backdrop rendered invisible nested under a bg-painted
     // ancestor, and rendered fine once the ancestor had no background of its own.
-    <div className="isolate flex h-screen gap-3 overflow-hidden bg-brand-cream p-3">
+    <div className="isolate flex h-screen gap-3 overflow-hidden bg-page p-3">
       <Sidebar
         items={items}
         user={{

@@ -15,7 +15,7 @@ const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? null;
 
 export default function IntakePage() {
   return (
-    <div className="min-h-screen bg-brand-cream">
+    <div className="min-h-screen bg-page">
       <div className="mx-auto max-w-2xl px-6 py-14">
         <p className="font-serif text-xl font-semibold tracking-tight text-brand-navy">GRANTED</p>
         <h1 className="mt-6 font-serif text-3xl font-semibold text-brand-navy">Tell us about your organization</h1>

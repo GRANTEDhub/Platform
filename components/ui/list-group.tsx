@@ -16,7 +16,7 @@ import { Card } from "@/components/ui/card";
 
 export function ListGroup({ className, children, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
-    <Card elevation="soft" className={cn("overflow-hidden", className)} {...props}>
+    <Card elevation="card" className={cn("overflow-hidden", className)} {...props}>
       {children}
     </Card>
   );

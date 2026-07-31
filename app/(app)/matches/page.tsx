@@ -119,7 +119,7 @@ export default async function ReviewQueuePage() {
             const subtitle = [client.engagement_tier, client.org_type?.replace(/_/g, " ")].filter(Boolean).join(" · ") || "—";
             return (
               <Link key={client.id} href={`/clients/${client.id}/roadmap`} className="block">
-                <div className="rounded-2xl border border-brand-navy/[0.05] bg-white p-6 shadow-soft transition hover:shadow-lift">
+                <div className="rounded-2xl border border-brand-navy/[0.05] bg-white p-6 shadow-soft transition hover:shadow-card-hover">
                   <div className="flex items-center gap-3.5">
                     <div
                       className={cn(

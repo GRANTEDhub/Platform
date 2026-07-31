@@ -166,7 +166,7 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
   })();
 
   return (
-    <div className="min-h-full bg-brand-cream">
+    <div className="min-h-full bg-page">
       <PageHeader
         title={lead.name}
         description={[lead.lead_source?.replace(/_/g, " "), lead.org_type?.replace(/_/g, " "), [lead.location_city, lead.location_state].filter(Boolean).join(", ")].filter(Boolean).join(" · ") || undefined}
@@ -192,7 +192,7 @@ export default async function LeadDetailPage({ params }: { params: { id: string 
         </div>
 
         {/* Next step — the centerpiece */}
-        <div className="rounded-2xl border border-brand-orange/30 bg-white p-6 shadow-[0_2px_10px_rgba(179,84,30,0.06)]">
+        <div className="rounded-2xl border border-brand-orange/30 bg-white p-6">
           <p className="text-xs font-medium uppercase tracking-wide text-brand-orange">Next step</p>
           <h2 className="mt-1 font-serif text-lg font-semibold text-brand-navy">{nextStep?.context}</h2>
           <div className="mt-4">{nextStep?.node}</div>

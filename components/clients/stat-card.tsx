@@ -13,7 +13,7 @@ export function StatCard({
   label: string;
 }) {
   return (
-    <div className="rounded-2xl bg-white p-5 shadow-[0_2px_8px_rgba(11,30,58,0.06),0_14px_34px_-16px_rgba(11,30,58,0.22)]">
+    <div className="rounded-2xl bg-white p-5 shadow-card">
       <div className="flex items-center gap-3">
         <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-orange/10 text-brand-orange">
           <Icon className="h-5 w-5" strokeWidth={2} />

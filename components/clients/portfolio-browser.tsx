@@ -106,7 +106,7 @@ export function PortfolioBrowser({ rows }: { rows: PortfolioRow[] }) {
             const pill = statusPill(r.status, r.isProspect);
             return (
               <Link key={r.id} href={`/clients/${r.id}`} className="block">
-                <div className="rounded-2xl border border-brand-navy/[0.05] bg-white p-6 shadow-soft transition hover:shadow-lift">
+                <div className="rounded-2xl border border-brand-navy/[0.05] bg-white p-6 shadow-soft transition hover:shadow-card-hover">
                   <div className="flex items-center gap-3.5">
                     <div className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-[15px] font-semibold text-white", monogramFill(r.id))}>
                       {initials(r.name)}

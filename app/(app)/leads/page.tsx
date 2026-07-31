@@ -142,7 +142,7 @@ export default async function LeadsPage({
     selectedStage === s ? `/leads?tab=${tab}` : `/leads?tab=${tab}&stage=${s}`;
 
   return (
-    <div className="min-h-full bg-brand-cream">
+    <div className="min-h-full bg-page">
       <PageHeader
         title="Lead pipeline"
         description="Inbound and outbound leads, worked toward becoming clients."
@@ -267,8 +267,8 @@ function StageCard({
   return (
     <Link
       href={href}
-      className={`block rounded-2xl bg-white p-4 shadow-[0_1px_3px_rgba(11,30,58,0.05)] ring-1 transition-shadow hover:shadow-[0_2px_8px_rgba(11,30,58,0.10)] ${
-        selected ? "ring-2 ring-brand-navy" : "ring-brand-navy/[0.06]"
+      className={`block rounded-2xl bg-white p-4 shadow-card transition-shadow hover:shadow-card-hover ${
+        selected ? "ring-2 ring-brand-navy" : ""
       }`}
     >
       <div className="flex items-center gap-1.5">

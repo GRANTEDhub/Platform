@@ -130,7 +130,7 @@ export default async function CardDetailPage({
   const hasAside = (isAdmin && isProspect && !!card.prospects) || (tab === "grant" && !!g);
 
   return (
-    <div className="min-h-full bg-brand-cream px-6 py-7 sm:px-8">
+    <div className="min-h-full bg-page px-6 py-7 sm:px-8">
       {/* Top strip: narrowed navy banner (left) + review-actions box (right).
           items-stretch so the right box matches the banner height -> one clean row.
           The banner FORMAT is identical on both tabs; only the body below differs. */}
@@ -386,7 +386,7 @@ function MatchSummaryCard({
 
       {clientMatchCount != null && clientMatchCount > 0 && (
         <div className="mt-4">
-          <span className="inline-flex items-center rounded-full bg-brand-cream px-2.5 py-0.5 text-[11px] font-medium text-brand-navy">
+          <span className="inline-flex items-center rounded-full bg-brand-navy/[0.06] px-2.5 py-0.5 text-[11px] font-medium text-brand-navy">
             {clientMatchCount} client match{clientMatchCount === 1 ? "" : "es"} for this grant
           </span>
         </div>

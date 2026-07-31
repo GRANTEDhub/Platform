@@ -226,7 +226,7 @@ function Row({
     // separately-clickable control without nesting a <button> inside an <a>.
     <div
       style={{ animationDelay: `${Math.min(index, 8) * 45}ms` }}
-      className="animate-fade-up relative rounded-2xl border border-brand-navy/[0.05] bg-white p-6 shadow-card transition duration-200 hover:-translate-y-0.5 hover:shadow-lift"
+      className="animate-fade-up relative rounded-2xl border border-brand-navy/[0.05] bg-white p-6 shadow-card transition duration-200 hover:-translate-y-0.5 hover:shadow-card-hover"
     >
       <Link href={href} aria-label={`View ${item.title}`} className="absolute inset-0 z-[1] rounded-2xl" />
       <div className="flex items-center gap-6">

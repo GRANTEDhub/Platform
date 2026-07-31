@@ -32,7 +32,7 @@ export default async function Home() {
   if (membership) redirect("/portal");
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-brand-cream px-4">
+    <div className="flex min-h-screen items-center justify-center bg-page px-4">
       <div className="w-full max-w-md rounded-2xl border border-brand-navy/[0.06] bg-white p-8 text-center shadow-soft">
         <h1 className="text-[20px] font-semibold text-brand-navy">No access yet</h1>
         <p className="mt-2 text-sm text-muted-foreground">

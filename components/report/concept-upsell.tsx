@@ -15,7 +15,7 @@ export function ConceptProposalUpsell({ clientName }: { clientName: string }) {
   const [requested, setRequested] = useState(false);
 
   return (
-    <Card elevation="grounded" className="p-6 sm:p-7">
+    <Card elevation="card" className="p-6 sm:p-7">
       <SectionTitle>Concept proposal</SectionTitle>
       <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
         A concept proposal is a practical snapshot of how your organization would pursue this grant — suggested

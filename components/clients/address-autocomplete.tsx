@@ -323,7 +323,7 @@ export function AddressAutocomplete({
           placeholder="Start typing an address…"
         />
         {open && suggestions.length > 0 && (
-          <ul className="absolute z-50 mt-1 w-full overflow-hidden rounded-md border border-input bg-white shadow-lift">
+          <ul className="absolute z-50 mt-1 w-full overflow-hidden rounded-md border border-input bg-white shadow-overlay">
             {suggestions.map((s, i) => (
               <li key={s.placeId}>
                 <button

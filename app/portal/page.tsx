@@ -2,7 +2,6 @@ import { format, parseISO } from "date-fns";
 import { TrendingUp, Eye, Target, CalendarClock } from "lucide-react";
 import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { PageBackdrop } from "@/components/layout/page-backdrop";
 import {
   ClientDashboard,
   type DashStat,
@@ -100,7 +99,6 @@ export default async function PortalHome() {
 
   return (
     <div className="relative min-h-full">
-      <PageBackdrop />
       <div className="relative">
         <ClientDashboard
           name={org.clientName}

@@ -78,7 +78,7 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
   }));
 
   return (
-    <div className="min-h-full bg-brand-cream px-6 py-7 sm:px-8">
+    <div className="min-h-full bg-page px-6 py-7 sm:px-8">
       <Link
         href="/intel/grants"
         className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-brand-navy"

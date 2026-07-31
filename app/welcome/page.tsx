@@ -41,7 +41,7 @@ export default async function WelcomePage() {
   };
 
   return (
-    <div className="min-h-screen bg-brand-cream px-4 py-12">
+    <div className="min-h-screen bg-page px-4 py-12">
       <div className="mx-auto w-full max-w-2xl">
         <div className="mb-8 text-center">
           <img src="/granted-lockup-light.svg" alt="GRANTED" className="mx-auto mb-6 h-11 w-auto" />

@@ -22,7 +22,7 @@ export function HeroBand({
   stats: HeroStat[];
 }) {
   return (
-    <div className="relative overflow-hidden rounded-3xl shadow-lift">
+    <div className="relative overflow-hidden rounded-3xl shadow-overlay">
       <div
         aria-hidden
         className="absolute inset-0"

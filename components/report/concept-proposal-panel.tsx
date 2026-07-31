@@ -91,7 +91,7 @@ export function ConceptProposalPanel({
   const proposal = row?.proposal_data ?? null;
 
   return (
-    <Card elevation="grounded" className="p-6 sm:p-7">
+    <Card elevation="card" className="p-6 sm:p-7">
       <div className="flex items-center justify-between gap-3">
         <SectionTitle>Concept proposal</SectionTitle>
         {status === "ready" && proposal && (

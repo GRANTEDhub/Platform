@@ -265,7 +265,7 @@ function CardFace({
   const [passing, setPassing] = useState(false);
   const [passReason, setPassReason] = useState("");
   return (
-    <div className="flex h-[640px] flex-col overflow-hidden rounded-3xl border border-brand-navy/[0.06] bg-white shadow-lift">
+    <div className="flex h-[640px] flex-col overflow-hidden rounded-3xl border border-brand-navy/[0.06] bg-white shadow-overlay">
       {/* road-photo banner — doubles as the horizontal drag handle for browsing */}
       <div
         className="relative h-32 shrink-0 cursor-grab touch-none active:cursor-grabbing"
@@ -370,7 +370,7 @@ function CardFace({
               </button>
               <button
                 onClick={onInterested}
-                className="flex items-center gap-2 rounded-full bg-brand-navy px-6 py-2.5 text-sm font-semibold text-white shadow-lift transition hover:bg-brand-navyDeep"
+                className="flex items-center gap-2 rounded-full bg-brand-navy px-6 py-2.5 text-sm font-semibold text-white shadow-overlay transition hover:bg-brand-navyDeep"
               >
                 Interested
                 <Check className="h-5 w-5" strokeWidth={3} />
