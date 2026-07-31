@@ -51,7 +51,7 @@ export function NotificationBell({ count, items }: { count: number; items: Clien
       {open && (
         <div
           role="menu"
-          className="absolute right-0 z-50 mt-2 w-72 overflow-hidden rounded-2xl border border-brand-navy/10 bg-white shadow-lift"
+          className="absolute right-0 z-50 mt-2 w-72 overflow-hidden rounded-2xl border border-brand-navy/10 bg-white shadow-overlay"
         >
           <div className="border-b border-brand-navy/[0.06] px-4 py-3">
             <p className="text-sm font-semibold text-brand-navy">Notifications</p>

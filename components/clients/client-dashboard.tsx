@@ -150,7 +150,7 @@ export function ClientDashboard({
 // onboarding stage, a date, or an open affordance for a navigable item.
 function ActionRow({ item }: { item: DashActionItem }) {
   const body = (
-    <div className="flex items-center justify-between gap-4 rounded-xl bg-white px-4 py-3 ring-1 ring-brand-navy/[0.08] transition-shadow hover:shadow-[0_1px_3px_rgba(11,30,58,0.08)]">
+    <div className="flex items-center justify-between gap-4 rounded-md bg-white px-4 py-3 ring-1 ring-brand-navy/[0.08] transition-shadow hover:shadow-card">
       <div className="min-w-0">
         <p className="text-sm font-medium text-brand-navy">{item.title}</p>
         {item.tag && (

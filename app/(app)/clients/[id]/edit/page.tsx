@@ -75,7 +75,7 @@ function Detail({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-const RAIL = "rounded-2xl border-0 bg-white shadow-[0_1px_3px_rgba(11,30,58,0.05)] ring-1 ring-brand-navy/[0.06]";
+const RAIL = "rounded-2xl border-0 bg-white shadow-card";
 
 function DangerZone({
   name,

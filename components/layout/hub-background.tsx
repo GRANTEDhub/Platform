@@ -1,19 +1,23 @@
 // Backdrops for the client-facing hub surfaces, selected via HubShell's `variant`:
 //
-//   texture — warm-cream + faint contour lines (PageBackdrop). The de-staled body
-//             treatment for card-dense pages (dashboard, report list, swipe).
+//   texture — NOTHING now. This used to render PageBackdrop (warm cream + a faint
+//             drifting contour-map texture). That texture is gone platform-wide: it
+//             sat on top of the visual hierarchy, so flat white cards read as holes
+//             punched in the page rather than as surfaces above it. The page is a
+//             flat warm neutral (SURFACE.page, applied via --background), which is
+//             already what shows through here.
 //   map     — the photo itself, FIXED to the viewport so it frames at a natural
 //             zoom (landscape crop of a wide image) and stays visible top-to-bottom
 //             as the page scrolls. Used on the grant detail. Uses a pre-softened
 //             asset (map-bg-soft.jpg) because background-attachment:fixed can't take
-//             a live CSS filter.
+//             a live CSS filter. DELIBERATELY KEPT: it is a chosen treatment on one
+//             client-facing page, not ambient page texture.
 //
-// Both variants are `fixed inset-0 -z-10`, not `absolute` — the app shell boxes
-// page content in with its own padding/gutter (see AppLayout's p-3/gap-3), so an
+// MapBackdrop is `fixed inset-0 -z-10`, not `absolute` — the app shell boxes page
+// content in with its own padding/gutter (see AppLayout's p-3/gap-3), so an
 // absolutely-positioned backdrop only ever filled that inset content box. Fixed
 // positioning sizes to the true viewport instead, so the backdrop reaches every
 // screen edge and sits behind the sidebar too.
-import { PageBackdrop } from "./page-backdrop";
 
 function MapBackdrop() {
   return (
@@ -54,7 +58,7 @@ export function HubShell({
 }) {
   return (
     <div className="relative min-h-full">
-      {variant === "map" ? <MapBackdrop /> : <PageBackdrop />}
+      {variant === "map" && <MapBackdrop />}
       <div className={`relative mx-auto ${MAX_W[width]} px-6 py-8`}>{children}</div>
     </div>
   );

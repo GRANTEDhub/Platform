@@ -53,7 +53,7 @@ function ProspectingCard({
 }) {
   return (
     <Link href={href} className="group block">
-      <div className="flex h-full flex-col rounded-2xl border border-brand-navy/[0.06] bg-white p-6 shadow-soft transition hover:shadow-lift">
+      <div className="flex h-full flex-col rounded-2xl border border-brand-navy/[0.06] bg-white p-6 shadow-soft transition hover:shadow-card-hover">
         <span className="grid h-12 w-12 place-items-center rounded-xl bg-brand-navy text-white">
           <Icon className="h-5 w-5" />
         </span>

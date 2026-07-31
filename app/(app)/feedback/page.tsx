@@ -3,7 +3,6 @@ import { ThumbsUp, Flag } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { Card } from "@/components/ui/card";
-import { PageBackdrop } from "@/components/layout/page-backdrop";
 import { FeedbackFilters } from "@/components/feedback/feedback-filters";
 import type { Grant } from "@/types/database";
 
@@ -73,7 +72,6 @@ export default async function FeedbackPage({
 
   return (
     <div className="relative min-h-full">
-      <PageBackdrop />
       <div className="relative mx-auto max-w-6xl px-8 py-8">
         <h1 className="font-serif text-2xl font-semibold text-brand-navy">Match feedback</h1>
         <p className="mt-1 text-sm text-muted-foreground">

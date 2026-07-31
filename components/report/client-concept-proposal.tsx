@@ -15,7 +15,7 @@ export function ClientConceptProposal({ row }: { row: ConceptProposalRow | null 
 
   if (row.status === "ready" && row.proposal_data) {
     return (
-      <Card elevation="grounded" className="p-6 sm:p-7">
+      <Card elevation="card" className="p-6 sm:p-7">
         <SectionTitle>Concept proposal</SectionTitle>
         <p className="mt-1.5 text-[12.5px] text-muted-foreground">
           How your GRANTED team scoped a run at this grant — a starting point to react to, not a final application.
@@ -29,7 +29,7 @@ export function ClientConceptProposal({ row }: { row: ConceptProposalRow | null 
 
   if (row.status === "generating") {
     return (
-      <Card elevation="grounded" className="p-6 sm:p-7">
+      <Card elevation="card" className="p-6 sm:p-7">
         <SectionTitle>Concept proposal</SectionTitle>
         <p className="mt-1.5 text-[12.5px] text-muted-foreground">
           Your GRANTED team is preparing a concept proposal for this grant. Check back shortly.

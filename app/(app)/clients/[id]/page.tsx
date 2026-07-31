@@ -4,7 +4,6 @@ import { Loader2, TrendingUp, Eye, Target, CalendarClock } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { AutoRefresh } from "@/components/ui/auto-refresh";
-import { PageBackdrop } from "@/components/layout/page-backdrop";
 import { GenerateReportButton } from "@/components/clients/generate-report-button";
 import { CheckGrant } from "@/components/clients/check-grant";
 import { InviteClientButton } from "@/components/clients/invite-client-button";
@@ -264,7 +263,6 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
 
   return (
     <div className="relative min-h-full">
-      <PageBackdrop />
       <div className="relative">
         <ClientDashboard
         name={client.name}

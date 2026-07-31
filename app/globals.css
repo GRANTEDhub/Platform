@@ -4,16 +4,22 @@
 
 @layer base {
   /* GRANTED palette. These HSL tokens MIRROR lib/brand.ts (CSS can't import TS):
-     navy #0B1E3A = 216 68% 14% · orange #E4761F = 27 79% 51% · cream #faf7f2 =
-     39 44% 96%. Keep this block in sync with lib/brand.ts. The old forest-green
+     navy #0B1E3A = 216 68% 14% · orange #E4761F = 27 79% 51% · page #F1EEE8 =
+     40 24% 93%. Keep this block in sync with lib/brand.ts. The old forest-green
      primary is gone -- primary is now navy, so all chrome (sidebar, login, "G"
      marks, buttons, badges) matches the brand surfaces. */
   :root {
-    --background: 39 44% 96%;      /* cream */
-    --foreground: 214 42% 15%;     /* navy-ink body text */
+    /* Page background is the flat warm neutral (SURFACE.page), replacing cream +
+       the topo-map texture layer. Flat is the point: the texture sat on top of the
+       hierarchy, so white cards read as holes rather than as surfaces above it. */
+    --background: 40 24% 93%;      /* page #F1EEE8 */
+    /* Body text is INK.DEFAULT, i.e. navy itself. It used to be a second,
+       near-identical navy (214 42% 15%) -- two values one shade apart, for no
+       reason anyone could name. */
+    --foreground: 216 68% 14%;     /* ink #0B1E3A */
 
     --card: 0 0% 100%;
-    --card-foreground: 214 42% 15%;
+    --card-foreground: 216 68% 14%;
 
     --muted: 40 22% 94%;           /* warm light grey surface */
     --muted-foreground: 215 14% 38%; /* grey — secondary text */
@@ -30,9 +36,10 @@
     --border: 214 20% 88%;
     --input: 214 20% 88%;
     --ring: 216 68% 30%;           /* navy focus ring */
-
-    --radius: 0.625rem;
   }
+  /* --radius is gone on purpose. Radii are now three fixed values keyed to a role
+     (lib/brand.ts RADIUS, wired in tailwind.config.ts), not one variable that every
+     size name derived a slightly different number from. */
 }
 
 @layer base {
@@ -68,28 +75,6 @@
     }
   }
 
-  /* Near-imperceptible drift for the page backdrop texture -- a 2-minute loop
-     moving background-position by a few percent so the ambient map texture
-     feels quietly alive rather than a static image. Deliberately slow enough
-     that no single glance registers it as "moving." */
-  @keyframes bg-drift {
-    0% {
-      background-position: 50% 48%;
-    }
-    50% {
-      background-position: 52% 52%;
-    }
-    100% {
-      background-position: 50% 48%;
-    }
-  }
-  .animate-bg-drift {
-    animation: bg-drift 120s ease-in-out infinite;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .animate-bg-drift {
-      animation: none;
-      background-position: center;
-    }
-  }
+  /* bg-drift is gone with the page texture it animated. The page background is a
+     flat fill now, so there is nothing to drift. */
 }

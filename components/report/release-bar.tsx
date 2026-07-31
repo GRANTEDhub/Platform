@@ -104,7 +104,7 @@ export function ReleaseToClientBar({
           {menuOpen && (
             <div
               role="menu"
-              className="absolute left-0 z-50 mt-2 w-64 overflow-hidden rounded-2xl border border-brand-navy/10 bg-white shadow-lift"
+              className="absolute left-0 z-50 mt-2 w-64 overflow-hidden rounded-2xl border border-brand-navy/10 bg-white shadow-overlay"
             >
               <button
                 type="button"

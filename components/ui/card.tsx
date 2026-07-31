@@ -1,23 +1,26 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
-// Floating card surface (visual refresh, epic #92). Default `soft` is the warm
-// floating card on cream; `flat` is a bordered nested surface (no shadow); `lift`
-// is the strongest elevation. Existing consumers get `soft` by default.
+// Card surface. THREE options, and only one of them is an elevation step up.
+//
+// This component used to offer four (`soft`, `grounded`, `lift`, `flat`), which is
+// where most of the "sibling cards look like they came from different designs"
+// problem originated: two of the four were rest-state elevations differing only in
+// how heavy the drop was, chosen per-page rather than per-role.
+//
+//   card    — every card. The default.
+//   flat    — a nested surface INSIDE a card: border, no shadow. Not an elevation
+//             step; a card on a card does not float higher, it just delineates.
+//   overlay — menus, popovers, the command palette. Over the page, not on it.
 const ELEVATION = {
-  soft: "rounded-2xl bg-white shadow-soft",
-  flat: "rounded-2xl border border-brand-navy/10 bg-white",
-  lift: "rounded-2xl bg-white shadow-lift",
-  // A defined drop (not a diffuse halo) so cards sit clearly on a busy backdrop
-  // (the grant detail's photo backdrop) instead of blending into it. No border —
-  // a faint navy stroke against the warm photo read as a pale highlight ring,
-  // not depth.
-  grounded: "rounded-2xl bg-white shadow-grounded",
+  card: "rounded-2xl bg-white shadow-card",
+  flat: "rounded-2xl border border-hairline-strong bg-white",
+  overlay: "rounded-2xl bg-white shadow-overlay",
 } as const;
 
 export function Card({
   className,
-  elevation = "soft",
+  elevation = "card",
   ...props
 }: React.HTMLAttributes<HTMLDivElement> & { elevation?: keyof typeof ELEVATION }) {
   return <div className={cn(ELEVATION[elevation], "text-card-foreground", className)} {...props} />;

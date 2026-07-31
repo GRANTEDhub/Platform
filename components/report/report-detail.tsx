@@ -161,11 +161,11 @@ export function ReportDetail({
       </div>
 
       {/* purpose & overview — the grant description */}
-      <WhatItFunds grant={grant} label="Purpose & overview" headingStyle="title" elevation="grounded" />
+      <WhatItFunds grant={grant} label="Purpose & overview" headingStyle="title" />
 
       {/* why this matches you — narrative + the per-factor scoring graphic */}
       {(why.length > 0 || card.concept_synopsis || card.factor_scores) && (
-        <Card elevation="grounded" className="p-6 sm:p-7">
+        <Card className="p-6 sm:p-7">
           <SectionTitle>Why this matches you</SectionTitle>
           {why.length > 0 && (
             <ul className="mt-3 space-y-2">
@@ -187,11 +187,11 @@ export function ReportDetail({
       )}
 
       {/* eligibility */}
-      <WhoCanApply grant={grant} label="Eligibility requirements" headingStyle="title" elevation="grounded" />
+      <WhoCanApply grant={grant} label="Eligibility requirements" headingStyle="title" />
 
       {/* key details & links */}
       {(match !== "None" || grant.period_of_performance || funder || cfda || showSource) && (
-        <Card elevation="grounded" className="p-6 sm:p-7">
+        <Card className="p-6 sm:p-7">
           <SectionTitle>Key details &amp; links</SectionTitle>
           <div className="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2">
             <DetailRow label="Match required" value={match} />

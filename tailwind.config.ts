@@ -1,5 +1,5 @@
 import type { Config } from "tailwindcss";
-import { BRAND } from "./lib/brand";
+import { BRAND, SURFACE, INK, LINE, STAGE, ELEVATION, RADIUS, MOTION } from "./lib/brand";
 
 const config: Config = {
   content: [
@@ -7,6 +7,22 @@ const config: Config = {
     "./components/**/*.{ts,tsx}",
   ],
   theme: {
+    // OVERRIDE, not extend -- this deletes Tailwind's `shadow-<color>` utilities.
+    //
+    // They collide with our elevation names and silently win. Tailwind derives
+    // boxShadowColor from theme.colors, so because a color named `card` exists (the
+    // shadcn --card token), `shadow-card` generated BOTH our box-shadow and a
+    // shadow-COLOR utility. The color one is emitted later, and it reassigns
+    // `--tw-shadow: var(--tw-shadow-colored)` against `--tw-shadow-color: hsl(var(--card))`
+    // -- i.e. a WHITE shadow. Every card on the default elevation rendered with no
+    // visible shadow at all, which is exactly the "flat white cards read as holes"
+    // symptom this refresh is supposed to fix.
+    //
+    // Nothing in the app uses a shadow-color utility (verified across app/ and
+    // components/), so removing the whole family is the root fix rather than dodging
+    // it by renaming our token -- and it means no future token name can be shadowed
+    // by a same-named color.
+    boxShadowColor: {},
     extend: {
       colors: {
         border: "hsl(var(--border))",
@@ -39,30 +55,87 @@ const config: Config = {
         // same navy/orange/cream palette, so brand utilities and app chrome agree.
         brand: {
           navy: BRAND.navy,
+          navyHover: BRAND.navyHover,
           navyDeep: BRAND.navyDeep,
           orange: BRAND.orange,
+          orangeHover: BRAND.orangeHover,
           cream: BRAND.cream,
           creamWarm: BRAND.creamWarm,
         },
+        // Surfaces. `page` is flat -- there is no page texture (see lib/brand.ts).
+        page: SURFACE.page,
+        surface: {
+          DEFAULT: SURFACE.card,
+          sunken: SURFACE.sunken,
+        },
+        // Screen text scale. NOT BRAND.ink, which is the print ink for the contract
+        // PDF -- see the note in lib/brand.ts.
+        ink: {
+          DEFAULT: INK.DEFAULT,
+          muted: INK.muted,
+          subtle: INK.subtle,
+          faint: INK.faint,
+        },
+        hairline: {
+          DEFAULT: LINE.hairline,
+          strong: LINE.hairlineStrong,
+        },
+        edge: LINE.edge,
+        // Pipeline stages. One color per stage, used only for that stage.
+        stage: {
+          triage: STAGE.triage.color,
+          "triage-tint": STAGE.triage.tint,
+          client: STAGE.client.color,
+          "client-tint": STAGE.client.tint,
+          "client-text": STAGE.client.text,
+          approved: STAGE.approved.color,
+          "approved-tint": STAGE.approved.tint,
+          pursuit: STAGE.pursuit.color,
+          "pursuit-tint": STAGE.pursuit.tint,
+          passed: STAGE.passed.color,
+          "passed-tint": STAGE.passed.tint,
+        },
       },
+      // THREE radii, by role (lib/brand.ts RADIUS). Tailwind's own `none` and `full`
+      // survive because this is an `extend` block -- `full` is still what count
+      // badges and status chips use.
+      //
+      // The size names are collapsed onto the three roles rather than kept as a
+      // ladder: sm/md/lg all resolve to the control radius, and xl through 4xl all
+      // resolve to the card radius. That is what makes five different radii on
+      // sibling elements impossible to reintroduce by picking the "next size up".
       borderRadius: {
-        lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
-        "4xl": "1.75rem",
+        DEFAULT: RADIUS.control,
+        sm: RADIUS.control,
+        md: RADIUS.control,
+        lg: RADIUS.control,
+        pill: RADIUS.pill,
+        xl: RADIUS.card,
+        "2xl": RADIUS.card,
+        "3xl": RADIUS.card,
+        "4xl": RADIUS.card,
       },
       boxShadow: {
-        // Design-system elevation scale (visual refresh, epic #92). Warm navy-
-        // tinted soft shadows for the floating-card language.
-        soft: "0 10px 40px -14px rgba(11,30,58,0.16)",
-        softer: "0 6px 22px -12px rgba(11,30,58,0.13)",
-        lift: "0 26px 70px -24px rgba(11,30,58,0.30)",
-        // Lifted card: a defined drop (not a diffuse halo) so cards sit clearly on
-        // the warmer hub backdrop (dashboard / report).
-        card: "0 2px 4px -1px rgba(11,30,58,0.14), 0 10px 26px -8px rgba(11,30,58,0.30)",
-        // Darker/denser navy drop for cards over the busy detail-page photo
-        // backdrop, where `card` read too faint (a pale border ring, not a shadow).
-        grounded: "0 4px 10px -2px rgba(8,20,45,0.35), 0 16px 36px -12px rgba(8,20,45,0.45)",
+        // TWO steps (lib/brand.ts ELEVATION), plus the card's hover state.
+        card: ELEVATION.card,
+        "card-hover": ELEVATION.cardHover,
+        overlay: ELEVATION.overlay,
+        // DEPRECATED ALIASES. The old scale had four rest-state elevations
+        // (soft / softer / card / grounded) plus `lift`, which is most of why
+        // sibling cards looked like they came from different designs. They are
+        // aliased into the two-step scale rather than deleted so that no call site
+        // silently loses its shadow: an unknown Tailwind class produces no CSS and
+        // no build error, so removing these outright would fail invisibly.
+        //
+        // Do not use them in new code. They collapse as PRs touch their call sites.
+        soft: ELEVATION.card,
+        softer: ELEVATION.card,
+        grounded: ELEVATION.card,
+        lift: ELEVATION.overlay,
+      },
+      transitionTimingFunction: {
+        // One curve for entrances and layout. Nothing bounces.
+        entrance: MOTION.entrance,
       },
       fontFamily: {
         // Body / default. Tailwind's preflight sets `html { font-family: sans }`,

@@ -23,7 +23,7 @@ export function NavyHero({
   return (
     <section
       className={cn(
-        "rounded-4xl bg-gradient-to-br from-brand-navy to-brand-navyDeep p-8 text-white shadow-lift",
+        "rounded-4xl bg-gradient-to-br from-brand-navy to-brand-navyDeep p-8 text-white shadow-overlay",
         className,
       )}
     >

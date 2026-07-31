@@ -52,7 +52,7 @@ export function Sidebar({
   const pathname = usePathname();
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col rounded-3xl bg-brand-navy px-3 py-5 text-white shadow-lift">
+    <aside className="flex w-60 shrink-0 flex-col rounded-3xl bg-brand-navy px-3 py-5 text-white shadow-overlay">
       <div className="mb-6 flex items-center gap-2.5 px-2">
         {/* Real TM'd mark rendered directly on navy — its dark-background variant is
             white + orange, so both read cleanly here. (No orange tile: it camouflaged
