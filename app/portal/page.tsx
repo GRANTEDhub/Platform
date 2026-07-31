@@ -8,6 +8,7 @@ import {
 } from "@/components/clients/client-dashboard";
 import { type DashReportRow } from "@/components/clients/client-grant-report-card";
 import { type DashDraft } from "@/components/clients/client-draft-progress";
+import { buildCommunityView } from "@/lib/clients/community";
 import { deadlineDaysLeft } from "@/lib/report/shape";
 import { deriveClientNotifications } from "@/lib/portal/notifications";
 import type { Client, CardDecision, Grant, IntellEngineDraft } from "@/types/database";
@@ -159,6 +160,10 @@ export default async function PortalHome() {
             list: drafts,
             emptyNote: "No proposals started yet. IntellEngine is where a matched grant becomes a draft.",
           }}
+          // Public Census/HRSA facts about the client's OWN community -- the same need
+          // signals their proposals cite, so they see what grounds the narrative.
+          // Pure read; `client` is null only if the row vanished mid-session.
+          community={client ? buildCommunityView(client) : undefined}
           bookingUrl={process.env.NEXT_PUBLIC_BOOKING_URL ?? null}
         />
       </div>

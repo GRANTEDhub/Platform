@@ -16,6 +16,7 @@ import { inviteClientToPortalAction } from "../actions";
 import { ClientDashboard, type DashActionItem } from "@/components/clients/client-dashboard";
 import { type DashReportRow } from "@/components/clients/client-grant-report-card";
 import { type DashDraft } from "@/components/clients/client-draft-progress";
+import { buildCommunityView } from "@/lib/clients/community";
 import { deriveEnrichmentSteps } from "@/lib/clients/enrichment-status";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import { deadlineDaysLeft } from "@/lib/report/shape";
@@ -377,6 +378,8 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
           list: drafts,
           emptyNote: "No proposals started yet. IntellEngine is where a matched grant becomes a draft.",
         }}
+        // Pure read of the community_context already on the record -- no fetch here.
+        community={buildCommunityView(client)}
         bookingUrl={process.env.NEXT_PUBLIC_BOOKING_URL ?? null}
         matchNote={matchNote}
         staffTools={isLead ? undefined : <CheckGrant clientId={client.id} clientName={client.name} />}

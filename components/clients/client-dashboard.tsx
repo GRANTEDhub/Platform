@@ -4,6 +4,8 @@ import { Card } from "@/components/ui/card";
 import { ClientMatchChart } from "@/components/clients/client-match-chart";
 import { ClientGrantReportCard, type DashReportRow } from "@/components/clients/client-grant-report-card";
 import { ClientDraftProgress, type DashDraft } from "@/components/clients/client-draft-progress";
+import { ClientCommunityContext } from "@/components/clients/client-community-context";
+import type { CommunityView } from "@/lib/clients/community";
 import { HeroBand } from "@/components/layout/hero-band";
 import { BRAND } from "@/lib/brand";
 
@@ -52,6 +54,7 @@ export function ClientDashboard({
   activity,
   report,
   drafts,
+  community,
   bookingUrl,
   editHref,
   refresh,
@@ -82,6 +85,10 @@ export function ClientDashboard({
   // exactly the previous dashboard rather than a gap where a card should be.
   report?: { rows: DashReportRow[]; total: number; emptyNote: string };
   drafts?: { list: DashDraft[]; emptyNote: string };
+  // Rail: community need-context read from client_profile.community_context. Optional
+  // for the same reason as the two above -- absent means the rail simply carries Grant
+  // activity alone, which is what it did before.
+  community?: CommunityView;
   bookingUrl: string | null;
   // Staff-only: Edit profile. The API-data view used to sit beside it as a second
   // button; it is a SECTION of Edit profile now (?section=api), so the hero carries one
@@ -160,8 +167,12 @@ export function ClientDashboard({
           )}
         </div>
 
-        {/* Context rail */}
+        {/* Context rail. Community context leads: its map tile is the rail's visual
+            anchor and it answers "where is this org" -- the standing question the rest
+            of the rail is read against. Grant activity follows, because it moves. */}
         <div className="space-y-6">
+          {community && <ClientCommunityContext view={community} />}
+
           <Card className="p-6 shadow-grounded sm:p-7">
             <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Grant activity</h2>
             <div className="mt-4">
