@@ -7,6 +7,22 @@ const config: Config = {
     "./components/**/*.{ts,tsx}",
   ],
   theme: {
+    // OVERRIDE, not extend -- this deletes Tailwind's `shadow-<color>` utilities.
+    //
+    // They collide with our elevation names and silently win. Tailwind derives
+    // boxShadowColor from theme.colors, so because a color named `card` exists (the
+    // shadcn --card token), `shadow-card` generated BOTH our box-shadow and a
+    // shadow-COLOR utility. The color one is emitted later, and it reassigns
+    // `--tw-shadow: var(--tw-shadow-colored)` against `--tw-shadow-color: hsl(var(--card))`
+    // -- i.e. a WHITE shadow. Every card on the default elevation rendered with no
+    // visible shadow at all, which is exactly the "flat white cards read as holes"
+    // symptom this refresh is supposed to fix.
+    //
+    // Nothing in the app uses a shadow-color utility (verified across app/ and
+    // components/), so removing the whole family is the root fix rather than dodging
+    // it by renaming our token -- and it means no future token name can be shadowed
+    // by a same-named color.
+    boxShadowColor: {},
     extend: {
       colors: {
         border: "hsl(var(--border))",
