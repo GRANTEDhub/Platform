@@ -120,7 +120,9 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
 
   const base = `/clients/${client.id}/roadmap`;
   const alertsHref = `${base}/triage`;
-  const apiDataHref = `/clients/${client.id}/api-data`;
+  const editHref = `/clients/${client.id}/edit`;
+  // The API-data view is a SECTION of Edit profile now, not its own route/button.
+  const apiDataHref = `${editHref}?section=api`;
   // Action items: staff's own review queue, then the client's next step. For an
   // account-managed client the review is a SINGLE gate (the roadmap review list at
   // `base`, where why-it-matches + manual concept generate/edit + release live), so
@@ -274,8 +276,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         actionItems={actionItems}
         activity={counts}
         bookingUrl={process.env.NEXT_PUBLIC_BOOKING_URL ?? null}
-        editHref={`/clients/${client.id}/edit`}
-        apiDataHref={apiDataHref}
+        editHref={editHref}
         refresh={
           <>
             <GenerateReportButton

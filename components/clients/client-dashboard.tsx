@@ -49,7 +49,6 @@ export function ClientDashboard({
   activity,
   bookingUrl,
   editHref,
-  apiDataHref,
   refresh,
   matchNote,
   staffTools,
@@ -66,11 +65,10 @@ export function ClientDashboard({
   actionItems: DashActionItem[];
   activity: { pending: number; approved: number; passed: number };
   bookingUrl: string | null;
+  // Staff-only: Edit profile. The API-data view used to sit beside it as a second
+  // button; it is a SECTION of Edit profile now (?section=api), so the hero carries one
+  // door into the profile instead of two.
   editHref?: string | null;
-  // Staff-only: the "API data" view (what the public sources returned, and when).
-  // A persistent entry point, not just an action item -- the values behind a match's
-  // citations should always be one click away, not only while something is wrong.
-  apiDataHref?: string | null;
   refresh?: React.ReactNode; // staff-only refresh control
   matchNote?: React.ReactNode; // staff-only in-progress indicator
   staffTools?: React.ReactNode; // staff-only tools (e.g. "Check a grant"), below the hero
@@ -82,7 +80,7 @@ export function ClientDashboard({
         title={name}
         subtitle={subLine ?? undefined}
         right={
-          isStaff && (editHref || apiDataHref || refresh) ? (
+          isStaff && (editHref || refresh) ? (
             <div className="flex items-center gap-3">
               {editHref && (
                 <Link
@@ -90,14 +88,6 @@ export function ClientDashboard({
                   className="rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
                 >
                   Edit profile
-                </Link>
-              )}
-              {apiDataHref && (
-                <Link
-                  href={apiDataHref}
-                  className="rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
-                >
-                  API data
                 </Link>
               )}
               {refresh}
