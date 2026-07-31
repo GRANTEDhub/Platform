@@ -6,9 +6,11 @@ import {
   ClientDashboard,
   type DashStat,
 } from "@/components/clients/client-dashboard";
+import { type DashReportRow } from "@/components/clients/client-grant-report-card";
+import { type DashDraft } from "@/components/clients/client-draft-progress";
 import { deadlineDaysLeft } from "@/lib/report/shape";
 import { deriveClientNotifications } from "@/lib/portal/notifications";
-import type { Client, CardDecision, Grant } from "@/types/database";
+import type { Client, CardDecision, Grant, IntellEngineDraft } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +49,20 @@ export default async function PortalHome() {
     .select("id, fit_score, decision, interested_at, sme_released_at, grants(id, title, funder, submission_deadline)")
     .eq("client_id", org.clientId)
     .neq("card_type", "prospect");
+
+  // This org's proposals in flight (migration 0062), read under the client member
+  // RLS policy -- same query and ordering the IntellEngine hub itself uses, so the
+  // dashboard card leads with the draft the hub leads with.
+  const { data: draftRows } = await supabase
+    .from("intellengine_drafts")
+    .select("id, title, status, updated_at")
+    .eq("client_id", org.clientId)
+    .order("updated_at", { ascending: false });
+
+  const drafts: DashDraft[] = ((draftRows ?? []) as Pick<
+    IntellEngineDraft,
+    "id" | "title" | "status" | "updated_at"
+  >[]).map((d) => ({ id: d.id, title: d.title, status: d.status }));
 
   const allCards = ((cardRows ?? []) as CardRow[]).map((r) => ({ ...r, grant: grantOf(r.grants) }));
   // For an account-managed client (0059), a card not yet released by staff must
@@ -94,6 +110,31 @@ export default async function PortalHome() {
 
   const base = "/portal/grants";
 
+  // Grant Report card: strongest live matches first, soonest deadline as the tiebreak.
+  // Built from `cards`, which for an account-managed client is ALREADY filtered to
+  // released rows -- so an unreleased match cannot surface here any more than it can in
+  // the counts above.
+  const REPORT_ROWS = 3;
+  const reportRows: DashReportRow[] = [...nonPassed]
+    .sort((a, b) => {
+      if (b.fit_score !== a.fit_score) return b.fit_score - a.fit_score;
+      const da = deadlineDaysLeft(a.grant?.submission_deadline);
+      const db = deadlineDaysLeft(b.grant?.submission_deadline);
+      // No deadline sorts last -- null is "unknown", not "urgent".
+      return (da ?? Number.POSITIVE_INFINITY) - (db ?? Number.POSITIVE_INFINITY);
+    })
+    .slice(0, REPORT_ROWS)
+    .map((c) => ({
+      cardId: c.id,
+      title: c.grant?.title || "Untitled opportunity",
+      funder: c.grant?.funder ?? null,
+      fitScore: c.fit_score,
+      deadline: c.grant?.submission_deadline
+        ? format(parseISO(c.grant.submission_deadline), "MMM d")
+        : null,
+      href: `${base}/${c.id}`,
+    }));
+
   const subLine =
     [client?.org_type?.replace(/_/g, " "), client?.location_city, client?.location_state].filter(Boolean).join(" · ") || null;
 
@@ -109,6 +150,15 @@ export default async function PortalHome() {
           stats={stats}
           actionItems={actionItems}
           activity={counts}
+          report={{
+            rows: reportRows,
+            total: nonPassed.length,
+            emptyNote: "Your team is still working through opportunities. Matches will appear here as they are released.",
+          }}
+          drafts={{
+            list: drafts,
+            emptyNote: "No proposals started yet. IntellEngine is where a matched grant becomes a draft.",
+          }}
           bookingUrl={process.env.NEXT_PUBLIC_BOOKING_URL ?? null}
         />
       </div>

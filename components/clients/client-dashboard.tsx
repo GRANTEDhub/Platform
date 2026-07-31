@@ -2,6 +2,8 @@ import Link from "next/link";
 import { CalendarPlus, LifeBuoy, Loader2, MessageSquare, Sparkles, Target, type LucideIcon } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ClientMatchChart } from "@/components/clients/client-match-chart";
+import { ClientGrantReportCard, type DashReportRow } from "@/components/clients/client-grant-report-card";
+import { ClientDraftProgress, type DashDraft } from "@/components/clients/client-draft-progress";
 import { HeroBand } from "@/components/layout/hero-band";
 import { BRAND } from "@/lib/brand";
 
@@ -48,6 +50,8 @@ export function ClientDashboard({
   stats,
   actionItems,
   activity,
+  report,
+  drafts,
   bookingUrl,
   editHref,
   refresh,
@@ -73,6 +77,11 @@ export function ClientDashboard({
   stats?: DashStat[];
   actionItems: DashActionItem[];
   activity: { pending: number; approved: number; passed: number };
+  // Left-column cards. Both are optional, and when one is absent its old shortcut
+  // tile renders in the bottom row instead -- so a caller that passes neither gets
+  // exactly the previous dashboard rather than a gap where a card should be.
+  report?: { rows: DashReportRow[]; total: number; emptyNote: string };
+  drafts?: { list: DashDraft[]; emptyNote: string };
   bookingUrl: string | null;
   // Staff-only: Edit profile. The API-data view used to sit beside it as a second
   // button; it is a SECTION of Edit profile now (?section=api), so the hero carries one
@@ -110,39 +119,73 @@ export function ClientDashboard({
       {isStaff && matchNote}
       {isStaff && staffTools}
 
-      {/* main grid: action items (wide) + grant activity */}
-      <div className="mt-8 grid gap-6 lg:grid-cols-3">
-        <Card className="p-6 shadow-grounded sm:p-7 lg:col-span-2">
-          <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Action items</h2>
-          {actionItems.length === 0 ? (
-            <p className="mt-4 text-sm text-muted-foreground">Nothing needs your attention right now.</p>
-          ) : (
-            <ul className="mt-4 space-y-2">
-              {actionItems.map((it) => (
-                <ActionRow key={it.id} item={it} />
-              ))}
-            </ul>
-          )}
-        </Card>
+      {/* Main grid: a WORK column and a CONTEXT rail.
 
-        <Card className="p-6 shadow-grounded sm:p-7">
-          <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Grant activity</h2>
-          <div className="mt-4">
-            <ClientMatchChart
-              data={[
-                { label: "In review", count: activity.pending, color: BRAND.slate },
-                { label: "Pursuing", count: activity.approved, color: BRAND.orange },
-                { label: "Passed", count: activity.passed, color: BRAND.taupe },
-              ]}
+          The split is by role, not by size. The left column is everything with a next
+          action attached -- what needs attention, what was matched, what is being
+          drafted -- read top to bottom. The rail is standing context you consult
+          rather than act on. That is why the report and draft cards moved out of the
+          bottom shortcut row and into the column: they carry real state now, and
+          state belongs in the reading order, not in a row of doors. */}
+      <div className="mt-8 grid gap-6 lg:grid-cols-3 lg:items-start">
+        <div className="space-y-6 lg:col-span-2">
+          <Card className="p-6 shadow-grounded sm:p-7">
+            <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Needs attention</h2>
+            {actionItems.length === 0 ? (
+              <p className="mt-4 text-sm text-muted-foreground">Nothing needs your attention right now.</p>
+            ) : (
+              <ul className="mt-4 space-y-2">
+                {actionItems.map((it) => (
+                  <ActionRow key={it.id} item={it} />
+                ))}
+              </ul>
+            )}
+          </Card>
+
+          {report && (
+            <ClientGrantReportCard
+              rows={report.rows}
+              total={report.total}
+              reportHref={roadmapHref}
+              emptyNote={report.emptyNote}
             />
-          </div>
-        </Card>
+          )}
+
+          {drafts && intellEngineHref && (
+            <ClientDraftProgress
+              drafts={drafts.list}
+              intellEngineHref={intellEngineHref}
+              emptyNote={drafts.emptyNote}
+            />
+          )}
+        </div>
+
+        {/* Context rail */}
+        <div className="space-y-6">
+          <Card className="p-6 shadow-grounded sm:p-7">
+            <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Grant activity</h2>
+            <div className="mt-4">
+              <ClientMatchChart
+                data={[
+                  { label: "In review", count: activity.pending, color: BRAND.slate },
+                  { label: "Pursuing", count: activity.approved, color: BRAND.orange },
+                  { label: "Passed", count: activity.passed, color: BRAND.taupe },
+                ]}
+              />
+            </div>
+          </Card>
+        </div>
       </div>
 
-      {/* shortcuts — square tiles, bottom row */}
+      {/* shortcuts — square tiles, bottom row. The Grant Report and IntellEngine
+          tiles appear ONLY when their card is absent: with the card present the tile
+          is a second door to the same place, and two entry points to one destination
+          on one screen is how a dashboard starts feeling arbitrary. */}
       <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <QuickAction featured href={roadmapHref} icon={Target} title="Grant Report" sub="Review your matched opportunities" />
-        {intellEngineHref && (
+        {!report && (
+          <QuickAction featured href={roadmapHref} icon={Target} title="Grant Report" sub="Review your matched opportunities" />
+        )}
+        {!drafts && intellEngineHref && (
           <QuickAction href={intellEngineHref} icon={Sparkles} title="IntellEngine" sub="Draft a proposal — AI assistance coming soon" />
         )}
         <QuickAction external href={scheduleHref} icon={CalendarPlus} title="Schedule with an advisor" sub="Book a grant strategy call" />
