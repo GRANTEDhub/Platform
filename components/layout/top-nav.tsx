@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Bell,
   ChevronDown,
   Clock,
   FileSearch,
@@ -28,16 +29,21 @@ import { cn } from "@/lib/utils";
 // eleven links that are each one click deep. Horizontal costs 58px of height for the
 // same reach and gives every page its full width back.
 //
-// WHAT IS DELIBERATELY NOT HERE, and why — all three would be controls that look
+// WHAT IS DELIBERATELY NOT HERE, and why — both would be controls that look
 // functional and are not, which is the same failure as the "Soon" badges this bar
-// removes from the nav:
+// removes from the nav. The approved design (design/dashboard/) draws both; the
+// layout is matched without inventing the behaviour, and each has a tracking issue:
 //   · Search / ⌘K palette. There is no global search backend and no palette. A live
-//     input that returns nothing is worse than no input.
-//   · A notification bell. NotificationBell exists but reads client-portal
-//     notifications; there is no staff notification source to point it at.
+//     input that returns nothing is worse than no input. No dead space is reserved
+//     for it either — the nav is flex-1, so the band still reads correctly.
 //   · IntellEngine. /intellengine is requireClient() — a client surface. Staff reach
 //     it per-client at /clients/:id/intellengine, so a global staff link would land
 //     on a page that rejects them.
+//
+// The bell IS here, unlike the two above, because it can tell the truth: it opens and
+// says there is nothing yet. NotificationBell (the client-portal one) is not reused —
+// it reads client-scoped "awaiting the client" state, which is the wrong subject for a
+// staff bell. It becomes the real source once a staff notification feed exists.
 
 export interface NavItem {
   href: string;
@@ -46,6 +52,9 @@ export interface NavItem {
   // Renders in the More menu as a disabled row with a "Soon" chip. Live pages are
   // never marked this way — the flag tracks whether the destination actually exists.
   soon?: boolean;
+  // Count pill trailing the label. Omitted (not zeroed) when there is nothing to
+  // show, so a quiet queue renders no pill rather than a "0".
+  badge?: number | null;
 }
 
 const ICONS: Record<string, LucideIcon> = {
@@ -124,7 +133,7 @@ export function TopNav({
   const moreActive = more.some((m) => !m.soon && isActive(pathname, m.href));
 
   return (
-    <header className="flex h-[58px] shrink-0 items-center gap-4 bg-brand-navy px-[26px]">
+    <header className="flex h-[58px] shrink-0 items-center gap-[26px] bg-brand-navy px-[26px]">
       <Link href="/clients" className={cn("flex shrink-0 items-center gap-2.5 rounded-md", FOCUS)}>
         <img src="/granted-mark-dark.svg" alt="" aria-hidden="true" className="h-[23px] w-auto" />
         <span className="font-serif text-[15px] font-bold tracking-[0.03em] text-white">GRANTED</span>
@@ -132,7 +141,7 @@ export function TopNav({
 
       {/* Wide: the items inline. Narrow: one hamburger holding the same list, so the
           band never wraps to two rows. */}
-      <nav aria-label="Main" className="hidden min-w-0 flex-1 items-center gap-1 lg:flex">
+      <nav aria-label="Main" className="hidden min-w-0 flex-1 items-center gap-[2px] lg:flex">
         {items.map((item) => (
           <NavLink key={item.href} item={item} active={isActive(pathname, item.href)} />
         ))}
@@ -235,43 +244,48 @@ export function TopNav({
         )}
       </div>
 
-      <div ref={userRef} className="relative ml-auto hidden shrink-0 lg:block">
-        <button
-          type="button"
-          onClick={() => setUserOpen((v) => !v)}
-          aria-expanded={userOpen}
-          aria-haspopup="menu"
-          aria-label={`Account: ${user.name}`}
-          className={cn(
-            "flex h-[29px] w-[29px] items-center justify-center rounded-full bg-brand-orange text-xs font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90",
-            FOCUS,
-          )}
-        >
-          {(user.name?.[0] || "U").toUpperCase()}
-        </button>
-        {userOpen && (
-          <div
-            role="menu"
+      {/* Right cluster — 12px apart, per the design. The search field that sits to the
+          left of these in the mockup is deliberately absent (see the note at the top). */}
+      <div className="ml-auto hidden shrink-0 items-center gap-3 lg:flex">
+        <StaffBell />
+        <div ref={userRef} className="relative">
+          <button
+            type="button"
+            onClick={() => setUserOpen((v) => !v)}
+            aria-expanded={userOpen}
+            aria-haspopup="menu"
+            aria-label={`Account: ${user.name}`}
             className={cn(
-              "absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-md bg-white shadow-overlay",
-              MENU_IN,
+              "flex h-[29px] w-[29px] items-center justify-center rounded-full bg-brand-orange text-xs font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90",
+              FOCUS,
             )}
           >
-            <div className="border-b border-hairline-strong px-3 py-2.5">
-              <p className="truncate text-[13px] font-semibold text-brand-navy">{user.name}</p>
-              <p className="text-[11.5px] capitalize text-ink-subtle">{user.role}</p>
+            {(user.name?.[0] || "U").toUpperCase()}
+          </button>
+          {userOpen && (
+            <div
+              role="menu"
+              className={cn(
+                "absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-md bg-white shadow-overlay",
+                MENU_IN,
+              )}
+            >
+              <div className="border-b border-hairline-strong px-3 py-2.5">
+                <p className="truncate text-[13px] font-semibold text-brand-navy">{user.name}</p>
+                <p className="text-[11.5px] capitalize text-ink-subtle">{user.role}</p>
+              </div>
+              <form action="/auth/signout" method="post">
+                <button
+                  type="submit"
+                  role="menuitem"
+                  className="w-full px-3 py-2 text-left text-[13px] text-ink-muted transition-colors hover:bg-page hover:text-brand-navy"
+                >
+                  Sign out
+                </button>
+              </form>
             </div>
-            <form action="/auth/signout" method="post">
-              <button
-                type="submit"
-                role="menuitem"
-                className="w-full px-3 py-2 text-left text-[13px] text-ink-muted transition-colors hover:bg-page hover:text-brand-navy"
-              >
-                Sign out
-              </button>
-            </form>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </header>
   );
@@ -279,19 +293,80 @@ export function TopNav({
 
 function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   const Icon = ICONS[item.icon];
+  // The icon renders ONLY on the active item. Every inactive item in the approved
+  // design is text-only, and the handoff describes the active state as "600 weight on
+  // rgba(255,255,255,0.10) with its icon in orange" — the icon is part of the active
+  // treatment, not a permanent fixture. Rendering all eleven icons at once turned the
+  // band into a toolbar and flattened exactly the emphasis this is meant to carry.
+  // (The narrow-viewport menu below keeps its icons: it is a vertical list, where they
+  // aid scanning rather than compete.)
+  const badge = item.badge ?? 0;
   return (
     <Link
       href={item.href}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "flex items-center gap-2 rounded-md px-3 py-[7px] text-[13.5px] transition-colors duration-[120ms] ease-out",
-        active ? "bg-white/10 font-semibold text-white" : "text-white/[0.62] hover:bg-white/5 hover:text-white",
+        "flex items-center gap-[7px] rounded-md px-3 py-[7px] text-[13.5px] transition-colors duration-[120ms] ease-out",
+        active
+          ? "bg-white/10 font-semibold text-white"
+          : "font-medium text-white/[0.62] hover:bg-white/5 hover:text-white",
         FOCUS,
       )}
     >
-      <Icon className={cn("h-4 w-4 shrink-0", active && "text-brand-orange")} />
+      {active && <Icon className="h-[15px] w-[15px] shrink-0 text-brand-orange" />}
       {item.label}
+      {badge > 0 && (
+        <span
+          // aria-hidden: the count is already announced by the accessible label below,
+          // so the pill would otherwise read out twice as a bare number.
+          aria-hidden="true"
+          className="shrink-0 whitespace-nowrap rounded-full bg-brand-orange px-[7px] py-[2px] text-[10.5px] font-bold leading-[1.3] tabular-nums text-white"
+        >
+          {badge}
+        </span>
+      )}
+      {badge > 0 && <span className="sr-only">, {badge} awaiting review</span>}
     </Link>
+  );
+}
+
+// Staff notifications. There is no staff notification feed yet, so this opens and says
+// so rather than being omitted (the design draws a bell) or rendered inert (a control
+// that swallows clicks is the failure this bar exists to remove). The design shows no
+// badge on it, so there is no count to fake.
+function StaffBell() {
+  const [open, setOpen] = useState(false);
+  const ref = useDismiss(open, () => setOpen(false));
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label="Notifications"
+        className={cn(
+          "flex items-center rounded-md p-1 text-white/60 transition-colors duration-[120ms] ease-out hover:text-white",
+          FOCUS,
+        )}
+      >
+        <Bell className="h-[17px] w-[17px]" />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className={cn(
+            "absolute right-0 top-full z-50 mt-2 w-64 overflow-hidden rounded-md bg-white p-4 shadow-overlay",
+            MENU_IN,
+          )}
+        >
+          <p className="text-[13px] font-semibold text-brand-navy">No staff notifications yet</p>
+          <p className="mt-1 text-[11.5px] leading-[1.5] text-ink-subtle">
+            Grants awaiting your review show up under Matches.
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 
