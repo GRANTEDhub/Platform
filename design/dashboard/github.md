@@ -5,7 +5,7 @@ branch: main
 date: 2026-07-31T13:22:33Z
 
 ### Updated in this project
-- Recreated the staff client dashboard (UAMS NorthWest) pixel-for-pixel from source as a baseline.
+- Recreated the staff client dashboard (Northgate Health) pixel-for-pixel from source as a baseline.
 - Proposed a tightened token system: two elevations, three radii, sans tabular figures, no photo backdrops.
 - Three redesign directions for the same screen: Institutional calm, Console, Signal.
 

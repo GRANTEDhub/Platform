@@ -8,6 +8,17 @@ at its native 1440×900.
 `Claude Code Handoff.md` carries the design intent and alignment/empty-state rules.
 `github.md` records which codebase files the design was drawn against.
 
+## Sample data is fictional
+
+The mockup's client — "Northgate Health", Riverton County IL, and its figures — is
+**invented**. This repository is public, so a real client's name and eligibility detail
+does not belong in a design file, and nothing about the design depends on whose name is
+in it. Keep it that way if you refresh this export: swap the sample org before
+committing.
+
+The federal program names are real public NOFO titles, which is fine — the association
+between a client and a pursuit is the part that must not be real.
+
 ## Why this lives in the repo
 
 Two prior implementation passes were driven from screenshots plus prose and drifted from
