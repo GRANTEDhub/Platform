@@ -21,6 +21,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { NavSearch } from "@/components/layout/nav-search";
 
 // The command band — a full-width navy bar, replacing the 240px floating sidebar.
 //
@@ -29,16 +30,17 @@ import { cn } from "@/lib/utils";
 // eleven links that are each one click deep. Horizontal costs 58px of height for the
 // same reach and gives every page its full width back.
 //
-// WHAT IS DELIBERATELY NOT HERE, and why — both would be controls that look
-// functional and are not, which is the same failure as the "Soon" badges this bar
-// removes from the nav. The approved design (design/dashboard/) draws both; the
-// layout is matched without inventing the behaviour, and each has a tracking issue:
-//   · Search / ⌘K palette. There is no global search backend and no palette. A live
-//     input that returns nothing is worse than no input. No dead space is reserved
-//     for it either — the nav is flex-1, so the band still reads correctly.
+// WHAT IS DELIBERATELY NOT HERE, and why:
 //   · IntellEngine. /intellengine is requireClient() — a client surface. Staff reach
 //     it per-client at /clients/:id/intellengine, so a global staff link would land
-//     on a page that rejects them.
+//     on a page that rejects them. It would be a control that looks functional and is
+//     not, the same failure as the "Soon" badges this bar removed from the nav.
+//
+// The search field IS here now, and only because there is something real behind it: it
+// jumps to a client or a ledger grant by name (NavSearch, app/api/search). It was held
+// out of the band until that existed, because an input that returns nothing is worse
+// than no input — and it is scoped to those two entities on purpose, with the results
+// labelled by group so the scope is visible rather than implied.
 //
 // The bell IS here, unlike the two above, because it can tell the truth: it opens and
 // says there is nothing yet. NotificationBell (the client-portal one) is not reused —
@@ -123,6 +125,7 @@ export function TopNav({
   const [moreOpen, setMoreOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+
 
   const moreRef = useDismiss(moreOpen, () => setMoreOpen(false));
   const userRef = useDismiss(userOpen, () => setUserOpen(false));
@@ -247,6 +250,7 @@ export function TopNav({
       {/* Right cluster — 12px apart, per the design. The search field that sits to the
           left of these in the mockup is deliberately absent (see the note at the top). */}
       <div className="ml-auto hidden shrink-0 items-center gap-3 lg:flex">
+        <NavSearch />
         <StaffBell />
         <div ref={userRef} className="relative">
           <button
