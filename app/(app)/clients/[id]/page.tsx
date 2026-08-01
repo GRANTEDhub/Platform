@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { format, parseISO } from "date-fns";
-import { Clock, Layers, Loader2, Mail, MessageSquareText, Plug, Play, type LucideIcon } from "lucide-react";
+import { Clock, Layers, Loader2, Mail, MessageSquareText, Plug, Play, Sparkles, type LucideIcon } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { AutoRefresh } from "@/components/ui/auto-refresh";
@@ -13,7 +13,7 @@ import { GrantPipeline } from "@/components/clients/grant-pipeline";
 import { Badge } from "@/components/ui/badge";
 import { derivePipeline, stageOf, type PipelineStageKey } from "@/lib/clients/pipeline";
 import { inviteClientToPortalAction } from "../actions";
-import { ClientDashboard, type DashActionItem } from "@/components/clients/client-dashboard";
+import { ClientDashboard, type DashActionItem, type DashPinnedRow } from "@/components/clients/client-dashboard";
 import { type DashReportRow } from "@/components/clients/client-grant-report-card";
 import { type DashDraft } from "@/components/clients/client-draft-progress";
 import { type DashDeadline } from "@/components/clients/upcoming-deadlines";
@@ -208,12 +208,10 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         stage: { step: 1, total: 3 },
       });
     } else if (toReview > 0) {
-      actionItems.push({
-        id: "to-review",
-        title: `Review ${toReview} matched grant${toReview === 1 ? "" : "s"}`,
-        href: managed ? base : alertsHref,
-        stage: { step: 2, total: 3 },
-      });
+      // Deliberately pushes nothing: the pinned "Review matched grants" row already
+      // carries this queue and its count, and a dynamic item saying the same thing would
+      // render it twice. The BRANCH stays so the `else` below still only fires once review
+      // is actually clear -- collapsing it would offer the portal invite mid-review.
     } else {
       // Reviewed and decided. The invite is the release: it seats the client AND is
       // what lets their alerts reach them (client-facing sends are held until a seat
@@ -261,13 +259,6 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         ? "Run grant matches to surface opportunities"
         : "Run the first grant match for this client",
       tag: "Use the button, top right",
-    });
-  }
-  if (!inOnboarding && toReview > 0) {
-    actionItems.push({
-      id: "to-review",
-      title: `You have ${toReview} grant${toReview === 1 ? "" : "s"} to review`,
-      href: managed || isLead ? base : alertsHref,
     });
   }
   if (!inOnboarding && counts.pending > 0) {
@@ -344,6 +335,42 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
           : { kind: "none" },
     };
   });
+
+  // ALWAYS-PRESENT queue rows, above the dynamic items. They give the attention card a
+  // floor height so the left column stops collapsing on a quiet client, and they answer
+  // "is there anything waiting for me" without the answer depending on whether an action
+  // item happened to be generated.
+  //
+  // Only queues that EXIST get a row. In-app messaging is deliberately absent: it is not
+  // built (the portal still advertises it as coming soon), so a row for it would be a
+  // permanently-zero count behind a permanently dead button -- the "Submitted" pipeline
+  // stage and the "Soon" nav links over again. It gets a row the day it ships.
+  const reviewHref = managed || isLead ? base : alertsHref;
+  const intellEngineHref = `/clients/${client.id}/intellengine`;
+  const pinnedRows: DashPinnedRow[] = [
+    {
+      id: "review-queue",
+      title: "Review matched grants",
+      description: managed || isLead
+        ? "Snapshot review — clear the ones that don't apply"
+        : "Triage before they reach the client's Grant Alerts",
+      count: toReview,
+      icon: Layers,
+      tone: "triage",
+      href: reviewHref,
+      actionLabel: pillLabel(reviewHref),
+    },
+    {
+      id: "proposals",
+      title: "Grant proposals",
+      description: "Drafts in progress in IntellEngine",
+      count: drafts.length,
+      icon: Sparkles,
+      tone: "approved",
+      href: intellEngineHref,
+      actionLabel: "Open IntellEngine",
+    },
+  ];
 
   // See ClientDashboard's attentionNote prop: the design's line names Grant Alerts, which
   // is only where this card leads for a standard client. Managed clients and leads review
@@ -520,6 +547,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         intellEngineHref={`/clients/${client.id}/intellengine`}
         hero={<GrantPipeline pipeline={pipeline} nextDeadlineLabel={nextDeadlineLabel} />}
         actionItems={consoleActionItems}
+        pinnedRows={pinnedRows}
         activity={counts}
         report={{
           rows: reportRows,
