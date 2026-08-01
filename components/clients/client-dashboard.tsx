@@ -243,8 +243,16 @@ function ConsoleBody({
   intellEngineHref?: string;
 }) {
   return (
-    <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_318px] xl:items-start">
-      <div className="flex flex-col gap-4">
+    // items-stretch, NOT items-start: the design has the left column and the rail ending
+    // level, and that only held in the mockup because its attention queue happened to
+    // carry three rows. With a quiet queue the left column came up short and the bottoms
+    // disagreed. Stretching both to the taller one and letting the attention card absorb
+    // the slack (below) makes the alignment a property of the layout rather than of how
+    // many action items a particular client happens to have today. A fixed min-height on
+    // the card would have lined up this rail and drifted the moment the rail changed --
+    // a client with no upcoming deadlines drops that card entirely.
+    <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_318px] xl:items-stretch">
+      <div className="flex min-w-0 flex-col gap-4">
         <AttentionCard items={actionItems} note={attentionNote} />
 
         {/* Side by side, equal width, equal height. IntellEngine is the shorter of the
@@ -289,7 +297,7 @@ function ConsoleBody({
 // different shape, which is the instability this redesign exists to remove.
 function AttentionCard({ items, note }: { items: DashActionItem[]; note?: string | null }) {
   return (
-    <section className="overflow-hidden rounded-2xl bg-white shadow-card">
+    <section className="flex flex-1 flex-col overflow-hidden rounded-2xl bg-white shadow-card">
       <div
         className="flex items-center gap-2.5 border-b px-5 py-3"
         style={{ backgroundColor: STAGE.triage.tint, borderColor: STAGE.triage.border }}
@@ -310,12 +318,15 @@ function AttentionCard({ items, note }: { items: DashActionItem[]; note?: string
       </div>
 
       {items.length === 0 ? (
-        <div className="px-5 py-6 text-center">
+        <div className="flex flex-1 flex-col items-center justify-center px-5 py-8 text-center">
           <p className="text-sm font-semibold text-brand-navy">You&apos;re caught up</p>
           <p className="mt-1 text-xs text-ink-subtle">New matches land here as grants are scored.</p>
         </div>
       ) : (
-        <ul>
+        // flex-1 on the list, rows at their natural height: the spare space collects at
+        // the bottom of the card rather than being distributed between rows, which would
+        // change the row rhythm depending on how many there are.
+        <ul className="flex-1">
           {items.map((it, i) => (
             <AttentionRow key={it.id} item={it} last={i === items.length - 1} />
           ))}
