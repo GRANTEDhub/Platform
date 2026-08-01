@@ -21,7 +21,7 @@ import { ClientCommunityContext } from "@/components/clients/client-community-co
 import { UpcomingDeadlines, type DashDeadline } from "@/components/clients/upcoming-deadlines";
 import type { CommunityView } from "@/lib/clients/community";
 import { HeroBand } from "@/components/layout/hero-band";
-import { BRAND, STAGE } from "@/lib/brand";
+import { BRAND, INK, STAGE } from "@/lib/brand";
 import type { PipelineStageKey } from "@/lib/clients/pipeline";
 
 // The shared, actor-aware client dashboard — the per-client hub. Staff open it via
@@ -67,6 +67,28 @@ export type DashAffordance =
   | { kind: "none" }
   | { kind: "blocked" };
 
+// A PINNED queue row. Unlike a DashActionItem these always render, at zero as much as at
+// twenty, so the card has a floor height and the left column stops collapsing when a
+// client happens to be quiet -- the same reasoning as the pipeline card's five always-
+// present slots. The count IS the state: at zero the row says so and its control goes
+// grey and inert rather than the row disappearing.
+//
+// A queue only earns a pinned row if it EXISTS. A permanently-zero row with a permanently
+// dead button is the "Submitted" pipeline stage and the "Soon" nav links all over again --
+// so in-app messaging does not get one until in-app messaging is built.
+export interface DashPinnedRow {
+  id: string;
+  title: string;
+  description: string;
+  count: number;
+  icon: LucideIcon;
+  tone: PipelineStageKey;
+  // Where the control goes when there is something to open. Null disables it regardless
+  // of count, for a queue with no destination on this actor's path.
+  href: string | null;
+  actionLabel: string;
+}
+
 export interface DashActionItem {
   id: string;
   title: string;
@@ -100,6 +122,7 @@ export function ClientDashboard({
   hero,
   stats,
   actionItems,
+  pinnedRows,
   activity,
   report,
   drafts,
@@ -127,6 +150,8 @@ export function ClientDashboard({
   // staff page computing four tiles nothing renders.
   stats?: DashStat[];
   actionItems: DashActionItem[];
+  // Console-only: the always-present queue rows above the dynamic items.
+  pinnedRows?: DashPinnedRow[];
   activity: { pending: number; approved: number; passed: number };
   // Left-column cards. Both are optional, and when one is absent its old shortcut
   // tile renders in the bottom row instead -- so a caller that passes neither gets
@@ -163,6 +188,7 @@ export function ClientDashboard({
         {matchNote}
         <ConsoleBody
           actionItems={actionItems}
+          pinnedRows={pinnedRows}
           report={report}
           drafts={drafts}
           community={community}
@@ -223,6 +249,7 @@ export function ClientDashboard({
 // level. The geography card's 76px image is load-bearing for that.
 function ConsoleBody({
   actionItems,
+  pinnedRows,
   report,
   drafts,
   community,
@@ -233,6 +260,7 @@ function ConsoleBody({
   intellEngineHref,
 }: {
   actionItems: DashActionItem[];
+  pinnedRows?: DashPinnedRow[];
   report?: { rows: DashReportRow[]; total: number; emptyNote: string; metrics?: DashReportMetrics };
   drafts?: { list: DashDraft[]; emptyNote: string };
   community?: CommunityView;
@@ -243,17 +271,14 @@ function ConsoleBody({
   intellEngineHref?: string;
 }) {
   return (
-    // items-stretch, NOT items-start: the design has the left column and the rail ending
-    // level, and that only held in the mockup because its attention queue happened to
-    // carry three rows. With a quiet queue the left column came up short and the bottoms
-    // disagreed. Stretching both to the taller one and letting the attention card absorb
-    // the slack (below) makes the alignment a property of the layout rather than of how
-    // many action items a particular client happens to have today. A fixed min-height on
-    // the card would have lined up this rail and drifted the moment the rail changed --
-    // a client with no upcoming deadlines drops that card entirely.
-    <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_318px] xl:items-stretch">
+    // items-start, and the columns are aligned by CONTENT rather than by stretching. An
+    // earlier attempt stretched them and let the attention card absorb the slack; with a
+    // quiet queue that produced a tall empty white card, which reads worse than a slightly
+    // short column. The pinned rows below give the card a real floor height instead, so
+    // whatever difference remains falls at the bottom of the column as page background.
+    <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_318px] xl:items-start">
       <div className="flex min-w-0 flex-col gap-4">
-        <AttentionCard items={actionItems} note={attentionNote} />
+        <AttentionCard items={actionItems} pinned={pinnedRows} note={attentionNote} />
 
         {/* Side by side, equal width, equal height. IntellEngine is the shorter of the
             two by content: it stretches, its content stays top-aligned, and the slack
@@ -295,17 +320,30 @@ function ConsoleBody({
 // trailing control. THE CARD NEVER DISAPPEARS: when the queue clears it keeps its frame
 // and shows a caught-up row instead. A card that vanishes makes the page collapse to a
 // different shape, which is the instability this redesign exists to remove.
-function AttentionCard({ items, note }: { items: DashActionItem[]; note?: string | null }) {
+function AttentionCard({
+  items,
+  pinned,
+  note,
+}: {
+  items: DashActionItem[];
+  pinned?: DashPinnedRow[];
+  note?: string | null;
+}) {
+  const rows = pinned ?? [];
+  // The header badge counts THINGS THAT WANT YOU, not rows on screen: a pinned queue at
+  // zero is on the card but is not asking for anything. So it is the pinned rows carrying
+  // a count, plus the dynamic items.
+  const live = rows.filter((r) => r.count > 0).length + items.length;
   return (
-    <section className="flex flex-1 flex-col overflow-hidden rounded-2xl bg-white shadow-card">
+    <section className="overflow-hidden rounded-2xl bg-white shadow-card">
       <div
         className="flex items-center gap-2.5 border-b px-5 py-3"
         style={{ backgroundColor: STAGE.triage.tint, borderColor: STAGE.triage.border }}
       >
         <h2 className="font-serif text-base font-bold text-brand-navy">Needs your attention</h2>
-        {items.length > 0 ? (
+        {live > 0 ? (
           <span className="rounded-full bg-brand-orange px-2 py-0.5 text-[11px] font-bold leading-[1.4] tabular-nums text-white">
-            {items.length}
+            {live}
           </span>
         ) : (
           <span
@@ -317,22 +355,88 @@ function AttentionCard({ items, note }: { items: DashActionItem[]; note?: string
         {note && <span className="ml-auto text-[11.5px] text-ink-subtle">{note}</span>}
       </div>
 
-      {items.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center px-5 py-8 text-center">
+      <ul>
+        {rows.map((r) => (
+          <PinnedRow key={r.id} row={r} last={false} />
+        ))}
+        {items.map((it, i) => (
+          <AttentionRow key={it.id} item={it} last={i === items.length - 1} />
+        ))}
+      </ul>
+
+      {/* Only when the card has NOTHING to say -- no pinned queues configured and no
+          dynamic items. With pinned rows present the zeros already say it, and a
+          "caught up" line under two "0" rows would be saying it twice. */}
+      {rows.length === 0 && items.length === 0 && (
+        <div className="px-5 py-8 text-center">
           <p className="text-sm font-semibold text-brand-navy">You&apos;re caught up</p>
           <p className="mt-1 text-xs text-ink-subtle">New matches land here as grants are scored.</p>
         </div>
-      ) : (
-        // flex-1 on the list, rows at their natural height: the spare space collects at
-        // the bottom of the card rather than being distributed between rows, which would
-        // change the row rhythm depending on how many there are.
-        <ul className="flex-1">
-          {items.map((it, i) => (
-            <AttentionRow key={it.id} item={it} last={i === items.length - 1} />
-          ))}
-        </ul>
       )}
     </section>
+  );
+}
+
+// A pinned queue row. Its control is the state indicator: orange and live when the queue
+// has something in it, grey and genuinely disabled at zero. A disabled control here is
+// honest in a way the "Soon" nav links were not -- the destination exists and works, there
+// is simply nothing in the queue right now, and that is a fact about today's data rather
+// than a feature that was never built.
+function PinnedRow({ row, last }: { row: DashPinnedRow; last: boolean }) {
+  const live = row.count > 0 && row.href !== null;
+  const Icon = row.icon;
+  return (
+    <li className={`flex items-center gap-[13px] px-5 py-3 ${last ? "" : "border-b border-hairline"}`}>
+      <span
+        aria-hidden="true"
+        className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-pill"
+        style={{ backgroundColor: live ? STAGE[row.tone].tint : "rgba(11,30,58,0.04)" }}
+      >
+        <Icon
+          className="h-[15px] w-[15px]"
+          style={{
+            color: live
+              ? row.tone === "client"
+                ? STAGE.client.text
+                : STAGE[row.tone].color
+              : INK.faint,
+          }}
+        />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-semibold text-brand-navy">{row.title}</p>
+          <span
+            className="shrink-0 rounded-full px-1.5 py-px text-[11px] font-bold leading-[1.4] tabular-nums"
+            style={
+              live
+                ? { backgroundColor: STAGE.triage.color, color: "#fff" }
+                : { backgroundColor: "rgba(11,30,58,0.05)", color: INK.subtle }
+            }
+          >
+            {row.count}
+          </span>
+        </div>
+        <p className="mt-0.5 text-xs text-ink-subtle">{row.description}</p>
+      </div>
+      {live ? (
+        <Link
+          href={row.href as string}
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-pill bg-brand-orange px-3.5 text-[12.5px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+        >
+          {row.actionLabel}
+          <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+        </Link>
+      ) : (
+        <span
+          aria-disabled="true"
+          className="inline-flex h-8 shrink-0 cursor-default items-center rounded-pill px-3.5 text-[12.5px] font-semibold"
+          style={{ backgroundColor: "rgba(11,30,58,0.05)", color: INK.faint }}
+        >
+          {row.actionLabel}
+        </span>
+      )}
+    </li>
   );
 }
 
