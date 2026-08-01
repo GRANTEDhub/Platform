@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   Bell,
   ChevronDown,
+  Search,
   Clock,
   FileSearch,
   FileSignature,
@@ -21,6 +22,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CommandPalette } from "@/components/layout/command-palette";
 
 // The command band — a full-width navy bar, replacing the 240px floating sidebar.
 //
@@ -29,16 +31,18 @@ import { cn } from "@/lib/utils";
 // eleven links that are each one click deep. Horizontal costs 58px of height for the
 // same reach and gives every page its full width back.
 //
-// WHAT IS DELIBERATELY NOT HERE, and why — both would be controls that look
-// functional and are not, which is the same failure as the "Soon" badges this bar
-// removes from the nav. The approved design (design/dashboard/) draws both; the
-// layout is matched without inventing the behaviour, and each has a tracking issue:
-//   · Search / ⌘K palette. There is no global search backend and no palette. A live
-//     input that returns nothing is worse than no input. No dead space is reserved
-//     for it either — the nav is flex-1, so the band still reads correctly.
+// WHAT IS DELIBERATELY NOT HERE, and why:
 //   · IntellEngine. /intellengine is requireClient() — a client surface. Staff reach
 //     it per-client at /clients/:id/intellengine, so a global staff link would land
-//     on a page that rejects them.
+//     on a page that rejects them. It would be a control that looks functional and is
+//     not, the same failure as the "Soon" badges this bar removed from the nav.
+//
+// The search field IS here now, and only because there is something real behind it: a
+// ⌘K palette that jumps to a client or a ledger grant by name (CommandPalette,
+// app/api/search). It was held out of the band until that existed, because an input
+// that returns nothing is worse than no input — and it is scoped to those two entities
+// on purpose, with the palette labelling its groups so the scope is visible rather
+// than implied.
 //
 // The bell IS here, unlike the two above, because it can tell the truth: it opens and
 // says there is nothing yet. NotificationBell (the client-portal one) is not reused —
@@ -123,6 +127,21 @@ export function TopNav({
   const [moreOpen, setMoreOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  // ⌘K / Ctrl-K from anywhere. Registered on the window because the point of a palette
+  // is that you never have to reach the control first; the visible field is the
+  // discoverability aid, not the entry point.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const moreRef = useDismiss(moreOpen, () => setMoreOpen(false));
   const userRef = useDismiss(userOpen, () => setUserOpen(false));
@@ -247,6 +266,24 @@ export function TopNav({
       {/* Right cluster — 12px apart, per the design. The search field that sits to the
           left of these in the mockup is deliberately absent (see the note at the top). */}
       <div className="ml-auto hidden shrink-0 items-center gap-3 lg:flex">
+        <button
+          type="button"
+          onClick={() => setSearchOpen(true)}
+          aria-label="Search clients and grants"
+          className={cn(
+            "flex h-8 w-[180px] items-center gap-2 rounded-md bg-white/[0.08] px-2.5 text-[12.5px] text-white/[0.45] transition-colors duration-[120ms] ease-out hover:bg-white/[0.12] hover:text-white/70",
+            FOCUS,
+          )}
+        >
+          <Search className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          Search
+          <span
+            aria-hidden="true"
+            className="ml-auto shrink-0 rounded border border-white/[0.18] px-[5px] py-px text-[11px]"
+          >
+            ⌘K
+          </span>
+        </button>
         <StaffBell />
         <div ref={userRef} className="relative">
           <button
@@ -287,6 +324,7 @@ export function TopNav({
           )}
         </div>
       </div>
+      <CommandPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
     </header>
   );
 }
