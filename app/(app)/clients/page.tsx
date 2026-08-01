@@ -1,163 +1,103 @@
-import Link from "next/link";
-import { differenceInCalendarDays, parseISO } from "date-fns";
-import { Building2, CheckCircle2, DollarSign, CalendarClock, type LucideIcon } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { cn, formatCurrency } from "@/lib/utils";
 import { isUnconvertedLead } from "@/lib/leads/stage";
+import { deadlineDaysLeft } from "@/lib/report/shape";
+import { derivePipeline, type PipelineCard, type PipelineStageKey } from "@/lib/clients/pipeline";
+import { actionReason, hasEmptyPipeline } from "@/lib/clients/portfolio";
 import { PortfolioBrowser, type PortfolioRow } from "@/components/clients/portfolio-browser";
-import type { ClientOverview, CardDecision } from "@/types/database";
+import type { ClientOverview } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
-// The roster surface: one card per client AND prospect, rolled up by their live grant
-// pipeline (approved = active, pending = in review) plus fit, next deadline, and (for
-// clients) a money footer. Prospects (un-converted leads) now populate here too, with
-// a Clients / Prospects / All toggle + a live name search (PortfolioBrowser). Dead
-// leads (archived / rejected) are excluded. Pipeline counts are real (review_cards);
-// award dollars are deliberately NOT summed (grant funding is free-text). Read-only,
-// staff-only; client/prospect detail lives under /clients/[id].
+// The roster surface, built to the approved design (design/portfolio/).
+//
+// The page's central claim is a SPLIT: clients asking for something today, as large
+// cards, above everything else as a quieter grid. The rule behind that split lives in
+// lib/clients/portfolio.ts, not here — see it for the thresholds and why "question
+// waiting" is wired through at a permanent zero.
+//
+// Every client's mini bar is the SAME derivePipeline the client dashboard's pipeline
+// card uses. That is the point: a bar on the roster and the funnel on the detail page
+// are the same five stages derived by the same cascade, so they cannot tell different
+// stories about one client. It costs a wider select on review_cards and nothing else.
+//
+// Dead leads (archived / rejected) are excluded; prospects (un-converted leads) appear
+// with a chip. Read-only, staff-only.
 
-type Rollup = { active: number; inReview: number; fitSum: number; fitCount: number };
-const EMPTY_ROLLUP: Rollup = { active: 0, inReview: 0, fitSum: 0, fitCount: 0 };
+type CardRow = PipelineCard & { client_id: string | null };
 
 export default async function ClientsPage() {
-  // Contractors see the roster (grant work), but NOT GRANTED's billing: the money
-  // footer, the "outstanding" tile, and the admin-only "+ Add client" are gated.
+  // Contractors see the roster (it is grant work); "+ Add client" stays admin-only.
   const profile = await requireUser();
   const isAdmin = profile.role === "admin";
   const supabase = createClient();
 
   const { data: overviewData } = await supabase.from("client_overview").select("*").order("name");
-  // Include clients + active prospects (un-converted leads); drop dead leads.
   const clients = ((overviewData ?? []) as ClientOverview[]).filter(
     (c) => c.pipeline_stage !== "archived" && c.pipeline_stage !== "rejected",
   );
   const ids = clients.map((c) => c.id);
 
-  type CardRow = { client_id: string | null; decision: CardDecision; fit_score: number | null };
   let cards: CardRow[] = [];
   const locById = new Map<string, string>();
   if (ids.length > 0) {
     const [{ data: cardData }, { data: locData }] = await Promise.all([
-      supabase.from("review_cards").select("client_id, decision, fit_score").in("client_id", ids).neq("card_type", "prospect"),
+      supabase
+        .from("review_cards")
+        // Wider than the old rollup by four columns, all of them pipeline inputs. No
+        // extra round-trip: same query, same filters.
+        .select("client_id, decision, interested_at, sme_released_at, sent_at, pursuit_path")
+        .in("client_id", ids)
+        .neq("card_type", "prospect"),
       supabase.from("clients").select("id, location_city, location_state").in("id", ids),
     ]);
     cards = (cardData ?? []) as CardRow[];
     for (const l of (locData ?? []) as { id: string; location_city: string | null; location_state: string | null }[]) {
-      const cityState = [l.location_city, l.location_state].filter(Boolean).join(", ");
-      if (cityState) locById.set(l.id, cityState);
+      // City only, per the design's "Nonprofit · Springdale" subtitle. The state is
+      // redundant on a roster that is almost entirely one state, and the card is narrow.
+      if (l.location_city) locById.set(l.id, l.location_city);
     }
   }
 
-  const byClient = new Map<string, Rollup>();
+  const byClient = new Map<string, CardRow[]>();
   for (const c of cards) {
     if (!c.client_id) continue;
-    const r = byClient.get(c.client_id) ?? { ...EMPTY_ROLLUP };
-    if (c.decision === "approved") r.active += 1;
-    else if (c.decision === "pending") r.inReview += 1;
-    if ((c.decision === "approved" || c.decision === "pending") && typeof c.fit_score === "number") {
-      r.fitSum += c.fit_score;
-      r.fitCount += 1;
-    }
-    byClient.set(c.client_id, r);
+    const list = byClient.get(c.client_id);
+    if (list) list.push(c);
+    else byClient.set(c.client_id, [c]);
   }
 
-  const rows: PortfolioRow[] = clients
-    .map((c) => {
-      const r = byClient.get(c.id) ?? EMPTY_ROLLUP;
-      const isProspect = isUnconvertedLead(c.pipeline_stage);
-      const subtitle = [c.org_type?.replace(/_/g, " "), locById.get(c.id)].filter(Boolean).join(" · ") || "—";
-      const owedText = c.owed_cents > 0 ? `${formatCurrency(c.owed_cents / 100)} owed` : "Paid up";
-      const hoursText = c.hours_remaining != null ? `${Number(c.hours_remaining).toFixed(1)}h left` : null;
-      return {
-        id: c.id,
-        name: c.name,
-        subtitle,
-        status: c.status,
-        isProspect,
-        active: r.active,
-        inReview: r.inReview,
-        avgFit: r.fitCount > 0 ? (r.fitSum / r.fitCount).toFixed(1) : null,
-        nextDeadline: c.next_deadline,
-        // Money footer is a client concept; prospects don't bill, and it's
-        // GRANTED billing so contractors never see it.
-        money: isProspect || !isAdmin ? null : [owedText, hoursText].filter(Boolean).join("  ·  "),
-      };
-    })
-    // Clients first, then prospects; within each, most active then alphabetical.
-    .sort(
-      (a, b) => Number(a.isProspect) - Number(b.isProspect) || b.active - a.active || a.name.localeCompare(b.name),
-    );
+  const rows: PortfolioRow[] = clients.map((c) => {
+    const own = byClient.get(c.id) ?? [];
+    const pipeline = derivePipeline(own);
+    // "Alerts" = awaiting review. Identical predicate to /matches and the command
+    // band's badge (non-passed, not yet released to the client), so a client's number
+    // is the same wherever it is shown.
+    const alerts = own.filter((x) => x.decision !== "passed" && x.sme_released_at === null).length;
+    const deadlineDays = deadlineDaysLeft(c.next_deadline);
+    // See lib/clients/portfolio.ts: no question store exists, so this is a real zero
+    // rather than a placeholder. The reason stays wired for when one does.
+    const questions = 0;
 
-  const activeCount = clients.filter((c) => c.status === "active").length;
-  const prospectCount = rows.filter((r) => r.isProspect).length;
-  const totalActive = rows.reduce((s, r) => s + r.active, 0);
-  const totalOwedCents = clients.reduce((s, c) => s + (c.owed_cents || 0), 0);
-  const deadlineSoon = clients.filter(
-    (c) => c.next_deadline && differenceInCalendarDays(parseISO(c.next_deadline), new Date()) <= 30,
-  ).length;
+    const counts = {} as Record<PipelineStageKey, number>;
+    for (const s of pipeline.stages) counts[s.key] = s.count;
 
-  return (
-    <div className="px-6 py-8 lg:px-10 lg:py-9">
-      <header className="mb-8 flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-[30px] font-semibold tracking-tight text-brand-navy">Portfolio</h1>
-          <p className="mt-1.5 text-[15px] text-muted-foreground">
-            Your roster — clients and prospects, grant pipeline and account status at a glance.
-          </p>
-        </div>
-        {isAdmin && (
-          <Link
-            href="/clients/new"
-            className="shrink-0 rounded-full bg-brand-navy px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-navyDeep"
-          >
-            + Add client
-          </Link>
-        )}
-      </header>
+    return {
+      id: c.id,
+      name: c.name,
+      subtitle: [c.org_type?.replace(/_/g, " "), locById.get(c.id)].filter(Boolean).join(" · ") || "—",
+      isProspect: isUnconvertedLead(c.pipeline_stage),
+      alerts,
+      deadlineDays,
+      deadlineDate: c.next_deadline,
+      questions,
+      reason: actionReason({ alerts, deadlineDays, questions }),
+      counts,
+      totalGrants: pipeline.total,
+      inPursuit: counts.pursuit ?? 0,
+      emptyPipeline: hasEmptyPipeline(pipeline),
+    };
+  });
 
-      <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <SummaryTile icon={Building2} tone="navy" value={String(activeCount)} label="active clients" hint={`${prospectCount} prospect${prospectCount === 1 ? "" : "s"}`} />
-        <SummaryTile icon={CheckCircle2} tone="orange" value={String(totalActive)} label="active opportunities" />
-        {isAdmin && (
-          <SummaryTile icon={DollarSign} tone="orange" value={formatCurrency(totalOwedCents / 100)} label="outstanding" />
-        )}
-        <SummaryTile icon={CalendarClock} tone="navy" value={String(deadlineSoon)} label="deadlines ≤30d" />
-      </div>
-
-      <PortfolioBrowser rows={rows} />
-    </div>
-  );
-}
-
-function SummaryTile({
-  icon: Icon,
-  tone,
-  value,
-  label,
-  hint,
-}: {
-  icon: LucideIcon;
-  tone: "navy" | "orange";
-  value: string;
-  label: string;
-  hint?: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-brand-navy/[0.05] bg-white p-5 shadow-soft">
-      <div className="flex items-center gap-3.5">
-        <span className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-xl text-white", tone === "orange" ? "bg-brand-orange" : "bg-brand-navy")}>
-          <Icon className="h-[18px] w-[18px]" />
-        </span>
-        <div className="min-w-0">
-          <p className="text-[26px] font-semibold leading-none text-brand-navy">{value}</p>
-          <p className="mt-1.5 truncate text-[13px] text-muted-foreground">
-            {label}
-            {hint ? <span className="text-muted-foreground/70"> · {hint}</span> : null}
-          </p>
-        </div>
-      </div>
-    </div>
-  );
+  return <PortfolioBrowser rows={rows} isAdmin={isAdmin} />;
 }
