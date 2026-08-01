@@ -82,12 +82,24 @@ export const LINE = {
 // tinted panel header needs roughly double to read as an edge. Both stage headers in the
 // approved design pair the two, so the pairing is named here rather than reinvented as a
 // one-off rgba at each call site -- which is how a second, undocumented orange gets in.
+//
+// `muted` is the SAME scale desaturated, for pipeline bars on rows that need no
+// attention (the Portfolio's no-action grid). It exists so a quiet client's bar still
+// reads as the same funnel rather than a different chart, while receding behind the
+// rows that are actually asking for something -- the alternative, reusing the live
+// colours at lower opacity, would let a large taupe segment on a quiet client out-shout
+// a small orange one on a client that needs work.
+//
+// triage / approved / passed are taken from the approved design. client and pursuit are
+// DERIVED to the same lightness and chroma: the design's sample roster happened to
+// contain no quiet client sitting at those two stages, so they were never drawn. If a
+// future mockup specifies them, that value wins over these.
 export const STAGE = {
-  triage: { color: "#E4761F", tint: "rgba(228,118,31,0.07)", border: "rgba(228,118,31,0.14)" },
-  client: { color: "#C9962B", tint: "rgba(201,150,43,0.14)", text: "#A87A1B" },
-  approved: { color: "#2E7D91", tint: "rgba(46,125,145,0.06)", border: "rgba(46,125,145,0.13)" },
-  pursuit: { color: "#0B7A5A", tint: "rgba(11,122,90,0.10)" },
-  passed: { color: "#C9C2B8", tint: "rgba(11,30,58,0.06)" },
+  triage: { color: "#E4761F", tint: "rgba(228,118,31,0.07)", border: "rgba(228,118,31,0.14)", muted: "#E4C4A3" },
+  client: { color: "#C9962B", tint: "rgba(201,150,43,0.14)", text: "#A87A1B", muted: "#DCC9A0" },
+  approved: { color: "#2E7D91", tint: "rgba(46,125,145,0.06)", border: "rgba(46,125,145,0.13)", muted: "#8FBAC4" },
+  pursuit: { color: "#0B7A5A", tint: "rgba(11,122,90,0.10)", muted: "#A3C6B8" },
+  passed: { color: "#C9C2B8", tint: "rgba(11,30,58,0.06)", muted: "#DCD6CC" },
 } as const;
 
 // ── Elevation ───────────────────────────────────────────────────────────────
