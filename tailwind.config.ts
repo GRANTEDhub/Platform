@@ -61,6 +61,8 @@ const config: Config = {
           orange: BRAND.orange,
           orangeHover: BRAND.orangeHover,
           orangeDeep: BRAND.orangeDeep,
+          amberOnDark: BRAND.amberOnDark,
+          reject: BRAND.reject,
           cream: BRAND.cream,
           creamWarm: BRAND.creamWarm,
         },

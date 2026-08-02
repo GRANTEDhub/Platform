@@ -184,7 +184,7 @@ export function NavSearch() {
     <div ref={wrapRef} className="relative">
       <div
         className={cn(
-          "flex h-8 w-[270px] items-center gap-2 rounded-md bg-white/[0.08] px-2.5 transition-colors duration-[120ms] ease-out",
+          "flex h-8 w-[270px] items-center gap-2 rounded-sharp bg-white/[0.08] px-2.5 transition-colors duration-[120ms] ease-out",
           focused ? "bg-white/[0.14]" : "hover:bg-white/[0.12]",
         )}
       >
