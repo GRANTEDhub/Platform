@@ -168,7 +168,7 @@ function Row({
 function ConsoleGeographyCard({ view }: { view: CommunityView }) {
   const { placeLabel, income, shortage, rurality, sam } = view;
   return (
-    <section className="overflow-hidden rounded-2xl bg-white shadow-card">
+    <section className="shrink-0 overflow-hidden rounded-sharp border border-edge bg-white">
       <div className="relative h-[76px]">
         <div
           aria-hidden="true"

@@ -111,15 +111,17 @@ export function ClientDraftProgress({
 
 // ── Console variant — the approved design ───────────────────────────────────
 //
-// The gradient plus a soft orange bloom top-right, clipped by overflow-hidden. This is
-// the only place in the product where gradient and glow are allowed; the page background
-// is deliberately flat everywhere else (a texture behind flat white cards made them read
-// as holes, which is what the refresh removed).
+// FLAT INK, and the gradient-plus-glow is gone. It was the one place in the product
+// allowed that treatment, on the argument that this is the surface where the AI does
+// work. The ink direction retires it: cards are drawn planes, not lifted paper, and a
+// glowing gradient panel next to five squared flat ones now reads as the odd one out
+// rather than as emphasis. The panel is still the only DARK card on the page, which is
+// the emphasis it actually needed.
 //
-// NO DRAFTS keeps the panel and the whole treatment, replacing the progress block with
-// one line and promoting "New draft" to the white primary. The panel disappearing would
-// change the page's shape, and this is half of a side-by-side pair — its absence would
-// leave the Grant Report card stretched across the full column.
+// NO DRAFTS keeps the panel, replacing the progress block with one line and promoting
+// "New draft" to the white primary. The panel disappearing would change the page's shape,
+// and this is half of a side-by-side pair — its absence would leave the Grant Report card
+// stretched across the full column.
 const FOCUS =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-navy";
 
@@ -134,15 +136,7 @@ function ConsoleDraftPanel({
   const progress = lead ? draftProgress(lead.status) : null;
 
   return (
-    <section
-      className="relative flex flex-col overflow-hidden rounded-2xl px-5 pb-[18px] pt-[17px] text-white"
-      style={{ backgroundImage: `linear-gradient(145deg, ${BRAND.navy} 0%, ${BRAND.navyHover} 100%)` }}
-    >
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute -right-10 -top-[70px] h-[210px] w-[210px] rounded-full"
-        style={{ background: `radial-gradient(circle, ${BRAND.orangeGlow}, transparent 70%)` }}
-      />
+    <section className="relative flex flex-col overflow-hidden rounded-sharp bg-brand-navy px-5 pb-[18px] pt-[17px] text-white">
       <div className="relative flex flex-1 flex-col">
         <div className="flex items-center gap-[7px]">
           <Sparkles className="h-3.5 w-3.5 text-brand-orange" aria-hidden="true" />

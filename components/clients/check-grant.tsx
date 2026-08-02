@@ -151,14 +151,14 @@ export function CheckGrant({ clientId, clientName }: { clientId: string; clientN
   return (
     <>
       <section
-        className="rounded-2xl border-l-[3px] bg-white px-[18px] pb-3.5 pt-3 shadow-card"
-        style={{ borderLeftColor: STAGE.triage.color }}
+        className="shrink-0 rounded-sharp border border-edge bg-white px-[18px] pb-3.5 pt-3"
+        style={{ borderLeftWidth: "3px", borderLeftColor: STAGE.triage.color }}
       >
         <div className="flex items-center justify-between gap-2.5">
-          <h2 className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-subtle">Score a grant</h2>
+          <h2 className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-muted">Score a grant</h2>
           <span
             aria-hidden="true"
-            className="rounded border border-edge px-[5px] py-px font-mono text-[11px] text-ink-faint"
+            className="rounded border border-edge px-[5px] py-px font-mono text-[11px] text-ink-muted"
           >
             ⌘/
           </span>

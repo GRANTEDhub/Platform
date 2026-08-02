@@ -5,23 +5,40 @@ import type { Grant } from "@/types/database";
 // (/review/[id]) and the Prospects grant detail (/intel/[id]) so the two render
 // identical numbers/labels from one source.
 
+// A currency-ish string as a NUMBER of dollars, or null when there is no figure in it
+// ("Varies", "See NOFO", ""). Split out of abbrevAmount so that anything summing award
+// data — the dashboard's per-stage rollups — parses it exactly the way the display path
+// does, rather than growing a second regex that drifts.
+export function parseAmount(raw: string | null | undefined): number | null {
+  if (!raw) return null;
+  const s = raw.trim();
+  if (!s) return null;
+  const m = s.replace(/,/g, "").match(/\$?\s*([0-9]+(?:\.[0-9]+)?)\s*([kmb])?/i);
+  if (!m) return null;
+  let n = parseFloat(m[1]);
+  const unit = (m[2] || "").toLowerCase();
+  if (unit === "k") n *= 1e3;
+  else if (unit === "m") n *= 1e6;
+  else if (unit === "b") n *= 1e9;
+  return Number.isFinite(n) ? n : null;
+}
+
+// Compact a dollar figure to $150K / $1.1M.
+export function abbrevDollars(n: number): string {
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(1).replace(/\.0$/, "")}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(1).replace(/\.0$/, "")}M`;
+  if (n >= 1e3) return `$${Math.round(n / 1e3)}K`;
+  return `$${Math.round(n)}`;
+}
+
 // Compact a currency-ish string to $150K / $1.1M so a range fits one line. Falls
 // back to the raw string when it is not numeric (e.g. "Varies").
 export function abbrevAmount(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const s = raw.trim();
   if (!s) return null;
-  const m = s.replace(/,/g, "").match(/\$?\s*([0-9]+(?:\.[0-9]+)?)\s*([kmb])?/i);
-  if (!m) return s;
-  let n = parseFloat(m[1]);
-  const unit = (m[2] || "").toLowerCase();
-  if (unit === "k") n *= 1e3;
-  else if (unit === "m") n *= 1e6;
-  else if (unit === "b") n *= 1e9;
-  if (n >= 1e9) return `$${(n / 1e9).toFixed(1).replace(/\.0$/, "")}B`;
-  if (n >= 1e6) return `$${(n / 1e6).toFixed(1).replace(/\.0$/, "")}M`;
-  if (n >= 1e3) return `$${Math.round(n / 1e3)}K`;
-  return `$${Math.round(n)}`;
+  const n = parseAmount(s);
+  return n === null ? s : abbrevDollars(n);
 }
 
 export function formatAwardRange(min: string | null | undefined, max: string | null | undefined): string {

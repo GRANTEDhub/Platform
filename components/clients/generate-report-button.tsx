@@ -38,7 +38,10 @@ export function GenerateReportButton({
   // control); prospecting keeps the default "Generate report".
   idleLabel?: string;
   // "dark" restyles the button to read on a navy surface (the dashboard hero band).
-  tone?: "light" | "dark";
+  // "dark" is the outlined-on-navy treatment the old hero used. "ink" is the masthead's
+  // PRIMARY: white fill, navy label — the one filled control on that band, because
+  // refreshing matches is the thing you came to the top of the page to do.
+  tone?: "light" | "dark" | "ink";
 }) {
   const router = useRouter();
   const [phase, setPhase] = useState<"idle" | "running" | "error">("idle");
@@ -132,12 +135,20 @@ export function GenerateReportButton({
         size="sm"
         onClick={onClick}
         disabled={busy}
-        className={tone === "dark" ? "border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white" : undefined}
+        className={
+          tone === "dark"
+            ? "border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white"
+            : tone === "ink"
+              ? "h-8 rounded-pill border-transparent bg-white px-[14px] text-[13px] font-semibold text-brand-navy hover:bg-white hover:text-brand-navy hover:opacity-90"
+              : undefined
+        }
       >
         <RefreshCw className={`h-3.5 w-3.5 ${busy ? "animate-spin" : ""}`} />
         {label}
       </Button>
-      {error && <p className={`text-xs ${tone === "dark" ? "text-orange-200" : "text-destructive"}`}>{error}</p>}
+      {error && (
+        <p className={`text-xs ${tone === "light" ? "text-destructive" : "text-orange-200"}`}>{error}</p>
+      )}
     </div>
   );
 }
