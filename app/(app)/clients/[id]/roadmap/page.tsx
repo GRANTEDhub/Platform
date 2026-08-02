@@ -1,27 +1,36 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { GrantReport } from "@/components/report/grant-report";
-import { ClientActivity, type ClientActivityItem } from "@/components/report/client-activity";
-import { HubShell } from "@/components/layout/hub-background";
-import { toReportItems, staffBucket, type ReportCardRow, type StaffBucket } from "@/lib/report/shape";
+import { GrantReportConsole } from "@/components/report/grant-report-console";
+import { buildQueue } from "@/lib/report/report-queue";
+import { toReportItems, type ReportCardRow } from "@/lib/report/shape";
 import { isUnconvertedLead } from "@/lib/leads/stage";
-import type { Client, PursuitPath } from "@/types/database";
+import type { Client } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
-// Staff account-manager view of a client's Grant Roadmap. For a STANDARD client,
-// renders the EXACT same GrantReport the client sees in their portal -- one
-// shared surface, the actor is just whoever's signed in. For an ACCOUNT-MANAGED
-// client (0059), this is instead staff's OWN queue: every card staff has marked
-// interested (their own Grant Alerts pass), both still awaiting release AND
-// already released -- staff keep read-only visibility into released cards here
-// (the "can I still see it as admin" question) rather than needing to sign in
-// as the client. The per-row "Released to client" badge (lib/report/shape.ts's
-// smeReleased) is what tells the two states apart; released cards are no longer
-// actionable here (the client's own Grant Report owns the pursue decision now).
+// Staff's view of a client's Grant Report — the queue of matched grants awaiting review,
+// and the entry point into the review loop.
+//
+// THIS IS NOT THE CLIENT'S LIST. app/portal/grants renders GrantReport for the client's
+// own view of the same cards. The two were one component; they are deliberately not any
+// more, for the same reason the grant review split: every staff control here would
+// otherwise have to be suppressed there.
+//
+// For a STANDARD client there is no release gate — their queue is theirs the moment it is
+// scored, so the "awaiting release" bucket is empty by construction and the useful view is
+// what is with the client. For an ACCOUNT-MANAGED client (0059) or an un-converted lead,
+// staff hold every card before the client sees it, and that bucket is the job.
+//
+// The client-decision activity feed that used to sit above this list is gone: the client
+// dashboard's activity card carries client-side decisions now, and two places showing the
+// same facts is one too many on a screen built to fit nine rows.
+
+// The engine's own check-this-first list. Non-empty means the card carries a concern,
+// which drives the row's left-edge accent — the only per-row status signal, and
+// deliberately not a chip (an earlier pass carried per-row flag chips; they were removed).
+type ConcernRow = { id: string; before_you_approve: string[] | null };
+
 export default async function ClientRoadmapPage({ params }: { params: { id: string } }) {
   await requireUser();
   const supabase = createClient();
@@ -32,105 +41,67 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
     .eq("id", params.id)
     .single<Pick<Client, "id" | "name" | "account_managed" | "pipeline_stage">>();
   if (!client) notFound();
-  const managed = !!client.account_managed;
-  // A prospect (un-converted lead, Tara-build) has no portal, so — like a managed
-  // client — its whole scored queue is staff's to review here; the per-card action
-  // is a cold one-pager send, not a portal release.
-  const isLead = isUnconvertedLead(client.pipeline_stage);
 
-  // Typed `any`: the two branches chain a different shape of filters (two calls
-  // vs one), which sends the Supabase query builder's generic into a "type
-  // instantiation is excessively deep" error if left inferred.
+  const managed = !!client.account_managed;
+  const isLead = isUnconvertedLead(client.pipeline_stage);
+  const gate = managed || isLead;
+
+  // Typed `any`: the two branches chain a different shape of filters (two calls vs one),
+  // which sends the Supabase query builder's generic into a "type instantiation is
+  // excessively deep" error if left inferred.
   let query: any = supabase
     .from("review_cards")
     .select(
-      "id, grant_id, fit_score, proposed_role, decision, factor_scores, sme_released_at, grants(title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate, focus_areas)",
+      "id, grant_id, fit_score, proposed_role, decision, factor_scores, sme_released_at, before_you_approve, grants(title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate, focus_areas)",
     )
     .eq("client_id", params.id)
     .neq("card_type", "prospect");
-  // Managed client (single AM gate) and lead/prospect (no portal): staff's whole
-  // queue. Standard client: unchanged -- the client's Grant Alerts gate (0057),
-  // promoted-only. Passed cards are now kept (they populate the "Rejected" bucket);
-  // the default "Admin" view filters them out client-side.
-  query = managed || isLead ? query : query.not("interested_at", "is", null);
+  // Managed client and lead/prospect: staff's whole queue. Standard client: the client's
+  // Grant Alerts gate (0057), promoted-only. Passed cards are kept either way — they
+  // populate the Rejected bucket rather than vanishing.
+  query = gate ? query : query.not("interested_at", "is", null);
   const { data } = await query;
 
-  const items = toReportItems((data ?? []) as unknown as ReportCardRow[]);
+  const rowsRaw = (data ?? []) as unknown as (ReportCardRow & ConcernRow)[];
+  const items = toReportItems(rowsRaw);
+  const concernIds = new Set(rowsRaw.filter((r) => (r.before_you_approve ?? []).length > 0).map((r) => r.id));
 
-  // Client-side decisions (decided_by_actor='client') — the loop signal for the
-  // AM. Separate query since it includes passes, which the roadmap list hides.
-  const { data: activityRows } = await supabase
-    .from("review_cards")
-    .select("id, decision, decision_reason, decided_at, pursuit_path, grants(title)")
+  // When matching last produced a card for this client — the header's "last refreshed".
+  // review_cards has no created_at, so a carded match_attempt is the only record of it.
+  const { data: attemptRows } = await supabase
+    .from("match_attempts")
+    .select("created_at")
     .eq("client_id", params.id)
-    .eq("decided_by_actor", "client")
-    .neq("card_type", "prospect")
-    .order("decided_at", { ascending: false })
-    .limit(12);
-
-  const activity: ClientActivityItem[] = ((activityRows ?? []) as Array<{
-    id: string;
-    decision: string;
-    decision_reason: string | null;
-    decided_at: string | null;
-    pursuit_path: PursuitPath | null;
-    grants: { title: string | null } | { title: string | null }[] | null;
-  }>)
-    .filter((r) => r.decision === "approved" || r.decision === "passed")
-    .map((r) => {
-      const g = Array.isArray(r.grants) ? r.grants[0] : r.grants;
-      return {
-        cardId: r.id,
-        title: g?.title || "Untitled opportunity",
-        decision: r.decision as "approved" | "passed",
-        reason: r.decision_reason,
-        decidedAt: r.decided_at,
-        pursuitPath: r.pursuit_path,
-      };
-    });
-
-  // Lifecycle-bucket counts drive both the header and the chip badges. Managed
-  // clients and leads have the AM release gate; standard clients don't.
-  const gate = managed || isLead;
-  const counts: Record<StaffBucket, number> = { admin: 0, client: 0, pursued: 0, rejected: 0 };
-  for (const i of items) counts[staffBucket(i, gate)]++;
-  const subtitle = isLead
-    ? items.length === 0
-      ? "No grants yet — generate this prospect's grant report from their dashboard."
-      : `${counts.admin} awaiting your review · send each a one-pager`
-    : managed
-      ? items.length === 0
-        ? "Nothing in your queue right now."
-        : `${counts.admin} awaiting your release · ${counts.client} with the client`
-      : items.length === 0
-        ? "No matched opportunities yet — they appear here as the engine surfaces them."
-        : `${items.length} matched ${items.length === 1 ? "opportunity" : "opportunities"} · Ranked by fit · The client sees this exact view`;
+    .eq("outcome", "carded")
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const lastCarded = ((attemptRows ?? []) as { created_at: string }[])[0]?.created_at ?? null;
 
   return (
-    <HubShell variant="texture" width="7xl">
-      <div className="mb-4">
-        <Link
-          href={`/clients/${client.id}`}
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-brand-navy"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          {client.name}
-        </Link>
-      </div>
-      <ClientActivity items={activity} basePath={`/clients/${client.id}/roadmap`} clientName={client.name} />
-      <GrantReport
-        items={items}
-        heading={
-          isLead
-            ? `${client.name} · Prospect grant report`
-            : managed
-              ? `${client.name} · Your review queue`
-              : `${client.name} · Grant Report`
-        }
-        subtitle={subtitle}
-        basePath={`/clients/${client.id}/roadmap`}
-        hasReleaseGate={gate}
-      />
-    </HubShell>
+    <GrantReportConsole
+      clientName={client.name}
+      clientHref={`/clients/${client.id}`}
+      basePath={`/clients/${client.id}/roadmap`}
+      rows={buildQueue(items, { hasReleaseGate: gate, concernIds })}
+      refreshedLabel={lastCarded ? agoLabel(lastCarded, Date.now()) : null}
+      // Bulk-archiving writes a decision on every card it touches. Offered only where
+      // staff hold the queue in the first place — on a standard client these cards are
+      // the client's, and their deadlines passing is not ours to close out. Everyone who
+      // reaches this route is staff (requireUser + the (app) segment), so the gate is the
+      // release gate, not the role.
+      canArchive={gate}
+    />
   );
+}
+
+// Deliberately coarse: the point is "is this list current", and a minute-precise figure
+// on a page that does not live-update would be its own small lie.
+function agoLabel(iso: string, now: number): string | null {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t) || t > now) return null;
+  const mins = Math.floor((now - t) / 60_000);
+  if (mins < 60) return mins <= 1 ? "just now" : `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
