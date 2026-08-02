@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { format, parseISO } from "date-fns";
 import { ArrowRight, Clock, CornerUpLeft, Layers, MessageSquare, Plus } from "lucide-react";
-import { INK, STAGE } from "@/lib/brand";
+import { INK, STAGE, STAGE_ON_INK } from "@/lib/brand";
 import { ALERTS_THRESHOLD, DEADLINE_DAYS, type ActionReason, type BookPipeline } from "@/lib/clients/portfolio";
 import type { PipelineStageKey } from "@/lib/clients/pipeline";
 import { cn } from "@/lib/utils";
@@ -63,17 +63,12 @@ type Filter = "all" | "action" | "quiet";
 
 const BAR_ORDER: PipelineStageKey[] = ["triage", "client", "approved", "pursuit", "passed"];
 
-// The stage scale reversed out of the navy masthead. Only `passed` needs a substitute:
-// its taupe was picked to recede on a light page and glares on dark, so the book bar's
-// terminal segment uses a chrome neutral — the same white-alpha family as the masthead's
-// divider rules and labels, not a sixth stage colour.
-const BOOK_ON_DARK: Record<PipelineStageKey, string> = {
-  triage: STAGE.triage.color,
-  client: STAGE.client.color,
-  approved: STAGE.approved.color,
-  pursuit: STAGE.pursuit.color,
-  passed: "rgba(255,255,255,0.24)",
-};
+// The book bar uses STAGE_ON_INK — orange for what is owed, a neutral ramp for
+// everything past it — NOT the stage palette. This reverses the first build of this
+// masthead, which rendered each stage in its own hue. The client dashboard states the
+// rule outright: on ink, colour means signal and stage is carried by position and label.
+// Two pages that ship together cannot render the same five stages two ways, and a
+// full-palette bar makes a settled book as loud as a backlogged one. See lib/brand.ts.
 
 const BOOK_LABEL: Record<PipelineStageKey, string> = {
   triage: "Unassessed",
@@ -122,7 +117,7 @@ export function PortfolioBrowser({
 
   return (
     <div className="flex min-h-full flex-col bg-ground">
-      <div className="relative z-[1] shrink-0 bg-brand-navy px-[34px] pb-3.5">
+      <div className="relative z-[1] shrink-0 bg-brand-chrome px-[34px] pb-3.5">
         <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 pb-[11px] pt-3">
           <div>
             <h1 className="font-serif text-[30px] font-bold leading-none tracking-[-0.015em] text-white">
@@ -157,7 +152,7 @@ export function PortfolioBrowser({
             {isAdmin && (
               <Link
                 href="/clients/new"
-                className="inline-flex h-8 shrink-0 items-center gap-[7px] rounded-[9px] bg-white px-[14px] text-[13px] font-semibold text-brand-navy transition-opacity duration-[120ms] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-navy"
+                className="inline-flex h-8 shrink-0 items-center gap-[7px] rounded-[9px] bg-white px-[14px] text-[13px] font-semibold text-brand-navy transition-opacity duration-[120ms] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome"
               >
                 <Plus className="h-3.5 w-3.5" aria-hidden="true" />
                 Add client
@@ -209,13 +204,13 @@ export function PortfolioBrowser({
                 bar that drops a real stage stops summing to the total printed above it. */}
             <div aria-hidden="true" className="mt-[9px] flex h-[9px] gap-[2px]">
               {BAR_ORDER.filter((k) => book.counts[k] > 0).map((k) => (
-                <div key={k} style={{ flexGrow: book.counts[k], flexBasis: 0, backgroundColor: BOOK_ON_DARK[k] }} />
+                <div key={k} style={{ flexGrow: book.counts[k], flexBasis: 0, backgroundColor: STAGE_ON_INK[k] }} />
               ))}
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-x-3.5 gap-y-1">
               {BAR_ORDER.filter((k) => book.counts[k] > 0).map((k) => (
                 <span key={k} className="inline-flex items-center gap-[5px] text-[10.5px] text-white/[0.58]">
-                  <span aria-hidden="true" className="h-1.5 w-1.5" style={{ backgroundColor: BOOK_ON_DARK[k] }} />
+                  <span aria-hidden="true" className="h-1.5 w-1.5" style={{ backgroundColor: STAGE_ON_INK[k] }} />
                   {BOOK_LABEL[k]} {book.counts[k]}
                 </span>
               ))}

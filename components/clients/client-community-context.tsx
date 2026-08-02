@@ -168,7 +168,7 @@ function Row({
 function ConsoleGeographyCard({ view }: { view: CommunityView }) {
   const { placeLabel, income, shortage, rurality, sam } = view;
   return (
-    <section className="overflow-hidden rounded-2xl bg-white shadow-card">
+    <section className="shrink-0 overflow-hidden rounded-sharp border border-edge bg-white">
       <div className="relative h-[76px]">
         <div
           aria-hidden="true"
@@ -255,11 +255,15 @@ function GeoRow({
   const resolved = state !== "unchecked" && value !== null;
   return (
     <div className={`flex items-center justify-between gap-3 py-1.5 ${last ? "" : "border-b border-hairline"}`}>
-      <dt className="text-[12px] text-ink-muted">{label}</dt>
+      {/* shrink-0 on the label and a cap on the value: a long rurality string ("unknown
+          — verify; <county>") used to squeeze the label out of the row entirely, so the
+          row lost the one word that said what the number was. The full value stays
+          recoverable on hover. */}
+      <dt className="shrink-0 text-[12px] text-ink-muted">{label}</dt>
       <dd
-        className="flex min-w-0 items-center gap-[5px] text-[12px] font-semibold"
+        className="flex min-w-0 max-w-[58%] items-center gap-[5px] text-[12px] font-semibold"
         style={{ color: resolved ? valueColor ?? INK.DEFAULT : INK.faint }}
-        title={resolved ? title ?? undefined : undefined}
+        title={resolved ? [value, title].filter(Boolean).join(" · ") : undefined}
       >
         {resolved && dot && (
           <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: dot }} />

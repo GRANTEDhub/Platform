@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { FIT_BAND } from "@/lib/report/shape";
-import { INK, STAGE } from "@/lib/brand";
+import { BRAND, INK, STAGE } from "@/lib/brand";
 import type { PipelineStageKey } from "@/lib/clients/pipeline";
 
 // The Grant Report card — the top of the client's scored matches, on the dashboard
@@ -55,6 +55,9 @@ export interface DashReportMetrics {
   // Mean fit across the live set, to one decimal. Null when there is nothing to average
   // — "0.0 avg fit" would read as "we scored everything at zero".
   avgFit: string | null;
+  // How long ago matching last produced a card for this client, pre-formatted ("4h ago").
+  // The design's "Updated 4h ago". Null when the client has never been matched.
+  freshness?: string | null;
 }
 
 // Ordinal chip: the score AND the word. The number alone is meaningless to a client
@@ -137,14 +140,23 @@ export function ClientGrantReportCard({
 
 // ── Console variant — the approved design ───────────────────────────────────
 //
-// A 3px approved-stage top edge is the ONE border this card carries (no ring, no second
-// shadow): the two-step elevation scale allows a deliberate accent edge, not a general
-// border. "STANDING WORKSPACE" says what the surface IS — the place staff live all day —
-// which is why it shows real rows rather than a counter.
+// Ink treatment: squared corner, a 1px LINE.edge rule, no shadow — plus the 3px
+// approved-stage top edge, the one accent the design keeps.
 //
-// The design's strip also reads "Updated {n}h ago" on the right. review_cards has no
-// updated_at column, so there is nothing honest to put there and the slot is left empty
-// rather than filled with the page's render time, which would only ever say "now".
+// TEAL IS RESERVED. It used to carry this card's eyebrow, its strip and its button, which
+// made it read as the card's brand colour. On the ink screens teal means exactly one
+// thing — a person is waiting on you — so everywhere else it goes neutral or navy. The
+// top edge survives because it is a STAGE marker, not decoration; the row dots are the
+// same scale for the same reason.
+//
+// "STANDING WORKSPACE" says what the surface IS — the place staff live all day — which is
+// why it shows real rows rather than a counter.
+//
+// "Updated {n}h ago" is real now. review_cards still has no updated_at, but match_attempts
+// records when the engine last carded a pair for this client, which is exactly when this
+// list last changed. The caller formats it; null when the client has never been matched,
+// and the slot drops rather than saying "now" (which the page's own render time would
+// always have said).
 function ConsoleReportCard({
   rows,
   total,
@@ -161,15 +173,12 @@ function ConsoleReportCard({
   const remaining = Math.max(0, total - rows.length);
   return (
     <section
-      className="flex flex-col overflow-hidden rounded-2xl border-t-[3px] bg-white shadow-card"
-      style={{ borderTopColor: STAGE.approved.color }}
+      className="flex flex-col overflow-hidden rounded-sharp border border-edge bg-white"
+      style={{ borderTopWidth: "3px", borderTopColor: STAGE.approved.color }}
     >
       <div className="flex items-start justify-between gap-3.5 px-5 pb-3 pt-4">
         <div>
-          <p
-            className="text-[10px] font-bold uppercase tracking-[0.13em]"
-            style={{ color: STAGE.approved.color }}
-          >
+          <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-muted">
             Standing workspace
           </p>
           <h2 className="mt-[7px] font-serif text-[18px] font-bold text-brand-navy">Grant Report</h2>
@@ -178,7 +187,10 @@ function ConsoleReportCard({
           <div className="flex shrink-0 gap-4 text-right">
             <Metric value={String(metrics.open)} label="open" />
             <Metric value={String(metrics.decided)} label="decided" />
-            {metrics.avgFit && <Metric value={metrics.avgFit} label="avg fit" />}
+            {/* The denominator is not decoration: a bare "2.1" means nothing without the
+                scale, and the scale here is 3, not the 4 the mockup draws. Fit is the
+                engine's 1–3 ordinal. */}
+            {metrics.avgFit && <Metric value={metrics.avgFit} denominator="/3" label="avg fit" />}
           </div>
         )}
       </div>
@@ -188,15 +200,15 @@ function ConsoleReportCard({
       ) : (
         <>
           <div
-            className="flex items-center justify-between gap-2.5 border-y px-5 py-[7px]"
-            style={{ backgroundColor: STAGE.approved.tint, borderColor: STAGE.approved.border }}
+            className="flex items-center justify-between gap-2.5 border-y border-hairline px-5 py-[7px]"
+            style={{ backgroundColor: "rgba(11,30,58,0.035)" }}
           >
-            <p
-              className="text-[10px] font-bold uppercase tracking-[0.11em]"
-              style={{ color: STAGE.approved.color }}
-            >
+            <p className="text-[10px] font-bold uppercase tracking-[0.11em] text-ink-muted">
               Highest fit right now
             </p>
+            {metrics?.freshness && (
+              <p className="shrink-0 text-[11px] text-ink-muted">Updated {metrics.freshness}</p>
+            )}
           </div>
           <ul>
             {rows.map((r) => (
@@ -211,8 +223,7 @@ function ConsoleReportCard({
             </p>
             <Link
               href={reportHref}
-              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-pill px-3.5 text-[12.5px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
-              style={{ backgroundColor: STAGE.approved.color }}
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sharp bg-brand-navy px-3.5 text-[12.5px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
             >
               Open report
               <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
@@ -224,10 +235,16 @@ function ConsoleReportCard({
   );
 }
 
-function Metric({ value, label }: { value: string; label: string }) {
+// Libre Baskerville, like every other display figure on the ink screens. The denominator
+// stays in the body face and a step down, so the figure reads first and the scale reads
+// second rather than the two competing.
+function Metric({ value, denominator, label }: { value: string; denominator?: string; label: string }) {
   return (
     <div>
-      <p className="text-[18px] font-semibold leading-none tabular-nums text-brand-navy">{value}</p>
+      <p className="font-serif text-[21px] font-bold leading-none tabular-nums text-brand-navy">
+        {value}
+        {denominator && <span className="font-sans text-[12px] font-medium text-ink-muted">{denominator}</span>}
+      </p>
       <p className="mt-[3px] text-[10.5px] text-ink-subtle">{label}</p>
     </div>
   );
@@ -256,11 +273,16 @@ function ConsoleReportRow({ row }: { row: DashReportRow }) {
         {meta && <p className="mt-0.5 truncate text-[11.5px] text-ink-subtle">{meta}</p>}
       </div>
       <div className="shrink-0 text-right">
-        <p className="text-[13px] font-semibold tabular-nums text-brand-navy">{row.fitScore}</p>
+        <p className="text-[13px] font-semibold tabular-nums text-brand-navy">
+          {row.fitScore}
+          <span className="text-[10.5px] font-medium text-ink-muted">/3</span>
+        </p>
         {days !== null && (
           <p
             className="mt-0.5 text-[11px] tabular-nums"
-            style={{ color: urgent ? STAGE.triage.color : INK.subtle, fontWeight: urgent ? 500 : 400 }}
+            // Urgent days are small orange text on white, which brand orange cannot
+            // carry — BRAND.orangeDeep is the on-light variant. See lib/brand.ts.
+            style={{ color: urgent ? BRAND.orangeDeep : INK.subtle, fontWeight: urgent ? 600 : 400 }}
           >
             {overdue ? "Overdue" : `${days} ${days === 1 ? "day" : "days"}`}
           </p>

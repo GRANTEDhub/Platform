@@ -16,9 +16,8 @@ import type { IntellEngineDraftStatus } from "@/types/database";
 // the caption says so rather than letting a client read it as three-quarters drafted.
 //
 // TWO VARIANTS, as with the Grant Report card: this renders in the staff console and in
-// the client portal. "console" is the approved design — and it is the ONE surface in the
-// product allowed a gradient and a glow, because it is the one that represents the AI
-// doing work. Everywhere else that treatment would be decoration.
+// the client portal. "console" is the approved design; "portal" is what the portal has
+// always shipped.
 
 export interface DashDraft {
   id: string;
@@ -26,10 +25,35 @@ export interface DashDraft {
   status: IntellEngineDraftStatus;
 }
 
+// One grant the panel is pointing at.
+export interface DraftPick {
+  title: string;
+  // "HRSA · $900K · approved, never started" — joined by the caller, which owns the
+  // award formatting and its estimate marker.
+  meta: string;
+  // One sentence on why this one. Rendered in italic serif, so it must read as a
+  // sentence, not a label, and every clause of it must be a fact the caller actually has.
+  rationale: string;
+  href: string;
+}
+
+// What the console panel says when no draft is in flight. THE PANEL IS NEVER EMPTY: it
+// always has something to point at or a specific reason it cannot.
+//
+//   ready    approved matches exist and none is drafted — scope this one
+//   waiting  nothing approved yet, so the blocker is upstream. Names it, and still shows
+//            the closest candidate so the reader knows what approving would get them.
+//
+// Null means neither applies (nothing matched at all), and the panel says so in a line.
+export type DraftNext =
+  | { kind: "ready"; pick: DraftPick }
+  | { kind: "waiting"; unassessed: number; reviewHref: string; pick: DraftPick | null };
+
 export function ClientDraftProgress({
   drafts,
   intellEngineHref,
   emptyNote,
+  next,
   variant = "portal",
 }: {
   // Most-recently-updated first (the caller already orders by updated_at, which is
@@ -37,13 +61,17 @@ export function ClientDraftProgress({
   drafts: DashDraft[];
   intellEngineHref: string;
   emptyNote: string;
+  // Console only. See DraftNext.
+  next?: DraftNext | null;
   variant?: "console" | "portal";
 }) {
   const lead = drafts[0];
   const progress = lead ? draftProgress(lead.status) : null;
 
   if (variant === "console") {
-    return <ConsoleDraftPanel drafts={drafts} intellEngineHref={intellEngineHref} />;
+    return (
+      <ConsoleDraftPanel drafts={drafts} intellEngineHref={intellEngineHref} next={next ?? null} />
+    );
   }
 
   return (
@@ -111,38 +139,45 @@ export function ClientDraftProgress({
 
 // ── Console variant — the approved design ───────────────────────────────────
 //
-// The gradient plus a soft orange bloom top-right, clipped by overflow-hidden. This is
-// the only place in the product where gradient and glow are allowed; the page background
-// is deliberately flat everywhere else (a texture behind flat white cards made them read
-// as holes, which is what the refresh removed).
+// FLAT INK, and the gradient-plus-glow is gone. It was the one place in the product
+// allowed that treatment, on the argument that this is the surface where the AI does
+// work. The ink direction retires it: cards are drawn planes, not lifted paper, and a
+// glowing gradient panel next to five squared flat ones now reads as the odd one out
+// rather than as emphasis. The panel is still the only DARK card on the page, which is
+// the emphasis it actually needed.
 //
-// NO DRAFTS keeps the panel and the whole treatment, replacing the progress block with
-// one line and promoting "New draft" to the white primary. The panel disappearing would
-// change the page's shape, and this is half of a side-by-side pair — its absence would
-// leave the Grant Report card stretched across the full column.
+// NO DRAFTS RECOMMENDS RATHER THAN WAITS, and that is the panel's whole argument in its
+// most common state. "No drafts yet. Start from an approved match." plus a New draft
+// button is a tool sitting idle: correct, useless, and a large dead box in a 1fr column
+// beside a Grant Report card carrying real rows. Naming the approved match that should be
+// scoped next — with its agency, its money, and one sentence on why it is that one —
+// makes the same box a colleague pointing at something.
+//
+// It never invents the recommendation. With no approved match to point at there is
+// nothing to recommend, and the panel says that in one line instead.
+//
+// HEIGHT IS A CONSTRAINT, NOT A PREFERENCE. This shares a 1fr row with a card of about
+// 330px of real content, so the empty state has to fit the same box or its buttons clip
+// out of existence. Do not add explanatory copy to it.
 const FOCUS =
-  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-navy";
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome";
+const PRIMARY = `inline-flex h-8 items-center gap-1.5 rounded-sharp bg-white px-3.5 text-[12.5px] font-semibold text-brand-navy transition-opacity duration-[120ms] hover:opacity-90 ${FOCUS}`;
+const SECONDARY = `inline-flex h-8 items-center rounded-sharp border border-white/20 px-3 text-[12.5px] font-medium text-white/[0.85] transition-colors duration-[120ms] hover:border-white/40 ${FOCUS}`;
 
 function ConsoleDraftPanel({
   drafts,
   intellEngineHref,
+  next,
 }: {
   drafts: DashDraft[];
   intellEngineHref: string;
+  next: DraftNext | null;
 }) {
   const lead = drafts[0];
   const progress = lead ? draftProgress(lead.status) : null;
 
   return (
-    <section
-      className="relative flex flex-col overflow-hidden rounded-2xl px-5 pb-[18px] pt-[17px] text-white"
-      style={{ backgroundImage: `linear-gradient(145deg, ${BRAND.navy} 0%, ${BRAND.navyHover} 100%)` }}
-    >
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute -right-10 -top-[70px] h-[210px] w-[210px] rounded-full"
-        style={{ background: `radial-gradient(circle, ${BRAND.orangeGlow}, transparent 70%)` }}
-      />
+    <section className="relative flex flex-col overflow-hidden rounded-sharp bg-brand-chrome px-5 pb-[18px] pt-[17px] text-white">
       <div className="relative flex flex-1 flex-col">
         <div className="flex items-center gap-[7px]">
           <Sparkles className="h-3.5 w-3.5 text-brand-orange" aria-hidden="true" />
@@ -155,21 +190,80 @@ function ConsoleDraftPanel({
           Turns an approved match into a scoped draft — narrative, budget frame, consortium.
         </p>
 
-        <div className="mt-3.5 border-t border-white/[0.14] pt-[13px]">
+        <div className="mt-3.5 flex flex-1 flex-col border-t border-white/[0.14] pt-[13px]">
           {!lead || !progress ? (
             <>
-              <p className="text-[12.5px] leading-[1.5] text-white/[0.65]">
-                No drafts yet. Start from an approved match.
-              </p>
-              <div className="mt-3.5">
-                <Link
-                  href={intellEngineHref}
-                  className={`inline-flex h-8 items-center gap-1.5 rounded-pill bg-white px-3.5 text-[12.5px] font-semibold text-brand-navy transition-opacity duration-[120ms] hover:opacity-90 ${FOCUS}`}
-                >
-                  New draft
-                  <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-                </Link>
+              {/* The strip names the STATE, and when the panel is blocked it names the
+                  blocker. "No drafts open" on its own explains nothing; "Waiting on an
+                  approval · 8 unassessed" says where the work actually is. */}
+              <div className="flex items-center justify-between gap-2.5">
+                <p className="text-[10px] font-bold uppercase tracking-[0.11em] text-white/[0.5]">
+                  {next?.kind === "ready"
+                    ? "Ready to scope"
+                    : next?.kind === "waiting"
+                      ? `Waiting on an approval${next.unassessed > 0 ? ` · ${next.unassessed} unassessed` : ""}`
+                      : "Nothing to scope yet"}
+                </p>
+                <span className="shrink-0 text-[11.5px] text-white/[0.58]">No drafts open</span>
               </div>
+
+              {next?.pick ? (
+                <>
+                  {/* A 2px orange rule, not a card inside a card. This is one thing being
+                      pointed at, and a bordered box would make it look like a list of
+                      one. Nothing else goes in here — the card has to fit the same box as
+                      a Grant Report carrying three real rows, and every previous attempt
+                      to add a readiness list pushed the buttons out of existence. */}
+                  <div className="mt-[13px] border-l-2 pl-[11px]" style={{ borderColor: BRAND.orange }}>
+                    <p className="truncate text-[13px] font-semibold">{next.pick.title}</p>
+                    <p className="mt-1 truncate text-[11.5px] text-white/[0.62]">{next.pick.meta}</p>
+                    {/* Italic serif, same voice as the ambient note on the attention card:
+                        this is a judgement, not a field. */}
+                    <p className="mt-[7px] font-serif text-[12.5px] italic leading-[1.5] text-white/80 [text-wrap:pretty]">
+                      {next.pick.rationale}
+                    </p>
+                  </div>
+                  <div className="mt-auto flex items-center gap-2 pt-[13px]">
+                    {next.kind === "ready" ? (
+                      <>
+                        <Link href={next.pick.href} className={PRIMARY}>
+                          Scope this one
+                          <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                        </Link>
+                        <Link href={intellEngineHref} className={SECONDARY}>
+                          Pick another
+                        </Link>
+                      </>
+                    ) : (
+                      <>
+                        {/* The primary routes to what UNBLOCKS the panel, not to the
+                            panel's own tool. Nothing here can start until something is
+                            approved, so offering a draft button would be the dead
+                            affordance this card exists to avoid. */}
+                        <Link href={next.reviewHref} className={PRIMARY}>
+                          {next.unassessed > 0 ? `Review the ${next.unassessed}` : "Review matches"}
+                          <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                        </Link>
+                        <Link href={intellEngineHref} className={SECONDARY}>
+                          Open IntellEngine
+                        </Link>
+                      </>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="mt-[13px] text-[12.5px] leading-[1.5] text-white/[0.65]">
+                    Approve a match and IntellEngine can scope it.
+                  </p>
+                  <div className="mt-auto pt-[13px]">
+                    <Link href={intellEngineHref} className={SECONDARY}>
+                      Open IntellEngine
+                      <ArrowRight className="ml-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                    </Link>
+                  </div>
+                </>
+              )}
             </>
           ) : (
             <>
@@ -223,14 +317,14 @@ function ConsoleDraftPanel({
               <div className="mt-3.5 flex items-center gap-2">
                 <Link
                   href={intellEngineHref}
-                  className={`inline-flex h-8 items-center gap-1.5 rounded-pill bg-white px-3.5 text-[12.5px] font-semibold text-brand-navy transition-opacity duration-[120ms] hover:opacity-90 ${FOCUS}`}
+                  className={`inline-flex h-8 items-center gap-1.5 rounded-sharp bg-white px-3.5 text-[12.5px] font-semibold text-brand-navy transition-opacity duration-[120ms] hover:opacity-90 ${FOCUS}`}
                 >
                   Resume draft
                   <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
                 </Link>
                 <Link
                   href={intellEngineHref}
-                  className={`inline-flex h-8 items-center rounded-pill border border-white/20 px-3 text-[12.5px] font-medium text-white/[0.85] transition-colors duration-[120ms] hover:border-white/40 ${FOCUS}`}
+                  className={`inline-flex h-8 items-center rounded-sharp border border-white/20 px-3 text-[12.5px] font-medium text-white/[0.85] transition-colors duration-[120ms] hover:border-white/40 ${FOCUS}`}
                 >
                   New draft
                 </Link>

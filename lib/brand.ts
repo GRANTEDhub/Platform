@@ -13,6 +13,15 @@ export const BRAND = {
   navy: "#0B1E3A",        // primary
   navyHover: "#12305A",   // primary button hover, IntellEngine gradient end
   navyDeep: "#081627",    // darker navy for gradient ends
+  // The ink direction's CHROME: the command band, both mastheads, and the IntellEngine
+  // panel. A near-black with only a trace of blue, and deliberately NOT `navy`.
+  //
+  // Navy is a text colour first — it is INK.DEFAULT, it is on every heading and body
+  // paragraph in the product — so it cannot be retuned to suit a dark surface without
+  // repainting all of that. As a large dark FIELD it also reads hazy: white cards against
+  // it look soft rather than crisp, which is most of what separated the first ink build
+  // from the reference. Two tokens because they have two jobs.
+  chrome: "#0A1420",
   orange: "#E4761F",      // accent / action
   orangeHover: "#C9631A", // orange button hover / press
   cream: "#faf7f2",       // legacy surface tint (pre-refresh cards / backgrounds)
@@ -26,6 +35,13 @@ export const BRAND = {
   // rather than inline at the call site so the glow cannot drift into a second orange:
   // the gradient geometry belongs to the component, the COLOUR belongs to this file.
   orangeGlow: "rgba(228,118,31,0.32)",
+  // Brand orange darkened until small type on a light ground is legible. #E4761F tops
+  // out near 3:1 against white and worse against SURFACE.ground, so it CANNOT carry
+  // 9–12px text however much the layout wants orange there. Use this for eyebrows,
+  // micro-chips and urgent deadline labels on light surfaces; use `orange` for fills,
+  // display figures, and anything on ink. They are not interchangeable — the pair exists
+  // so "orange small text" has a right answer instead of being quietly illegible.
+  orangeDeep: "#A8501A",
   // Completion green for use ON the navy IntellEngine gradient (its checklist ticks).
   // Deliberately NOT `success` (#059669): that value is tuned for dark-on-light and
   // does not clear contrast against navy, so the two are different tokens for
@@ -116,6 +132,30 @@ export const STAGE = {
   pursuit: { color: "#0B7A5A", tint: "rgba(11,122,90,0.10)", muted: "#A3C6B8" },
   passed: { color: "#C9C2B8", tint: "rgba(11,30,58,0.06)", muted: "#DCD6CC" },
 } as const;
+
+// ── Stage on ink ────────────────────────────────────────────────────────────
+// The five stages rendered on the dark masthead — and deliberately NOT the STAGE scale.
+//
+// COLOUR MEANS SIGNAL, NOT CATEGORY. On the masthead, orange means "this is owed" and
+// everything past it is a neutral ramp, so clearing a triage backlog literally drains
+// colour off the page. Rendering each stage in its own hue would make a settled client
+// as loud as a backlogged one and turn the bar into a chart nobody reads twice. Stage is
+// carried by position and label; only urgency is carried by hue.
+//
+// NEVER BELOW .34. A swatch under roughly 3:1 on this chrome is invisible, and the swatch
+// is the only thing tying a zero-count stage to its segment in the bar.
+//
+// `client` and `passed` share .34 because that is what the approved mockup draws — its
+// sample client had zero at the with-client stage, so the two were never adjacent. When a
+// client sits at both, they will read alike. Flagged rather than silently "fixed": a
+// monotonic ramp is a design decision, not a bug fix.
+export const STAGE_ON_INK: Record<"triage" | "client" | "approved" | "pursuit" | "passed", string> = {
+  triage: "#E4761F",
+  client: "rgba(255,255,255,0.34)",
+  approved: "rgba(255,255,255,0.55)",
+  pursuit: "rgba(255,255,255,0.40)",
+  passed: "rgba(255,255,255,0.34)",
+};
 
 // ── Elevation ───────────────────────────────────────────────────────────────
 // TWO steps, plus a hover state on the card step. Not three levels: `cardHover` is

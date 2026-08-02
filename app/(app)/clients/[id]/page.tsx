@@ -1,28 +1,30 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { format, parseISO } from "date-fns";
-import { Clock, Layers, Loader2, Mail, MessageSquareText, Plug, Play, Sparkles, type LucideIcon } from "lucide-react";
+import { Clock, Layers, Loader2, Mail, MessageSquareText, Plug, Play, type LucideIcon } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { AutoRefresh } from "@/components/ui/auto-refresh";
 import { GenerateReportButton } from "@/components/clients/generate-report-button";
 import { CheckGrant } from "@/components/clients/check-grant";
 import { InviteClientButton } from "@/components/clients/invite-client-button";
-import { ClientContextBar } from "@/components/clients/client-context-bar";
-import { GrantPipeline } from "@/components/clients/grant-pipeline";
-import { Badge } from "@/components/ui/badge";
-import { derivePipeline, stageOf, type PipelineStageKey } from "@/lib/clients/pipeline";
+import { ClientMasthead } from "@/components/clients/client-masthead";
+import { stageOf, type PipelineStageKey } from "@/lib/clients/pipeline";
 import { inviteClientToPortalAction } from "../actions";
 import { ClientDashboard, type DashActionItem, type DashPinnedRow } from "@/components/clients/client-dashboard";
 import { type DashReportRow } from "@/components/clients/client-grant-report-card";
 import { type DashDraft } from "@/components/clients/client-draft-progress";
-import { type DashDeadline } from "@/components/clients/upcoming-deadlines";
 import { buildCommunityView } from "@/lib/clients/community";
 import { deriveEnrichmentSteps } from "@/lib/clients/enrichment-status";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import { deadlineDaysLeft } from "@/lib/report/shape";
 import { formatAwardRange } from "@/lib/grants/format";
-import type { Client, CardDecision, Grant, IntellEngineDraft, PursuitPath } from "@/types/database";
+import { rollUpClient, type PricedCard } from "@/lib/clients/dashboard-summary";
+import { deriveAmbientNote } from "@/lib/clients/ambient-note";
+import { deriveActivity } from "@/lib/clients/activity";
+import { deriveBacklog, leftTriageAt } from "@/lib/clients/backlog";
+import { type DraftNext } from "@/components/clients/client-draft-progress";
+import type { Client, CardDecision, FactorScores, Grant, IntellEngineDraft, PursuitPath } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -42,7 +44,11 @@ type GrantEmbed = Pick<
 type CardRow = {
   id: string;
   fit_score: 1 | 2 | 3;
+  // Per-factor sub-scores (#105). Null on cards scored before they shipped -- the
+  // IntellEngine panel's rationale degrades to a shorter sentence rather than guessing.
+  factor_scores: FactorScores | null;
   decision: CardDecision;
+  decided_at: string | null;
   interested_at: string | null;
   sme_interested_at: string | null;
   sme_released_at: string | null;
@@ -51,8 +57,56 @@ type CardRow = {
   // Also the pipeline's: null on an approved card means the decision is recorded but
   // the pursuit path is still open, which is the Approved stage rather than In pursuit.
   pursuit_path: PursuitPath | null;
+  grant_id: string | null;
   grants: GrantEmbed | GrantEmbed[] | null;
 };
+
+// How long ago, in the masthead-adjacent "Updated 4h ago" shape. Deliberately coarse:
+// the point is "is this list current", not the exact interval, and a minute-precise
+// figure on a page that is not live-updating would be its own small lie.
+function agoLabel(iso: string, now: number): string | null {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t) || t > now) return null;
+  const mins = Math.floor((now - t) / 60_000);
+  if (mins < 60) return mins <= 1 ? "just now" : `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+// Which factors read "strong", in the order a reader cares about them. The IntellEngine
+// panel's waiting-state sentence is built from these rather than from a template, so it
+// can only ever say something the engine actually scored.
+const FACTOR_LABEL: { key: keyof FactorScores; label: string }[] = [
+  { key: "eligibility", label: "eligibility" },
+  { key: "geographic", label: "geography" },
+  { key: "seat_role", label: "the seat" },
+  { key: "mission", label: "mission fit" },
+  { key: "program_history", label: "program history" },
+  { key: "cost_share", label: "cost share" },
+];
+
+// One sentence for the waiting state: what already looks right about the closest
+// candidate, and what approving it would unlock.
+//
+// It names ONLY factors the engine rated strong. With no factor scores on the card (they
+// post-date #105) it degrades to the shorter half of the sentence rather than asserting
+// anything about eligibility it cannot support -- which is the specific thing that must
+// never be guessed at on a grant surface.
+function waitingRationale(scores: FactorScores | null, days: number | null): string {
+  const strong = scores
+    ? FACTOR_LABEL.filter(({ key }) => scores[key]?.rating === "strong").map(({ label }) => label)
+    : [];
+  const clock = days !== null && days >= 0 ? ` ${days} ${days === 1 ? "day" : "days"} to the deadline.` : "";
+  if (strong.length === 0) return `Highest fit of what is waiting. Approve it and IntellEngine can scope it.${clock}`;
+  const list =
+    strong.length === 1
+      ? strong[0]
+      : `${strong.slice(0, -1).join(", ")} and ${strong[strong.length - 1]}`;
+  const verb = strong.length === 1 ? "scores" : "score";
+  return `${list.charAt(0).toUpperCase()}${list.slice(1)} ${verb} strong. Approve it and IntellEngine can scope it.${clock}`;
+}
 
 // What to actually DO about a data source that needs a human, phrased per field.
 // "sam" covers both never-registered and expired -- either way the fix is the same
@@ -112,29 +166,48 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
 
   const { data: cardRows } = await supabase
     .from("review_cards")
-    .select("id, fit_score, decision, interested_at, sme_interested_at, sme_released_at, sent_at, pursuit_path, grants(id, title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate)")
+    .select("id, fit_score, factor_scores, decision, decided_at, interested_at, sme_interested_at, sme_released_at, sent_at, pursuit_path, grant_id, grants(id, title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate)")
     .eq("client_id", params.id)
     .neq("card_type", "prospect");
+
+  // When the engine first carded each (client, grant) pair. review_cards has no
+  // created_at, so this is the only record of when a match APPEARED -- which is both the
+  // Grant Report's "updated Nh ago" and the activity feed's "N new matches". Ascending,
+  // so the first row seen for a grant is its earliest attempt: a min without a compare.
+  const { data: attemptRows } = await supabase
+    .from("match_attempts")
+    .select("grant_id, created_at")
+    .eq("client_id", params.id)
+    .eq("outcome", "carded")
+    .order("created_at", { ascending: true });
 
   // The client's proposals in flight (migration 0062). Staff read every draft for
   // this client under the staff RLS policy; ordered the same way the IntellEngine hub
   // orders them, so the dashboard card leads with the same draft the hub does.
   const { data: draftRows } = await supabase
     .from("intellengine_drafts")
-    .select("id, title, status, updated_at")
+    .select("id, card_id, title, status, updated_at")
     .eq("client_id", params.id)
     .order("updated_at", { ascending: false });
 
-  const drafts: DashDraft[] = ((draftRows ?? []) as Pick<
+  const draftRecords = (draftRows ?? []) as Pick<
     IntellEngineDraft,
-    "id" | "title" | "status" | "updated_at"
-  >[]).map((d) => ({ id: d.id, title: d.title, status: d.status }));
+    "id" | "card_id" | "title" | "status" | "updated_at"
+  >[];
+  const drafts: DashDraft[] = draftRecords.map((d) => ({ id: d.id, title: d.title, status: d.status }));
+
+  // grant_id -> ms of the first carded attempt for that pair.
+  const firstCarded = new Map<string, string>();
+  for (const a of (attemptRows ?? []) as { grant_id: string | null; created_at: string }[]) {
+    if (!a.grant_id || firstCarded.has(a.grant_id)) continue;
+    firstCarded.set(a.grant_id, a.created_at);
+  }
+  const now = Date.now();
+  // Latest carded attempt = when this client's match list last changed.
+  const lastCarded = ((attemptRows ?? []) as { created_at: string }[]).at(-1)?.created_at ?? null;
+  const freshness = lastCarded ? agoLabel(lastCarded, now) : null;
 
   const cards = ((cardRows ?? []) as CardRow[]).map((r) => ({ ...r, grant: grantOf(r.grants) }));
-  // The row shape everything downstream actually works with: CardRow plus the embedded
-  // grant flattened to one object. Named so the derivations below can be typed against
-  // it instead of against CardRow, which no longer describes them.
-  type DashCard = (typeof cards)[number];
   // "In review" now means interested-but-undecided (sitting in the Grant Report,
   // past the Grant Alerts gate) -- not-yet-triaged cards are a separate bucket
   // (newAlerts, below), not part of this count. See migration 0057.
@@ -360,16 +433,6 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
       href: reviewHref,
       actionLabel: pillLabel(reviewHref),
     },
-    {
-      id: "proposals",
-      title: "Grant proposals",
-      description: "Drafts in progress in IntellEngine",
-      count: drafts.length,
-      icon: Sparkles,
-      tone: "approved",
-      href: intellEngineHref,
-      actionLabel: "Open IntellEngine",
-    },
   ];
 
   // See ClientDashboard's attentionNote prop: the design's line names Grant Alerts, which
@@ -385,10 +448,34 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   // Report rows and the deadline reads below -- though it IS still a pipeline column.
   const liveCards = cards.filter((c) => c.decision !== "passed");
 
-  // The pipeline replaces the four stat tiles. Same rows the page already loaded, one
-  // pure cascade over them -- see lib/clients/pipeline.ts for the five stages and how
-  // each is derived.
-  const pipeline = derivePipeline(cards);
+  // The pipeline, now IN the masthead rather than a card under it. Same rows the page
+  // already loaded, one pure cascade over them (lib/clients/pipeline.ts) plus the award
+  // rollup per stage (lib/clients/dashboard-summary.ts -- read its note on why the money
+  // is labelled as an estimated ceiling and never as expected receipts).
+  const priced: PricedCard[] = cards.map((c) => ({
+    decision: c.decision,
+    interested_at: c.interested_at,
+    sme_released_at: c.sme_released_at,
+    sent_at: c.sent_at,
+    pursuit_path: c.pursuit_path,
+    awardMin: c.grant?.award_range_min ?? null,
+    awardMax: c.grant?.award_range_max ?? null,
+    awardIsEstimate: c.grant?.award_range_is_estimate ?? null,
+  }));
+  const book = rollUpClient(priced);
+  const stageLabel = new Map(book.stages.map((s) => [s.key, s.label]));
+
+  // The masthead's backlog sparkline. Reconstructed from timestamps this page already
+  // has -- see lib/clients/backlog.ts, which reverses the earlier conclusion that a trend
+  // needs a nightly snapshot table. It does for a general metric; it does not for THIS
+  // one, because both edges of "untriaged" are already recorded.
+  const backlog = deriveBacklog(
+    cards.map((c) => ({
+      enteredAt: c.grant_id ? (firstCarded.get(c.grant_id) ?? null) : null,
+      leftAt: leftTriageAt(c),
+    })),
+    now,
+  );
 
   // The date in the pipeline header. The design reads "triage window closes {date}";
   // there is no triage-window field, and a placeholder date must never ship on a
@@ -397,31 +484,131 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   // excluded (a closed decision's deadline is not upcoming) and so are dates already
   // behind us -- an overdue date presented as the "next deadline" would be its own
   // small lie. Null when nothing qualifies, and the clause drops entirely.
-  const nextDeadlineLabel =
+  const nextDeadline =
     liveCards
       .map((c) => c.grant?.submission_deadline)
       .filter((d): d is string => Boolean(d) && (deadlineDaysLeft(d) ?? -1) >= 0)
-      .sort()
-      .map((d) => format(parseISO(d), "MMM d"))[0] ?? null;
+      .sort()[0] ?? null;
+  const nextDeadlineLabel = nextDeadline ? format(parseISO(nextDeadline), "MMM d") : null;
+  const nextDeadlineDays = deadlineDaysLeft(nextDeadline);
 
-  // Rail: the next three real deadlines, soonest first. Same source and same exclusions
-  // as the header date above -- open cards only, nothing overdue -- so the two can never
-  // tell different stories about which deadline is next. The stage label is read off the
-  // pipeline's own stage list rather than re-derived, for the same reason.
-  const DEADLINE_ROWS = 3;
-  const stageLabel = new Map(pipeline.stages.map((s) => [s.key, s.label]));
-  const deadlines: DashDeadline[] = liveCards
+  // The upcoming-deadlines rail card is GONE -- the design drops it, and every deadline
+  // it carried is already on a Grant Report row with a day count beside it. The rail slot
+  // it held goes to the activity feed, which is also what makes the two columns end level.
+
+  // The IntellEngine observation at the foot of the attention card. Deterministic rules
+  // over records this page already has -- see lib/clients/ambient-note.ts for why it is
+  // not model-authored, and for the two findings it can and cannot make. Null is the
+  // expected common case and renders nothing at all.
+  const ambient = deriveAmbientNote({
+    cards: liveCards.map((c) => ({
+      id: c.id,
+      stage: stageOf(c),
+      funder: c.grant?.funder ?? null,
+      deadlineDays: deadlineDaysLeft(c.grant?.submission_deadline),
+    })),
+    hasDraft: drafts.length > 0,
+    triageHref: reviewHref,
+    intellEngineHref,
+    // Pinned rows carrying a count, plus the dynamic items -- the same definition the
+    // attention card's own badge uses, so "the card already has four things on it" means
+    // the same thing in both places.
+    otherRows: pinnedRows.filter((r) => r.count > 0).length + consoleActionItems.length,
+  });
+
+  // What the IntellEngine panel points at when no draft is in flight. Two states, and
+  // the panel is never empty in either -- see DraftNext in the component.
+  const draftedCardIds = new Set(draftRecords.map((d) => d.card_id).filter(Boolean));
+
+  // READY: approved, nobody started it, nearest deadline first. Undated sorts last --
+  // "no deadline" is the absence of a clock, not urgency.
+  const readyQueue = cards
+    .filter((c) => c.decision === "approved" && !draftedCardIds.has(c.id))
     .map((c) => ({ card: c, days: deadlineDaysLeft(c.grant?.submission_deadline) }))
-    .filter((x): x is { card: DashCard; days: number } => x.days !== null && x.days >= 0)
-    .sort((a, b) => a.days - b.days)
-    .slice(0, DEADLINE_ROWS)
-    .map(({ card, days }) => ({
-      id: card.id,
-      title: card.grant?.title || "Untitled opportunity",
-      meta: [card.grant?.funder, stageLabel.get(stageOf(card))?.toLowerCase()].filter(Boolean).join(" · ") || null,
-      days,
-      href: `${base}/${card.id}`,
-    }));
+    .sort((a, b) => (a.days ?? Number.POSITIVE_INFINITY) - (b.days ?? Number.POSITIVE_INFINITY));
+
+  const draftNext: DraftNext | null = (() => {
+    const ready = readyQueue[0];
+    if (ready) {
+      const { card, days } = ready;
+      const sinceApproved =
+        card.decided_at !== null ? Math.max(0, Math.floor((now - Date.parse(card.decided_at)) / 86_400_000)) : null;
+      // Every clause drops when its fact is missing rather than being guessed at, so the
+      // sentence gets shorter instead of getting invented. The closing line is only true
+      // when this really is the only unstarted approval, so it is only said then.
+      const parts: string[] = [];
+      if (sinceApproved !== null) {
+        parts.push(
+          `Approved ${sinceApproved === 0 ? "today" : `${sinceApproved} ${sinceApproved === 1 ? "day" : "days"} ago`}`,
+        );
+      }
+      if (days !== null && days >= 0) parts.push(`${days} ${days === 1 ? "day" : "days"} left on the clock`);
+      else if (days !== null) parts.push("the deadline has already passed");
+      const lead = parts.length > 0 ? `${parts.join(" with ")}.` : "Approved and not yet scoped.";
+      const tail =
+        readyQueue.length === 1
+          ? " It is the only approved match with nothing drafted."
+          : ` ${readyQueue.length - 1} other${readyQueue.length === 2 ? "" : "s"} are waiting too.`;
+      return {
+        kind: "ready",
+        pick: {
+          title: card.grant?.title || "Untitled opportunity",
+          meta: [card.grant?.funder, awardLabel(card.grant), "approved, never started"].filter(Boolean).join(" \u00b7 "),
+          rationale: lead + tail,
+          href: `${intellEngineHref}?start=${card.id}`,
+        },
+      };
+    }
+
+    // WAITING: nothing is approved, so the blocker is upstream and the panel says so.
+    // It still shows the closest candidate -- knowing what an approval would unlock is
+    // the point, and hiding it would make the card sit blank for exactly the clients who
+    // most need pushing.
+    const untriaged = cards.filter((c) => c.decision !== "passed" && c.interested_at === null).length;
+    const closest = cards
+      .filter((c) => c.decision !== "passed" && c.decision !== "approved")
+      .map((c) => ({ card: c, days: deadlineDaysLeft(c.grant?.submission_deadline) }))
+      .sort(
+        (a, b) =>
+          b.card.fit_score - a.card.fit_score ||
+          (a.days ?? Number.POSITIVE_INFINITY) - (b.days ?? Number.POSITIVE_INFINITY),
+      )[0];
+
+    if (!closest) return null;
+
+    return {
+      kind: "waiting",
+      unassessed: untriaged,
+      reviewHref,
+      pick: {
+        title: closest.card.grant?.title || "Untitled opportunity",
+        meta: [closest.card.grant?.funder, awardLabel(closest.card.grant), `fit ${closest.card.fit_score}/3`]
+          .filter(Boolean)
+          .join(" \u00b7 "),
+        rationale: waitingRationale(closest.card.factor_scores, closest.days),
+        href: `${intellEngineHref}?start=${closest.card.id}`,
+      },
+    };
+  })();
+
+  // Rail: what has moved lately. NOT "since you were last here" -- see
+  // lib/clients/activity.ts for why that needs a migration and what is derived instead.
+  const events = deriveActivity({
+    carded: cards.map((c) => (c.grant_id ? firstCarded.get(c.grant_id) : null)).filter((t): t is string => !!t),
+    decided: cards
+      .filter((c) => (c.decision === "approved" || c.decision === "passed") && c.decided_at !== null)
+      .map((c) => ({
+        id: c.id,
+        title: c.grant?.title || "Untitled opportunity",
+        decision: c.decision as "approved" | "passed",
+        at: c.decided_at as string,
+      })),
+    released: cards
+      .filter((c) => c.sme_released_at !== null)
+      .map((c) => ({ id: c.id, title: c.grant?.title || "Untitled opportunity", at: c.sme_released_at as string })),
+    drafts: draftRecords.map((d) => ({ id: d.id, title: d.title, at: d.updated_at })),
+    now,
+  });
 
   // Grant Report card: the strongest live matches, highest fit first, then soonest
   // deadline as the tiebreak (among equal fits, the one with a clock on it is the one
@@ -470,6 +657,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
     avgFit: liveCards.length
       ? (liveCards.reduce((n, c) => n + c.fit_score, 0) / liveCards.length).toFixed(1)
       : null,
+    freshness,
   };
 
   // "Client since" only when there IS a contract start. Otherwise this reports when the
@@ -479,30 +667,27 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   const since = client.contract_start
     ? `Client since ${format(parseISO(client.contract_start), "MMM yyyy")}`
     : `Added ${format(parseISO(client.created_at), "MMM yyyy")}`;
-  const contextMeta = [
-    client.org_type?.replace(/_/g, " "),
-    [client.location_city, client.location_state].filter(Boolean).join(", ") || null,
-    since,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  const monogram = (() => {
-    const parts = client.name.trim().split(/\s+/).filter(Boolean);
-    if (parts.length === 0) return "—";
-    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-  })();
+  const contextMeta =
+    [
+      client.org_type?.replace(/_/g, " "),
+      [client.location_city, client.location_state].filter(Boolean).join(", ") || null,
+      since,
+    ]
+      .filter(Boolean)
+      .join(" · ") || null;
 
   // No visible banner: the action item carries the spinner and the message now, and
   // saying it twice on one screen read as clutter. AutoRefresh still mounts, because
   // results appearing without a manual reload is behaviour, not decoration.
   const matchNote = matchInProgress ? <AutoRefresh enabled /> : null;
 
+  // On ink now, so both controls are reversed out: Edit profile as an outlined ghost,
+  // Refresh matches as the one white-filled primary on the band.
   const actions = (
     <>
       <Link
         href={editHref}
-        className="rounded-md border border-edge px-3 py-1.5 text-[12.5px] font-semibold text-ink-muted transition-colors hover:bg-page hover:text-brand-navy"
+        className="inline-flex h-8 items-center rounded-pill border border-white/20 px-[14px] text-[13px] font-medium text-white/[0.85] transition-colors hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome"
       >
         Edit profile
       </Link>
@@ -510,6 +695,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         clientId={client.id}
         inProgress={matchInProgress}
         confirmRerun={confirmRerun}
+        tone="ink"
         idleLabel={cards.length === 0 ? "Run Grant Matches" : "Refresh matches"}
       />
       {/* Only at the end of the onboarding sequence: grants matched AND reviewed,
@@ -526,53 +712,60 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   );
 
   return (
-    <div className="relative min-h-full">
-      {/* Full-bleed, so it sits OUTSIDE the dashboard's max-w content column -- it is
-          chrome continuous with the command band above it, not page content. */}
-      <ClientContextBar
-        name={client.name}
-        monogram={monogram}
-        statusChip={<Badge variant="secondary">{isLead ? "prospect" : client.status}</Badge>}
-        meta={contextMeta}
-        actions={actions}
-        backHref="/clients"
-        backLabel="Portfolio"
-      />
-      <div className="relative">
-        <ClientDashboard
-        name={client.name}
-        subLine={subLine}
-        isStaff
-        roadmapHref={base}
-        intellEngineHref={`/clients/${client.id}/intellengine`}
-        hero={<GrantPipeline pipeline={pipeline} nextDeadlineLabel={nextDeadlineLabel} />}
-        actionItems={consoleActionItems}
-        pinnedRows={pinnedRows}
-        activity={counts}
-        report={{
-          rows: reportRows,
-          metrics: reportMetrics,
-          total: liveCards.length,
-          emptyNote: matchInProgress
-            ? "Matching is running — opportunities will appear here as they are scored."
-            : "No matches yet. Run grant matches to surface opportunities.",
-        }}
-        drafts={{
-          list: drafts,
-          emptyNote: "No proposals started yet. IntellEngine is where a matched grant becomes a draft.",
-        }}
-        // Pure read of the community_context already on the record -- no fetch here.
-        community={buildCommunityView(client)}
-        deadlines={deadlines}
-        attentionNote={attentionNote}
-        // The scorer moves INTO the rail. It used to sit under the hero as `staffTools`,
-        // where it was the loudest thing on the page for a tool that is not daily-use;
-        // the design makes it a compact rail card instead.
-        scorer={isLead ? undefined : <CheckGrant clientId={client.id} clientName={client.name} />}
-        bookingUrl={process.env.NEXT_PUBLIC_BOOKING_URL ?? null}
-        matchNote={matchNote}
+    <ClientDashboard
+      name={client.name}
+      subLine={subLine}
+      isStaff
+      roadmapHref={base}
+      intellEngineHref={intellEngineHref}
+      // The masthead REPLACES both the white identity strip and the pipeline card. See
+      // components/clients/client-masthead.tsx: a client's funnel is not a card on the
+      // page, it is the summary of the page, and collapsing the two buys back the ~90px
+      // that makes 1440x900 fit without scrolling.
+      hero={
+        <ClientMasthead
+          name={client.name}
+          meta={contextMeta}
+          statusLabel={isLead ? "prospect" : client.status}
+          book={book}
+          decided={reportMetrics.decided}
+          nextDeadlineDays={nextDeadlineDays}
+          backlog={backlog}
+          nextDeadlineLabel={nextDeadlineLabel}
+          backHref="/clients"
+          backLabel="Portfolio"
+          actions={actions}
         />
-      </div>
-    </div>
+      }
+      actionItems={consoleActionItems}
+      pinnedRows={pinnedRows}
+      activity={counts}
+      report={{
+        rows: reportRows,
+        metrics: reportMetrics,
+        total: liveCards.length,
+        emptyNote: matchInProgress
+          ? "Matching is running — opportunities will appear here as they are scored."
+          : "No matches yet. Run grant matches to surface opportunities.",
+      }}
+      drafts={{
+        list: drafts,
+        emptyNote: "No proposals started yet. IntellEngine is where a matched grant becomes a draft.",
+      }}
+      draftNext={draftNext}
+      // Pure read of the community_context already on the record -- no fetch here.
+      community={buildCommunityView(client)}
+      events={events}
+      ambient={ambient}
+      // The oversized figure bled off the body's bottom-right corner: the unassessed
+      // count, at 3% ink. Nothing to bleed when there is nothing waiting.
+      ghost={book.stages.find((s) => s.key === "triage")?.count ?? null}
+      attentionNote={attentionNote}
+      // The scorer sits in the rail -- it used to be the loudest thing on the page for a
+      // tool that is not daily-use.
+      scorer={isLead ? undefined : <CheckGrant clientId={client.id} clientName={client.name} />}
+      bookingUrl={process.env.NEXT_PUBLIC_BOOKING_URL ?? null}
+      matchNote={matchNote}
+    />
   );
 }

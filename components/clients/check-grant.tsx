@@ -77,7 +77,13 @@ export function CheckGrant({ clientId, clientName }: { clientId: string; clientN
   async function resolve(e?: React.FormEvent) {
     e?.preventDefault();
     const q = query.trim();
-    if (!q || phase === "resolving") return;
+    if (phase === "resolving") return;
+    // Nothing typed: put the cursor where the work starts rather than doing nothing.
+    // The button stays live for the same reason -- see its disabled note.
+    if (!q) {
+      inputRef.current?.focus();
+      return;
+    }
     setPhase("resolving");
     setError(null);
     setMessage(null);
@@ -151,14 +157,14 @@ export function CheckGrant({ clientId, clientName }: { clientId: string; clientN
   return (
     <>
       <section
-        className="rounded-2xl border-l-[3px] bg-white px-[18px] pb-3.5 pt-3 shadow-card"
-        style={{ borderLeftColor: STAGE.triage.color }}
+        className="shrink-0 rounded-sharp border border-edge bg-white px-[18px] pb-3.5 pt-3"
+        style={{ borderLeftWidth: "3px", borderLeftColor: STAGE.triage.color }}
       >
         <div className="flex items-center justify-between gap-2.5">
-          <h2 className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-subtle">Score a grant</h2>
+          <h2 className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-muted">Score a grant</h2>
           <span
             aria-hidden="true"
-            className="rounded border border-edge px-[5px] py-px font-mono text-[11px] text-ink-faint"
+            className="rounded border border-edge px-[5px] py-px font-mono text-[11px] text-ink-muted"
           >
             ⌘/
           </span>
@@ -169,7 +175,7 @@ export function CheckGrant({ clientId, clientName }: { clientId: string; clientN
             Paste a NOFO link or name a program
           </label>
           <div
-            className="flex h-9 items-center gap-2 rounded-pill border border-edge px-[11px] focus-within:border-brand-orange/60"
+            className="flex h-9 items-center gap-2 rounded-sharp border border-edge px-[11px] focus-within:border-brand-orange/60"
             style={{ backgroundColor: SURFACE.sunken }}
           >
             <Link2 className="h-3.5 w-3.5 shrink-0 text-ink-faint" aria-hidden="true" />
@@ -187,8 +193,12 @@ export function CheckGrant({ clientId, clientName }: { clientId: string; clientN
             <p className="min-w-0 truncate text-[11px] text-ink-subtle">Fit checked against {clientName}</p>
             <button
               type="submit"
-              disabled={phase === "resolving" || !query.trim()}
-              className="inline-flex h-[29px] shrink-0 items-center gap-1.5 rounded-md bg-brand-orange px-[13px] text-[12.5px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+              // Disabled ONLY while a check is in flight. It used to also disable on an
+              // empty field, which meant the primary sat dimmed at rest on every visit --
+              // an enabled control that looks broken. Pressing it with nothing typed now
+              // focuses the field, which is the actual next step.
+              disabled={phase === "resolving"}
+              className="inline-flex h-[29px] shrink-0 items-center gap-1.5 rounded-sharp bg-brand-orange px-[13px] text-[12.5px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
             >
               {phase === "resolving" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               {phase === "resolving" ? "Checking…" : "Check fit"}
@@ -259,7 +269,7 @@ export function CheckGrant({ clientId, clientName }: { clientId: string; clientN
                         </p>
                         {c.reason && <p className="mt-1 text-xs text-brand-navy/70">{c.reason}</p>}
                       </div>
-                      <span className="shrink-0 text-xs font-semibold text-brand-orange">Check fit →</span>
+                      <span className="shrink-0 text-xs font-semibold text-brand-orangeDeep">Check fit →</span>
                     </button>
                   ))}
                   {message && (
@@ -317,7 +327,7 @@ function Result({ result, clientId }: { result: RunResult; clientId: string }) {
       {!result.alreadyMatched && result.persisted && (
         <p className="text-sm text-brand-navy">
           Added to{" "}
-          <Link href={`/clients/${clientId}/roadmap`} className="font-medium text-brand-orange hover:underline">
+          <Link href={`/clients/${clientId}/roadmap`} className="font-medium text-brand-orangeDeep hover:underline">
             the roadmap
           </Link>
           .
