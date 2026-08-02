@@ -101,6 +101,11 @@ labels and micro-chips are illegible in it however much the layout wants orange 
 stage; when a client sits at both, the two swatches are identical. Shipped as drawn and
 flagged — a monotonic ramp is a design decision, not a bug fix.
 
+**Resolved in the pass after this one**, as a design decision taken on purpose. The ramp
+is now monotonic in funnel order: *with client* `.55`, *approved* `.47`, *in pursuit*
+`.40`, *passed* `.34`, with triage keeping the orange. A neutral ramp's one job is to read
+left-to-right, and two stages rendering the same grey was the one thing that stopped it.
+
 ### The bar is weighted by count, not money
 
 The mockup weights its segments by dollars (its flex values are the award figures). Money
@@ -261,9 +266,9 @@ and the Grant Report, IntellEngine and geography cards each take a `variant` for
 reason. Converging the two is a decision someone should make on purpose, not a side effect
 of a styling pass.
 
-## Known contrast failures — not fixed here
+## Known contrast failures — not fixed here, fixed since
 
-Both are systemic and neither is a per-screen patch:
+Both were systemic and neither was a per-screen patch:
 
 1. **`INK.subtle` (`#8A93A0`) is ~3.1:1** and fails AA everywhere it appears, across every
    page. Darkening it is one token change with a product-wide visual effect and wants its
@@ -274,3 +279,10 @@ Both are systemic and neither is a per-screen patch:
 
 `BRAND.orangeDeep` resolves the small-orange-text case, which is the part that was
 actionable inside this screen.
+
+**Both were taken product-wide in the pass after this one.** `INK.subtle` is now `#6E7683`
+(4.58:1 on white), and white-on-orange fills moved to a second token, `BRAND.orangeFill`
+(`#B85A17`, 4.65:1 under white) — `BRAND.orange` stays the fill for anything carrying no
+type. Three orange tokens now, split by what sits on or under the colour: `orange` for
+text-free fills and anything on ink, `orangeDeep` for small orange text on light,
+`orangeFill` for white text on orange.

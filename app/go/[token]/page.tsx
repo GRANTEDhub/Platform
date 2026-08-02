@@ -86,7 +86,7 @@ export default async function ScheduleLandingPage({ params }: { params: { token:
       {bookingUrl ? (
         <a
           href={bookingUrl}
-          className="mt-6 inline-block rounded-full bg-brand-orange px-6 py-3 text-sm font-medium text-brand-cream transition-opacity hover:opacity-90"
+          className="mt-6 inline-block rounded-full bg-brand-orangeFill px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-brand-orangeFillHover"
         >
           Book your call →
         </a>

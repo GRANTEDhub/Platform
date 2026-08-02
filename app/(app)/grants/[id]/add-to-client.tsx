@@ -107,7 +107,7 @@ export function AddToClientControl({
               size="sm"
               onClick={() => run("soft")}
               disabled={busy}
-              className="bg-brand-orange text-white hover:bg-brand-orange/90"
+              className="bg-brand-orangeFill text-white hover:bg-brand-orangeFillHover"
             >
               {busy ? "Adding…" : "Add anyway"}
             </Button>
@@ -149,7 +149,7 @@ export function AddToClientControl({
               <Button
                 onClick={() => run("hard")}
                 disabled={busy}
-                className="bg-brand-orange text-white hover:bg-brand-orange/90"
+                className="bg-brand-orangeFill text-white hover:bg-brand-orangeFillHover"
               >
                 {busy ? "Adding…" : "Add anyway"}
               </Button>

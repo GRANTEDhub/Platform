@@ -145,7 +145,9 @@ specified for all five.
 1. `INK.subtle` (`#8A93A0`) at ~3.1:1 — fails AA everywhere it appears
 2. White on `#E4761F` at 3.04:1 — every primary button
 
-Neither is touched here.
+Neither is touched here. **Both were fixed product-wide in the pass after this one** —
+`INK.subtle` → `#6E7683`, and white-on-orange fills → `BRAND.orangeFill` (`#B85A17`), which
+on this screen is the "Check a grant" button and the active bucket pill.
 
 ## Also removed
 

@@ -198,7 +198,7 @@ export function CheckGrant({ clientId, clientName }: { clientId: string; clientN
               // an enabled control that looks broken. Pressing it with nothing typed now
               // focuses the field, which is the actual next step.
               disabled={phase === "resolving"}
-              className="inline-flex h-[29px] shrink-0 items-center gap-1.5 rounded-sharp bg-brand-orange px-[13px] text-[12.5px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+              className="inline-flex h-[29px] shrink-0 items-center gap-1.5 rounded-sharp bg-brand-orangeFill px-[13px] text-[12.5px] font-semibold text-white transition-colors duration-[120ms] hover:bg-brand-orangeFillHover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
             >
               {phase === "resolving" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               {phase === "resolving" ? "Checking…" : "Check fit"}

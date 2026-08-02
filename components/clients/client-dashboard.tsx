@@ -408,7 +408,7 @@ function AttentionCard({
       >
         <h2 className="font-serif text-base font-bold text-brand-navy">Needs your attention</h2>
         {live > 0 ? (
-          <span className="rounded-full bg-brand-orange px-2 py-0.5 text-[11px] font-bold leading-[1.4] tabular-nums text-white">
+          <span className="rounded-full bg-brand-orangeFill px-2 py-0.5 text-[11px] font-bold leading-[1.4] tabular-nums text-white">
             {live}
           </span>
         ) : (
@@ -526,7 +526,7 @@ function PinnedRow({ row, last }: { row: DashPinnedRow; last: boolean }) {
       {live ? (
         <Link
           href={row.href as string}
-          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sharp bg-brand-orange px-3.5 text-[12.5px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sharp bg-brand-orangeFill px-3.5 text-[12.5px] font-semibold text-white transition-colors duration-[120ms] hover:bg-brand-orangeFillHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
         >
           {row.actionLabel}
           <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
@@ -580,7 +580,7 @@ function AttentionRow({ item, last }: { item: DashActionItem; last: boolean }) {
           In progress
         </span>
       ) : affordance.kind === "pill" ? (
-        <span className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sharp bg-brand-orange px-3.5 text-[12.5px] font-semibold text-white">
+        <span className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sharp bg-brand-orangeFill px-3.5 text-[12.5px] font-semibold text-white">
           {affordance.label}
           <ChevronRight className="h-3.5 w-3.5" />
         </span>

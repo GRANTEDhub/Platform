@@ -27,14 +27,13 @@ import { cn } from "@/lib/utils";
 // into the base tokens.
 //
 // CONTRAST: on SURFACE.ground the small-text floor is INK.muted (#5B6472). INK.subtle
-// (#8A93A0) clears it on a white card and fails on the ground, so ground-level type uses
-// muted and card-level labels use subtle. That is why the two look inconsistent in the
-// diff — they are answering to different backgrounds.
+// (#6E7683) clears AA on a white card (4.58:1) and fails on the ground (3.70:1), so
+// ground-level type uses muted and card-level labels use subtle. That is why the two look
+// inconsistent in the diff — they are answering to different backgrounds.
 //
-// The masthead is BRAND.navy rather than the mockup's #0A1420. It sits flush beneath the
-// global command band, which is navy; honouring the darker value would either put a seam
-// across the top of one page or repaint the nav everywhere, and the nav has not been
-// redrawn. If the ink direction reaches the chrome, this follows it.
+// The masthead is BRAND.chrome (#0A1420), the mockup's value. An earlier pass used
+// BRAND.navy to avoid a seam where it meets the global command band; the resolution was
+// to repaint the band instead, so both are chrome now and the seam is gone.
 
 export type PortfolioRow = {
   id: string;
@@ -139,7 +138,7 @@ export function PortfolioBrowser({
               <Tab active={filter === "action"} onClick={() => setFilter("action")}>
                 Requires action
                 {action.length > 0 && (
-                  <span className="rounded-full bg-brand-orange px-1.5 py-px text-[10px] font-bold leading-[1.3] text-white">
+                  <span className="rounded-full bg-brand-orangeFill px-1.5 py-px text-[10px] font-bold leading-[1.3] text-white">
                     {action.length}
                   </span>
                 )}
@@ -247,7 +246,7 @@ export function PortfolioBrowser({
                 <>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pb-[11px]">
                     <h2 className="font-serif text-[17px] font-bold text-brand-navy">Requires action</h2>
-                    <span className="inline-flex h-[19px] items-center rounded-full bg-brand-orange px-2 text-[10.5px] font-bold tabular-nums text-white">
+                    <span className="inline-flex h-[19px] items-center rounded-full bg-brand-orangeFill px-2 text-[10.5px] font-bold tabular-nums text-white">
                       {action.length}
                     </span>
                     <span aria-hidden="true" className="h-px flex-1 bg-brand-navy/20" />

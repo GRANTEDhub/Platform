@@ -61,6 +61,10 @@ const config: Config = {
           orange: BRAND.orange,
           orangeHover: BRAND.orangeHover,
           orangeDeep: BRAND.orangeDeep,
+          // Solid orange UNDER WHITE TEXT only — see the note in lib/brand.ts. `orange`
+          // stays the fill for anything with no type on it.
+          orangeFill: BRAND.orangeFill,
+          orangeFillHover: BRAND.orangeFillHover,
           amberOnDark: BRAND.amberOnDark,
           reject: BRAND.reject,
           cream: BRAND.cream,

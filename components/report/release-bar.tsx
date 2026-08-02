@@ -106,7 +106,7 @@ export function ReleaseToClientBar({
           type="button"
           disabled={busy}
           onClick={() => setMode("alert")}
-          className="inline-flex h-[42px] flex-1 items-center justify-center gap-2 rounded-sharp bg-brand-orange text-[14px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+          className="inline-flex h-[42px] flex-1 items-center justify-center gap-2 rounded-sharp bg-brand-orangeFill text-[14px] font-semibold text-white transition-colors duration-[120ms] hover:bg-brand-orangeFillHover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
         >
           Release to client
         </button>
@@ -117,7 +117,7 @@ export function ReleaseToClientBar({
           aria-label="Choose how to release"
           disabled={busy}
           onClick={() => setMenuOpen((v) => !v)}
-          className="inline-flex h-[42px] w-[38px] shrink-0 items-center justify-center rounded-sharp bg-brand-orange text-white transition-opacity duration-[120ms] hover:opacity-90 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+          className="inline-flex h-[42px] w-[38px] shrink-0 items-center justify-center rounded-sharp bg-brand-orangeFill text-white transition-colors duration-[120ms] hover:bg-brand-orangeFillHover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
         >
           <ChevronDown className="h-4 w-4" aria-hidden="true" />
         </button>

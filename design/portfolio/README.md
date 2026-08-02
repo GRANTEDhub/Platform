@@ -65,6 +65,10 @@ the new ground. v4 splits by background instead: **ground-level type is `INK.mut
 (`#5B6472`), card-level labels are `INK.subtle`.** They look inconsistent side by side in
 the diff because they answer to different backgrounds.
 
+`INK.subtle` has since been darkened product-wide to `#6E7683` — 4.58:1 on a white card,
+3.70:1 on this page's ground. The split above is unchanged and is the reason it was not
+darkened further: ground-level type answers to `INK.muted`, not to this token.
+
 Same reasoning behind two new stage values: `STAGE.client.deep` (`#856210`, the index's
 deadline dates — even `client.text` falls under the floor on the ground) and
 `STAGE.approved.onDark` (`#7FC4D4`, teal reversed out of the masthead).

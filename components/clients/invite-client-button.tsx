@@ -67,7 +67,7 @@ export function InviteClientButton({
       <Button
         type="button"
         onClick={() => setConfirming(true)}
-        className="rounded-full bg-brand-orange text-white hover:bg-brand-orange/90"
+        className="rounded-full bg-brand-orangeFill text-white hover:bg-brand-orangeFillHover"
       >
         Invite client to portal
       </Button>
@@ -86,7 +86,7 @@ export function InviteClientButton({
         size="sm"
         disabled={busy || !contactEmail}
         onClick={go}
-        className="rounded-full bg-brand-orange text-white hover:bg-brand-orange/90"
+        className="rounded-full bg-brand-orangeFill text-white hover:bg-brand-orangeFillHover"
       >
         {busy ? "Inviting…" : "Yes, invite"}
       </Button>

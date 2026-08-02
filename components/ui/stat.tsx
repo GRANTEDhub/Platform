@@ -32,7 +32,7 @@ export function Stat({
     // Match-tab facts pass `truncateValue` to clip to one line with a hover tooltip.
     // `hint` is not rendered here (dropped in #106); both props still drive onLight.
     return (
-      <div className={cn("rounded-2xl p-4", accent ? "bg-brand-orange" : "bg-white shadow-soft")}>
+      <div className={cn("rounded-2xl p-4", accent ? "bg-brand-orangeFill" : "bg-white shadow-soft")}>
         <p
           className={cn("font-serif text-base font-semibold leading-tight", truncateValue && "truncate", accent ? "text-white" : "text-brand-orange")}
           title={typeof value === "string" ? value : undefined}
