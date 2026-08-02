@@ -456,7 +456,7 @@ function StepLink({ id, tab, n, title, active }: { id: string; tab: TabKey; n: n
       }`}
     >
       <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-[12.5px] font-semibold ${
-        active ? "bg-brand-orange text-white" : "bg-brand-navy/[0.06] text-brand-navy"
+        active ? "bg-brand-orangeFill text-white" : "bg-brand-navy/[0.06] text-brand-navy"
       }`}>{n}</span>
       <span className="min-w-0 leading-tight">
         <span className={`block text-[10px] uppercase tracking-[0.1em] ${active ? "text-white/60" : "text-muted-foreground"}`}>Step {n}</span>

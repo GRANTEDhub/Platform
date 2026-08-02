@@ -6,6 +6,7 @@ import { ReleaseToClientBar } from "@/components/report/release-bar";
 import { ConceptProposalPanel } from "@/components/report/concept-proposal-panel";
 import { ConceptCard } from "@/components/report/concept-card";
 import { ScoreFeedback } from "@/components/report/score-feedback";
+import { ScoreFactorsBackfill } from "@/components/report/score-factors-backfill";
 import { GrantReviewConsole, type ReviewKeyDetail, type ReviewMeta } from "@/components/report/grant-review-console";
 import { AlertSend } from "@/app/(app)/review/[id]/alert-send";
 import { getConceptProposal } from "@/lib/concept/store";
@@ -250,6 +251,10 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         eligibility={eligibility}
         rationale={rationale}
         factors={factors}
+        // Only ever rendered in the unscored branch. Offered to every staff reviewer
+        // rather than admins only: the reviewer looking at the empty panel is the person
+        // who needs the breakdown, and the route writes nothing but the six ratings.
+        scoreFactors={factors.unscored ? <ScoreFactorsBackfill cardId={params.cardId} /> : null}
         fitScore={card.fit_score}
         verdict={FIT_BAND[card.fit_score].label}
         // What the score MEANS for the next step, derived from the lit factor rather than

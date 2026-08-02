@@ -42,6 +42,23 @@ export const BRAND = {
   // display figures, and anything on ink. They are not interchangeable — the pair exists
   // so "orange small text" has a right answer instead of being quietly illegible.
   orangeDeep: "#A8501A",
+  // Brand orange as a FILL UNDER WHITE TEXT. The mirror of orangeDeep, one layer out:
+  // orangeDeep exists because orange type on a light ground is illegible, this exists
+  // because white type on an orange ground is too. White on #E4761F is 3.04:1 — every
+  // primary button in the product sat there. #B85A17 takes it to 4.65:1 and is the
+  // shallowest darkening that clears AA, so the buttons stay recognisably brand orange.
+  //
+  // NOT a replacement for `orange`. Use this ONLY where white (or cream) text sits on a
+  // solid orange field: primary buttons, count badges, the active bucket pill. `orange`
+  // stays the fill for anything with no text on it — bars, dials, dots, rules, ghost
+  // figures, the left-edge accents — because those carry no contrast obligation and
+  // darkening them would drain the accent out of the product for no gain.
+  //
+  // The pair is deliberately NOT `orangeHover`: that value (#C9631A, 3.97:1 under white)
+  // was tuned as a press state for #E4761F and is itself below AA, so it cannot be the
+  // hover for this one. `orangeFillHover` is the matching darker step.
+  orangeFill: "#B85A17",
+  orangeFillHover: "#9C4A12",
   // The warm accent ON INK, and the mirror image of orangeDeep — which is the part that
   // is easy to get backwards. On a light ground the accent must go DARKER to clear
   // contrast; on a dark one it must go LIGHTER. Brand orange on #0A1420 falls below AA,
@@ -88,7 +105,15 @@ export const SURFACE = {
 export const INK = {
   DEFAULT: "#0B1E3A", // primary text (= navy)
   muted: "#5B6472",   // body / secondary text
-  subtle: "#8A93A0",  // labels, metadata, counts of hidden rows
+  // Labels, metadata, counts of hidden rows. Was #8A93A0, which is 3.11:1 on white and
+  // failed AA at every one of the ~30 places it appears — all of them small type, which
+  // is the worst case for it. #6E7683 is 4.58:1 on white: the lightest value on this hue
+  // that clears the 4.5 floor, so the step between `muted` and `subtle` survives.
+  //
+  // It still does NOT clear AA on SURFACE.ground (3.70:1). That is by design and not a
+  // gap to close by darkening further — ground-level small type uses `muted`, and the
+  // ink screens already do. See the note at the top of components/clients/portfolio-browser.tsx.
+  subtle: "#6E7683",
   faint: "#B0B6BF",   // placeholder text, disabled chevrons
 } as const;
 
@@ -156,14 +181,20 @@ export const STAGE = {
 // NEVER BELOW .34. A swatch under roughly 3:1 on this chrome is invisible, and the swatch
 // is the only thing tying a zero-count stage to its segment in the bar.
 //
-// `client` and `passed` share .34 because that is what the approved mockup draws — its
-// sample client had zero at the with-client stage, so the two were never adjacent. When a
-// client sits at both, they will read alike. Flagged rather than silently "fixed": a
-// monotonic ramp is a design decision, not a bug fix.
+// THE RAMP IS MONOTONIC, brightest just past triage and fading to the end of the funnel:
+// .55 → .47 → .40 → .34. The mockup drew `client` and `passed` at the same .34 — its
+// sample roster had zero at the with-client stage, so the two were never adjacent and the
+// collision was invisible. On a real client sitting at both, two different stages rendered
+// as the same grey and the bar stopped being readable left-to-right, which is the one job
+// a neutral ramp has. `client` takes the top of the ramp because it is the stage nearest
+// the thing that is owed; the three behind it step down in funnel order.
+//
+// Stage order (triage → client → approved → pursuit → passed) is the ramp order. Adding a
+// stage means re-spacing the whole ramp, not squeezing a sixth value in between two.
 export const STAGE_ON_INK: Record<"triage" | "client" | "approved" | "pursuit" | "passed", string> = {
   triage: "#E4761F",
-  client: "rgba(255,255,255,0.34)",
-  approved: "rgba(255,255,255,0.55)",
+  client: "rgba(255,255,255,0.55)",
+  approved: "rgba(255,255,255,0.47)",
   pursuit: "rgba(255,255,255,0.40)",
   passed: "rgba(255,255,255,0.34)",
 };

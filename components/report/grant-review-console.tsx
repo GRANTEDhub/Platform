@@ -50,6 +50,7 @@ export function GrantReviewConsole({
   eligibility,
   rationale,
   factors,
+  scoreFactors,
   fitScore,
   verdict,
   consequence,
@@ -84,6 +85,10 @@ export function GrantReviewConsole({
   // Prose. `blocking` is bolded inside it — see the note at the top of this file.
   rationale: { lead: string | null; blocking: string | null; mitigation: string | null };
   factors: FitFactorView;
+  // The backfill control for a card with no per-factor breakdown. A client component,
+  // passed in, and null on any surface that should not be able to spend a scorer call.
+  // Rendered ONLY in the unscored branch — a scored card never sees it.
+  scoreFactors: React.ReactNode | null;
   fitScore: 1 | 2 | 3;
   verdict: string;
   consequence: string | null;
@@ -139,7 +144,12 @@ export function GrantReviewConsole({
               meta={meta}
               eligibility={eligibility}
             />
-            <RationaleCard rationale={rationale} factors={factors} footnote={scoreFootnote} />
+            <RationaleCard
+              rationale={rationale}
+              factors={factors}
+              scoreFactors={scoreFactors}
+              footnote={scoreFootnote}
+            />
           </div>
 
           <div className="flex min-h-0 flex-col gap-3.5">
@@ -307,10 +317,12 @@ function EligibilityChip({ verdict }: { verdict: EligibilityVerdict }) {
 function RationaleCard({
   rationale,
   factors,
+  scoreFactors,
   footnote,
 }: {
   rationale: { lead: string | null; blocking: string | null; mitigation: string | null };
   factors: FitFactorView;
+  scoreFactors: React.ReactNode | null;
   footnote: string;
 }) {
   const hasProse = rationale.lead || rationale.blocking || rationale.mitigation;
@@ -348,15 +360,18 @@ function RationaleCard({
           // design, and `factor_scores` is in the scorer tool's required set — so a null
           // can only mean the card was matched before that date.
           //
-          // AND NOTHING IN THE UI FIXES IT. "Refresh matches" skips already-attempted
+          // NEITHER OF THE OTHER PATHS FIXES IT: "Refresh matches" skips already-attempted
           // pairs (lib/clients/match-queue.ts) and check-grant returns early when a card
-          // already exists, so neither re-scores this pair. The copy says so rather than
-          // pointing at a button that will appear to do nothing.
-          <p className="pt-2 text-[12.5px] leading-[1.5] text-ink-muted">
-            No per-factor breakdown — this card was matched before factor scoring shipped
-            (27 Jul). Existing matches are not re-scored, so it stays that way unless this
-            pair is scored again.
-          </p>
+          // already exists. `scoreFactors` is the one control that does, and the copy that
+          // used to sit here — "it stays that way unless this pair is scored again" — now
+          // lives inside it, next to the button that does the scoring. When the caller
+          // passes nothing (no staff control on this surface) the plain statement stands.
+          scoreFactors ?? (
+            <p className="pt-2 text-[12.5px] leading-[1.5] text-ink-muted">
+              No per-factor breakdown — this card was matched before factor scoring shipped
+              (27 Jul).
+            </p>
+          )
         ) : (
           factors.factors.map((f, i) => <FactorRow key={f.key} factor={f} last={i === factors.factors.length - 1} />)
         )}

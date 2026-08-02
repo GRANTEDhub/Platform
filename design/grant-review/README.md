@@ -144,6 +144,12 @@ decision, not a side effect of this screen.
 
 Both want one decision, not per-screen patches. Neither is touched here.
 
+**Resolved in the pass after this one**, product-wide as they needed to be: `INK.subtle` is
+`#6E7683` (4.58:1 on white), and white-on-orange fills use `BRAND.orangeFill` (`#B85A17`,
+4.65:1) while `BRAND.orange` keeps every text-free fill. The `hover:opacity-90` those
+buttons carried had to go with it — ancestor opacity composites the label too and dropped
+the pair back to ~3.95:1 exactly while you were pointing at the button.
+
 ## There are two grant-review screens
 
 This one is client-scoped, reached from a client's Grant Report. `/review/[id]` is the

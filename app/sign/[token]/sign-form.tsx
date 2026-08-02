@@ -70,7 +70,7 @@ export function SignForm({ token }: { token: string }) {
         type="button"
         disabled={busy || !name.trim() || !consent}
         onClick={submit}
-        className="inline-block rounded-full bg-brand-orange px-6 py-3 text-sm font-medium text-brand-cream transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+        className="inline-block rounded-full bg-brand-orangeFill px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-brand-orangeFillHover disabled:cursor-not-allowed disabled:opacity-50"
       >
         {busy ? "Signing…" : "Sign agreement"}
       </button>

@@ -260,7 +260,7 @@ export function TopNav({
             aria-haspopup="menu"
             aria-label={`Account: ${user.name}`}
             className={cn(
-              "flex h-[29px] w-[29px] items-center justify-center rounded-full bg-brand-orange text-xs font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90",
+              "flex h-[29px] w-[29px] items-center justify-center rounded-full bg-brand-orangeFill text-xs font-semibold text-white transition-colors duration-[120ms] hover:bg-brand-orangeFillHover",
               FOCUS,
             )}
           >
@@ -324,7 +324,7 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
           // aria-hidden: the count is already announced by the accessible label below,
           // so the pill would otherwise read out twice as a bare number.
           aria-hidden="true"
-          className="shrink-0 whitespace-nowrap rounded-full bg-brand-orange px-[7px] py-[2px] text-[10.5px] font-bold leading-[1.3] tabular-nums text-white"
+          className="shrink-0 whitespace-nowrap rounded-full bg-brand-orangeFill px-[7px] py-[2px] text-[10.5px] font-bold leading-[1.3] tabular-nums text-white"
         >
           {badge}
         </span>

@@ -162,7 +162,7 @@ export function GrantReportConsole({
             {firstHref && (
               <Link
                 href={firstHref}
-                className="inline-flex h-9 shrink-0 items-center gap-2 rounded-sharp bg-brand-orange px-[17px] text-[13px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+                className="inline-flex h-9 shrink-0 items-center gap-2 rounded-sharp bg-brand-orangeFill px-[17px] text-[13px] font-semibold text-white transition-colors duration-[120ms] hover:bg-brand-orangeFillHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
               >
                 Start review
                 <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
@@ -205,7 +205,7 @@ export function GrantReportConsole({
                     <span
                       className={cn(
                         "rounded-full px-1.5 text-[10px] font-bold leading-[1.4] tabular-nums",
-                        bucket === b.key ? "bg-brand-orange text-white" : "bg-brand-navy/[0.08] text-ink-muted",
+                        bucket === b.key ? "bg-brand-orangeFill text-white" : "bg-brand-navy/[0.08] text-ink-muted",
                       )}
                     >
                       {counts[b.key]}
