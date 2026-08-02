@@ -42,6 +42,17 @@ export const BRAND = {
   // display figures, and anything on ink. They are not interchangeable — the pair exists
   // so "orange small text" has a right answer instead of being quietly illegible.
   orangeDeep: "#A8501A",
+  // The warm accent ON INK, and the mirror image of orangeDeep — which is the part that
+  // is easy to get backwards. On a light ground the accent must go DARKER to clear
+  // contrast; on a dark one it must go LIGHTER. Brand orange on #0A1420 falls below AA,
+  // so the verdict word on the fit-score panel is this. Same accent, opposite directions,
+  // chosen by what is behind it.
+  amberOnDark: "#E2B457",
+  // Reject. Deliberately not `destructive` (the shadcn semantic red, tuned for
+  // form-validation copy) and deliberately muted: rejecting a grant is a routine,
+  // reversible call an analyst makes dozens of times a morning, not a destructive action
+  // that should shout.
+  reject: "#B4462F",
   // Completion green for use ON the navy IntellEngine gradient (its checklist ticks).
   // Deliberately NOT `success` (#059669): that value is tuned for dark-on-light and
   // does not clear contrast against navy, so the two are different tokens for
@@ -156,6 +167,23 @@ export const STAGE_ON_INK: Record<"triage" | "client" | "approved" | "pursuit" |
   pursuit: "rgba(255,255,255,0.40)",
   passed: "rgba(255,255,255,0.34)",
 };
+
+// ── Rating segments ─────────────────────────────────────────────────────────
+// The three-segment bars on the grant-review fit factors.
+//
+// RATING IS CARRIED BY HOW MANY SEGMENTS ARE FILLED, NOT BY HUE. The previous build ran
+// green / gold / red side by side, which is close to worst-case for red-green colour
+// blindness — the three ratings were distinguishable only by the one channel a red-green
+// viewer cannot use. Counting filled segments works for everyone, and the word underneath
+// says it in text as well.
+//
+// Exactly ONE row on a screen is allowed to light orange: the single worst factor, which
+// is the thing the reviewer is being pointed at. Spreading it to every weak factor is how
+// a highlight stops being a highlight.
+export const RATING = {
+  filled: "#8F8B82", // a filled segment on a neutral row
+  empty: "#E0DCD5",  // an unfilled segment
+} as const;
 
 // ── Elevation ───────────────────────────────────────────────────────────────
 // TWO steps, plus a hover state on the card step. Not three levels: `cardHover` is

@@ -29,6 +29,11 @@ export interface EligibilityVerdict {
   level: EligibilityLevel;
   headline: string;
   reasons: string[];
+  // WHICH eligible-entity-type string the client matched, verbatim from the NOFO. Null
+  // when nothing matched or there was nothing to match against. The staff review screen
+  // names it ("qualifies as a domestic private nonprofit entity") — a verdict that cannot
+  // say what it qualifies UNDER is not a verdict, it is a colour.
+  matchedType: string | null;
   // NOFO facts, surfaced verbatim for the client to read.
   eligibleTypes: string[];
   excluded: string | null;
@@ -85,6 +90,9 @@ export function computeEligibility(input: EligibilityInput): EligibilityVerdict 
 
   const keywords = orgType ? keywordsForOrgType(orgType) : [];
   const eligibleText = eligibleTypes.join(" | ");
+  // Matched per-entry rather than against the joined text, so the verdict can name the
+  // specific clause rather than the whole list.
+  const matchedType = keywords.length ? eligibleTypes.find((t) => textMatches(t, keywords)) ?? null : null;
 
   // A genuine all-client structural limitation is the strongest signal. Rare in
   // IntellEngine (matched cards on skip_reason grants are suppressed upstream), so
@@ -131,5 +139,5 @@ export function computeEligibility(input: EligibilityInput): EligibilityVerdict 
     if (level === "eligible") level = "caution";
   }
 
-  return { level, headline, reasons, eligibleTypes, excluded, geographic, structuralNote };
+  return { level, headline, reasons, matchedType, eligibleTypes, excluded, geographic, structuralNote };
 }

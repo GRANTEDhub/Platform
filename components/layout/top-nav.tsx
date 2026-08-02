@@ -156,7 +156,7 @@ export function TopNav({
               aria-expanded={moreOpen}
               aria-haspopup="menu"
               className={cn(
-                "flex items-center gap-1 rounded-md px-3 py-[7px] text-[13.5px] transition-colors duration-[120ms] ease-out",
+                "flex items-center gap-1 rounded-sharp px-3 py-[7px] text-[13.5px] transition-colors duration-[120ms] ease-out",
                 moreActive || moreOpen
                   ? "bg-white/10 font-semibold text-white"
                   : "text-white/[0.62] hover:bg-white/5 hover:text-white",
@@ -187,7 +187,7 @@ export function TopNav({
           onClick={() => setNavOpen((v) => !v)}
           aria-expanded={navOpen}
           aria-label="Main menu"
-          className={cn("rounded-md p-2 text-white/[0.62] transition-colors hover:bg-white/5 hover:text-white", FOCUS)}
+          className={cn("rounded-sharp p-2 text-white/[0.62] transition-colors hover:bg-white/5 hover:text-white", FOCUS)}
         >
           <Menu className="h-5 w-5" />
         </button>
@@ -310,7 +310,7 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
       href={item.href}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "flex items-center gap-[7px] rounded-md px-3 py-[7px] text-[13.5px] transition-colors duration-[120ms] ease-out",
+        "flex items-center gap-[7px] rounded-sharp px-3 py-[7px] text-[13.5px] transition-colors duration-[120ms] ease-out",
         active
           ? "bg-white/10 font-semibold text-white"
           : "font-medium text-white/[0.62] hover:bg-white/5 hover:text-white",
