@@ -14,16 +14,21 @@ const RING_TONE: Record<FitBand["tone"], { border: string; word: string }> = {
 // The circular fit badge: bare score + "Fit" inside the ring, the band word
 // (Strong fit / Conditional / Weak) beneath it, outside the circle. `lg` is the
 // detail hero; the default is the list row.
+//
+// UNSCORED IS ITS OWN STATE, not a zero and not a floor. review_cards.fit_score is
+// nullable and a card can exist unscored; this used to be coerced to 1 upstream, which
+// showed a confident "Weak" for a grant nobody had assessed. A dash and the word say
+// what is actually true.
 export function ScoreRing({
   fitScore,
   band,
   size = "md",
 }: {
-  fitScore: number;
-  band: FitBand;
+  fitScore: number | null;
+  band: FitBand | null;
   size?: "md" | "lg";
 }) {
-  const tone = RING_TONE[band.tone];
+  const tone = band ? RING_TONE[band.tone] : RING_TONE.fair;
   const box = size === "lg" ? "h-[92px] w-[92px]" : "h-[68px] w-[68px]";
   const num = size === "lg" ? "text-[34px]" : "text-[24px]";
   const word = size === "lg" ? "text-[10px]" : "text-[9px]";
@@ -31,10 +36,14 @@ export function ScoreRing({
   return (
     <div className="flex shrink-0 flex-col items-center">
       <div className={`flex ${box} flex-col items-center justify-center rounded-full border-2 ${tone.border}`}>
-        <span className={`${num} font-semibold leading-none text-brand-navy`}>{fitScore}</span>
+        <span className={`${num} font-semibold leading-none ${fitScore === null ? "text-ink-faint" : "text-brand-navy"}`}>
+          {fitScore ?? "–"}
+        </span>
         <span className={`mt-0.5 ${word} font-semibold uppercase tracking-wide text-muted-foreground`}>Fit</span>
       </div>
-      <span className={`mt-1.5 ${bandWord} font-semibold uppercase tracking-wide ${tone.word}`}>{band.label}</span>
+      <span className={`mt-1.5 ${bandWord} font-semibold uppercase tracking-wide ${tone.word}`}>
+        {band?.label ?? "Not scored"}
+      </span>
     </div>
   );
 }

@@ -107,8 +107,13 @@ export interface ReportItem {
   grantId: string | null;
   title: string;
   funder: string | null;
-  fitScore: 1 | 2 | 3;
-  band: FitBand;
+  // NULLABLE, and the null is real: review_cards.fit_score has no NOT NULL
+  // constraint (0001_init) and a card can exist unscored. This used to coerce to 1,
+  // which rendered an unscored grant as a confident "Weak" — on the client's own
+  // Grant Report as well as staff's — and dragged the average-fit rollup down with it.
+  // Every consumer must handle null rather than the shape inventing a floor.
+  fitScore: 1 | 2 | 3 | null;
+  band: FitBand | null;
   role: string | null; // proposed_role (Prime / Partner) — a real prime-vs-partner signal
   focusAreas: string[];
   awardRange: string;
@@ -196,14 +201,14 @@ function toPlain(html: string | null | undefined, max = 240): string | null {
 export function toReportItem(card: ReportCardRow): ReportItem {
   const g = card.grants;
   const days = deadlineDaysLeft(g?.submission_deadline);
-  const fit = (card.fit_score ?? 1) as 1 | 2 | 3;
+  const fit = (card.fit_score ?? null) as 1 | 2 | 3 | null;
   return {
     id: card.id,
     grantId: card.grant_id,
     title: g?.title || "Untitled opportunity",
     funder: g?.funder ?? null,
     fitScore: fit,
-    band: FIT_BAND[fit] ?? FIT_BAND[1],
+    band: fit === null ? null : FIT_BAND[fit],
     role: card.proposed_role,
     focusAreas: (g?.focus_areas ?? []).slice(0, 2),
     awardRange: formatAwardRange(g?.award_range_min, g?.award_range_max),
@@ -228,7 +233,11 @@ export function toReportItem(card: ReportCardRow): ReportItem {
 // bottom), then title for a stable order.
 export function toReportItems(cards: ReportCardRow[]): ReportItem[] {
   return cards.map(toReportItem).sort((a, b) => {
-    if (b.fitScore !== a.fitScore) return b.fitScore - a.fitScore;
+    // Unscored sinks below every scored card. It is not a zero — it is an absence,
+    // and ranking it first or last by accident is how it gets read as one.
+    const af = a.fitScore ?? -1;
+    const bf = b.fitScore ?? -1;
+    if (bf !== af) return bf - af;
     const ad = a.deadlineDaysLeft, bd = b.deadlineDaysLeft;
     if (ad !== bd) {
       if (ad === null) return 1;
@@ -271,16 +280,22 @@ export function deciderLabel(
 
 export interface ReportStats {
   matched: number;
-  avgFit: string | null; // one-decimal string, e.g. "2.7"; null when empty
+  // Mean over the SCORED items only. Null when nothing is scored — an average that
+  // silently counted unscored cards as 1 was reporting a worse book than exists.
+  avgFit: string | null;
+  // How many carry no score at all, so a surface can say so instead of implying the
+  // average covers everything.
+  unscored: number;
   dueSoon: number; // deadline within 30 days
 }
 
 export function reportStats(items: ReportItem[]): ReportStats {
-  const matched = items.length;
-  const avg = matched ? items.reduce((s, i) => s + i.fitScore, 0) / matched : null;
+  const scored = items.filter((i): i is ReportItem & { fitScore: 1 | 2 | 3 } => i.fitScore !== null);
+  const avg = scored.length ? scored.reduce((s, i) => s + i.fitScore, 0) / scored.length : null;
   return {
-    matched,
+    matched: items.length,
     avgFit: avg === null ? null : avg.toFixed(1),
+    unscored: items.length - scored.length,
     dueSoon: items.filter((i) => i.deadlineSoon).length,
   };
 }
