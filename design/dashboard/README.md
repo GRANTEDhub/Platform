@@ -6,7 +6,7 @@ native 1440×900.
 
 | File | Status |
 |---|---|
-| `Client Dashboard v7 - Ink.dc.html` | **Current.** What the page is built to. |
+| `Client Dashboard v8 - Ink.dc.html` | **Current.** What the page is built to. |
 | `Client Dashboard - Final.dc.html` | Superseded. Kept because most of its card-level reasoning still holds and `Claude Code Handoff.md` documents it. |
 
 `Claude Code Handoff.md` carries the earlier design intent and alignment/empty-state
@@ -22,17 +22,31 @@ in it. Keep it that way if you refresh either export.
 Federal program names are real public NOFO titles, which is fine — the association
 between a client and a pursuit is the part that must not be real.
 
-## What v7 changes
+## What the ink pass changes
 
-The **masthead is the summary.** Identity, actions, and the entire five-stage pipeline
-sit on one band of ink; the white identity strip and the pipeline card underneath it are
-both gone. That is the design's actual argument — a client's funnel is not a card on the
-page, it is the page's summary — and collapsing the two buys back roughly 90px, which is
-most of what makes 1440×900 fit without scrolling.
+The **masthead is the summary.** Identity, actions, and the entire pipeline sit on one
+band of ink; the white identity strip and the pipeline card underneath it are both gone.
+That is the design's actual argument — a client's funnel is not a card on the page, it is
+the page's summary — and collapsing the two buys back roughly 90px, which is most of what
+makes 1440×900 fit without scrolling.
 
 Everything else is the same surfaces restyled to the ink system, minus one and plus one:
 the **upcoming-deadlines rail card is dropped** (every deadline it carried is already on a
 Grant Report row with a day count) and an **activity feed** takes its slot.
+
+### The masthead arrangement is the Portfolio's, exactly
+
+Four display figures → divider → a compact pipeline block that flexes to fill → divider →
+the backlog sparkline pinned right.
+
+The v7 pass built the five stages as full-width cells with their own figures instead,
+which turned the strip into a row of six equal things with no hierarchy and no reason to
+look at any of them first. **The four figures are the answers; the pipeline is the shape
+behind them.** Unassessed (with its money), Decided, To next deadline, Portfolio assessed.
+
+**The sparkline is load-bearing, not ornament.** Without it the pipeline block expands
+into that space and the row reads unbalanced — which is precisely why it must be real. A
+flat placeholder row would be a fabricated trend sitting where a real one is promised.
 
 ## The ink direction
 
@@ -98,20 +112,24 @@ Two of the four note types ship (`lib/clients/ambient-note.ts`):
 problem, and not faked in the meantime.
 
 Renders nothing when no rule fires, which is the intended common case. Suppressed at 4+
-other attention rows. **Dismissal is not built** — "does not return until the facts
-change" needs persisted state, i.e. a migration. The note only exists while its condition
-holds and clears itself when you act, so it should not need dismissing; add it if it
-turns out to be noisy.
+other attention rows, and it counts toward the card's badge when it does fire — it names a
+specific piece of work and points at it, which is the same claim every other counted row
+makes.
 
-## What v7 unlocked, and what's blocked
+**Dismissal is not built.** "Does not return until the facts change" needs persisted
+state, i.e. a migration. The note only exists while its condition holds and clears itself
+when you act, so it should not need dismissing; add it if it turns out to be noisy.
+
+## What is real, and what is blocked
 
 Real now:
 
 | Element | How |
 |---|---|
-| Per-stage dollar rollups | `grants.award_range_*` summed by stage. **Estimated award ceilings, not expected receipts**, and the masthead says so in one line rather than an "est." per cell. Grants with no published figure are counted and named — a $31M pipeline with eight unpriced grants is a different fact from one with none. |
+| Dollar rollup | `grants.award_range_*` summed. **Estimated award ceilings, not expected receipts**, and the marker is inline on the Unassessed label rather than a caption under the strip. Grants with no published figure are counted on the pipeline line — a $31M pipeline with three unpriced grants is a different fact from one with none. |
 | "Portfolio assessed" | Everything past triage over the total. Assessed means a human made a call, not that the call was yes. |
 | "Updated 4h ago" | `match_attempts` with `outcome='carded'` — when the engine last produced a card for this client is exactly when the list last changed. |
+| **Backlog · 8 wks sparkline** | **Reverses the Portfolio pass's conclusion.** A general trend does need a snapshot table; this specific one does not, because both edges of "untriaged" are already timestamped — a card *enters* the backlog at its first carded attempt and *leaves* at the earliest of `interested_at` / `sme_released_at` / `sent_at` / `decided_at`. Given an interval per card, the count at any past instant is how many intervals span it. `lib/clients/backlog.ts`. Cards with no carded attempt (manual adds) cannot be placed in time and are counted as `unplaceable`; the chart hides itself rather than draw a series built on half a book. |
 
 Blocked, and rendered as such:
 
@@ -122,6 +140,7 @@ Blocked, and rendered as such:
 | "Dr. Whitfield opened Rural Health Network" | Nothing records a client-side portal read. Needs an event stream. |
 | IntellEngine "62%" + its checklist | `draftProgress` is a four-step ladder, so it is 25/50/75/100 — 62% is not representable, and the drawn checklist rows ("Budget frame · 4 years, $1.9M") are content-specific and unbacked. Layout kept, real ladder kept. |
 | "Consortium letters · 2 outstanding" | Letters of support are not modelled anywhere. Same blocker as the Portfolio's "2 letters out". |
+| Ambient-note dismissal | Needs persisted per-client state, i.e. a migration. Not built — see below. |
 | "Triage window closes Aug 4" | Still no triage-window field. The slot carries the nearest real deadline, labelled as one. |
 
 ## Fit is `/3`, not `/4`
@@ -129,6 +148,31 @@ Blocked, and rendered as such:
 The mockup draws `3.4/4` and `2.1/4`. `fit_score` is the engine's **1–3 ordinal** — a
 seat ceiling with strength placed inside it. The rule the design states (always show the
 denominator) is right and shipped; the denominator is just 3.
+
+## The IntellEngine no-draft state recommends, it does not wait
+
+"No drafts yet. Start from an approved match." plus a New draft button is a tool sitting
+idle: correct, useless, and a large dead box in a 1fr column beside a Grant Report card
+carrying real rows. The empty state instead **names the approved match that should be
+scoped next** — nearest deadline, nothing started — against a 2px orange rule, with its
+funder and award, and one italic-serif sentence on why it is that one.
+
+The sentence is assembled from facts, and every clause drops when its fact is missing
+rather than being guessed at, so it gets shorter instead of getting invented. "It is the
+only approved match with nothing drafted" is only said when that is true.
+
+Primary is **"Scope this one"**, secondary is "Pick another" — the difference between a
+tool waiting for input and a colleague pointing at something. "Scope this one" carries
+`?start=<cardId>` to the IntellEngine hub, which opens its picker with that grant first.
+Deliberately **not** an auto-create on mount: a mutation fired from a URL means a browser
+refresh silently produces a second draft.
+
+**Fallback:** with no approved match at all there is nothing to recommend, and the panel
+says so in one line.
+
+**Height is a constraint.** This shares a `1fr` row with ~330px of real content, so the
+empty state has to fit the same box or its buttons clip out of existence. Do not add
+explanatory copy to it.
 
 ## States not drawn
 

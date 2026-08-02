@@ -17,7 +17,7 @@ import {
   type DashReportRow,
   type DashReportMetrics,
 } from "@/components/clients/client-grant-report-card";
-import { ClientDraftProgress, type DashDraft } from "@/components/clients/client-draft-progress";
+import { ClientDraftProgress, type DashDraft, type DraftCandidate } from "@/components/clients/client-draft-progress";
 import { ClientCommunityContext } from "@/components/clients/client-community-context";
 import { ClientActivity } from "@/components/clients/client-activity";
 import type { CommunityView } from "@/lib/clients/community";
@@ -133,6 +133,7 @@ export function ClientDashboard({
   events,
   ambient,
   ghost,
+  draftCandidate,
   scorer,
   attentionNote,
   bookingUrl,
@@ -175,6 +176,8 @@ export function ClientDashboard({
   // Console-only: the oversized figure bled off the bottom-right of the body. The
   // unassessed count, at 3% ink. Null renders nothing.
   ghost?: number | null;
+  // Console-only: what IntellEngine should scope next when no draft is in flight.
+  draftCandidate?: DraftCandidate | null;
   // Rail, console-only: the grant scorer. Passed as a node because it is a client
   // component with its own state and the console only needs to place it.
   scorer?: React.ReactNode;
@@ -213,6 +216,7 @@ export function ClientDashboard({
               community={community}
               events={events}
               ambient={ambient}
+              draftCandidate={draftCandidate}
               scorer={scorer}
               attentionNote={attentionNote}
               roadmapHref={roadmapHref}
@@ -304,6 +308,7 @@ function ConsoleBody({
   community,
   events,
   ambient,
+  draftCandidate,
   scorer,
   attentionNote,
   roadmapHref,
@@ -316,6 +321,7 @@ function ConsoleBody({
   community?: CommunityView;
   events?: ActivityEvent[];
   ambient?: AmbientNote | null;
+  draftCandidate?: DraftCandidate | null;
   scorer?: React.ReactNode;
   attentionNote?: string | null;
   roadmapHref: string;
@@ -346,6 +352,7 @@ function ConsoleBody({
               drafts={drafts.list}
               intellEngineHref={intellEngineHref}
               emptyNote={drafts.emptyNote}
+              candidate={draftCandidate}
             />
           )}
         </div>
@@ -382,8 +389,10 @@ function AttentionCard({
   const rows = pinned ?? [];
   // The header badge counts THINGS THAT WANT YOU, not rows on screen: a pinned queue at
   // zero is on the card but is not asking for anything. So it is the pinned rows carrying
-  // a count, plus the dynamic items.
-  const live = rows.filter((r) => r.count > 0).length + items.length;
+  // a count, plus the dynamic items, plus the ambient note when one fired -- the note
+  // names a specific piece of work and points at it, which is the same claim every other
+  // counted row makes.
+  const live = rows.filter((r) => r.count > 0).length + items.length + (ambient ? 1 : 0);
   return (
     <section className="shrink-0 overflow-hidden rounded-sharp border border-edge bg-white">
       <div

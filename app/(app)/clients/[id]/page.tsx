@@ -22,6 +22,8 @@ import { formatAwardRange } from "@/lib/grants/format";
 import { rollUpClient, type PricedCard } from "@/lib/clients/dashboard-summary";
 import { deriveAmbientNote } from "@/lib/clients/ambient-note";
 import { deriveActivity } from "@/lib/clients/activity";
+import { deriveBacklog, leftTriageAt } from "@/lib/clients/backlog";
+import { type DraftCandidate } from "@/components/clients/client-draft-progress";
 import type { Client, CardDecision, Grant, IntellEngineDraft, PursuitPath } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -148,11 +150,14 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   // orders them, so the dashboard card leads with the same draft the hub does.
   const { data: draftRows } = await supabase
     .from("intellengine_drafts")
-    .select("id, title, status, updated_at")
+    .select("id, card_id, title, status, updated_at")
     .eq("client_id", params.id)
     .order("updated_at", { ascending: false });
 
-  const draftRecords = (draftRows ?? []) as Pick<IntellEngineDraft, "id" | "title" | "status" | "updated_at">[];
+  const draftRecords = (draftRows ?? []) as Pick<
+    IntellEngineDraft,
+    "id" | "card_id" | "title" | "status" | "updated_at"
+  >[];
   const drafts: DashDraft[] = draftRecords.map((d) => ({ id: d.id, title: d.title, status: d.status }));
 
   // grant_id -> ms of the first carded attempt for that pair.
@@ -434,6 +439,18 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   const book = rollUpClient(priced);
   const stageLabel = new Map(book.stages.map((s) => [s.key, s.label]));
 
+  // The masthead's backlog sparkline. Reconstructed from timestamps this page already
+  // has -- see lib/clients/backlog.ts, which reverses the earlier conclusion that a trend
+  // needs a nightly snapshot table. It does for a general metric; it does not for THIS
+  // one, because both edges of "untriaged" are already recorded.
+  const backlog = deriveBacklog(
+    cards.map((c) => ({
+      enteredAt: c.grant_id ? (firstCarded.get(c.grant_id) ?? null) : null,
+      leftAt: leftTriageAt(c),
+    })),
+    now,
+  );
+
   // The date in the pipeline header. The design reads "triage window closes {date}";
   // there is no triage-window field, and a placeholder date must never ship on a
   // surface staff quote to a client. So the slot carries the nearest REAL deadline
@@ -441,12 +458,13 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   // excluded (a closed decision's deadline is not upcoming) and so are dates already
   // behind us -- an overdue date presented as the "next deadline" would be its own
   // small lie. Null when nothing qualifies, and the clause drops entirely.
-  const nextDeadlineLabel =
+  const nextDeadline =
     liveCards
       .map((c) => c.grant?.submission_deadline)
       .filter((d): d is string => Boolean(d) && (deadlineDaysLeft(d) ?? -1) >= 0)
-      .sort()
-      .map((d) => format(parseISO(d), "MMM d"))[0] ?? null;
+      .sort()[0] ?? null;
+  const nextDeadlineLabel = nextDeadline ? format(parseISO(nextDeadline), "MMM d") : null;
+  const nextDeadlineDays = deadlineDaysLeft(nextDeadline);
 
   // The upcoming-deadlines rail card is GONE -- the design drops it, and every deadline
   // it carried is already on a Grant Report row with a day count beside it. The rail slot
@@ -471,6 +489,53 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
     // the same thing in both places.
     otherRows: pinnedRows.filter((r) => r.count > 0).length + consoleActionItems.length,
   });
+
+  // What IntellEngine should scope next, for the panel's no-draft state. The approved
+  // match with the nearest deadline that nobody has started -- see ConsoleDraftPanel for
+  // why the empty state recommends instead of waiting. Null when there is no approved
+  // match at all, which gets its own line rather than an invented recommendation.
+  const draftedCardIds = new Set(draftRecords.map((d) => d.card_id).filter(Boolean));
+  const draftCandidate: DraftCandidate | null = (() => {
+    const eligible = cards
+      .filter((c) => c.decision === "approved" && !draftedCardIds.has(c.id))
+      .map((c) => ({ card: c, days: deadlineDaysLeft(c.grant?.submission_deadline) }))
+      // Undated sorts last: "no deadline" is not urgency, it is the absence of a clock.
+      .sort((a, b) => (a.days ?? Number.POSITIVE_INFINITY) - (b.days ?? Number.POSITIVE_INFINITY));
+    const pick = eligible[0];
+    if (!pick) return null;
+
+    const { card, days } = pick;
+    const sinceApproved =
+      card.decided_at !== null
+        ? Math.max(0, Math.floor((now - Date.parse(card.decided_at)) / 86_400_000))
+        : null;
+
+    // Every clause is dropped when its fact is missing rather than guessed at, so the
+    // sentence gets shorter instead of getting invented. The closing line is only true
+    // when this really is the only unstarted approval, so it is only said then.
+    const parts: string[] = [];
+    if (sinceApproved !== null) {
+      parts.push(`Approved ${sinceApproved === 0 ? "today" : `${sinceApproved} ${sinceApproved === 1 ? "day" : "days"} ago`}`);
+    }
+    if (days !== null && days >= 0) {
+      parts.push(`${days} ${days === 1 ? "day" : "days"} left on the clock`);
+    } else if (days !== null) {
+      parts.push("the deadline has already passed");
+    }
+    const lead = parts.length > 0 ? `${parts.join(" with ")}.` : "Approved and not yet scoped.";
+    const tail =
+      eligible.length === 1
+        ? " It is the only approved match with nothing drafted."
+        : ` ${eligible.length - 1} other${eligible.length === 2 ? "" : "s"} are waiting too.`;
+
+    return {
+      cardId: card.id,
+      title: card.grant?.title || "Untitled opportunity",
+      meta: [card.grant?.funder, awardLabel(card.grant), "approved, never started"].filter(Boolean).join(" · "),
+      rationale: lead + tail,
+      href: `${intellEngineHref}?start=${card.id}`,
+    };
+  })();
 
   // Rail: what has moved lately. NOT "since you were last here" -- see
   // lib/clients/activity.ts for why that needs a migration and what is derived instead.
@@ -609,7 +674,9 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
           meta={contextMeta}
           statusLabel={isLead ? "prospect" : client.status}
           book={book}
-          assessedLabel={book.total > 0 ? "Portfolio assessed" : "Nothing matched yet"}
+          decided={reportMetrics.decided}
+          nextDeadlineDays={nextDeadlineDays}
+          backlog={backlog}
           nextDeadlineLabel={nextDeadlineLabel}
           backHref="/clients"
           backLabel="Portfolio"
@@ -631,6 +698,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         list: drafts,
         emptyNote: "No proposals started yet. IntellEngine is where a matched grant becomes a draft.",
       }}
+      draftCandidate={draftCandidate}
       // Pure read of the community_context already on the record -- no fetch here.
       community={buildCommunityView(client)}
       events={events}

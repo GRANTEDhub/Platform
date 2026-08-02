@@ -23,7 +23,16 @@ function grantOf(g: GrantEmbed) {
 // client's pursuit decision (that stays an admin action via the pursuit chooser),
 // so it never touches the admin-only approval trigger and a contractor can use it.
 // Admin AND contractor (requireUser); the 0062 staff RLS scopes the reads/writes.
-export default async function StaffIntellEngineHub({ params }: { params: { id: string } }) {
+export default async function StaffIntellEngineHub({
+  params,
+  searchParams,
+}: {
+  params: { id: string };
+  // ?start=<cardId> arrives from the dashboard's "Scope this one" — see the hub's
+  // startCardId prop. An unknown id is harmless: the picker just opens in its normal
+  // order, which is what it would have done anyway.
+  searchParams?: { start?: string };
+}) {
   await requireUser();
   const supabase = createClient();
 
@@ -90,6 +99,7 @@ export default async function StaffIntellEngineHub({ params }: { params: { id: s
         candidates={candidates}
         orbitCount={orbitCount}
         clientId={client.id}
+        startCardId={searchParams?.start ?? null}
         backHref={`/clients/${client.id}`}
       />
     </HubShell>

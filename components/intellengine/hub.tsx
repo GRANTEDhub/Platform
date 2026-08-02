@@ -31,12 +31,18 @@ export function IntellEngineHub({
   candidates,
   orbitCount,
   clientId,
+  startCardId,
   backHref = "/portal",
 }: {
   clientName: string;
   drafts: HubDraft[];
   candidates: HubCandidate[];
   orbitCount: number;
+  // Arrived here from the dashboard's "Scope this one". Opens the picker with that
+  // grant first, rather than auto-creating the draft: a mutation fired from a URL on
+  // mount would make a browser refresh silently produce a second draft. One click
+  // away, and the button still lands on exactly the grant it named.
+  startCardId?: string | null;
   // Staff mode (driven from the console client view): the target client is passed
   // explicitly, so drafting acts on THAT client. In staff mode, developing a grant
   // is DRAFT-ONLY -- it never routes/approves the card (that stays an admin action
@@ -55,7 +61,11 @@ export function IntellEngineHub({
     staffMode
       ? `/intellengine/${resumeStep(status)}?draft=${id}&from=${encodeURIComponent(backHref)}`
       : `/intellengine/${id}`;
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(!!startCardId && candidates.length > 0);
+  // The named grant first; everything else keeps its order.
+  const ordered = startCardId
+    ? [...candidates].sort((a, b) => Number(b.cardId === startCardId) - Number(a.cardId === startCardId))
+    : candidates;
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Per-draft delete: confirmId is the row showing its inline "Delete?" confirm;
@@ -202,7 +212,7 @@ export function IntellEngineHub({
             Pick a grant to develop
           </p>
           <div className="space-y-2">
-            {candidates.map((c) => (
+            {ordered.map((c) => (
               <button
                 key={c.cardId}
                 type="button"

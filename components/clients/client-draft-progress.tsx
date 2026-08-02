@@ -16,9 +16,8 @@ import type { IntellEngineDraftStatus } from "@/types/database";
 // the caption says so rather than letting a client read it as three-quarters drafted.
 //
 // TWO VARIANTS, as with the Grant Report card: this renders in the staff console and in
-// the client portal. "console" is the approved design — and it is the ONE surface in the
-// product allowed a gradient and a glow, because it is the one that represents the AI
-// doing work. Everywhere else that treatment would be decoration.
+// the client portal. "console" is the approved design; "portal" is what the portal has
+// always shipped.
 
 export interface DashDraft {
   id: string;
@@ -26,10 +25,26 @@ export interface DashDraft {
   status: IntellEngineDraftStatus;
 }
 
+// What the console panel offers when there is no draft in flight: the approved match that
+// should be scoped next. See the note on ConsoleDraftPanel for why the empty state
+// recommends rather than waits.
+export interface DraftCandidate {
+  cardId: string;
+  title: string;
+  // "HRSA · $900K · approved, never started" — joined by the caller, which owns the
+  // award formatting and its estimate marker.
+  meta: string;
+  // One sentence on why this one. Rendered in italic serif, so it must read as a
+  // sentence, not a label.
+  rationale: string;
+  href: string;
+}
+
 export function ClientDraftProgress({
   drafts,
   intellEngineHref,
   emptyNote,
+  candidate,
   variant = "portal",
 }: {
   // Most-recently-updated first (the caller already orders by updated_at, which is
@@ -37,13 +52,18 @@ export function ClientDraftProgress({
   drafts: DashDraft[];
   intellEngineHref: string;
   emptyNote: string;
+  // Console only. Null when there is no approved match to point at, which is a real
+  // state and gets its own line rather than an invented recommendation.
+  candidate?: DraftCandidate | null;
   variant?: "console" | "portal";
 }) {
   const lead = drafts[0];
   const progress = lead ? draftProgress(lead.status) : null;
 
   if (variant === "console") {
-    return <ConsoleDraftPanel drafts={drafts} intellEngineHref={intellEngineHref} />;
+    return (
+      <ConsoleDraftPanel drafts={drafts} intellEngineHref={intellEngineHref} candidate={candidate ?? null} />
+    );
   }
 
   return (
@@ -118,19 +138,30 @@ export function ClientDraftProgress({
 // rather than as emphasis. The panel is still the only DARK card on the page, which is
 // the emphasis it actually needed.
 //
-// NO DRAFTS keeps the panel, replacing the progress block with one line and promoting
-// "New draft" to the white primary. The panel disappearing would change the page's shape,
-// and this is half of a side-by-side pair — its absence would leave the Grant Report card
-// stretched across the full column.
+// NO DRAFTS RECOMMENDS RATHER THAN WAITS, and that is the panel's whole argument in its
+// most common state. "No drafts yet. Start from an approved match." plus a New draft
+// button is a tool sitting idle: correct, useless, and a large dead box in a 1fr column
+// beside a Grant Report card carrying real rows. Naming the approved match that should be
+// scoped next — with its agency, its money, and one sentence on why it is that one —
+// makes the same box a colleague pointing at something.
+//
+// It never invents the recommendation. With no approved match to point at there is
+// nothing to recommend, and the panel says that in one line instead.
+//
+// HEIGHT IS A CONSTRAINT, NOT A PREFERENCE. This shares a 1fr row with a card of about
+// 330px of real content, so the empty state has to fit the same box or its buttons clip
+// out of existence. Do not add explanatory copy to it.
 const FOCUS =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-navy";
 
 function ConsoleDraftPanel({
   drafts,
   intellEngineHref,
+  candidate,
 }: {
   drafts: DashDraft[];
   intellEngineHref: string;
+  candidate: DraftCandidate | null;
 }) {
   const lead = drafts[0];
   const progress = lead ? draftProgress(lead.status) : null;
@@ -149,21 +180,62 @@ function ConsoleDraftPanel({
           Turns an approved match into a scoped draft — narrative, budget frame, consortium.
         </p>
 
-        <div className="mt-3.5 border-t border-white/[0.14] pt-[13px]">
+        <div className="mt-3.5 flex flex-1 flex-col border-t border-white/[0.14] pt-[13px]">
           {!lead || !progress ? (
             <>
-              <p className="text-[12.5px] leading-[1.5] text-white/[0.65]">
-                No drafts yet. Start from an approved match.
-              </p>
-              <div className="mt-3.5">
-                <Link
-                  href={intellEngineHref}
-                  className={`inline-flex h-8 items-center gap-1.5 rounded-pill bg-white px-3.5 text-[12.5px] font-semibold text-brand-navy transition-opacity duration-[120ms] hover:opacity-90 ${FOCUS}`}
-                >
-                  New draft
-                  <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-                </Link>
+              <div className="flex items-center justify-between gap-2.5">
+                <p className="text-[10px] font-bold uppercase tracking-[0.11em] text-white/[0.5]">
+                  {candidate ? "Ready to scope" : "Nothing to scope yet"}
+                </p>
+                <span className="shrink-0 text-[11.5px] text-white/[0.58]">No drafts open</span>
               </div>
+
+              {candidate ? (
+                <>
+                  {/* A 2px orange rule, not a card inside a card. The recommendation is
+                      one thing being pointed at, and a bordered box around it would make
+                      it look like a list of one. */}
+                  <div className="mt-[13px] border-l-2 pl-[11px]" style={{ borderColor: BRAND.orange }}>
+                    <p className="truncate text-[13px] font-semibold">{candidate.title}</p>
+                    <p className="mt-1 truncate text-[11.5px] text-white/[0.62]">{candidate.meta}</p>
+                    {/* Italic serif, same voice as the ambient note on the attention
+                        card: this is a judgement, not a field. */}
+                    <p className="mt-[7px] font-serif text-[12.5px] italic leading-[1.5] text-white/80 [text-wrap:pretty]">
+                      {candidate.rationale}
+                    </p>
+                  </div>
+                  <div className="mt-auto flex items-center gap-2 pt-[13px]">
+                    <Link
+                      href={candidate.href}
+                      className={`inline-flex h-8 items-center gap-1.5 rounded-sharp bg-white px-3.5 text-[12.5px] font-semibold text-brand-navy transition-opacity duration-[120ms] hover:opacity-90 ${FOCUS}`}
+                    >
+                      Scope this one
+                      <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                    </Link>
+                    <Link
+                      href={intellEngineHref}
+                      className={`inline-flex h-8 items-center rounded-sharp border border-white/20 px-3 text-[12.5px] font-medium text-white/[0.85] transition-colors duration-[120ms] hover:border-white/40 ${FOCUS}`}
+                    >
+                      Pick another
+                    </Link>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="mt-[13px] text-[12.5px] leading-[1.5] text-white/[0.65]">
+                    Approve a match and IntellEngine can scope it.
+                  </p>
+                  <div className="mt-auto pt-[13px]">
+                    <Link
+                      href={intellEngineHref}
+                      className={`inline-flex h-8 items-center gap-1.5 rounded-sharp border border-white/20 px-3 text-[12.5px] font-medium text-white/[0.85] transition-colors duration-[120ms] hover:border-white/40 ${FOCUS}`}
+                    >
+                      Open IntellEngine
+                      <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                    </Link>
+                  </div>
+                </>
+              )}
             </>
           ) : (
             <>
