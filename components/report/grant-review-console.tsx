@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { ArrowLeft, Check, ExternalLink } from "lucide-react";
 import { BRAND, INK, RATING } from "@/lib/brand";
+import { sanitizeRichText } from "@/lib/sanitize/html";
+import { collapseDuplicatedBlock, previewHtml } from "@/lib/grants/description";
 import type { FitFactorView, ReviewFactor } from "@/lib/report/fit-factors";
 import type { EligibilityVerdict } from "@/lib/intellengine/eligibility";
 
@@ -70,6 +72,12 @@ export function GrantReviewConsole({
   title: string;
   // The programme narrative, parsed from the NOFO. Not a one-liner: what the funder is
   // buying, what awardees must do, how it is measured.
+  //
+  // RAW grants.description, markup and all. Sanitizing happens INSIDE this component on
+  // purpose: source descriptions carry HTML, and the first build of this screen rendered
+  // the field as an escaped React child, which printed literal <p><span style=...> tags
+  // on the page. Owning the sanitize here means no future caller can reintroduce that by
+  // passing the field straight through.
   summary: string | null;
   meta: ReviewMeta[];
   eligibility: EligibilityVerdict;
@@ -202,16 +210,23 @@ function OverviewCard({
         {title}
       </h1>
 
-      {summary && (
-        <p className="mt-2.5 line-clamp-4 text-[13px] leading-[1.6] text-ink-muted [text-wrap:pretty]">{summary}</p>
-      )}
+      <ProgrammeSummary raw={summary} />
 
       {meta.length > 0 && (
-        <div className="mt-[13px] flex flex-wrap gap-y-3 border-t border-hairline-strong pt-3">
+        <div className="mt-[13px] flex flex-wrap items-start gap-y-3 border-t border-hairline-strong pt-3">
           {meta.map((m) => (
-            <div key={m.label} className="min-w-[110px] flex-1">
+            // pr-4 and a 2-line clamp, because period_of_performance is free text and can
+            // run long ("Up to 5 years (expected start 9/30/2026, end 9/29/2031)"). Without
+            // the gutter a wrapped value ran straight into the next cell's figure, so
+            // "Awards expected 91" read as part of the term.
+            <div key={m.label} className="min-w-[110px] flex-1 pr-4">
               <p className={EYEBROW}>{m.label}</p>
-              <p className="mt-[5px] text-[14px] font-semibold tabular-nums text-brand-navy">{m.value}</p>
+              <p
+                className="mt-[5px] line-clamp-2 text-[14px] font-semibold tabular-nums text-brand-navy"
+                title={m.value}
+              >
+                {m.value}
+              </p>
             </div>
           ))}
         </div>
@@ -251,6 +266,26 @@ function OverviewCard({
         )}
       </div>
     </section>
+  );
+}
+
+// The programme narrative. Sanitized, de-duplicated, and word-capped rather than
+// line-clamped: `previewHtml` cuts on a word boundary and closes the tags it left open,
+// where a CSS clamp on injected markup can hide a paragraph mid-tag and leave the visible
+// text ending on a fragment.
+//
+// collapseDuplicatedBlock first — several sources repeat the same paragraph twice, and a
+// clamp over a duplicate shows the same sentence in both halves of the visible text.
+function ProgrammeSummary({ raw }: { raw: string | null }) {
+  if (!raw?.trim()) return null;
+  const clean = sanitizeRichText(collapseDuplicatedBlock(raw));
+  if (!clean.trim()) return null;
+  const { html } = previewHtml(clean, 80);
+  return (
+    <div
+      className="mt-2.5 space-y-2 text-[13px] leading-[1.6] text-ink-muted [text-wrap:pretty] [&_li]:ml-4 [&_li]:list-disc [&_strong]:font-semibold [&_strong]:text-brand-navy"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
   );
 }
 
@@ -309,9 +344,18 @@ function RationaleCard({
           Fit factors
         </p>
         {factors.unscored ? (
+          // Per-factor sub-scores shipped 2026-07-27 (migration 0038) with no backfill by
+          // design, and `factor_scores` is in the scorer tool's required set — so a null
+          // can only mean the card was matched before that date.
+          //
+          // AND NOTHING IN THE UI FIXES IT. "Refresh matches" skips already-attempted
+          // pairs (lib/clients/match-queue.ts) and check-grant returns early when a card
+          // already exists, so neither re-scores this pair. The copy says so rather than
+          // pointing at a button that will appear to do nothing.
           <p className="pt-2 text-[12.5px] leading-[1.5] text-ink-muted">
-            This card was scored before per-factor sub-scores shipped, so there is no breakdown to show. Re-running
-            matching produces one.
+            No per-factor breakdown — this card was matched before factor scoring shipped
+            (27 Jul). Existing matches are not re-scored, so it stays that way unless this
+            pair is scored again.
           </p>
         ) : (
           factors.factors.map((f, i) => <FactorRow key={f.key} factor={f} last={i === factors.factors.length - 1} />)
