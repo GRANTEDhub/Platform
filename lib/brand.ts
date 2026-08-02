@@ -42,6 +42,13 @@ export const SURFACE = {
   page: "#F1EEE8",   // page background — flat, no texture
   card: "#FFFFFF",   // every card
   sunken: "#FBFAF8", // inset fields inside white cards
+  // The "ink" direction's page ground — a full step darker and greyer than `page`.
+  // PORTFOLIO ONLY today (design/portfolio/, the v4 mockup). It is a separate token
+  // rather than a new value for `page` on purpose: flipping the global ground would
+  // repaint the approved client dashboard too, and that surface has not been redrawn.
+  // If Design carries the ink direction across the rest of the console this collapses
+  // into `page` and this token goes away.
+  ground: "#E9E7E0",
 } as const;
 
 // ── Text ────────────────────────────────────────────────────────────────────
@@ -75,7 +82,15 @@ export const LINE = {
 // unreadable.
 //
 // `client.text` exists because #C9962B does not clear contrast on white. Use it for
-// warning-state label text; never render the raw stage color as small type.
+// warning-state label text; never render the raw stage color as small type. `client.deep`
+// is the same job one background further down: on SURFACE.ground even `text` falls under
+// the small-text floor, so the Portfolio index's deadline dates use `deep`. Two values
+// because the required contrast depends on what is behind the type, which is the same
+// reason BRAND.successOnDark exists.
+//
+// `approved.onDark` is the mirror case: the teal reversed out of the navy masthead.
+// #2E7D91 on that chrome is unreadable, so the light twin is named here rather than
+// invented inline.
 //
 // `border` is a SEPARATE token from `tint`, not a tidier way of spelling it. A tint is a
 // fill covering an area; a 1px rule in the same hue disappears at that alpha, so a
@@ -96,8 +111,8 @@ export const LINE = {
 // future mockup specifies them, that value wins over these.
 export const STAGE = {
   triage: { color: "#E4761F", tint: "rgba(228,118,31,0.07)", border: "rgba(228,118,31,0.14)", muted: "#E4C4A3" },
-  client: { color: "#C9962B", tint: "rgba(201,150,43,0.14)", text: "#A87A1B", muted: "#DCC9A0" },
-  approved: { color: "#2E7D91", tint: "rgba(46,125,145,0.06)", border: "rgba(46,125,145,0.13)", muted: "#8FBAC4" },
+  client: { color: "#C9962B", tint: "rgba(201,150,43,0.14)", text: "#A87A1B", deep: "#856210", muted: "#DCC9A0" },
+  approved: { color: "#2E7D91", tint: "rgba(46,125,145,0.06)", border: "rgba(46,125,145,0.13)", onDark: "#7FC4D4", muted: "#8FBAC4" },
   pursuit: { color: "#0B7A5A", tint: "rgba(11,122,90,0.10)", muted: "#A3C6B8" },
   passed: { color: "#C9C2B8", tint: "rgba(11,30,58,0.06)", muted: "#DCD6CC" },
 } as const;
@@ -123,6 +138,11 @@ export const RADIUS = {
   control: "8px", // buttons, inputs, nav items, icon tiles
   pill: "9px",    // inline pill buttons inside card rows
   card: "14px",   // all cards
+  // The ink direction's card corner — effectively square, paired with a 1px LINE.edge
+  // rule and NO shadow. A fourth value rather than a re-spelling of `card`: this is a
+  // different card treatment, not a different size of the same one, and the two coexist
+  // while only the Portfolio has been redrawn. Same scoping note as SURFACE.ground.
+  sharp: "2px",
 } as const;
 
 // ── Motion ──────────────────────────────────────────────────────────────────

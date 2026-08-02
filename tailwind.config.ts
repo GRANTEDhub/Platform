@@ -64,6 +64,7 @@ const config: Config = {
         },
         // Surfaces. `page` is flat -- there is no page texture (see lib/brand.ts).
         page: SURFACE.page,
+        ground: SURFACE.ground,
         surface: {
           DEFAULT: SURFACE.card,
           sunken: SURFACE.sunken,
@@ -88,15 +89,18 @@ const config: Config = {
           client: STAGE.client.color,
           "client-tint": STAGE.client.tint,
           "client-text": STAGE.client.text,
+          "client-deep": STAGE.client.deep,
           approved: STAGE.approved.color,
           "approved-tint": STAGE.approved.tint,
+          "approved-on-dark": STAGE.approved.onDark,
           pursuit: STAGE.pursuit.color,
           "pursuit-tint": STAGE.pursuit.tint,
           passed: STAGE.passed.color,
           "passed-tint": STAGE.passed.tint,
         },
       },
-      // THREE radii, by role (lib/brand.ts RADIUS). Tailwind's own `none` and `full`
+      // THREE radii, by role (lib/brand.ts RADIUS), plus `sharp` for the ink direction's
+      // squared card — see the note on RADIUS.sharp. Tailwind's own `none` and `full`
       // survive because this is an `extend` block -- `full` is still what count
       // badges and status chips use.
       //
@@ -110,6 +114,7 @@ const config: Config = {
         md: RADIUS.control,
         lg: RADIUS.control,
         pill: RADIUS.pill,
+        sharp: RADIUS.sharp,
         xl: RADIUS.card,
         "2xl": RADIUS.card,
         "3xl": RADIUS.card,

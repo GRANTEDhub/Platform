@@ -3,29 +3,38 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { format, parseISO } from "date-fns";
-import { ArrowRight, ChevronRight, Clock, CornerUpLeft, Layers, MessageSquare, Plus, Search } from "lucide-react";
+import { ArrowRight, Clock, CornerUpLeft, Layers, MessageSquare, Plus } from "lucide-react";
 import { INK, STAGE } from "@/lib/brand";
-import { ALERTS_THRESHOLD, type ActionReason } from "@/lib/clients/portfolio";
+import { ALERTS_THRESHOLD, DEADLINE_DAYS, type ActionReason, type BookPipeline } from "@/lib/clients/portfolio";
 import type { PipelineStageKey } from "@/lib/clients/pipeline";
 import { cn } from "@/lib/utils";
 
-// The Portfolio roster, built to the approved design (design/portfolio/).
+// The Portfolio roster, built to the approved design (design/portfolio/, the v4 "Ink"
+// mockup). It replaces the card-grid build wholesale — same split, different system.
 //
-// TWO GRIDS, and the split is the page's whole argument: large cards for clients asking
-// for something today, a quieter grid for everyone else. The rule that decides which is
-// which lives in lib/clients/portfolio.ts.
+// THE SPLIT IS STILL THE ARGUMENT: large cards for clients asking for something today,
+// everyone else as a typographic index. What changed is the second tier. A grid of
+// compact cards gave twenty quiet clients the same visual weight class as seven urgent
+// ones; an index gives them a line each and lets the cards own the page. The rule that
+// decides which tier a client lands in is unchanged and still lives in
+// lib/clients/portfolio.ts.
 //
-// The quiet grid's bars use the STAGE scale's `muted` variants rather than the live
-// colours at lower opacity. Opacity would let a big taupe segment on a settled client
-// out-shout a small orange one on a client that needs work; a desaturated scale recedes
-// as a whole while still reading as the same funnel.
+// THREE THINGS HERE ARE PAGE-SCOPED, not new system defaults — see lib/brand.ts for the
+// full note on each. The ground (SURFACE.ground) is a step darker than every other page;
+// cards are squared (RADIUS.sharp) with a 1px LINE.edge rule and NO shadow, where the
+// rest of the console is 14px and raised. They coexist because only this page has been
+// redrawn in the ink direction. If Design carries it across the console, these collapse
+// into the base tokens.
 //
-// SNAPPED TO TOKENS, not reproduced literally: the mockup carries a few values within a
-// hair of existing ones — 13px/11px card radii (→ RADIUS.card), a half-strength card
-// shadow on the compact tiles (→ ELEVATION.card; a third elevation step is exactly what
-// the two-step scale exists to prevent), #C9CDD4 and #B7BCC4 (→ INK.faint, which is the
-// disabled-chevron token), and #6B7480 for absent values (→ INK.subtle). Minting
-// near-duplicates of tokens is the drift the single-source rule is there to stop.
+// CONTRAST: on SURFACE.ground the small-text floor is INK.muted (#5B6472). INK.subtle
+// (#8A93A0) clears it on a white card and fails on the ground, so ground-level type uses
+// muted and card-level labels use subtle. That is why the two look inconsistent in the
+// diff — they are answering to different backgrounds.
+//
+// The masthead is BRAND.navy rather than the mockup's #0A1420. It sits flush beneath the
+// global command band, which is navy; honouring the darker value would either put a seam
+// across the top of one page or repaint the nav everywhere, and the nav has not been
+// redrawn. If the ink direction reaches the chrome, this follows it.
 
 export type PortfolioRow = {
   id: string;
@@ -33,9 +42,16 @@ export type PortfolioRow = {
   subtitle: string;
   isProspect: boolean;
   alerts: number;
+  // Days the longest-waiting alert has been sitting, or null when unknowable (see the
+  // page's note — manual adds never went through the engine, so they have no
+  // first-surfaced time and the card falls back to the plain count).
+  oldestAlertDays: number | null;
   deadlineDays: number | null;
   deadlineDate: string | null;
   questions: number;
+  // Step progress on the furthest-along proposal in flight, or null if none. Progress
+  // through the scope -> compliance -> build flow, NOT how much narrative is written.
+  draftPct: number | null;
   reason: ActionReason | null;
   counts: Record<PipelineStageKey, number>;
   totalGrants: number;
@@ -47,188 +63,327 @@ type Filter = "all" | "action" | "quiet";
 
 const BAR_ORDER: PipelineStageKey[] = ["triage", "client", "approved", "pursuit", "passed"];
 
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "—";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
+// The stage scale reversed out of the navy masthead. Only `passed` needs a substitute:
+// its taupe was picked to recede on a light page and glares on dark, so the book bar's
+// terminal segment uses a chrome neutral — the same white-alpha family as the masthead's
+// divider rules and labels, not a sixth stage colour.
+const BOOK_ON_DARK: Record<PipelineStageKey, string> = {
+  triage: STAGE.triage.color,
+  client: STAGE.client.color,
+  approved: STAGE.approved.color,
+  pursuit: STAGE.pursuit.color,
+  passed: "rgba(255,255,255,0.24)",
+};
 
-export function PortfolioBrowser({ rows, isAdmin }: { rows: PortfolioRow[]; isAdmin: boolean }) {
-  const [q, setQ] = useState("");
+const BOOK_LABEL: Record<PipelineStageKey, string> = {
+  triage: "Unassessed",
+  client: "With client",
+  approved: "Approved",
+  pursuit: "In pursuit",
+  passed: "Passed",
+};
+
+export function PortfolioBrowser({
+  rows,
+  isAdmin,
+  book,
+  nextDeadlineDays,
+  today,
+}: {
+  rows: PortfolioRow[];
+  isAdmin: boolean;
+  book: BookPipeline;
+  nextDeadlineDays: number | null;
+  // Stamped on the server and passed down, so the masthead's date cannot differ between
+  // the server render and the hydrated one.
+  today: string;
+}) {
   const [filter, setFilter] = useState<Filter>("all");
 
-  const { action, quiet, matched } = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    const matched = rows.filter((r) => !needle || r.name.toLowerCase().includes(needle));
-    // Alphabetical within each group, as the design's own headers state. Not
-    // most-urgent-first: the grid is scanned by name when you already know who you are
-    // looking for, and the requires-action split has already done the prioritising.
+  const { action, quiet } = useMemo(() => {
+    // Alphabetical within each tier. Not most-urgent-first: the split has already done
+    // the prioritising, and both tiers are scanned by name once you know who you are
+    // looking for. The index in particular is only usable in alphabetical order.
     const byName = (a: PortfolioRow, b: PortfolioRow) => a.name.localeCompare(b.name);
     return {
-      matched,
-      action: matched.filter((r) => r.reason !== null).sort(byName),
-      quiet: matched.filter((r) => r.reason === null).sort(byName),
+      action: rows.filter((r) => r.reason !== null).sort(byName),
+      quiet: rows.filter((r) => r.reason === null).sort(byName),
     };
-  }, [rows, q]);
+  }, [rows]);
 
   const clientCount = rows.filter((r) => !r.isProspect).length;
   const prospectCount = rows.filter((r) => r.isProspect).length;
-  const actionTotal = rows.filter((r) => r.reason !== null).length;
+  const openAlerts = rows.reduce((n, r) => n + r.alerts, 0);
+  const questionsWaiting = rows.reduce((n, r) => n + r.questions, 0);
   const emptyCount = quiet.filter((r) => r.emptyPipeline).length;
 
   const showAction = filter !== "quiet";
   const showQuiet = filter !== "action";
 
   return (
-    <div className="flex min-h-full flex-col">
-      {/* Context bar — chrome continuous with the command band above it, so it is
-          full-bleed at the same 34px gutter rather than inside a content column. */}
-      <div className="flex min-h-[60px] flex-wrap items-center justify-between gap-x-5 gap-y-3 border-b border-hairline-strong bg-white px-[34px] py-3">
-        <div className="flex items-baseline gap-3">
-          <h1 className="font-serif text-[19px] font-bold tracking-[-0.01em] text-brand-navy">Portfolio</h1>
-          <p className="text-[12.5px] text-ink-subtle">
-            {clientCount} {clientCount === 1 ? "client" : "clients"}
-            {prospectCount > 0 && ` · ${prospectCount} ${prospectCount === 1 ? "prospect" : "prospects"}`}
-            {actionTotal > 0 && (
-              <>
-                {" · "}
-                <strong className="font-semibold text-brand-orange">{actionTotal} require action</strong>
-              </>
+    <div className="flex min-h-full flex-col bg-ground">
+      <div className="relative z-[1] shrink-0 bg-brand-navy px-[34px] pb-3.5">
+        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 pb-[11px] pt-3">
+          <div>
+            <h1 className="font-serif text-[30px] font-bold leading-none tracking-[-0.015em] text-white">
+              The Portfolio
+            </h1>
+            <p className="mt-[9px] text-[11px] font-semibold uppercase tracking-[0.16em] text-white/50">
+              {format(parseISO(today), "EEEE, MMMM d, yyyy")}
+              {" · "}
+              {clientCount} {clientCount === 1 ? "client" : "clients"}
+              {prospectCount > 0 && `, ${prospectCount} ${prospectCount === 1 ? "prospect" : "prospects"}`}
+            </p>
+          </div>
+
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <div className="flex items-center gap-[2px] rounded-[9px] bg-white/[0.08] p-[3px]">
+              <Tab active={filter === "all"} onClick={() => setFilter("all")}>
+                All {rows.length}
+              </Tab>
+              <Tab active={filter === "action"} onClick={() => setFilter("action")}>
+                Requires action
+                {action.length > 0 && (
+                  <span className="rounded-full bg-brand-orange px-1.5 py-px text-[10px] font-bold leading-[1.3] text-white">
+                    {action.length}
+                  </span>
+                )}
+              </Tab>
+              <Tab active={filter === "quiet"} onClick={() => setFilter("quiet")}>
+                No action
+              </Tab>
+            </div>
+
+            {isAdmin && (
+              <Link
+                href="/clients/new"
+                className="inline-flex h-8 shrink-0 items-center gap-[7px] rounded-[9px] bg-white px-[14px] text-[13px] font-semibold text-brand-navy transition-opacity duration-[120ms] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-navy"
+              >
+                <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                Add client
+              </Link>
             )}
-          </p>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex h-[34px] w-[190px] items-center gap-[7px] rounded-[10px] border border-edge bg-surface-sunken px-[11px]">
-            <Search className="h-3.5 w-3.5 shrink-0 text-ink-faint" aria-hidden="true" />
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search by name…"
-              aria-label="Search the roster by name"
-              className="min-w-0 flex-1 bg-transparent text-[12.5px] text-brand-navy outline-none placeholder:text-ink-faint"
-            />
-          </div>
+        {/* The masthead rule — a thick orange bar over a hairline, the one piece of pure
+            typographic furniture on the page. */}
+        <div aria-hidden="true" className="h-[2px] bg-brand-orange" />
+        <div aria-hidden="true" className="mt-[3px] h-px bg-white/[0.22]" />
 
-          <div className="flex items-center gap-[2px] rounded-pill bg-brand-navy/[0.055] p-[3px]">
-            <Tab active={filter === "all"} onClick={() => setFilter("all")}>
-              All {rows.length}
-            </Tab>
-            <Tab active={filter === "action"} onClick={() => setFilter("action")}>
-              Requires action
-              {actionTotal > 0 && (
-                <span className="rounded-full bg-brand-orange px-1.5 py-px text-[10px] font-bold tabular-nums text-white">
-                  {actionTotal}
+        <div className="flex flex-wrap items-end gap-y-4 pt-[13px]">
+          <Figure value={openAlerts} label="Open alerts" color={STAGE.triage.color} className="pr-[26px]" />
+          <Rule />
+          <Figure value={action.length} label="Require action" className="px-[26px]" />
+          <Rule />
+          {/* Questions are unbuilt (see lib/clients/portfolio.ts), so this is a real zero
+              and renders in the muted treatment rather than a lit teal nought. The tile
+              is here because the slot is real; it lights up when the feature lands. */}
+          <Figure
+            value={questionsWaiting}
+            label="Questions waiting"
+            color={questionsWaiting > 0 ? STAGE.approved.onDark : undefined}
+            title={questionsWaiting > 0 ? undefined : "Client questions are not available yet"}
+            className="px-[26px]"
+          />
+          <Rule />
+          <Figure
+            value={nextDeadlineDays}
+            suffix="d"
+            label="To next deadline"
+            className="px-[26px]"
+          />
+          <Rule />
+
+          <div className="min-w-[280px] flex-1 px-[26px]">
+            <div className="flex items-baseline justify-between gap-3">
+              <p className="text-[9.5px] font-bold uppercase tracking-[0.14em] text-white/[0.58]">
+                Book pipeline · {book.total} {book.total === 1 ? "grant" : "grants"}
+              </p>
+              <p className="shrink-0 text-[11px] text-white/[0.55]">
+                <span className="font-semibold text-brand-orange">{book.unassessedPct}%</span> never looked at
+              </p>
+            </div>
+            {/* FIVE segments, not the mockup's four — the drawn legend omits the
+                with-client stage, which its sample roster happened to have empty, and a
+                bar that drops a real stage stops summing to the total printed above it. */}
+            <div aria-hidden="true" className="mt-[9px] flex h-[9px] gap-[2px]">
+              {BAR_ORDER.filter((k) => book.counts[k] > 0).map((k) => (
+                <div key={k} style={{ flexGrow: book.counts[k], flexBasis: 0, backgroundColor: BOOK_ON_DARK[k] }} />
+              ))}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-x-3.5 gap-y-1">
+              {BAR_ORDER.filter((k) => book.counts[k] > 0).map((k) => (
+                <span key={k} className="inline-flex items-center gap-[5px] text-[10.5px] text-white/[0.58]">
+                  <span aria-hidden="true" className="h-1.5 w-1.5" style={{ backgroundColor: BOOK_ON_DARK[k] }} />
+                  {BOOK_LABEL[k]} {book.counts[k]}
                 </span>
-              )}
-            </Tab>
-            <Tab active={filter === "quiet"} onClick={() => setFilter("quiet")}>
-              No action
-            </Tab>
+              ))}
+            </div>
           </div>
+        </div>
+      </div>
 
-          {isAdmin && (
-            <Link
-              href="/clients/new"
-              className="inline-flex h-[34px] shrink-0 items-center gap-[7px] rounded-[10px] bg-brand-navy px-[14px] text-[13px] font-semibold text-white transition-colors duration-[120ms] hover:bg-brand-navyHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
-            >
-              <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-              Add client
-            </Link>
+      {/* The body carries the page's decoration: three faint vertical rules and an
+          oversized figure bled off the bottom-right corner. Both are ornament — the
+          rules are set as a fraction of the width rather than aligned to the card grid,
+          because at the drawn 1440 they do not line up with it either. overflow-hidden
+          is what clips the figure. */}
+      <div className="relative flex-1 overflow-hidden px-[34px] pb-3.5 pt-3.5">
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-0">
+          <span className="absolute inset-y-0 left-[26%] w-px bg-brand-navy/[0.07]" />
+          <span className="absolute inset-y-0 left-1/2 w-px bg-brand-navy/[0.07]" />
+          <span className="absolute inset-y-0 left-[74%] w-px bg-brand-navy/[0.07]" />
+          <span className="absolute inset-y-0 left-0 w-px bg-brand-navy/10" />
+          <span className="absolute inset-y-0 right-0 w-px bg-brand-navy/10" />
+          <span className="absolute -bottom-[152px] -right-[72px] font-serif text-[340px] font-bold leading-none tracking-[-0.04em] text-brand-navy/[0.03]">
+            {openAlerts}
+          </span>
+        </div>
+
+        <div className="relative z-[1]">
+          {rows.length === 0 ? (
+            <p className="rounded-sharp border border-edge bg-white px-6 py-12 text-center text-sm text-ink-muted">
+              No clients or prospects yet.
+            </p>
+          ) : (
+            <>
+              {showAction && (
+                <>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pb-[11px]">
+                    <h2 className="font-serif text-[17px] font-bold text-brand-navy">Requires action</h2>
+                    <span className="inline-flex h-[19px] items-center rounded-full bg-brand-orange px-2 text-[10.5px] font-bold tabular-nums text-white">
+                      {action.length}
+                    </span>
+                    <span aria-hidden="true" className="h-px flex-1 bg-brand-navy/20" />
+                    {/* The legend states the rule the split is made on, so the page
+                        explains itself rather than requiring you to infer the thresholds
+                        from which cards happen to be up here. */}
+                    <div className="flex flex-wrap items-center gap-3.5 text-[11.5px] text-ink-muted">
+                      <Key color={STAGE.triage.color}>Alerts ≥ {ALERTS_THRESHOLD}</Key>
+                      <Key color={STAGE.client.color}>Deadline ≤ {DEADLINE_DAYS}d</Key>
+                      <Key color={STAGE.approved.color}>Question waiting</Key>
+                    </div>
+                  </div>
+
+                  {action.length === 0 ? (
+                    <p className="rounded-sharp border border-edge bg-white/40 px-4 py-3 text-[12.5px] text-ink-muted">
+                      Nothing needs you right now — every client is inside their alert and deadline thresholds.
+                    </p>
+                  ) : (
+                    <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:auto-rows-[214px] xl:grid-cols-4">
+                      {action.map((r) => (
+                        <ActionCard key={r.id} row={r} />
+                      ))}
+                      {/* Closes the grid, and ONLY when it actually closes it: rendered
+                          when the cards leave a gap in the last row of the 4-up layout,
+                          never when they fill it exactly (which would strand this alone
+                          on a fresh row and read as a missing card). */}
+                      {action.length % 4 !== 0 && (
+                        <div className="hidden flex-col items-center justify-center gap-2 rounded-sharp border border-edge bg-white/[0.42] px-[18px] xl:flex">
+                          <p className="font-serif text-[15px] font-bold text-ink-muted">And that&rsquo;s all</p>
+                          <p className="text-center text-[11.5px] leading-[1.5] text-ink-muted">
+                            {quiet.length > 0
+                              ? `The other ${quiet.length} are indexed below and can wait for the sweep`
+                              : "Everyone else is settled"}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {showQuiet && (
+                <>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pb-2 pt-[13px]">
+                    <h2 className="font-serif text-[13.5px] font-bold text-ink-muted">No action needed</h2>
+                    <span className="text-[11.5px] tabular-nums text-ink-muted">{quiet.length}</span>
+                    {emptyCount > 0 && (
+                      // Empty is NOT the same as quiet: quiet means the work is done,
+                      // empty means nothing was ever found, which is usually a matching
+                      // or profile problem rather than good news.
+                      <span className="text-[11.5px] font-semibold" style={{ color: STAGE.approved.color }}>
+                        {emptyCount} {emptyCount === 1 ? "has" : "have"} an empty pipeline
+                      </span>
+                    )}
+                    <span aria-hidden="true" className="h-px flex-1 bg-brand-navy/20" />
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-ink-muted">
+                      Name · alerts · next deadline
+                    </span>
+                  </div>
+
+                  {quiet.length === 0 ? (
+                    <p className="text-[11.5px] text-ink-muted">Every client on the roster needs something today.</p>
+                  ) : (
+                    // THREE COLUMNS READ DOWN, not across: the index is alphabetical and
+                    // only usable if A-to-Z runs down each column in turn, so the list is
+                    // chunked into three and rendered as three stacks. A single grid with
+                    // row auto-flow would order it across, which is unreadable.
+                    <div className="grid grid-cols-1 gap-x-10 sm:grid-cols-2 lg:grid-cols-3">
+                      {columnise(quiet, 3).map((col, i) => (
+                        <div key={i} className="flex flex-col">
+                          {col.map((r) => (
+                            <IndexRow key={r.id} row={r} />
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </>
           )}
         </div>
       </div>
+    </div>
+  );
+}
 
-      <div className="flex flex-1 flex-col px-[34px] pb-[18px] pt-4">
-        {matched.length === 0 ? (
-          <p className="rounded-2xl bg-white px-6 py-12 text-center text-sm text-ink-subtle shadow-card">
-            {rows.length === 0 ? "No clients or prospects yet." : `No matches for “${q.trim()}”.`}
-          </p>
-        ) : (
-          <>
-            {showAction && (
-              <>
-                <div className="flex flex-wrap items-center gap-2.5 pb-2.5">
-                  <h2 className="font-serif text-[14.5px] font-bold text-brand-navy">Requires action</h2>
-                  <span className="rounded-full bg-brand-orange px-2 py-0.5 text-[10.5px] font-bold leading-[1.4] tabular-nums text-white">
-                    {action.length}
-                  </span>
-                  <span className="text-[11.5px] text-ink-subtle">Alphabetical</span>
-                  {/* The legend states the rule the split is made on, so the page
-                      explains itself rather than requiring you to infer the thresholds
-                      from which cards happen to be up here. */}
-                  <div className="ml-auto flex flex-wrap items-center gap-3.5 text-[11.5px] text-ink-subtle">
-                    <Key color={STAGE.triage.color}>Alerts ≥ {ALERTS_THRESHOLD}</Key>
-                    <Key color={STAGE.client.color}>Deadline ≤ 30d</Key>
-                    <Key color={STAGE.approved.color}>Question waiting</Key>
-                  </div>
-                </div>
+// Split into `n` column-major chunks, front-loading the remainder so the columns differ
+// by at most one row and the left ones are never shorter than the right.
+function columnise<T>(items: T[], n: number): T[][] {
+  const out: T[][] = [];
+  let start = 0;
+  for (let i = 0; i < n; i++) {
+    const size = Math.ceil((items.length - start) / (n - i));
+    out.push(items.slice(start, start + size));
+    start += size;
+  }
+  return out;
+}
 
-                {action.length === 0 ? (
-                  <div className="mb-2 rounded-2xl border border-dashed border-brand-navy/[0.16] bg-white/40 px-6 py-8 text-center">
-                    <p className="text-[12.5px] font-semibold text-ink-muted">Nothing needs you right now</p>
-                    <p className="mx-auto mt-1 max-w-[240px] text-[11.5px] leading-[1.5] text-ink-subtle">
-                      Every client is inside their alert and deadline thresholds.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 xl:auto-rows-[222px]">
-                    {action.map((r) => (
-                      <ActionCard key={r.id} row={r} />
-                    ))}
-                    {/* Closes the grid deliberately: without it the last row ends on a
-                        ragged edge that reads as "the list was cut off". */}
-                    <div className="hidden flex-col items-center justify-center gap-[7px] rounded-2xl border border-dashed border-brand-navy/[0.16] bg-white/40 px-4 xl:flex">
-                      <p className="text-[12.5px] font-semibold text-ink-muted">
-                        {action.length === 1 ? "That's the only one" : `That's all ${action.length}`}
-                      </p>
-                      <p className="max-w-[190px] text-center text-[11.5px] leading-[1.5] text-ink-subtle">
-                        Everything else is below and can wait until the sweep
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
+function Rule() {
+  return <span aria-hidden="true" className="h-11 w-px shrink-0 bg-white/[0.16]" />;
+}
 
-            {showQuiet && (
-              <>
-                <div className="flex flex-wrap items-center gap-2.5 pb-2.5 pt-4">
-                  <h2 className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-subtle">No action needed</h2>
-                  <span className="rounded-full bg-brand-navy/[0.08] px-2 py-0.5 text-[10.5px] font-semibold leading-[1.4] tabular-nums text-ink-muted">
-                    {quiet.length}
-                  </span>
-                  <span className="ml-auto text-[11.5px] text-ink-subtle">
-                    Alphabetical
-                    {emptyCount > 0 && (
-                      <>
-                        {" · "}
-                        {/* Empty is NOT the same as quiet: quiet means the work is done,
-                            empty means nothing was ever found, which is usually a
-                            matching or profile problem rather than good news. */}
-                        <span className="font-semibold" style={{ color: STAGE.approved.color }}>
-                          {emptyCount} {emptyCount === 1 ? "has" : "have"} an empty pipeline
-                        </span>
-                      </>
-                    )}
-                  </span>
-                </div>
-
-                {quiet.length === 0 ? (
-                  <p className="text-[11.5px] text-ink-subtle">Every client on the roster needs something today.</p>
-                ) : (
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 xl:auto-rows-[118px]">
-                    {quiet.map((r) => (
-                      <QuietCard key={r.id} row={r} />
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-          </>
-        )}
-      </div>
+// One masthead figure. Libre Baskerville at 40px — the display face carries every number
+// on this page, which is what makes it read as a printed ledger rather than a dashboard.
+function Figure({
+  value,
+  suffix,
+  label,
+  color,
+  title,
+  className,
+}: {
+  value: number | null;
+  suffix?: string;
+  label: string;
+  color?: string;
+  title?: string;
+  className?: string;
+}) {
+  return (
+    <div className={cn("shrink-0", className)} title={title}>
+      <p
+        className="font-serif text-[40px] font-bold leading-[0.85] tabular-nums"
+        style={{ color: color ?? "#FFFFFF" }}
+      >
+        {value === null ? "—" : value}
+        {value !== null && suffix && <span className="text-[20px] text-white/[0.55]">{suffix}</span>}
+      </p>
+      <p className="mt-[9px] text-[9.5px] font-bold uppercase tracking-[0.14em] text-white/[0.58]">{label}</p>
     </div>
   );
 }
@@ -240,8 +395,8 @@ function Tab({ active, onClick, children }: { active: boolean; onClick: () => vo
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "inline-flex h-7 items-center gap-1.5 rounded-[7px] px-[13px] text-[12.5px] transition-colors duration-[120ms]",
-        active ? "bg-white font-semibold text-brand-navy shadow-card" : "font-medium text-ink-muted hover:text-brand-navy",
+        "inline-flex h-[26px] items-center gap-1.5 rounded-[7px] px-3 text-[12.5px] transition-colors duration-[120ms]",
+        active ? "bg-white font-semibold text-brand-navy" : "font-medium text-white/[0.72] hover:text-white",
       )}
     >
       {children}
@@ -252,17 +407,16 @@ function Tab({ active, onClick, children }: { active: boolean; onClick: () => vo
 function Key({ color, children }: { color: string; children: React.ReactNode }) {
   return (
     <span className="inline-flex items-center gap-[5px]">
-      <span aria-hidden="true" className="h-[7px] w-[7px] rounded-[2px]" style={{ backgroundColor: color }} />
+      <span aria-hidden="true" className="h-[7px] w-[7px]" style={{ backgroundColor: color }} />
       {children}
     </span>
   );
 }
 
-// The stage bar. `muted` swaps the whole scale for its desaturated twin — see the note
-// at the top of the file. Stages with no cards are dropped rather than collapsed to a
-// hairline: this is a summary at 5px tall, not the dashboard's five-slot funnel, and
-// hairline stubs at this size read as rendering artefacts.
-function StageBar({ counts, muted }: { counts: Record<PipelineStageKey, number>; muted?: boolean }) {
+// The per-client stage bar. Stages with no cards are dropped rather than collapsed to a
+// hairline: this is a 5px summary, not the dashboard's five-slot funnel, and hairline
+// stubs at that size read as rendering artefacts.
+function StageBar({ counts }: { counts: Record<PipelineStageKey, number> }) {
   const segments = BAR_ORDER.filter((k) => (counts[k] ?? 0) > 0);
   if (segments.length === 0) return null;
   return (
@@ -271,7 +425,7 @@ function StageBar({ counts, muted }: { counts: Record<PipelineStageKey, number>;
         <div
           key={k}
           className="rounded-full"
-          style={{ flexGrow: counts[k], flexBasis: 0, backgroundColor: muted ? STAGE[k].muted : STAGE[k].color }}
+          style={{ flexGrow: counts[k], flexBasis: 0, backgroundColor: STAGE[k].color }}
         />
       ))}
     </div>
@@ -279,23 +433,37 @@ function StageBar({ counts, muted }: { counts: Record<PipelineStageKey, number>;
 }
 
 const REASON_STYLE: Record<ActionReason, { tint: string; color: string; icon: typeof Layers; trailing: typeof ArrowRight }> = {
+  // The strip fills sit a little heavier than the STAGE tints, which are tuned for panel
+  // headers behind body text; here the strip IS the emphasis. client snaps to its token
+  // (0.13 -> 0.14 is imperceptible); the other two are the design's strip alphas.
   alerts: { tint: "rgba(228,118,31,0.10)", color: STAGE.triage.color, icon: Layers, trailing: ArrowRight },
   deadline: { tint: STAGE.client.tint, color: STAGE.client.text, icon: Clock, trailing: ArrowRight },
   question: { tint: "rgba(46,125,145,0.09)", color: STAGE.approved.color, icon: MessageSquare, trailing: CornerUpLeft },
 };
 
+// What the footer strip says. One line per reason, and each says the thing that makes it
+// urgent rather than restating the count already printed on the card.
 function reasonText(r: PortfolioRow): string {
   if (r.reason === "question") {
     return `${r.questions} ${r.questions === 1 ? "question" : "questions"} waiting`;
   }
   if (r.reason === "deadline") {
     const when = r.deadlineDate ? format(parseISO(r.deadlineDate), "MMM d") : "Deadline";
-    const overdue = r.deadlineDays !== null && r.deadlineDays < 0;
-    return overdue ? `${when} · overdue` : `${when} · ${r.deadlineDays}d out`;
+    if (r.deadlineDays !== null && r.deadlineDays < 0) return `${when} · overdue`;
+    // The drawn line pairs the date with the state of the work: "no draft started" or
+    // "draft 40%". The percentage is progress through the scope -> compliance -> build
+    // flow, the same figure the client dashboard shows as "step N of 4" — it is NOT a
+    // claim about how much narrative exists, so it is qualified here too.
+    if (r.draftPct === null) return `${when} · no draft started`;
+    return `${when} · draft ${r.draftPct}% of the flow`;
   }
-  // Deliberately no age ("oldest sat 41 days" in the design): review_cards has no
-  // created_at, so the age of a waiting alert is not recoverable. The count is real;
-  // the age would have been invented.
+  // The drawn line is "Oldest sat 41 days", recovered from the first carded match
+  // attempt for each waiting card. Falls back to the plain count when no waiting card
+  // has an attempt behind it (manual adds never went through the engine) — the count is
+  // always real, the age is shown only when it is.
+  if (r.oldestAlertDays !== null) {
+    return `Oldest sat ${r.oldestAlertDays} ${r.oldestAlertDays === 1 ? "day" : "days"}`;
+  }
   return `${r.alerts} waiting for review`;
 }
 
@@ -304,64 +472,60 @@ function ActionCard({ row }: { row: PortfolioRow }) {
   const Icon = style.icon;
   const Trailing = style.trailing;
   const alertsHot = row.alerts >= ALERTS_THRESHOLD;
-  const deadlineHot = row.deadlineDays !== null;
+  const questioned = row.questions > 0;
+
   return (
     <Link
       href={`/clients/${row.id}`}
-      className="flex flex-col overflow-hidden rounded-2xl border-t-[3px] bg-white shadow-card transition-shadow duration-[140ms] hover:shadow-card-hover"
+      className="flex flex-col overflow-hidden rounded-sharp border border-edge bg-white transition-colors duration-[120ms] hover:border-brand-navy/25"
       // Teal marks a waiting person, orange marks a waiting queue or clock. With
       // questions unbuilt the teal branch never fires today — it is kept so the card
       // needs no change when they land.
-      style={{ borderTopColor: row.reason === "question" ? STAGE.approved.color : STAGE.triage.color }}
+      style={{
+        borderTopWidth: "3px",
+        borderTopColor: row.reason === "question" ? STAGE.approved.color : STAGE.triage.color,
+      }}
     >
-      <div className="flex items-center gap-2.5 px-[15px] pt-3">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-pill bg-brand-navy text-[11.5px] font-semibold text-white">
-          {initials(row.name)}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-semibold text-brand-navy">{row.name}</span>
-          <span className="mt-0.5 block truncate text-[11px] capitalize text-ink-subtle">{row.subtitle}</span>
-        </span>
-        <ChevronRight className="h-[15px] w-[15px] shrink-0 text-ink-faint" aria-hidden="true" />
-      </div>
-
-      <div className="mx-[15px] mt-[11px] flex items-center border-y border-hairline py-[9px]">
-        <span className="flex-1">
-          <span
-            className="block text-[17px] font-semibold leading-none tabular-nums"
-            style={{ color: alertsHot ? STAGE.triage.color : INK.muted }}
+      <div className="flex items-start gap-3 px-[15px] pt-[13px]">
+        {/* The alert count as a display figure, not a stat tile. It is the first thing
+            read on the card and the reason the card is on this tier at all. */}
+        <div className="w-[52px] shrink-0 text-center">
+          <p
+            className="font-serif text-[34px] font-bold leading-[0.9] tabular-nums"
+            style={{ color: alertsHot ? STAGE.triage.color : INK.subtle }}
           >
             {row.alerts}
-          </span>
-          <span className="mt-1 block text-[10.5px] text-ink-subtle">alerts</span>
-        </span>
-        <span className="flex-1">
-          <span
-            className="block text-[17px] font-semibold leading-none tabular-nums"
-            style={{ color: deadlineHot ? STAGE.client.text : INK.subtle }}
-          >
-            {row.deadlineDays !== null ? `${row.deadlineDays}d` : "—"}
-          </span>
-          <span className="mt-1 block text-[10.5px] text-ink-subtle">
-            {row.deadlineDate ? format(parseISO(row.deadlineDate), "MMM d") : "no deadline"}
-          </span>
-        </span>
+          </p>
+          <p className="mt-1.5 text-[9px] font-bold uppercase tracking-[0.12em] text-ink-subtle">Alerts</p>
+        </div>
+
+        <div className="min-w-0 flex-1 pt-0.5">
+          <p className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate font-serif text-[15px] font-bold text-brand-navy">{row.name}</span>
+            {row.isProspect && <ProspectChip />}
+          </p>
+          <p className="mt-1 truncate text-[11px] capitalize text-ink-subtle">{row.subtitle}</p>
+          <p className="mt-2">
+            <DeadlineLine row={row} />
+          </p>
+        </div>
+
         {/* Questions are unbuilt, so this renders in the design's own inactive state
             rather than being omitted — the slot is real, it just has nothing in it. */}
         <span
-          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-pill"
-          style={{ backgroundColor: row.questions > 0 ? "rgba(46,125,145,0.12)" : STAGE.passed.tint }}
-          title={row.questions > 0 ? undefined : "Client questions are not available yet"}
+          className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-md"
+          style={{ backgroundColor: questioned ? "rgba(46,125,145,0.12)" : "rgba(11,30,58,0.045)" }}
+          title={questioned ? undefined : "Client questions are not available yet"}
         >
           <MessageSquare
-            className="h-4 w-4"
-            style={{ color: row.questions > 0 ? STAGE.approved.color : INK.faint }}
+            className="h-3.5 w-3.5"
+            style={{ color: questioned ? STAGE.approved.color : INK.faint }}
             aria-hidden="true"
           />
         </span>
       </div>
 
-      <div className="px-[15px] pt-2.5">
+      <div className="px-[15px] pt-3">
         <StageBar counts={row.counts} />
         <p className="mt-2 text-[11px] text-ink-subtle">
           {row.totalGrants} {row.totalGrants === 1 ? "grant" : "grants"} ·{" "}
@@ -370,10 +534,7 @@ function ActionCard({ row }: { row: PortfolioRow }) {
       </div>
 
       <div className="mt-auto px-3 pb-3">
-        <span
-          className="flex items-center gap-[9px] rounded-pill px-[11px] py-[9px]"
-          style={{ backgroundColor: style.tint }}
-        >
+        <span className="flex items-center gap-[9px] rounded-pill px-[11px] py-[9px]" style={{ backgroundColor: style.tint }}>
           <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: style.color }} aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate text-[11.5px] text-brand-navy">{reasonText(row)}</span>
           <Trailing className="h-3.5 w-3.5 shrink-0" style={{ color: style.color }} aria-hidden="true" />
@@ -383,45 +544,63 @@ function ActionCard({ row }: { row: PortfolioRow }) {
   );
 }
 
-function QuietCard({ row }: { row: PortfolioRow }) {
+function DeadlineLine({ row }: { row: PortfolioRow }) {
+  if (row.deadlineDate === null || row.deadlineDays === null) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[11.5px] text-ink-muted">
+        <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: STAGE.passed.muted }} />
+        No deadline set
+      </span>
+    );
+  }
+  const when = format(parseISO(row.deadlineDate), "MMM d");
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold" style={{ color: STAGE.client.text }}>
+      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: STAGE.client.color }} />
+      {row.deadlineDays < 0 ? `${when} · overdue` : `${when} · ${row.deadlineDays} ${row.deadlineDays === 1 ? "day" : "days"}`}
+    </span>
+  );
+}
+
+function ProspectChip() {
+  return (
+    <span
+      className="shrink-0 rounded-full bg-brand-orange/[0.11] px-1.5 text-[9.5px] font-semibold text-brand-orange"
+      title="Prospect — not yet converted to a client"
+    >
+      P
+    </span>
+  );
+}
+
+// One line of the index. Name, dot leader, alerts, next deadline — the whole quiet tier
+// is this row twenty times, which is the point: a client with nothing to do earns a line,
+// not a card.
+function IndexRow({ row }: { row: PortfolioRow }) {
   return (
     <Link
       href={`/clients/${row.id}`}
-      className="flex flex-col rounded-2xl bg-white p-[13px] shadow-card transition-shadow duration-[140ms] hover:shadow-card-hover"
+      className="group flex h-[22px] items-baseline gap-[7px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-orange/60"
     >
-      <span className="flex items-center gap-[9px]">
-        <span
-          className={cn(
-            "flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-md text-[10px] font-semibold",
-            row.isProspect ? "bg-brand-orange/[0.14] text-brand-orange" : "bg-brand-navy/[0.07] text-ink-muted",
-          )}
-        >
-          {initials(row.name)}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-[13px] font-semibold text-brand-navy">{row.name}</span>
-            {row.isProspect && (
-              <span className="shrink-0 rounded-full bg-brand-orange/10 px-1.5 py-px text-[9.5px] font-semibold text-brand-orange">
-                Prospect
-              </span>
-            )}
-          </span>
-          <span className="mt-px block truncate text-[10.5px] capitalize text-ink-subtle">{row.subtitle}</span>
-        </span>
+      <span className="max-w-[186px] shrink-0 truncate text-[12.5px] font-medium text-brand-navy group-hover:text-brand-orange">
+        {row.name}
       </span>
-
-      <span className="mt-auto block">
-        <StageBar counts={row.counts} muted />
+      {row.isProspect && <ProspectChip />}
+      <span
+        aria-hidden="true"
+        className="h-px min-w-[12px] flex-1 -translate-y-[3px]"
+        style={{
+          background: "repeating-linear-gradient(to right,rgba(11,30,58,.28) 0 1.5px,transparent 1.5px 5px)",
+        }}
+      />
+      <span className="w-4 shrink-0 text-right text-[12.5px] font-semibold tabular-nums text-ink-muted">
+        {row.alerts > 0 ? row.alerts : "–"}
       </span>
-
-      <span className="mt-2 flex items-center gap-2 text-[11px] tabular-nums">
-        <span style={{ color: row.alerts > 0 ? INK.muted : INK.subtle }}>
-          {row.emptyPipeline ? "no grants yet" : row.alerts > 0 ? `${row.alerts} alerts` : "nothing pending"}
-        </span>
-        <span className="ml-auto text-ink-subtle">
-          {row.deadlineDate ? format(parseISO(row.deadlineDate), "MMM d") : "no deadline"}
-        </span>
+      <span
+        className="w-11 shrink-0 text-right text-[11px] tabular-nums"
+        style={{ color: row.deadlineDate ? STAGE.client.deep : INK.muted }}
+      >
+        {row.deadlineDate ? format(parseISO(row.deadlineDate), "MMM d") : "—"}
       </span>
     </Link>
   );
