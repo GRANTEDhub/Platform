@@ -13,6 +13,15 @@ export const BRAND = {
   navy: "#0B1E3A",        // primary
   navyHover: "#12305A",   // primary button hover, IntellEngine gradient end
   navyDeep: "#081627",    // darker navy for gradient ends
+  // The ink direction's CHROME: the command band, both mastheads, and the IntellEngine
+  // panel. A near-black with only a trace of blue, and deliberately NOT `navy`.
+  //
+  // Navy is a text colour first — it is INK.DEFAULT, it is on every heading and body
+  // paragraph in the product — so it cannot be retuned to suit a dark surface without
+  // repainting all of that. As a large dark FIELD it also reads hazy: white cards against
+  // it look soft rather than crisp, which is most of what separated the first ink build
+  // from the reference. Two tokens because they have two jobs.
+  chrome: "#0A1420",
   orange: "#E4761F",      // accent / action
   orangeHover: "#C9631A", // orange button hover / press
   cream: "#faf7f2",       // legacy surface tint (pre-refresh cards / backgrounds)

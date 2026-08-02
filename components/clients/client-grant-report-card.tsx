@@ -141,9 +141,16 @@ export function ClientGrantReportCard({
 // ── Console variant — the approved design ───────────────────────────────────
 //
 // Ink treatment: squared corner, a 1px LINE.edge rule, no shadow — plus the 3px
-// approved-stage top edge, which is the accent the design keeps. "STANDING WORKSPACE"
-// says what the surface IS — the place staff live all day — which is why it shows real
-// rows rather than a counter.
+// approved-stage top edge, the one accent the design keeps.
+//
+// TEAL IS RESERVED. It used to carry this card's eyebrow, its strip and its button, which
+// made it read as the card's brand colour. On the ink screens teal means exactly one
+// thing — a person is waiting on you — so everywhere else it goes neutral or navy. The
+// top edge survives because it is a STAGE marker, not decoration; the row dots are the
+// same scale for the same reason.
+//
+// "STANDING WORKSPACE" says what the surface IS — the place staff live all day — which is
+// why it shows real rows rather than a counter.
 //
 // "Updated {n}h ago" is real now. review_cards still has no updated_at, but match_attempts
 // records when the engine last carded a pair for this client, which is exactly when this
@@ -171,10 +178,7 @@ function ConsoleReportCard({
     >
       <div className="flex items-start justify-between gap-3.5 px-5 pb-3 pt-4">
         <div>
-          <p
-            className="text-[10px] font-bold uppercase tracking-[0.13em]"
-            style={{ color: STAGE.approved.color }}
-          >
+          <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-muted">
             Standing workspace
           </p>
           <h2 className="mt-[7px] font-serif text-[18px] font-bold text-brand-navy">Grant Report</h2>
@@ -196,13 +200,10 @@ function ConsoleReportCard({
       ) : (
         <>
           <div
-            className="flex items-center justify-between gap-2.5 border-y px-5 py-[7px]"
-            style={{ backgroundColor: STAGE.approved.tint, borderColor: STAGE.approved.border }}
+            className="flex items-center justify-between gap-2.5 border-y border-hairline px-5 py-[7px]"
+            style={{ backgroundColor: "rgba(11,30,58,0.035)" }}
           >
-            <p
-              className="text-[10px] font-bold uppercase tracking-[0.11em]"
-              style={{ color: STAGE.approved.color }}
-            >
+            <p className="text-[10px] font-bold uppercase tracking-[0.11em] text-ink-muted">
               Highest fit right now
             </p>
             {metrics?.freshness && (
@@ -222,8 +223,7 @@ function ConsoleReportCard({
             </p>
             <Link
               href={reportHref}
-              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-pill px-3.5 text-[12.5px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
-              style={{ backgroundColor: STAGE.approved.color }}
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sharp bg-brand-navy px-3.5 text-[12.5px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
             >
               Open report
               <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />

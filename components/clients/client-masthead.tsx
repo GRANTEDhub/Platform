@@ -67,20 +67,21 @@ export function ClientMasthead({
 }) {
   const unassessed = book.stages.find((s) => s.key === "triage");
   const segments = book.stages.filter((s) => s.count > 0);
-  // The trend is only worth drawing when there is a book at all AND most of it can be
-  // placed in time. Below that it is a chart of whichever subset happens to have engine
-  // history, which is a different and misleading quantity — and on an empty client it is
-  // eight 2px stubs pretending to be a series.
-  const showBacklog = backlog !== null && book.total > 0 && backlog.unplaceable <= book.total / 2;
+  // Two gates, and both are about not drawing a chart that says nothing. `drawable`
+  // requires actual shape across the weeks — a client whose whole backlog appeared
+  // yesterday has one spike and seven baselines, which reads as a broken chart rather
+  // than as new work. The unplaceable check keeps it from charting whichever subset
+  // happens to have engine history, which is a different quantity.
+  const showBacklog = backlog !== null && backlog.drawable && backlog.unplaceable <= book.total / 2;
 
   return (
-    <div className="relative z-[1] shrink-0 bg-brand-navy px-[34px] pb-3.5">
+    <div className="relative z-[1] shrink-0 bg-brand-chrome px-[34px] pb-3.5">
       <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 pb-[9px] pt-2.5">
         <div className="min-w-0">
           <div className="flex items-center gap-[9px]">
             <Link
               href={backHref}
-              className="inline-flex items-center gap-1.5 rounded-md text-[11.5px] font-medium text-white/[0.55] transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-navy"
+              className="inline-flex items-center gap-1.5 rounded-md text-[11.5px] font-medium text-white/[0.55] transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome"
             >
               <ArrowLeft className="h-[13px] w-[13px]" aria-hidden="true" />
               {backLabel}

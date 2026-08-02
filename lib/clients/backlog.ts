@@ -33,6 +33,11 @@ export interface BacklogCard {
   leftAt: string | null;
 }
 
+// Below this many weeks with anything in the backlog there is no shape to draw — the
+// chart would be one spike and seven baselines, which says less than the count already
+// above it does.
+export const MIN_NONZERO_WEEKS = 3;
+
 export interface BacklogTrend {
   // Oldest first, one per week, ending with the count as of now.
   points: number[];
@@ -43,6 +48,9 @@ export interface BacklogTrend {
   absChange: number;
   // Cards that could not be placed in time (no carded attempt).
   unplaceable: number;
+  // Whether the series has enough shape to be worth drawing. A trend is a claim about
+  // movement; a single spike at the right-hand end is not one.
+  drawable: boolean;
 }
 
 // The earliest of a card's exit markers, or null while it is still untriaged. Earliest
@@ -93,5 +101,6 @@ export function deriveBacklog(cards: BacklogCard[], now: number): BacklogTrend {
     pctChange: first > 0 ? Math.round(((last - first) / first) * 100) : null,
     absChange: last - first,
     unplaceable,
+    drawable: points.filter((n) => n > 0).length >= MIN_NONZERO_WEEKS,
   };
 }

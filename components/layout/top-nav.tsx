@@ -98,7 +98,7 @@ function useDismiss(open: boolean, close: () => void) {
   return ref;
 }
 
-const FOCUS = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-navy";
+const FOCUS = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome";
 // Entrance for both menus: fade + a 4px settle, on the one entrance curve. Nothing
 // slides in from off-screen, and it is dropped entirely under prefers-reduced-motion.
 // Defined as a real keyframe in globals.css, NOT with animate-in / slide-in-from-top:
@@ -136,7 +136,7 @@ export function TopNav({
   const moreActive = more.some((m) => !m.soon && isActive(pathname, m.href));
 
   return (
-    <header className="flex h-[58px] shrink-0 items-center gap-[26px] bg-brand-navy px-[26px]">
+    <header className="flex h-[58px] shrink-0 items-center gap-[26px] bg-brand-chrome px-[26px]">
       <Link href="/clients" className={cn("flex shrink-0 items-center gap-2.5 rounded-md", FOCUS)}>
         <img src="/granted-mark-dark.svg" alt="" aria-hidden="true" className="h-[23px] w-auto" />
         <span className="font-serif text-[15px] font-bold tracking-[0.03em] text-white">GRANTED</span>

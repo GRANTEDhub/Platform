@@ -14,7 +14,10 @@ import { BACKLOG_WEEKS, type BacklogTrend } from "@/lib/clients/backlog";
 // this size — eight 7px bars cannot carry a precise shape, only "rising" or "falling".
 const LIT = 2;
 const MAX_H = 24;
-const MIN_H = 2;
+// A 2px floor turned a low-count series into a row of dashes on the baseline — eight
+// clients with two grants each looked identical to eight with none. 6px is the smallest
+// bar that still reads as a bar.
+const MIN_H = 6;
 
 export function BacklogSparkline({ trend }: { trend: BacklogTrend }) {
   const peak = Math.max(...trend.points, 1);

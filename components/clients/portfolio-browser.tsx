@@ -117,7 +117,7 @@ export function PortfolioBrowser({
 
   return (
     <div className="flex min-h-full flex-col bg-ground">
-      <div className="relative z-[1] shrink-0 bg-brand-navy px-[34px] pb-3.5">
+      <div className="relative z-[1] shrink-0 bg-brand-chrome px-[34px] pb-3.5">
         <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 pb-[11px] pt-3">
           <div>
             <h1 className="font-serif text-[30px] font-bold leading-none tracking-[-0.015em] text-white">
@@ -152,7 +152,7 @@ export function PortfolioBrowser({
             {isAdmin && (
               <Link
                 href="/clients/new"
-                className="inline-flex h-8 shrink-0 items-center gap-[7px] rounded-[9px] bg-white px-[14px] text-[13px] font-semibold text-brand-navy transition-opacity duration-[120ms] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-navy"
+                className="inline-flex h-8 shrink-0 items-center gap-[7px] rounded-[9px] bg-white px-[14px] text-[13px] font-semibold text-brand-navy transition-opacity duration-[120ms] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome"
               >
                 <Plus className="h-3.5 w-3.5" aria-hidden="true" />
                 Add client

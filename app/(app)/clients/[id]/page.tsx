@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { format, parseISO } from "date-fns";
-import { Clock, Layers, Loader2, Mail, MessageSquareText, Plug, Play, Sparkles, type LucideIcon } from "lucide-react";
+import { Clock, Layers, Loader2, Mail, MessageSquareText, Plug, Play, type LucideIcon } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { AutoRefresh } from "@/components/ui/auto-refresh";
@@ -23,8 +23,8 @@ import { rollUpClient, type PricedCard } from "@/lib/clients/dashboard-summary";
 import { deriveAmbientNote } from "@/lib/clients/ambient-note";
 import { deriveActivity } from "@/lib/clients/activity";
 import { deriveBacklog, leftTriageAt } from "@/lib/clients/backlog";
-import { type DraftCandidate } from "@/components/clients/client-draft-progress";
-import type { Client, CardDecision, Grant, IntellEngineDraft, PursuitPath } from "@/types/database";
+import { type DraftNext } from "@/components/clients/client-draft-progress";
+import type { Client, CardDecision, FactorScores, Grant, IntellEngineDraft, PursuitPath } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +44,9 @@ type GrantEmbed = Pick<
 type CardRow = {
   id: string;
   fit_score: 1 | 2 | 3;
+  // Per-factor sub-scores (#105). Null on cards scored before they shipped -- the
+  // IntellEngine panel's rationale degrades to a shorter sentence rather than guessing.
+  factor_scores: FactorScores | null;
   decision: CardDecision;
   decided_at: string | null;
   interested_at: string | null;
@@ -70,6 +73,39 @@ function agoLabel(iso: string, now: number): string | null {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+// Which factors read "strong", in the order a reader cares about them. The IntellEngine
+// panel's waiting-state sentence is built from these rather than from a template, so it
+// can only ever say something the engine actually scored.
+const FACTOR_LABEL: { key: keyof FactorScores; label: string }[] = [
+  { key: "eligibility", label: "eligibility" },
+  { key: "geographic", label: "geography" },
+  { key: "seat_role", label: "the seat" },
+  { key: "mission", label: "mission fit" },
+  { key: "program_history", label: "program history" },
+  { key: "cost_share", label: "cost share" },
+];
+
+// One sentence for the waiting state: what already looks right about the closest
+// candidate, and what approving it would unlock.
+//
+// It names ONLY factors the engine rated strong. With no factor scores on the card (they
+// post-date #105) it degrades to the shorter half of the sentence rather than asserting
+// anything about eligibility it cannot support -- which is the specific thing that must
+// never be guessed at on a grant surface.
+function waitingRationale(scores: FactorScores | null, days: number | null): string {
+  const strong = scores
+    ? FACTOR_LABEL.filter(({ key }) => scores[key]?.rating === "strong").map(({ label }) => label)
+    : [];
+  const clock = days !== null && days >= 0 ? ` ${days} ${days === 1 ? "day" : "days"} to the deadline.` : "";
+  if (strong.length === 0) return `Highest fit of what is waiting. Approve it and IntellEngine can scope it.${clock}`;
+  const list =
+    strong.length === 1
+      ? strong[0]
+      : `${strong.slice(0, -1).join(", ")} and ${strong[strong.length - 1]}`;
+  const verb = strong.length === 1 ? "scores" : "score";
+  return `${list.charAt(0).toUpperCase()}${list.slice(1)} ${verb} strong. Approve it and IntellEngine can scope it.${clock}`;
 }
 
 // What to actually DO about a data source that needs a human, phrased per field.
@@ -130,7 +166,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
 
   const { data: cardRows } = await supabase
     .from("review_cards")
-    .select("id, fit_score, decision, decided_at, interested_at, sme_interested_at, sme_released_at, sent_at, pursuit_path, grant_id, grants(id, title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate)")
+    .select("id, fit_score, factor_scores, decision, decided_at, interested_at, sme_interested_at, sme_released_at, sent_at, pursuit_path, grant_id, grants(id, title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate)")
     .eq("client_id", params.id)
     .neq("card_type", "prospect");
 
@@ -397,16 +433,6 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
       href: reviewHref,
       actionLabel: pillLabel(reviewHref),
     },
-    {
-      id: "proposals",
-      title: "Grant proposals",
-      description: "Drafts in progress in IntellEngine",
-      count: drafts.length,
-      icon: Sparkles,
-      tone: "approved",
-      href: intellEngineHref,
-      actionLabel: "Open IntellEngine",
-    },
   ];
 
   // See ClientDashboard's attentionNote prop: the design's line names Grant Alerts, which
@@ -490,50 +516,78 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
     otherRows: pinnedRows.filter((r) => r.count > 0).length + consoleActionItems.length,
   });
 
-  // What IntellEngine should scope next, for the panel's no-draft state. The approved
-  // match with the nearest deadline that nobody has started -- see ConsoleDraftPanel for
-  // why the empty state recommends instead of waiting. Null when there is no approved
-  // match at all, which gets its own line rather than an invented recommendation.
+  // What the IntellEngine panel points at when no draft is in flight. Two states, and
+  // the panel is never empty in either -- see DraftNext in the component.
   const draftedCardIds = new Set(draftRecords.map((d) => d.card_id).filter(Boolean));
-  const draftCandidate: DraftCandidate | null = (() => {
-    const eligible = cards
-      .filter((c) => c.decision === "approved" && !draftedCardIds.has(c.id))
+
+  // READY: approved, nobody started it, nearest deadline first. Undated sorts last --
+  // "no deadline" is the absence of a clock, not urgency.
+  const readyQueue = cards
+    .filter((c) => c.decision === "approved" && !draftedCardIds.has(c.id))
+    .map((c) => ({ card: c, days: deadlineDaysLeft(c.grant?.submission_deadline) }))
+    .sort((a, b) => (a.days ?? Number.POSITIVE_INFINITY) - (b.days ?? Number.POSITIVE_INFINITY));
+
+  const draftNext: DraftNext | null = (() => {
+    const ready = readyQueue[0];
+    if (ready) {
+      const { card, days } = ready;
+      const sinceApproved =
+        card.decided_at !== null ? Math.max(0, Math.floor((now - Date.parse(card.decided_at)) / 86_400_000)) : null;
+      // Every clause drops when its fact is missing rather than being guessed at, so the
+      // sentence gets shorter instead of getting invented. The closing line is only true
+      // when this really is the only unstarted approval, so it is only said then.
+      const parts: string[] = [];
+      if (sinceApproved !== null) {
+        parts.push(
+          `Approved ${sinceApproved === 0 ? "today" : `${sinceApproved} ${sinceApproved === 1 ? "day" : "days"} ago`}`,
+        );
+      }
+      if (days !== null && days >= 0) parts.push(`${days} ${days === 1 ? "day" : "days"} left on the clock`);
+      else if (days !== null) parts.push("the deadline has already passed");
+      const lead = parts.length > 0 ? `${parts.join(" with ")}.` : "Approved and not yet scoped.";
+      const tail =
+        readyQueue.length === 1
+          ? " It is the only approved match with nothing drafted."
+          : ` ${readyQueue.length - 1} other${readyQueue.length === 2 ? "" : "s"} are waiting too.`;
+      return {
+        kind: "ready",
+        pick: {
+          title: card.grant?.title || "Untitled opportunity",
+          meta: [card.grant?.funder, awardLabel(card.grant), "approved, never started"].filter(Boolean).join(" \u00b7 "),
+          rationale: lead + tail,
+          href: `${intellEngineHref}?start=${card.id}`,
+        },
+      };
+    }
+
+    // WAITING: nothing is approved, so the blocker is upstream and the panel says so.
+    // It still shows the closest candidate -- knowing what an approval would unlock is
+    // the point, and hiding it would make the card sit blank for exactly the clients who
+    // most need pushing.
+    const untriaged = cards.filter((c) => c.decision !== "passed" && c.interested_at === null).length;
+    const closest = cards
+      .filter((c) => c.decision !== "passed" && c.decision !== "approved")
       .map((c) => ({ card: c, days: deadlineDaysLeft(c.grant?.submission_deadline) }))
-      // Undated sorts last: "no deadline" is not urgency, it is the absence of a clock.
-      .sort((a, b) => (a.days ?? Number.POSITIVE_INFINITY) - (b.days ?? Number.POSITIVE_INFINITY));
-    const pick = eligible[0];
-    if (!pick) return null;
+      .sort(
+        (a, b) =>
+          b.card.fit_score - a.card.fit_score ||
+          (a.days ?? Number.POSITIVE_INFINITY) - (b.days ?? Number.POSITIVE_INFINITY),
+      )[0];
 
-    const { card, days } = pick;
-    const sinceApproved =
-      card.decided_at !== null
-        ? Math.max(0, Math.floor((now - Date.parse(card.decided_at)) / 86_400_000))
-        : null;
-
-    // Every clause is dropped when its fact is missing rather than guessed at, so the
-    // sentence gets shorter instead of getting invented. The closing line is only true
-    // when this really is the only unstarted approval, so it is only said then.
-    const parts: string[] = [];
-    if (sinceApproved !== null) {
-      parts.push(`Approved ${sinceApproved === 0 ? "today" : `${sinceApproved} ${sinceApproved === 1 ? "day" : "days"} ago`}`);
-    }
-    if (days !== null && days >= 0) {
-      parts.push(`${days} ${days === 1 ? "day" : "days"} left on the clock`);
-    } else if (days !== null) {
-      parts.push("the deadline has already passed");
-    }
-    const lead = parts.length > 0 ? `${parts.join(" with ")}.` : "Approved and not yet scoped.";
-    const tail =
-      eligible.length === 1
-        ? " It is the only approved match with nothing drafted."
-        : ` ${eligible.length - 1} other${eligible.length === 2 ? "" : "s"} are waiting too.`;
+    if (!closest) return null;
 
     return {
-      cardId: card.id,
-      title: card.grant?.title || "Untitled opportunity",
-      meta: [card.grant?.funder, awardLabel(card.grant), "approved, never started"].filter(Boolean).join(" · "),
-      rationale: lead + tail,
-      href: `${intellEngineHref}?start=${card.id}`,
+      kind: "waiting",
+      unassessed: untriaged,
+      reviewHref,
+      pick: {
+        title: closest.card.grant?.title || "Untitled opportunity",
+        meta: [closest.card.grant?.funder, awardLabel(closest.card.grant), `fit ${closest.card.fit_score}/3`]
+          .filter(Boolean)
+          .join(" \u00b7 "),
+        rationale: waitingRationale(closest.card.factor_scores, closest.days),
+        href: `${intellEngineHref}?start=${closest.card.id}`,
+      },
     };
   })();
 
@@ -633,7 +687,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
     <>
       <Link
         href={editHref}
-        className="inline-flex h-8 items-center rounded-pill border border-white/20 px-[14px] text-[13px] font-medium text-white/[0.85] transition-colors hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-navy"
+        className="inline-flex h-8 items-center rounded-pill border border-white/20 px-[14px] text-[13px] font-medium text-white/[0.85] transition-colors hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome"
       >
         Edit profile
       </Link>
@@ -698,7 +752,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         list: drafts,
         emptyNote: "No proposals started yet. IntellEngine is where a matched grant becomes a draft.",
       }}
-      draftCandidate={draftCandidate}
+      draftNext={draftNext}
       // Pure read of the community_context already on the record -- no fetch here.
       community={buildCommunityView(client)}
       events={events}

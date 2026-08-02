@@ -54,9 +54,15 @@ Shared with the Portfolio — one visual system, built once. `SURFACE.ground` (`
 `RADIUS.sharp` (2px + a 1px `LINE.edge` rule, **no shadow**), Libre Baskerville for every
 display figure. Both are still page-scoped: only these two screens have been redrawn.
 
-The masthead uses `BRAND.navy`, not the drawn `#0A1420` — it sits flush beneath the
-global command band, and honouring the darker value means either a seam or repainting the
-nav on every page.
+**`BRAND.chrome` (`#0A1420`) is the dark surface** — the command band, both mastheads,
+and the IntellEngine panel. An earlier pass used `BRAND.navy` to avoid repainting the
+global nav; the nav was repainted instead, because the near-black is what makes the white
+cards read as crisp planes. Against navy the whole page looks hazy, and that was the
+single largest gap between the build and the reference.
+
+Two tokens, not a retuned one. `BRAND.navy` is a text colour first — it is `INK.DEFAULT`,
+on every heading and paragraph in the product — so it cannot be darkened to suit a dark
+field without repainting all of that.
 
 **The IntellEngine panel loses its gradient and glow.** That treatment was the one place
 in the product allowed it, on the argument that this is where the AI does work. Next to
@@ -73,6 +79,17 @@ the swatch is the only thing tying a zero-count stage to its segment.
 This **reversed the Portfolio's first build**, which rendered its book bar in the full
 stage palette. Two screens shipping together cannot render the same five stages two ways;
 the Portfolio bar was retrofitted in the same PR.
+
+### Teal is reserved
+
+Teal means exactly one thing on the ink screens: **a person is waiting on you.** It used
+to carry the Grant Report card's eyebrow, its strip and its button, which made it read as
+that card's brand colour. Those are now `INK.muted` and navy.
+
+The card's 3px top edge and its row dots survive as teal because they are STAGE markers
+from the `STAGE` scale, not decoration. That scale still uses teal for "approved" on white
+cards — a tension worth naming: colour-as-signal and colour-as-stage coexist, and only the
+ink surfaces have been resolved to the first rule.
 
 **Two orange tokens, not interchangeable.** `BRAND.orange` (`#E4761F`) for fills, display
 figures, and anything on ink. `BRAND.orangeDeep` (`#A8501A`) for **any small text on a
@@ -106,6 +123,10 @@ Two of the four note types ship (`lib/clients/ambient-note.ts`):
 |---|---|
 | Clustering | ≥3 unassessed grants share a funder with something already approved or in pursuit |
 | Staleness | An approved grant has a deadline inside 45 days and no draft started anywhere |
+
+The attention card also lost its **"Grant proposals"** pinned row: the IntellEngine panel
+sits directly below and says the same thing with far more detail, so at zero the row
+communicated nothing and at any other count it was a worse copy of the card.
 
 **Blocked dependency** is already the "N data sources need attention" row above it.
 **Rejection pattern** needs clustering over free-text `decision_reason` — a genuine model
@@ -173,6 +194,36 @@ says so in one line.
 **Height is a constraint.** This shares a `1fr` row with ~330px of real content, so the
 empty state has to fit the same box or its buttons clip out of existence. Do not add
 explanatory copy to it.
+
+### Nothing on these pages is a pill
+
+Cards, buttons and inputs are all `RADIUS.sharp` (2px); only count badges stay round. No
+box-shadow anywhere — a shadow is paper lifting off a desk, and a hairline reads as drawn.
+
+## The IntellEngine panel has three states, and is never empty
+
+| State | When | What it says |
+|---|---|---|
+| **Draft in progress** | a draft exists | title, step progress, checklist, Resume / New draft |
+| **Ready to scope** | approved matches exist, none drafted | names the nearest-deadline one against a 2px orange rule, one italic-serif line on why — **Scope this one** / Pick another |
+| **Waiting on an approval** | nothing approved yet | strip names the blocker and the unassessed count; shows the closest candidate anyway with its fit; primary is **Review the N**, routing to what unblocks it |
+
+The waiting state is the one most clients are actually in, and it is the one that looked
+saddest. Showing the closest candidate even though it is unapproved is the point — knowing
+what an approval would unlock is what makes the reader go approve something.
+
+Its sentence names **only factors the engine rated strong** (`factor_scores`, #105). Cards
+scored before those shipped have none, and it degrades to the shorter half of the sentence
+rather than asserting anything about eligibility it cannot support.
+
+"Scope this one" carries `?start=<cardId>` to the IntellEngine hub, which opens its picker
+with that grant first. Deliberately **not** an auto-create on mount: a mutation fired from
+a URL means a browser refresh silently produces a second draft.
+
+**Height is a hard constraint.** The panel shares a `1fr 1fr` row with a Grant Report card
+carrying ~330px of real content, so every state must fit the same box. Do not add
+explanatory blocks, feature lists or readiness checklists to any of them — if something
+needs saying, fold it into the italic line.
 
 ## States not drawn
 

@@ -17,7 +17,7 @@ import {
   type DashReportRow,
   type DashReportMetrics,
 } from "@/components/clients/client-grant-report-card";
-import { ClientDraftProgress, type DashDraft, type DraftCandidate } from "@/components/clients/client-draft-progress";
+import { ClientDraftProgress, type DashDraft, type DraftNext } from "@/components/clients/client-draft-progress";
 import { ClientCommunityContext } from "@/components/clients/client-community-context";
 import { ClientActivity } from "@/components/clients/client-activity";
 import type { CommunityView } from "@/lib/clients/community";
@@ -133,7 +133,7 @@ export function ClientDashboard({
   events,
   ambient,
   ghost,
-  draftCandidate,
+  draftNext,
   scorer,
   attentionNote,
   bookingUrl,
@@ -176,8 +176,9 @@ export function ClientDashboard({
   // Console-only: the oversized figure bled off the bottom-right of the body. The
   // unassessed count, at 3% ink. Null renders nothing.
   ghost?: number | null;
-  // Console-only: what IntellEngine should scope next when no draft is in flight.
-  draftCandidate?: DraftCandidate | null;
+  // Console-only: what the IntellEngine panel says when no draft is in flight — see
+  // DraftNext. The panel is never empty; this is what it points at.
+  draftNext?: DraftNext | null;
   // Rail, console-only: the grant scorer. Passed as a node because it is a client
   // component with its own state and the console only needs to place it.
   scorer?: React.ReactNode;
@@ -216,7 +217,7 @@ export function ClientDashboard({
               community={community}
               events={events}
               ambient={ambient}
-              draftCandidate={draftCandidate}
+              draftNext={draftNext}
               scorer={scorer}
               attentionNote={attentionNote}
               roadmapHref={roadmapHref}
@@ -279,7 +280,13 @@ function ConsoleDecor({ ghost }: { ghost?: number | null }) {
       <span className="absolute inset-y-0 left-0 w-px bg-brand-navy/10" />
       <span className="absolute inset-y-0 right-0 w-px bg-brand-navy/10" />
       {ghost !== null && ghost !== undefined && ghost > 0 && (
-        <span className="absolute -bottom-[146px] -right-[52px] font-serif text-[340px] font-bold leading-none tracking-[-0.04em] text-brand-navy/[0.03]">
+        // Colour set inline rather than via an opacity modifier: at 3% the difference
+        // between rendering and not rendering is one arbitrary-value class resolving, and
+        // this is not worth debugging twice.
+        <span
+          className="absolute -bottom-[146px] -right-[52px] select-none font-serif text-[340px] font-bold leading-none tracking-[-0.04em]"
+          style={{ color: "rgba(11,30,58,0.03)" }}
+        >
           {ghost}
         </span>
       )}
@@ -308,7 +315,7 @@ function ConsoleBody({
   community,
   events,
   ambient,
-  draftCandidate,
+  draftNext,
   scorer,
   attentionNote,
   roadmapHref,
@@ -321,7 +328,7 @@ function ConsoleBody({
   community?: CommunityView;
   events?: ActivityEvent[];
   ambient?: AmbientNote | null;
-  draftCandidate?: DraftCandidate | null;
+  draftNext?: DraftNext | null;
   scorer?: React.ReactNode;
   attentionNote?: string | null;
   roadmapHref: string;
@@ -352,7 +359,7 @@ function ConsoleBody({
               drafts={drafts.list}
               intellEngineHref={intellEngineHref}
               emptyNote={drafts.emptyNote}
-              candidate={draftCandidate}
+              next={draftNext}
             />
           )}
         </div>
@@ -465,7 +472,7 @@ function AmbientRow({ note }: { note: AmbientNote }) {
       </p>
       <Link
         href={note.action.href}
-        className="inline-flex shrink-0 items-center gap-1.5 border-b border-brand-navy/30 pb-px text-[12px] font-semibold text-brand-navy transition-colors hover:border-brand-orange hover:text-brand-orange focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+        className="inline-flex shrink-0 items-center gap-1.5 border-b border-brand-navy/30 pb-px text-[12px] font-semibold text-brand-navy transition-colors hover:border-brand-orangeDeep hover:text-brand-orangeDeep focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
       >
         {note.action.label}
         <ArrowRight className="h-[13px] w-[13px]" aria-hidden="true" />
@@ -519,7 +526,7 @@ function PinnedRow({ row, last }: { row: DashPinnedRow; last: boolean }) {
       {live ? (
         <Link
           href={row.href as string}
-          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-pill bg-brand-orange px-3.5 text-[12.5px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sharp bg-brand-orange px-3.5 text-[12.5px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
         >
           {row.actionLabel}
           <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
@@ -527,7 +534,7 @@ function PinnedRow({ row, last }: { row: DashPinnedRow; last: boolean }) {
       ) : (
         <span
           aria-disabled="true"
-          className="inline-flex h-8 shrink-0 cursor-default items-center rounded-pill px-3.5 text-[12.5px] font-semibold"
+          className="inline-flex h-8 shrink-0 cursor-default items-center rounded-sharp px-3.5 text-[12.5px] font-semibold"
           style={{ backgroundColor: "rgba(11,30,58,0.05)", color: INK.faint }}
         >
           {row.actionLabel}
@@ -563,12 +570,17 @@ function AttentionRow({ item, last }: { item: DashActionItem; last: boolean }) {
         {item.description && <p className="mt-0.5 text-xs text-ink-subtle">{item.description}</p>}
       </div>
       {item.busy ? (
-        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-brand-orange">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        // Small orange text on white -- the burnt variant, not brand orange. See
+        // BRAND.orangeDeep. The spinner keeps the brand hue: a 14px glyph is not type.
+        <span
+          className="inline-flex shrink-0 items-center gap-1.5 text-xs font-semibold"
+          style={{ color: BRAND.orangeDeep }}
+        >
+          <Loader2 className="h-3.5 w-3.5 animate-spin" style={{ color: BRAND.orange }} />
           In progress
         </span>
       ) : affordance.kind === "pill" ? (
-        <span className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-pill bg-brand-orange px-3.5 text-[12.5px] font-semibold text-white">
+        <span className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sharp bg-brand-orange px-3.5 text-[12.5px] font-semibold text-white">
           {affordance.label}
           <ChevronRight className="h-3.5 w-3.5" />
         </span>

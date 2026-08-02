@@ -57,6 +57,7 @@ const config: Config = {
           navy: BRAND.navy,
           navyHover: BRAND.navyHover,
           navyDeep: BRAND.navyDeep,
+          chrome: BRAND.chrome,
           orange: BRAND.orange,
           orangeHover: BRAND.orangeHover,
           orangeDeep: BRAND.orangeDeep,
