@@ -77,6 +77,16 @@ export default async function GrantProspectingPage() {
                     <p className="mt-0.5 truncate text-xs text-muted-foreground">{sub || "—"}</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
+                    {/* Says so on the row rather than letting you find out by pressing
+                        Prospect and getting a 400. Discovery maps candidate orgs onto the
+                        grant's ideal-applicant profile, so with no profile there is nothing
+                        to map onto — the row is here because a missing profile on a
+                        will-score grant is a gap worth seeing, not one to hide. */}
+                    {!item.prospectable && (
+                      <Badge variant="warning" title="No ideal-applicant profile — rebuild the grant profile in the Ledger to make this prospectable">
+                        No profile — can&apos;t prospect
+                      </Badge>
+                    )}
                     {item.prospectCards.length > 0 && (
                       <span className="rounded-full bg-brand-navy px-3 py-1 text-xs font-semibold text-white">
                         {item.prospectCards.length} prospect{item.prospectCards.length === 1 ? "" : "s"}

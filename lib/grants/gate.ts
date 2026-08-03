@@ -106,6 +106,10 @@ export async function releasedGrantsForProspecting(
 // client context (and any active pursuit) before reaching out. Excludes
 // international, hard-disqualified, forecasted, admin-closed, and not-yet-scored
 // grants. Read-only; discovery (discover.ts) is what acts on a feed item.
+//
+// Each item also carries `prospectable`: whether the grant has an ideal_applicant_profile
+// to discover against. See the field's note for why these rows are FLAGGED and not
+// dropped.
 export interface ProspectCardLite {
   id: string;
   fit_score: number | null;
@@ -121,6 +125,17 @@ export interface ProspectFeedItem {
     funder: string | null;
     submission_deadline: string | null;
   };
+  // FALSE = un-prospectable, however complete the grant otherwise looks. Discovery works
+  // by mapping candidate orgs onto the grant's ideal_applicant_profile, so with no profile
+  // there are no seats to map onto and discoverProspects refuses outright.
+  //
+  // Surfaced rather than FILTERED, deliberately. The feed used to list these and you only
+  // found out by pressing Prospect and eating a 400. Dropping them would fix the false
+  // promise by hiding the work: a missing profile on a will-score grant is an
+  // instrumentation failure worth seeing (the Ledger calls it a "Profile gap"), and rows
+  // silently vanishing from a feed is the shape of the drain incident. So the row stays,
+  // says why, and the action is disabled.
+  prospectable: boolean;
   // Informational only (see policy at top): 'released' = decided/no match,
   // 'locked' = a client is still deciding. Never blocks the feed.
   status: GateStatus;
@@ -150,6 +165,18 @@ export async function getProspectFeed(
   );
   if (eligible.length === 0) return [];
   const ids = eligible.map((g) => g.id);
+
+  // Which of these have a built ideal_applicant_profile. A global `is not null` probe of
+  // ids only -- never the large jsonb -- mirroring how the Ledger derives the same fact.
+  // Ids beyond this feed are harmless; only the feed's own are read back.
+  const profiled = new Set<string>();
+  {
+    const { data: profiledRows } = await db
+      .from("grants")
+      .select("id")
+      .not("ideal_applicant_profile", "is", null);
+    for (const r of (profiledRows ?? []) as { id: string }[]) profiled.add(r.id);
+  }
 
   const { data: cards } = await db
     .from("review_cards")
@@ -213,6 +240,7 @@ export async function getProspectFeed(
         funder: g.funder,
         submission_deadline: g.submission_deadline,
       },
+      prospectable: profiled.has(g.id),
       status,
       clientMatches,
       prospectCards,
