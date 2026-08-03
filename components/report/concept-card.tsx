@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Loader2, Sparkles } from "lucide-react";
 import { BRAND } from "@/lib/brand";
+import { useOverdueGate, type OverdueGateConfig } from "./overdue-gate";
 import type { ConceptProposalStatus } from "@/types/database";
 
 // The concept-proposal card in the grant review rail.
@@ -25,15 +26,27 @@ export function ConceptCard({
   cardId,
   status,
   anchorHref,
+  overdue,
 }: {
   cardId: string;
   status: ConceptProposalStatus | null;
   // Where "View the draft" goes once one exists — the panel further down the page.
   anchorHref: string;
+  // Deadline context for the overdue confirmation. Drafting a concept for a closed grant
+  // is the cheapest of the three gated actions to undo, but it is the one that usually
+  // comes FIRST in the workflow — so catching it here is what stops the other two.
+  overdue: OverdueGateConfig;
 }) {
   const router = useRouter();
+  // IN-FLIGHT POST ONLY. This used to be left true forever on purpose, on the theory
+  // that "the panel below polls to ready" would re-render this card — the panel polled
+  // into its own state and never told the server tree, so the spinner ran indefinitely
+  // on a proposal that had already finished. The panel now refreshes on that transition
+  // (see its note), and this state has gone back to meaning only what it says: a request
+  // is open. Everything after that is driven by `status`, which is the server's fact.
   const [busy, setBusy] = useState(false);
   const generating = busy || status === "generating";
+  const { guard, gate } = useOverdueGate(overdue, "Generate the concept proposal");
 
   async function generate() {
     setBusy(true);
@@ -43,9 +56,10 @@ export function ConceptCard({
         setBusy(false);
         return;
       }
-      // Leave busy true — the refresh re-renders at status='generating', which keeps the
-      // spinner until the panel below polls to ready.
+      // The refresh re-renders at status='generating', which carries the spinner from
+      // here on; clearing busy hands the state over rather than double-owning it.
       router.refresh();
+      setBusy(false);
     } catch {
       setBusy(false);
     }
@@ -82,7 +96,7 @@ export function ConceptCard({
         <button
           type="button"
           disabled={generating}
-          onClick={generate}
+          onClick={() => guard(() => void generate())}
           className="mt-2.5 inline-flex h-[34px] w-full items-center justify-center gap-[7px] rounded-sharp bg-brand-chrome text-[12.5px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
         >
           {generating ? (
@@ -98,6 +112,7 @@ export function ConceptCard({
           )}
         </button>
       )}
+      {gate}
     </section>
   );
 }

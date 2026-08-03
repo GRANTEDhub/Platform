@@ -14,6 +14,7 @@ import { getSentAlertForCard } from "@/lib/alerts/sent-status";
 import { viewFitFactors } from "@/lib/report/fit-factors";
 import { computeEligibility } from "@/lib/intellengine/eligibility";
 import { FIT_BAND, deadlineDaysLeft } from "@/lib/report/shape";
+import { isOverdue } from "@/components/report/overdue-gate";
 import { formatAwardRange, compactCostShare } from "@/lib/grants/format";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import type { Client, FactorScores, Grant } from "@/types/database";
@@ -190,23 +191,47 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
     mitigation: firstSentences(card.reasoning_context?.consortium_rationale, 2),
   };
 
+  const days = deadlineDaysLeft(g.submission_deadline);
+  const overdue = isOverdue(days);
+  const deadlineLabel = fmtDate(g.submission_deadline);
+
   const meta: ReviewMeta[] = [
     { label: "Award range", value: formatAwardRange(g.award_range_min, g.award_range_max) },
-    { label: "Deadline", value: fmtDate(g.submission_deadline) ?? "Not stated" },
+    {
+      label: "Deadline",
+      value: deadlineLabel ?? "Not stated",
+      // The one thing on this row that can invalidate the whole page, so it stops looking
+      // like the award range. See the `tone` note on ReviewMeta.
+      ...(overdue ? { tone: "danger" as const } : {}),
+    },
     { label: "Match required", value: compactCostShare(g.cost_share) },
     { label: "Term", value: g.period_of_performance?.trim() || "Not stated" },
     { label: "Awards expected", value: g.num_awards?.trim() || "Not stated" },
   ];
 
-  const days = deadlineDaysLeft(g.submission_deadline);
   const keyDetails: ReviewKeyDetail[] = [
     { label: "Opportunity number", value: g.fon?.trim() || "—" },
     { label: "CFDA", value: (g.assistance_listings ?? []).map((a) => a.number).join(", ") || "—" },
     { label: "Cost sharing", value: compactCostShare(g.cost_share) },
   ];
-  if (days !== null && days >= 0) keyDetails.push({ label: "Days remaining", value: String(days) });
+  // The countdown row used to be DROPPED once the deadline passed, which is the one state
+  // where it carries the most information — a card with four key details silently became
+  // three and nothing said why. It now reports the closure instead of vanishing.
+  if (days !== null) {
+    keyDetails.push(
+      days > 0
+        ? { label: "Days remaining", value: String(days) }
+        : days === 0
+          ? { label: "Days remaining", value: "Closes today" }
+          : { label: "Closed", value: `${Math.abs(days)} ${Math.abs(days) === 1 ? "day" : "days"} ago` },
+    );
+  }
+
 
   const backHref = `/clients/${params.id}/roadmap`;
+  // Shared by all three gated actions. backHref is where Archive lands — the Grant
+  // Report, since an archived card is gone from this queue.
+  const overdueConfig = { cardId: params.cardId, daysLeft: days, deadlineLabel, backHref };
   const monogram = (() => {
     const parts = (client?.name ?? "").trim().split(/\s+/).filter(Boolean);
     if (parts.length === 0) return "—";
@@ -276,6 +301,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
               cardId={params.cardId}
               released={!!card.sme_released_at}
               backHref={backHref}
+              overdue={overdueConfig}
               returnNote={
                 remaining > 0
                   ? `Either way you'll go back to the Grant Report — ${remaining} left.`
@@ -295,6 +321,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
                 sentAt={sentAlert?.sentAt ?? null}
                 sentTo={sentAlert?.sentTo ?? null}
                 contactName={client?.name ?? null}
+                overdue={overdueConfig}
               />
             </section>
           ) : (
@@ -308,7 +335,12 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         }
         concept={
           showConcept ? (
-            <ConceptCard cardId={params.cardId} status={conceptProposal?.status ?? null} anchorHref="#concept" />
+            <ConceptCard
+              cardId={params.cardId}
+              status={conceptProposal?.status ?? null}
+              anchorHref="#concept"
+              overdue={overdueConfig}
+            />
           ) : null
         }
         keyDetails={keyDetails}
