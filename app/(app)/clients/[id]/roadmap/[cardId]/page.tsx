@@ -22,10 +22,11 @@ export const dynamic = "force-dynamic";
 
 // The staff grant review — one matched grant, one client, one decision.
 //
-// THIS IS NOT THE CLIENT'S COPY. app/portal/grants/[id] renders ReportDetail for the
-// client's own view of the same card, with different visibility rules and none of these
-// controls. The two used to be one component; they are deliberately not any more, because
-// every control added here would otherwise have to be suppressed there.
+// THE CLIENT'S COPY IS THE SAME SCREEN. app/portal/grants/[id] mounts the same
+// GrantReviewConsole, by instruction — the two are meant to be pixel-identical so a change
+// lands on both. It differs only in the children it passes in (its own decision bar, a
+// read-only concept pointer, null feedback and null score-factors). The portal used to
+// render ReportDetail, a separate pre-redesign component; that is gone.
 //
 // There is a SECOND staff review surface — /review/[id], the cross-client Matches
 // worklist reached from the command band's badge. It is unchanged and now looks nothing
