@@ -91,7 +91,11 @@ function defaultBody(ctx: ReleaseCtx, url: string): string {
     "",
     "Happy to talk it through whenever you're ready.",
     "",
-    "— GRANTED",
+    // "Best, / GRANTED", matching buildAlertEmailBody. Was "— GRANTED", which broke the
+    // no-em-dashes rule the alert builder documents and the enrichment prompts enforce --
+    // and left the firm's two client-facing emails signing off two different ways.
+    "Best,",
+    "GRANTED",
   ].join("\n");
 }
 
