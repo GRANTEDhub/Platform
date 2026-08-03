@@ -12,6 +12,7 @@ import { Resend } from "resend";
 import { isRecipientAllowed } from "@/lib/email/guard";
 import { sanitizeOutreachEmail } from "@/lib/email/sanitize";
 import type { ReviewCard, Client } from "@/types/database";
+import { plainTextToHtml, type HtmlLink } from "./html";
 
 // Sends from the verified Resend domain (send.grantedco.com). Replies are
 // directed to a monitored human inbox so the conversation happens over email
@@ -108,6 +109,15 @@ export async function sendOutreachEmail(opts: {
   subject: string;
   body: string;
   contactName?: string | null;
+  // Set to send a multipart text+HTML email whose HTML is DERIVED HERE from the
+  // sanitized text -- so the two parts cannot disagree, and a caller cannot accidentally
+  // build the HTML from the pre-sanitize draft. The value is the anchor to substitute for
+  // the bare URL line (see plainTextToHtml); pass it and you get HTML, omit it and the
+  // email stays text-only exactly as before.
+  htmlLink?: HtmlLink | null;
+  // Optional attachments, same shape Resend takes. Used to hang the grant-alert one-pager
+  // on a custom release note so the client can read it without signing in.
+  attachments?: { filename: string; content: Buffer }[];
 }): Promise<SentResult> {
   const to = (opts.to ?? "").trim();
   if (!isDeliverableEmail(to)) {
@@ -124,12 +134,16 @@ export async function sendOutreachEmail(opts: {
   const cleanBody = sanitizeOutreachEmail(opts.body, opts.contactName ?? null);
 
   const resend = new Resend(process.env.RESEND_PLATFORM_API);
+  const html = opts.htmlLink ? plainTextToHtml(cleanBody, opts.htmlLink) : undefined;
+  const attachments = opts.attachments?.length ? opts.attachments : undefined;
   const { data, error } = await resend.emails.send({
     from: FROM,
     to,
     replyTo: REPLY_TO,
     subject,
     text: cleanBody,
+    ...(html ? { html } : {}),
+    ...(attachments ? { attachments } : {}),
   });
   if (error) throw new Error(`Resend send failed: ${error.message}`);
   return { to, subject, id: data?.id ?? null };
