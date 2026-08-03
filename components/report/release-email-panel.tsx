@@ -103,7 +103,8 @@ export function ReleaseEmailPanel({
           <>
             <h2 className="font-serif text-lg font-semibold text-brand-navy">Send email to the client</h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              Releases this grant to the client&apos;s portal and sends a custom note — no PDF attached. Edit below, then send.
+              Releases this grant to the client&apos;s portal and sends a custom note with the
+              one-page alert attached. The portal link sends as a clickable link. Edit below, then send.
             </p>
             {loading ? (
               <div className="mt-6 flex items-center gap-2 py-8 text-sm text-muted-foreground">
@@ -146,7 +147,10 @@ export function ReleaseEmailPanel({
                 Cancel
               </Button>
               <Button onClick={send} disabled={busy || loading || !to.trim() || !body.trim()}>
-                {busy ? "Releasing…" : "Release & send"}
+                {/* The one-pager is rendered at send time when the card has no saved draft
+                    yet, which can take up to a minute -- so the label says so rather than
+                    leaving a dead-looking button. */}
+                {busy ? "Releasing and attaching the one-pager…" : "Release & send"}
               </Button>
             </div>
           </>
