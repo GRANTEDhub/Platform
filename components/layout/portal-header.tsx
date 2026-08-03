@@ -37,9 +37,13 @@ function NavLinks({ pathname, className }: { pathname: string; className?: strin
             key={item.href}
             href={item.href}
             aria-current={active ? "page" : undefined}
+            // Byte-for-byte the console band's pill: same radius, padding, size and the
+            // same white/10 active fill. See components/layout/top-nav.tsx.
             className={cn(
-              "whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors",
-              active ? "bg-brand-navy/[0.06] text-brand-navy" : "text-muted-foreground hover:text-brand-navy",
+              "whitespace-nowrap rounded-sharp px-3 py-[7px] text-[13.5px] transition-colors duration-[120ms] ease-out",
+              active
+                ? "bg-white/10 font-semibold text-white"
+                : "font-medium text-white/[0.62] hover:bg-white/5 hover:text-white",
             )}
           >
             {item.label}
@@ -61,22 +65,29 @@ export function PortalHeader({
   const showClientChrome = notifications !== null;
 
   return (
-    <header className="border-b border-brand-navy/[0.06] bg-white">
-      <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-6 py-4">
-        <div className="flex items-center gap-6">
-          <Link href="/portal" aria-label="Go to dashboard">
-            <img src="/granted-lockup-light.svg" alt="GRANTED" className="h-8 w-auto" />
+    // THE CONSOLE'S COMMAND BAND, same construction: 58px, chrome, 26px gutters,
+    // full-bleed rather than a centred max-w-5xl column. The dashboard masthead butts
+    // straight up under it and is also chrome, so a white bar here put a seam across the
+    // top of the page and made the two halves of the product look like two products.
+    // The DESTINATIONS stay the client's own — matching the band is a styling decision,
+    // not an argument for showing them the firm's nav.
+    <header className="shrink-0 bg-brand-chrome">
+      <div className="flex h-[58px] items-center justify-between gap-[26px] px-[26px]">
+        <div className="flex items-center gap-[26px]">
+          <Link href="/portal" aria-label="Go to dashboard" className="flex shrink-0 items-center gap-2">
+            <img src="/granted-mark-dark.svg" alt="" aria-hidden="true" className="h-[23px] w-auto" />
+            <span className="font-serif text-[15px] font-bold tracking-[0.03em] text-white">GRANTED</span>
           </Link>
           {/* Desktop nav sits inline; on mobile it drops to a scrollable second row. */}
-          {showClientChrome && <NavLinks pathname={pathname} className="hidden items-center gap-1 md:flex" />}
+          {showClientChrome && <NavLinks pathname={pathname} className="hidden items-center gap-[2px] md:flex" />}
         </div>
         <div className="flex items-center gap-3">
-          {orgName && <span className="hidden text-sm font-medium text-brand-navy lg:inline">{orgName}</span>}
+          {orgName && <span className="hidden text-[13px] font-medium text-white/[0.72] lg:inline">{orgName}</span>}
           {notifications && <NotificationBell count={notifications.count} items={notifications.items} />}
           <form action="/auth/signout" method="post">
             <button
               type="submit"
-              className="rounded-full border border-brand-navy/15 px-4 py-1.5 text-sm text-muted-foreground transition-colors hover:border-brand-navy/30 hover:text-brand-navy"
+              className="rounded-sharp border border-white/20 px-3 py-[6px] text-[13px] text-white/[0.72] transition-colors hover:border-white/40 hover:text-white"
             >
               Sign out
             </button>
@@ -84,7 +95,7 @@ export function PortalHeader({
         </div>
       </div>
       {showClientChrome && (
-        <NavLinks pathname={pathname} className="flex items-center gap-1 overflow-x-auto px-4 pb-2 md:hidden" />
+        <NavLinks pathname={pathname} className="flex items-center gap-[2px] overflow-x-auto px-[26px] pb-2 md:hidden" />
       )}
     </header>
   );

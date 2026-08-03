@@ -10,6 +10,7 @@ import { type DashDraft } from "@/components/clients/client-draft-progress";
 import { buildCommunityView } from "@/lib/clients/community";
 import { deadlineDaysLeft } from "@/lib/report/shape";
 import { deriveClientNotifications } from "@/lib/portal/notifications";
+import { deriveActivity } from "@/lib/clients/activity";
 import type { Client, CardDecision, Grant, IntellEngineDraft } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +25,7 @@ type CardRow = {
   id: string;
   fit_score: 1 | 2 | 3;
   decision: CardDecision;
+  decided_at: string | null;
   interested_at: string | null;
   sme_released_at: string | null;
   grants:
@@ -46,7 +48,9 @@ export default async function PortalHome() {
 
   const { data: cardRows } = await supabase
     .from("review_cards")
-    .select("id, fit_score, decision, interested_at, sme_released_at, grants(id, title, funder, submission_deadline)")
+    .select(
+      "id, fit_score, decision, decided_at, interested_at, sme_released_at, grants(id, title, funder, submission_deadline)",
+    )
     .eq("client_id", org.clientId)
     .neq("card_type", "prospect");
 
@@ -59,10 +63,11 @@ export default async function PortalHome() {
     .eq("client_id", org.clientId)
     .order("updated_at", { ascending: false });
 
-  const drafts: DashDraft[] = ((draftRows ?? []) as Pick<
+  const draftRecords = (draftRows ?? []) as Pick<
     IntellEngineDraft,
     "id" | "title" | "status" | "updated_at"
-  >[]).map((d) => ({ id: d.id, title: d.title, status: d.status }));
+  >[];
+  const drafts: DashDraft[] = draftRecords.map((d) => ({ id: d.id, title: d.title, status: d.status }));
 
   const allCards = ((cardRows ?? []) as CardRow[]).map((r) => ({ ...r, grant: grantOf(r.grants) }));
   // For an account-managed client (0059), a card not yet released by staff must
@@ -85,12 +90,18 @@ export default async function PortalHome() {
   // also uses -- one source of truth, so the dashboard and the bell can never
   // disagree. Pass the unfiltered cards; derive re-applies the same
   // account-managed sme_released_at gate internally.
-  const { items: actionItems } = deriveClientNotifications({
+  const { items: allActionItems } = deriveClientNotifications({
     cards: allCards,
     managed,
     nextStep: client?.next_step ?? null,
     profileConfirmed: !!client?.profile_confirmed_at,
   });
+
+  // The grant-alerts item is dropped because the PINNED row below says the same thing and
+  // is always present. The bell keeps its own copy (it has no pinned rows), so the shared
+  // derivation still emits it -- this filters only what this page renders, and only the one
+  // row that would otherwise appear twice on the same card.
+  const actionItems = allActionItems.filter((i) => i.id !== "grant-alerts");
 
   // Upcoming deadlines (real) among live matches -- drives the deadline stat + the
   // action-items list.
@@ -126,6 +137,35 @@ export default async function PortalHome() {
     },
   ];
 
+  // Rail: what has moved lately, in the CLIENT's voice — see ActivityVoice in
+  // lib/clients/activity.ts. Same events, same tones, same rollup rules as staff get.
+  //
+  // `carded` is EMPTY and has to be: those timestamps live in match_attempts, which is
+  // staff-only under RLS (0055). For a premium client that costs nothing — a grant
+  // arriving IS the release, which the next line covers. For a standard client, who has no
+  // release step, it means new grants do not announce themselves in the feed; their alerts
+  // count and the pinned row carry that instead.
+  const now = Date.now();
+  const events = deriveActivity(
+    {
+      carded: [],
+      decided: cards
+        .filter((c) => (c.decision === "approved" || c.decision === "passed") && c.decided_at !== null)
+        .map((c) => ({
+          id: c.id,
+          title: c.grant?.title || "Untitled opportunity",
+          decision: c.decision as "approved" | "passed",
+          at: c.decided_at as string,
+        })),
+      released: cards
+        .filter((c) => c.sme_released_at !== null)
+        .map((c) => ({ id: c.id, title: c.grant?.title || "Untitled opportunity", at: c.sme_released_at as string })),
+      drafts: draftRecords.map((d) => ({ id: d.id, title: d.title, at: d.updated_at })),
+      now,
+    },
+    "client",
+  );
+
   const base = "/portal/grants";
 
   // Grant Report card: strongest live matches first, soonest deadline as the tiebreak.
@@ -156,9 +196,12 @@ export default async function PortalHome() {
   const subLine =
     [client?.org_type?.replace(/_/g, " "), client?.location_city, client?.location_state].filter(Boolean).join(" · ") || null;
 
+  // NO WRAPPER DIVS. ClientDashboard opens with `flex min-h-full flex-col`, and the console
+  // renders it as a DIRECT child of a flex-1 <main> — which is what gives it a definite
+  // height for the flex-1 cards inside to stretch into. The portal used to wrap it in two
+  // divs, the inner one with no height class, so min-h-full resolved against auto height
+  // and the Grant Report and IntellEngine panels collapsed to their content.
   return (
-    <div className="relative min-h-full">
-      <div className="relative">
         <ClientDashboard
           name={org.clientName}
           subLine={subLine}
@@ -189,6 +232,7 @@ export default async function PortalHome() {
           }
           actionItems={actionItems}
           pinnedRows={pinnedRows}
+          events={events}
           report={{
             rows: reportRows,
             total: nonPassed.length,
@@ -203,7 +247,5 @@ export default async function PortalHome() {
           // Pure read; `client` is null only if the row vanished mid-session.
           community={client ? buildCommunityView(client) : undefined}
         />
-      </div>
-    </div>
   );
 }

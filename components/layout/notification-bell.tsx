@@ -38,7 +38,10 @@ export function NotificationBell({ count, items }: { count: number; items: Clien
         aria-label={count > 0 ? `Notifications, ${count} needing attention` : "Notifications"}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="relative flex h-9 w-9 items-center justify-center rounded-full border border-brand-navy/15 text-muted-foreground transition-colors hover:border-brand-navy/30 hover:text-brand-navy"
+        // ON CHROME. Only PortalHeader mounts this, and that band is now the console's
+        // dark chrome — the previous navy-on-white treatment was invisible against it.
+        // Mirrors the console band's own bell (top-nav.tsx): no border, white/60 at rest.
+        className="relative flex h-9 w-9 items-center justify-center rounded-sharp text-white/60 transition-colors hover:bg-white/5 hover:text-white"
       >
         <Bell className="h-4 w-4" />
         {count > 0 && (
