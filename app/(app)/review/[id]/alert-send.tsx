@@ -57,7 +57,10 @@ export function AlertSend({
   const [body, setBody] = useState("");
   const [rev, setRev] = useState(0); // cache-buster for the preview PDF after regenerate
   const [schedulingLink, setSchedulingLink] = useState(false); // prospect/lead: PDF carries a booking link
-  const [priorEmailedAt, setPriorEmailedAt] = useState<string | null>(null); // soft "emailed this address before" flag
+  // Prior send against this address. COLD PATHS ONLY now — it drives PriorEmailGate
+  // and `coldReContact`. A warm client send no longer surfaces it at all (see the note
+  // at the To: field), so on that path this stays set and unread.
+  const [priorEmailedAt, setPriorEmailedAt] = useState<string | null>(null);
   const [summary, setSummary] = useState<GrantSummary | null>(null);
   // Cold re-contact gate: on a COLD send (prospect/lead) to an address we've emailed
   // before, Send is locked until the sender picks a path. "acknowledged" keeps the
@@ -279,13 +282,14 @@ export function AlertSend({
                   <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">To</span>
                   <input type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder="name@org.org"
                     className="flex h-9 w-full rounded-md border border-input bg-card px-3 text-sm" />
-                  {/* Warm client: passive note. Cold (prospect/lead): the gate below
-                      carries its own "emailed before" line + the required choice. */}
-                  {priorEmailedAt && !isColdSend && (
-                    <span className="text-[11px] text-amber-700">
-                      You’ve emailed this address before {new Date(priorEmailedAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}.
-                    </span>
-                  )}
+                  {/* NO "emailed this address before" NOTE ON A WARM CLIENT SEND. The
+                      whole point of an active engagement is that we email them about
+                      grants repeatedly, so a prior send is the expected state, not a
+                      thing to check — flagging it made the normal case look like a
+                      near-miss and trained the eye to skip an amber line that does
+                      matter elsewhere. Cold re-contact is the case it was built for and
+                      keeps it: PriorEmailGate below carries its own dated line plus the
+                      required cold/follow-up choice. */}
                 </label>
                 {/* Cold re-contact gate: renders only when this is a cold send AND the
                     address was emailed before (the component returns null otherwise).
