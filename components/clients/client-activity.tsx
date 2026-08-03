@@ -14,7 +14,13 @@ import { ACTIVITY_WINDOW_DAYS, type ActivityEvent } from "@/lib/clients/activity
 // a ragged bottom edge is visible in a way it was not on flat cream.
 export function ClientActivity({ events }: { events: ActivityEvent[] }) {
   return (
-    <section className="flex min-h-0 flex-1 flex-col rounded-sharp border border-edge bg-white px-[18px] pb-3.5 pt-[15px]">
+    // THE RAIL'S SLACK ABSORBER, capped for the same reason the left column's panels are
+    // (see ClientDashboard): flex-1 made this card's height a function of what else is in
+    // the rail. With the scorer present it settles around 270px; without it — the client
+    // portal, which has no scorer — it ballooned to 430px around a single event.
+    // 270px is the console's measured height at 1440x900. flex-1 + min-h-0 stay so a short
+    // viewport still shrinks it.
+    <section className="flex min-h-0 max-h-[270px] flex-1 flex-col rounded-sharp border border-edge bg-white px-[18px] pb-3.5 pt-[15px]">
       <div className="flex items-baseline justify-between gap-2.5">
         <h2 className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-muted">Recent activity</h2>
         <p className="shrink-0 text-[11px] text-ink-muted">Last {ACTIVITY_WINDOW_DAYS} days</p>

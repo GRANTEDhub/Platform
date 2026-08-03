@@ -296,8 +296,21 @@ function ConsoleBody({
 
         {/* Side by side, equal width, equal height. IntellEngine is the shorter of the
             two by content: it stretches, its content stays top-aligned, and the slack
-            falls to the bottom of the panel rather than centring it. */}
-        <div className="grid min-h-0 flex-1 gap-[15px] lg:grid-cols-2 lg:items-stretch">
+            falls to the bottom of the panel rather than centring it.
+
+            CAPPED, and the cap is the point. `flex-1` alone hands these panels ALL the
+            space left after the masthead and the attention card — which means their height
+            is a function of how much content sits ABOVE them, not of what is in them. On a
+            staff record that reads fine (17 grants, two attention rows, the panels fill).
+            On a sparse one — a client with one grant and one attention row — the same rule
+            gave them ~57px MORE and left 400px of white inside, and the page looked broken
+            in a way no token change could fix.
+
+            480px is the console's own measured panel height at 1440x900, so a full record
+            is unchanged and a sparse one stops stretching; the leftover falls to the bottom
+            of the page where empty space is supposed to go. flex-1 and min-h-0 stay, so a
+            SHORT viewport still shrinks them rather than overflowing. */}
+        <div className="grid min-h-0 max-h-[480px] flex-1 gap-[15px] lg:grid-cols-2 lg:items-stretch">
           {report && (
             <ClientGrantReportCard
               variant="console"
