@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronDown, FileText, Mail } from "lucide-react";
+import { ChevronDown, FileText, Loader2, Mail } from "lucide-react";
 import { BRAND } from "@/lib/brand";
 import { AlertSend } from "@/app/(app)/review/[id]/alert-send";
 import { ReleaseEmailPanel } from "./release-email-panel";
@@ -52,6 +53,32 @@ export function ReleaseToClientBar({
   // button and both menu items — goes through it, so one wrap covers all three and a new
   // release mode cannot be added past the gate by accident.
   const { guard, gate } = useOverdueGate(overdue, "Release it to the client");
+  // Recall outcome, held locally rather than refreshing straight away: the response
+  // carries the surviving send date and a refresh would re-render this component in its
+  // NOT-released state, taking that sentence off the screen before it was read. The
+  // caller's next navigation picks up the new state.
+  const [recalled, setRecalled] = useState(false);
+  const [recalledEmailedAt, setRecalledEmailedAt] = useState<string | null>(null);
+
+  async function recall() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/review/${cardId}/recall`, { method: "POST" });
+      const data = (await res.json().catch(() => ({}))) as { error?: string; emailedAt?: string | null };
+      if (!res.ok) throw new Error(data.error || "Couldn't recall that");
+      setRecalledEmailedAt(data.emailedAt ?? null);
+      setRecalled(true);
+      // Refresh so the Grant Report count and the rest of the page reflect the recall.
+      // This component keeps its own `recalled` state through it, so the outcome line
+      // survives the re-render that would otherwise replace it with the release buttons.
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't recall that");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   // Outside-click + Escape close for the menu (mirrors the notification bell).
   useEffect(() => {
@@ -90,6 +117,48 @@ export function ReleaseToClientBar({
     }
   }
 
+  // BEFORE the `released` check, deliberately. router.refresh() re-renders the parent,
+  // which now passes released=false — so without this the component would drop straight
+  // into the release buttons and take the outcome line off the screen before it was read.
+  // Local state, so it clears the moment you navigate.
+  if (recalled) {
+    return (
+      <section className="shrink-0 rounded-sharp border border-edge bg-white px-[19px] pb-4 pt-[15px]">
+        <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-muted">Your decision</p>
+        <p className="mt-2 text-[12.5px] leading-[1.55] text-ink-muted">
+          Recalled — this grant is back in Awaiting release and is no longer in the client&apos;s portal.
+        </p>
+        {/* The email is the part a recall cannot reach, so it is stated outright rather
+            than left for the reader to wonder about. grant_alerts keeps the record; a
+            null date means the send was gated off (every preview deploy) and nothing
+            actually reached them, which must not be reported as a sent email. */}
+        <p className="mt-2 text-[11.5px] leading-[1.5] text-ink-muted">
+          {recalledEmailedAt ? (
+            <>
+              The client was emailed on{" "}
+              <strong className="font-semibold text-brand-navy">
+                {new Date(recalledEmailedAt).toLocaleDateString("en-US", {
+                  year: "numeric",
+                  month: "short",
+                  day: "numeric",
+                })}
+              </strong>
+              . That cannot be taken back.
+            </>
+          ) : (
+            "No alert email had gone out, so nothing reached them."
+          )}
+        </p>
+        <Link
+          href={backHref}
+          className="mt-3 inline-flex h-8 items-center rounded-sharp border border-edge px-3 text-[12.5px] font-semibold text-brand-navy transition-colors hover:border-brand-navy/30"
+        >
+          Back to the Grant Report
+        </Link>
+      </section>
+    );
+  }
+
   if (released) {
     return (
       <section className="shrink-0 rounded-sharp border border-edge bg-white px-[19px] pb-4 pt-[15px]">
@@ -97,6 +166,33 @@ export function ReleaseToClientBar({
         <p className="mt-2 text-[12.5px] leading-[1.55] text-ink-muted">
           Released — the client now sees this in their own Grant Alerts.
         </p>
+
+        {/* RECALL. The released state used to be terminal on this surface: a card released
+            by mistake, or one you want back for another pass, could only be pulled by
+            hand in SQL. It takes the card out of the client's portal and returns it to
+            Awaiting release.
+            The EMAIL is not recalled and the copy says so — grant_alerts keeps the send
+            record, and after a successful recall this reports the real date rather than
+            leaving the impression nothing went out. */}
+        <div className="mt-3 border-t border-hairline-strong pt-3">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void recall()}
+              className="inline-flex h-8 items-center gap-1.5 rounded-sharp border border-edge px-3 text-[12.5px] font-semibold text-brand-navy transition-colors hover:border-brand-navy/30 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+            >
+              {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
+              Recall from the client
+            </button>
+            <p className="mt-1.5 text-[11px] leading-[1.45] text-ink-muted">
+              Removes it from their portal and returns it here. Any email already sent stays sent.
+            </p>
+        </div>
+        {error && (
+          <p className="mt-2 text-[11.5px] leading-[1.45]" style={{ color: BRAND.reject }}>
+            {error}
+          </p>
+        )}
       </section>
     );
   }
