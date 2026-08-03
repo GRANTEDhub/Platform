@@ -22,9 +22,13 @@ import type { EligibilityVerdict } from "@/lib/intellengine/eligibility";
 // mitigation to the client. Do not let copy edits erase the bold sentence or spread the
 // orange to a second factor.
 //
-// STAFF ONLY. The client's own copy of this grant is app/portal/grants/[id], which still
-// renders ReportDetail — this is deliberately a separate surface rather than a variant,
-// because the client's page has different visibility rules and none of these controls.
+// SHARED WITH THE CLIENT PORTAL. app/portal/grants/[id] mounts this same component, by
+// deliberate instruction: the two screens are meant to be pixel-identical so a change to
+// one lands on both. Every actionable difference is already a passed-in child —
+// `decision`, `concept`, `feedback`, `scoreFactors` — so the portal supplies its own and
+// passes null for what a client must not have. NOTHING in the frame itself forks on actor,
+// and it should stay that way: the moment this file grows an `isClient` branch, the two
+// screens start drifting and the reason for sharing it is gone.
 
 export interface ReviewMeta {
   label: string;
@@ -44,6 +48,7 @@ export interface ReviewKeyDetail {
 
 export function GrantReviewConsole({
   backHref,
+  backLabel = "Grant Report",
   clientName,
   clientMonogram,
   clientMeta,
@@ -68,6 +73,9 @@ export function GrantReviewConsole({
   sourceUrl,
 }: {
   backHref: string;
+  // The portal reaches this screen from Grant Alerts as well as from the Report, so a
+  // hardcoded "Grant Report" strands the Alerts path. Same slot, same styling.
+  backLabel?: string;
   clientName: string;
   clientMonogram: string;
   clientMeta: string | null;
@@ -100,7 +108,12 @@ export function GrantReviewConsole({
   consequence: string | null;
   scoreFootnote: string;
   // The agree/disagree control. A client component, passed in.
-  feedback: React.ReactNode;
+  //
+  // NULL ON THE PORTAL. Score feedback is staff calibration — it writes match_feedback
+  // attributed to a profiles row, which a portal member does not have, so it would 403 on
+  // press. The client's equivalent already exists as the optional reason on a Pass in
+  // DecisionBar, which routes to the same calibration store.
+  feedback: React.ReactNode | null;
   // Release / reject. A client component, passed in.
   decision: React.ReactNode;
   // The concept proposal card. A client component, passed in.
@@ -119,7 +132,7 @@ export function GrantReviewConsole({
             className="inline-flex shrink-0 items-center gap-[7px] rounded-sharp text-[12.5px] font-medium text-ink-muted transition-colors hover:text-brand-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
           >
             <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-            Grant Report
+            {backLabel}
           </Link>
           <span aria-hidden="true" className="h-[18px] w-px shrink-0 bg-brand-navy/[0.12]" />
           <span
@@ -480,7 +493,7 @@ function ScoreCard({
   score: 1 | 2 | 3;
   verdict: string;
   consequence: string | null;
-  feedback: React.ReactNode;
+  feedback: React.ReactNode | null;
 }) {
   return (
     <section className="shrink-0 rounded-sharp bg-brand-chrome px-[19px] pb-[15px] pt-4 text-white">

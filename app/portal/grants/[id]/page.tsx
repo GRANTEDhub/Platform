@@ -1,32 +1,90 @@
 import { notFound } from "next/navigation";
+import { format, parseISO } from "date-fns";
+import { ArrowRight, Sparkles } from "lucide-react";
 import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { ReportDetail, type ReportDetailCard } from "@/components/report/report-detail";
+import { GrantReviewConsole, type ReviewKeyDetail, type ReviewMeta } from "@/components/report/grant-review-console";
+import { DecisionBar } from "@/components/report/decision-bar";
 import { ConceptProposalUpsell } from "@/components/report/concept-upsell";
 import { ClientConceptProposal } from "@/components/report/client-concept-proposal";
 import { getConceptProposal } from "@/lib/concept/store";
-import { HubShell } from "@/components/layout/hub-background";
-import { deciderLabel } from "@/lib/report/shape";
-import type { GrantDetailFields } from "@/components/grants/grant-detail";
+import { viewFitFactors } from "@/lib/report/fit-factors";
+import { computeEligibility } from "@/lib/intellengine/eligibility";
+import { FIT_BAND, deadlineDaysLeft, isOverdue } from "@/lib/report/shape";
+import { formatAwardRange, compactCostShare } from "@/lib/grants/format";
+import { BRAND } from "@/lib/brand";
+import type { Client, FactorScores, Grant, CardDecision, PursuitPath } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
-type DetailRow = ReportDetailCard & {
+// The client's own copy of one matched grant.
+//
+// IT IS THE SAME SCREEN AS STAFF'S, deliberately and by instruction — GrantReviewConsole,
+// identical frame, identical positions — so a change to the review screen lands on both
+// sides instead of the portal drifting a release behind. It replaced ReportDetail, which
+// was the pre-redesign layout and had become the only place in the product still drawing
+// a grant the old way.
+//
+// FOUR THINGS A CLIENT DOES NOT GET, and every one of them is a passed-in child rather
+// than a fork inside the frame:
+//   decision      DecisionBar (Pursue / Save / Pass, with the pursuit chooser on premium)
+//                 instead of the staff release + send-alert bar. Outreach is never theirs.
+//   concept       read-only pointer at the draft; they may EDIT one we sent, never
+//                 generate or regenerate. Base tier sees the upsell instead.
+//   feedback      null. Score feedback writes match_feedback against a profiles row,
+//                 which a portal member does not have. Their Pass reason already feeds
+//                 the same calibration store via DecisionBar.
+//   scoreFactors  null. The backfill spends a real scorer call; not the client's to spend.
+//
+// Reached from Grant Alerts (?from=alerts, before the grant is in their Report) as well as
+// from the Report itself, so the back link follows where they came from.
+
+type GrantEmbed = Pick<
+  Grant,
+  | "id" | "source_url" | "title" | "funder" | "fon" | "assistance_listings" | "focus_areas"
+  | "submission_deadline" | "period_of_performance" | "cost_share" | "num_awards" | "description"
+  | "award_range_min" | "award_range_max" | "award_range_is_estimate"
+  | "eligible_entity_types" | "geographic_eligibility" | "ineligible_entities" | "hard_disqualifiers"
+  | "skip_reason" | "grant_status"
+>;
+
+type CardRow = {
+  fit_score: 1 | 2 | 3;
+  proposed_role: string | null;
+  why_this_org: string[] | null;
+  concept_synopsis: string | null;
+  factor_scores: FactorScores | null;
+  reasoning_context: { consortium_rationale?: string; fit_score_derivation?: string } | null;
+  decision: CardDecision;
+  pursuit_path: PursuitPath | null;
   card_type: string;
-  grants:
-    | (GrantDetailFields & {
-        title: string | null;
-        funder: string | null;
-        focus_areas: string[] | null;
-        assistance_listings: { number: string; program_title: string }[] | null;
-      })
-    | null;
+  grants: GrantEmbed | GrantEmbed[] | null;
 };
 
-// Read-only Grant Report detail in the client portal. RLS-scoped: the card is
-// fetched as the logged-in client, and we additionally pin client_id so a member
-// can only open their own org's match. Renders the shared ReportDetail — the same
-// surface the staff account-manager view will mount in a later slice.
+function grantOf(g: CardRow["grants"]) {
+  if (!g) return null;
+  return Array.isArray(g) ? g[0] ?? null : g;
+}
+
+function fmtDate(d: string | null | undefined): string | null {
+  if (!d) return null;
+  try {
+    return format(parseISO(d), "MMM d, yyyy");
+  } catch {
+    return null;
+  }
+}
+
+// Cut an engine string at a sentence boundary — only ever CUT, never paraphrased, so
+// nothing is asserted that the engine did not itself write. Same helper as the staff page.
+function firstSentences(raw: string | null | undefined, max = 2): string | null {
+  const s = (raw ?? "").trim();
+  if (!s) return null;
+  const parts = s.match(/[^.!?]+[.!?]+/g);
+  if (!parts) return s.endsWith(".") ? s : `${s}.`;
+  return parts.slice(0, max).join(" ").trim();
+}
+
 export default async function PortalGrantDetail({
   params,
   searchParams,
@@ -40,70 +98,228 @@ export default async function PortalGrantDetail({
 
   const { data: client } = await supabase
     .from("clients")
-    .select("account_managed")
+    .select("account_managed, org_type, location_city, location_state")
     .eq("id", org.clientId)
-    .single<{ account_managed: boolean }>();
+    .single<Pick<Client, "account_managed" | "org_type" | "location_city" | "location_state">>();
 
-  // Typed `any`: the conditional `.not()` below sends the query builder's
-  // generic into a "type instantiation is excessively deep" error if inferred.
+  // Typed `any`: the conditional `.not()` below sends the query builder's generic into a
+  // "type instantiation is excessively deep" error if inferred.
   let query: any = supabase
     .from("review_cards")
     .select(
-      "fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, decision, decided_by, decided_by_actor, pursuit_path, card_type, grants(id, source_url, title, funder, focus_areas, assistance_listings, submission_deadline, period_of_performance, cost_share, award_range_min, award_range_max, award_range_is_estimate, num_awards, description, eligible_entity_types, geographic_eligibility, ineligible_entities, subaward_prohibited, incumbent_risk, technical_burden_flags, hard_disqualifiers, verification_flags, scoring_rubric, ideal_applicant_profile, grant_status)",
+      "fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, reasoning_context, decision, pursuit_path, card_type, grants(id, source_url, title, funder, fon, assistance_listings, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, description, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status)",
     )
     .eq("id", params.id)
     .eq("client_id", org.clientId)
     .neq("card_type", "prospect");
-  // Same release gate as everywhere else (0059) -- a direct URL hit on an
-  // unreleased card's id must 404 just like it's invisible everywhere else,
-  // not just unlinked. IDs are unguessable UUIDs (low risk), but this closes
-  // the gap for free.
+  // Same release gate as everywhere else (0059): a direct URL hit on an unreleased card
+  // must 404 exactly as it is invisible everywhere else, not merely unlinked.
   if (client?.account_managed) query = query.not("sme_released_at", "is", null);
   const { data } = await query.maybeSingle();
 
-  const card = data as DetailRow | null;
-  if (!card || !card.grants) notFound();
+  const card = data as CardRow | null;
+  const g = grantOf(card?.grants ?? null);
+  if (!card || !g) notFound();
 
-  const g = card.grants;
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const decidedBy = deciderLabel(card.decision, card.decided_by, card.decided_by_actor, user?.id ?? null, org.clientName);
-
-  // Premium (account-managed) clients see their team's finalized concept proposal
-  // here, read-only. Fetched service-role (concept_proposals is admin-only RLS);
-  // the card query above already pinned it to this client + the release gate.
-  const conceptRow = client?.account_managed ? await getConceptProposal(params.id) : null;
   const tier = client?.account_managed ? "premium" : "base";
+  // Premium clients see their team's concept proposal and may edit it. concept_proposals
+  // is admin-only RLS so this reads service-role; the card query above already pinned the
+  // card to this client and applied the release gate.
+  const conceptRow = client?.account_managed ? await getConceptProposal(params.id) : null;
 
-  // Back target reflects where the client came from: this detail is reachable from
-  // Grant Alerts (?from=alerts, before the grant is in the Report) as well as from
-  // the Report itself, so a hardcoded "back to Report" strands the Alerts path.
+  // How much else is waiting in their Report. Same predicate as their Report list, so the
+  // two cannot disagree about the count.
+  const { count: remainingCount } = await supabase
+    .from("review_cards")
+    .select("id", { count: "exact", head: true })
+    .eq("client_id", org.clientId)
+    .neq("card_type", "prospect")
+    .eq("decision", "pending")
+    .neq("id", params.id);
+  const remaining = remainingCount ?? 0;
+
+  const factors = viewFitFactors(card.factor_scores);
+
+  const eligibility = computeEligibility({
+    eligibleEntityTypes: g.eligible_entity_types,
+    ineligibleEntities: g.ineligible_entities,
+    hardDisqualifiers: g.hard_disqualifiers,
+    skipReason: g.skip_reason,
+    geographicEligibility: g.geographic_eligibility,
+    clientOrgType: client?.org_type ?? null,
+    clientState: client?.location_state ?? null,
+  });
+
+  // Composed from what the engine already wrote, never generated here — identical
+  // derivation to the staff page so the same card reads the same way on both sides.
+  const why = (card.why_this_org ?? []).filter(Boolean);
+  const others = Math.max(0, factors.weakCount - (factors.lead ? 1 : 0));
+  const rationale = {
+    lead: firstSentences(why[0] ?? card.concept_synopsis, 2),
+    blocking: factors.lead?.rationale
+      ? `Capped at ${FIT_BAND[card.fit_score].label.toLowerCase()} on ${factors.lead.label.toLowerCase()} — ${
+          factors.lead.rationale
+        }${others > 0 ? ` (${others} other factor${others === 1 ? "" : "s"} also scored short.)` : ""}`
+      : null,
+    mitigation: firstSentences(card.reasoning_context?.consortium_rationale, 2),
+  };
+
+  const days = deadlineDaysLeft(g.submission_deadline);
+  const deadlineLabel = fmtDate(g.submission_deadline);
+
+  const meta: ReviewMeta[] = [
+    { label: "Award range", value: formatAwardRange(g.award_range_min, g.award_range_max) },
+    {
+      label: "Deadline",
+      value: deadlineLabel ?? "Not stated",
+      ...(isOverdue(days) ? { tone: "danger" as const } : {}),
+    },
+    { label: "Match required", value: compactCostShare(g.cost_share) },
+    { label: "Term", value: g.period_of_performance?.trim() || "Not stated" },
+    { label: "Awards expected", value: g.num_awards?.trim() || "Not stated" },
+  ];
+
+  const keyDetails: ReviewKeyDetail[] = [
+    { label: "Opportunity number", value: g.fon?.trim() || "—" },
+    { label: "CFDA", value: (g.assistance_listings ?? []).map((a) => a.number).join(", ") || "—" },
+    { label: "Cost sharing", value: compactCostShare(g.cost_share) },
+  ];
+  if (days !== null) {
+    keyDetails.push(
+      days > 0
+        ? { label: "Days remaining", value: String(days) }
+        : days === 0
+          ? { label: "Days remaining", value: "Closes today" }
+          : { label: "Closed", value: `${Math.abs(days)} ${Math.abs(days) === 1 ? "day" : "days"} ago` },
+    );
+  }
+
   const fromAlerts = searchParams?.from === "alerts";
   const backHref = fromAlerts ? "/portal/triage" : "/portal/grants";
-  const backLabel = fromAlerts ? "Back to Grant Alerts" : "Back to Grant Report";
+  const backLabel = fromAlerts ? "Grant Alerts" : "Grant Report";
+
+  const monogram = (() => {
+    const parts = (org.clientName ?? "").trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return "—";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  })();
+
+  const conceptReady = conceptRow?.status === "ready";
 
   return (
-    <HubShell variant="map">
-      <ReportDetail
-        cardId={params.id}
-        card={card}
-        grant={g}
-        title={g.title || "Untitled opportunity"}
-        funder={g.funder}
-        focusAreas={(g.focus_areas ?? []).slice(0, 3)}
-        deciderLabel={decidedBy}
+    <>
+      <GrantReviewConsole
         backHref={backHref}
         backLabel={backLabel}
-        tier={tier}
-        afterContent={
-          client?.account_managed ? (
-            <ClientConceptProposal row={conceptRow} />
-          ) : (
-            <ConceptProposalUpsell clientName={org.clientName} />
-          )
+        clientName={org.clientName}
+        clientMonogram={monogram}
+        clientMeta={
+          [
+            client?.org_type?.replace(/_/g, " "),
+            [client?.location_city, client?.location_state].filter(Boolean).join(", ") || null,
+          ]
+            .filter(Boolean)
+            .join(" · ") || null
         }
+        queueLine={
+          remaining > 0 ? (
+            <>
+              <strong className="font-semibold text-brand-navy">{remaining} more</strong> in your Grant Report
+            </>
+          ) : null
+        }
+        tags={[card.proposed_role, ...(g.focus_areas ?? []).slice(0, 1)].filter((t): t is string => !!t)}
+        agencyLine={
+          [g.funder, (g.assistance_listings ?? [])[0] && `CFDA ${(g.assistance_listings ?? [])[0].number}`]
+            .filter(Boolean)
+            .join(" · ") || null
+        }
+        title={g.title || "Untitled opportunity"}
+        summary={g.description}
+        meta={meta}
+        eligibility={eligibility}
+        rationale={rationale}
+        factors={factors}
+        // Spends a real scorer call — not the client's to spend.
+        scoreFactors={null}
+        fitScore={card.fit_score}
+        verdict={FIT_BAND[card.fit_score].label}
+        consequence={
+          factors.lead
+            ? `Worth addressing ${factors.lead.label.toLowerCase()} before you commit.`
+            : card.fit_score === 3
+              ? "No blocking factor on this one."
+              : null
+        }
+        // No "your feedback tunes future scoring" line: that control is staff-only here, so
+        // promising it would describe something the client cannot do.
+        scoreFootnote="Machine-scored · six factors weighted equally · your GRANTED team reviewed it before sending."
+        feedback={null}
+        decision={
+          <section className="shrink-0 rounded-sharp border border-edge bg-white px-[19px] pb-4 pt-[15px]">
+            <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-muted">Your decision</p>
+            <p className="mt-2 text-[12.5px] leading-[1.55] text-ink-muted">
+              Pursue it, save it for later, or pass. Passing tells us why so we stop sending
+              you ones like it.
+            </p>
+            <div className="mt-[13px]">
+              <DecisionBar
+                cardId={params.id}
+                decision={card.decision}
+                deciderLabel={null}
+                tier={tier}
+                pursuitPath={card.pursuit_path}
+              />
+            </div>
+          </section>
+        }
+        concept={
+          // Read-only pointer, mirroring the staff ConceptCard's shape without its generate
+          // button — a client edits a proposal we sent, never asks for one.
+          tier === "premium" ? (
+            <section
+              className="shrink-0 rounded-sharp border border-edge bg-white px-[17px] pb-[13px] pt-3"
+              style={{ borderLeftWidth: "3px", borderLeftColor: BRAND.chrome }}
+            >
+              <div className="flex items-center gap-[9px]">
+                <Sparkles className="h-3.5 w-3.5 shrink-0" style={{ color: BRAND.orangeDeep }} aria-hidden="true" />
+                <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-muted">Concept proposal</p>
+                <span className="ml-auto shrink-0 text-[11px] text-ink-muted">
+                  {conceptReady ? "Ready" : "Not started"}
+                </span>
+              </div>
+              <p className="mt-2 text-[12px] leading-[1.5] text-ink-muted">
+                {conceptReady
+                  ? "Scope, budget frame and named partners — read it below and edit anything that isn't right."
+                  : "Your GRANTED team drafts this when a pursuit is worth scoping. Nothing to read yet."}
+              </p>
+              {conceptReady && (
+                <a
+                  href="#concept"
+                  className="mt-2.5 inline-flex h-[34px] w-full items-center justify-center gap-[7px] rounded-sharp border border-edge text-[12.5px] font-semibold text-brand-navy transition-colors hover:border-brand-navy/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+                >
+                  Read the draft
+                  <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                </a>
+              )}
+            </section>
+          ) : null
+        }
+        keyDetails={keyDetails}
+        sourceUrl={g.source_url}
       />
-    </HubShell>
+
+      {/* Below the frame, exactly as on the staff screen: the review screen is zero-scroll,
+          reading a full proposal is not. Premium gets the editable draft; base gets the
+          upsell it always had. */}
+      <div id="concept" className="scroll-mt-24 bg-ground px-[30px] pb-8">
+        {tier === "premium" ? (
+          <ClientConceptProposal row={conceptRow} />
+        ) : (
+          <ConceptProposalUpsell clientName={org.clientName} />
+        )}
+      </div>
+    </>
   );
 }
