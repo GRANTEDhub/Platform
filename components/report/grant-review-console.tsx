@@ -235,31 +235,39 @@ function OverviewCard({
             // run long ("Up to 5 years (expected start 9/30/2026, end 9/29/2031)"). Without
             // the gutter a wrapped value ran straight into the next cell's figure, so
             // "Awards expected 91" read as part of the term.
-            <div
-              key={m.label}
-              className={
-                m.tone === "danger"
-                  ? "min-w-[110px] flex-1 rounded-sharp px-2.5 py-1.5"
-                  : "min-w-[110px] flex-1 pr-4"
-              }
-              // Filled rather than outlined, and it takes its own gutter back: an
-              // outline at this size reads as a focus ring, and the cell has to win
-              // against four neighbours at the same weight.
-              style={m.tone === "danger" ? { backgroundColor: BRAND.reject, color: "#FFFFFF" } : undefined}
-            >
-              {/* white/90, not the /55–/72 the ink surfaces use for an eyebrow: on this
-                  fill those land at 3.6–3.9:1 and this is 10px bold uppercase, the worst
-                  case for it. /90 is 4.72:1. Case and tracking carry the hierarchy here,
-                  not opacity. */}
-              <p className={m.tone === "danger" ? `${EYEBROW} !text-white/90` : EYEBROW}>{m.label}</p>
-              <p
-                className={`mt-[5px] line-clamp-2 text-[14px] font-semibold tabular-nums ${
-                  m.tone === "danger" ? "text-white" : "text-brand-navy"
-                }`}
-                title={m.value}
-              >
-                {m.value}
-              </p>
+            // The cell keeps the SAME flex sizing whatever its tone — the tint goes on an
+            // inner wrapper instead. Painting this div meant the fill inherited flex-1 and
+            // ran the full width of the cell's basis, so a short date sat in a red band
+            // stretching to the next column and read as a broken layout rather than a flag.
+            <div key={m.label} className="min-w-[110px] flex-1 pr-4">
+              {m.tone === "danger" ? (
+                // inline-block so it hugs the two lines it contains. Filled rather than
+                // outlined: an outline at this size reads as a focus ring, and the cell has
+                // to win against four neighbours at the same weight.
+                <span
+                  className="inline-block rounded-sharp px-2 py-1"
+                  style={{ backgroundColor: BRAND.reject }}
+                >
+                  {/* white/90, not the /55–/72 the ink surfaces use for an eyebrow: on this
+                      fill those land at 3.6–3.9:1 and this is 10px bold uppercase, the
+                      worst case for it. /90 is 4.72:1. Case and tracking carry the
+                      hierarchy here, not opacity. */}
+                  <span className={`block ${EYEBROW} !text-white/90`}>{m.label}</span>
+                  <span className="mt-[3px] block text-[14px] font-semibold tabular-nums text-white">
+                    {m.value}
+                  </span>
+                </span>
+              ) : (
+                <>
+                  <p className={EYEBROW}>{m.label}</p>
+                  <p
+                    className="mt-[5px] line-clamp-2 text-[14px] font-semibold tabular-nums text-brand-navy"
+                    title={m.value}
+                  >
+                    {m.value}
+                  </p>
+                </>
+              )}
             </div>
           ))}
         </div>
