@@ -181,7 +181,8 @@ export async function sendDiscoveryInviteEmail(opts: {
     "",
     "I've attached a short overview of how we work. Looking forward to talking.",
     "",
-    "— GRANTED",
+    "Best,",
+    "GRANTED",
   ].join("\n");
 
   const resend = new Resend(process.env.RESEND_PLATFORM_API);
@@ -258,7 +259,8 @@ export async function sendGrantReleaseEmail(opts: {
     "Take a look and let us know whether it's worth pursuing:",
     opts.url.trim(),
     "",
-    "— GRANTED",
+    "Best,",
+    "GRANTED",
   ].join("\n");
 
   const resend = new Resend(process.env.RESEND_PLATFORM_API);
@@ -299,7 +301,8 @@ export async function sendContractCopyEmail(opts: {
     "",
     "We'll be in touch with next steps shortly.",
     "",
-    "— GRANTED",
+    "Best,",
+    "GRANTED",
   ].join("\n");
 
   const resend = new Resend(process.env.RESEND_PLATFORM_API);
@@ -346,7 +349,8 @@ export async function sendClientInviteEmail(opts: {
     "",
     "That link signs you in and lets you set a password. If it has expired by the time you open it, reply to this email and we'll send a fresh one.",
     "",
-    "— GRANTED",
+    "Best,",
+    "GRANTED",
   ].join("\n");
 
   const resend = new Resend(process.env.RESEND_PLATFORM_API);

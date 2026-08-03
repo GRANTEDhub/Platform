@@ -137,7 +137,9 @@ export async function generateDraftAlert(
     const conceptHook = ctx.isLead ? await conceptHookForCard(ctx.card.id) : null;
     emailBody = buildProspectEmailBody(ctx.grant, ctx.card, senderFirstName(sender), !!alertData.schedulingUrl, false, conceptHook);
   } else {
-    emailBody = buildAlertEmailBody(ctx.grant, ctx.card);
+    // Baked at DRAFT time, like the prospect booking link, so preview == sent. `origin`
+    // is appBaseUrl()-derived by every caller -- never a Vercel deploy host.
+    emailBody = buildAlertEmailBody(ctx.grant, ctx.card, `${origin}/portal/grants/${ctx.card.id}?from=alerts`);
   }
 
   const id = randomUUID();

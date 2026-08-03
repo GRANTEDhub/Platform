@@ -187,7 +187,8 @@ function grantAnnouncement(g: Grant, card: ReviewCard): string {
 // announcement, then a PDF pointer and a clean close. No em dashes; no intro or
 // credential block -- clients already know us (those are prospect-only, see
 // buildProspectEmailBody). Close matches the prospect sign-off.
-export function buildAlertEmailBody(g: Grant, card: ReviewCard): string {
+export function buildAlertEmailBody(g: Grant, card: ReviewCard, portalUrl?: string | null): string {
+  const url = (portalUrl ?? "").trim();
   return [
     "Hello,",
     "",
@@ -195,7 +196,15 @@ export function buildAlertEmailBody(g: Grant, card: ReviewCard): string {
     "",
     grantAnnouncement(g, card),
     "",
-    "The full alert is attached as a one-page PDF.",
+    // The PDF first (it needs no sign-in), the portal second. Before this the alert
+    // offered ONLY the attachment, so a client who wanted to act had to open a PDF and
+    // then find the grant themselves -- while the hand-written release note, sent from the
+    // same screen, linked them straight into it. Two emails about the same grant, one with
+    // a way through and one without.
+    url
+      ? "The full alert is attached as a one-page PDF. You can also review it and record your decision in your portal:"
+      : "The full alert is attached as a one-page PDF.",
+    ...(url ? [url] : []),
     "",
     "Best,",
     "GRANTED",
