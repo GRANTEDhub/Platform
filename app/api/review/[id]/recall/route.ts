@@ -19,19 +19,20 @@ import { getSentAlertForCard } from "@/lib/alerts/sent-status";
 // Report's staffBucket keys on sme_released_at alone and would read "Awaiting release".
 // One of those has to be wrong, so the copy goes and the record stays.
 //
-// IT REFUSES WHEN AN INTELLENGINE DRAFT EXISTS. Clearing pursuit_path while a draft is
+// AN INTELLENGINE DRAFT IS A QUESTION, NOT A WALL. Clearing pursuit_path while a draft is
 // attached produces the mirror image of the hazard the draft-delete route already guards
-// ("routed to IntellEngine, but no draft"): a draft whose card is back in triage. That is
-// recoverable but it is not something to do silently, and a COMPLETE draft is real work.
-// Deleting the draft through the UI un-routes the card itself, which is the ordered way
-// to get to the same place.
+// ("routed to IntellEngine, but no draft"): a draft whose card is back in triage. So the
+// first call REFUSES with needsDraftDelete + the draft's status, and a second call with
+// deleteDraft:true removes the draft and proceeds. Two presses, because deleting a
+// proposal is irreversible and a COMPLETE draft is finished work -- but the caller is
+// never sent off to another screen to get unstuck.
 //
 // Staff only, and deliberately via the USER client rather than the service role: the
 // guard_card_approval trigger reads auth.uid(), so a service-role write would look like
 // an anonymous caller and be refused outright. Setting decision back to 'pending' never
 // trips the trigger's admin gate, which only fires on a transition INTO 'approved'.
 
-export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const supabase = createClient();
   const {
     data: { user },
@@ -68,21 +69,41 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: "This card is already awaiting release — nothing to recall." }, { status: 409 });
   }
 
+  // deleteDraft: the caller has SEEN the draft warning and chosen to delete it. Absent on
+  // the first press, which is what makes the 409 below a question rather than a dead end.
+  const body = (await req.json().catch(() => ({}))) as { deleteDraft?: unknown };
+  const deleteDraft = body.deleteDraft === true;
+
   const { data: draft } = await supabase
     .from("intellengine_drafts")
     .select("id, status")
     .eq("card_id", params.id)
     .maybeSingle<{ id: string; status: string }>();
-  if (draft) {
+
+  if (draft && !deleteDraft) {
+    // NOT an error state — the answer the caller needs to give. `draftStatus` travels with
+    // it so the question can name what is being destroyed: "delete to recall?" against a
+    // COMPLETE proposal is a materially different decision than against a scoping stub,
+    // and a confirm that hides the difference is one people click through.
     return NextResponse.json(
       {
-        error:
-          "A proposal draft is attached to this grant in IntellEngine. Delete it there first — that returns this card on its own — or leave the card routed.",
+        error: "A proposal draft is attached to this grant in IntellEngine. Delete it to recall?",
+        needsDraftDelete: true,
         draftId: draft.id,
         draftStatus: draft.status,
       },
       { status: 409 },
     );
+  }
+
+  if (draft && deleteDraft) {
+    // BEFORE the card write, so a failed delete cannot leave a recalled card whose draft
+    // is still attached — the exact detached state this whole guard exists to prevent.
+    // IRREVERSIBLE: there is no undo for a deleted proposal.
+    const { error: delErr } = await supabase.from("intellengine_drafts").delete().eq("id", draft.id);
+    if (delErr) {
+      return NextResponse.json({ error: `Couldn't delete the proposal draft: ${delErr.message}` }, { status: 500 });
+    }
   }
 
   // One write, every field that the stage cascades read. stageOf runs
@@ -119,6 +140,9 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
 
   return NextResponse.json({
     recalled: true,
+    // So the outcome line can say a proposal went with it rather than leaving the reader
+    // to notice it missing from IntellEngine later.
+    deletedDraft: draft && deleteDraft ? { id: draft.id, status: draft.status } : null,
     // Null when the client was never actually emailed (released but the send was gated
     // off, which is every preview deploy). The UI must not claim an email that never went.
     emailedAt: sent?.sentAt ?? null,

@@ -59,15 +59,37 @@ export function ReleaseToClientBar({
   // caller's next navigation picks up the new state.
   const [recalled, setRecalled] = useState(false);
   const [recalledEmailedAt, setRecalledEmailedAt] = useState<string | null>(null);
+  const [recalledDraft, setRecalledDraft] = useState<string | null>(null);
+  // Set when the route reports a proposal draft in the way. Holds the question inline
+  // rather than sending the reviewer off to IntellEngine to get unstuck.
+  const [draftBlock, setDraftBlock] = useState<{ status: string } | null>(null);
 
-  async function recall() {
+  async function recall(deleteDraft = false) {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/review/${cardId}/recall`, { method: "POST" });
-      const data = (await res.json().catch(() => ({}))) as { error?: string; emailedAt?: string | null };
+      const res = await fetch(`/api/review/${cardId}/recall`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deleteDraft }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        emailedAt?: string | null;
+        needsDraftDelete?: boolean;
+        draftStatus?: string;
+        deletedDraft?: { status: string } | null;
+      };
+      // The draft question, not a failure: surface the choice and stop, leaving the
+      // recall button in place if they would rather not.
+      if (res.status === 409 && data.needsDraftDelete) {
+        setDraftBlock({ status: data.draftStatus ?? "in progress" });
+        return;
+      }
       if (!res.ok) throw new Error(data.error || "Couldn't recall that");
       setRecalledEmailedAt(data.emailedAt ?? null);
+      setRecalledDraft(data.deletedDraft?.status ?? null);
+      setDraftBlock(null);
       setRecalled(true);
       // Refresh so the Grant Report count and the rest of the page reflect the recall.
       // This component keeps its own `recalled` state through it, so the outcome line
@@ -128,6 +150,12 @@ export function ReleaseToClientBar({
         <p className="mt-2 text-[12.5px] leading-[1.55] text-ink-muted">
           Recalled — this grant is back in Awaiting release and is no longer in the client&apos;s portal.
         </p>
+        {recalledDraft && (
+          <p className="mt-2 text-[11.5px] leading-[1.5] text-ink-muted">
+            The attached {recalledDraft === "complete" ? "completed" : recalledDraft} proposal draft was
+            deleted with it.
+          </p>
+        )}
         {/* The email is the part a recall cannot reach, so it is stated outright rather
             than left for the reader to wonder about. grant_alerts keeps the record; a
             null date means the send was gated off (every preview deploy) and nothing
@@ -175,6 +203,40 @@ export function ReleaseToClientBar({
             record, and after a successful recall this reports the real date rather than
             leaving the impression nothing went out. */}
         <div className="mt-3 border-t border-hairline-strong pt-3">
+            {draftBlock && (
+              // Names the draft's STAGE on purpose. Deleting a completed proposal is a
+              // different decision from deleting a scoping stub, and neither can be undone
+              // — a confirm that hides which one you have is one people click through.
+              <div className="mb-2.5">
+                <p className="text-[12px] leading-[1.5]" style={{ color: BRAND.reject }}>
+                  A {draftBlock.status === "complete" ? "completed" : draftBlock.status} proposal draft is
+                  attached to this grant in IntellEngine. Delete it to recall?
+                </p>
+                <p className="mt-1 text-[11px] leading-[1.45] text-ink-muted">
+                  Deleting the proposal cannot be undone.
+                </p>
+                <div className="mt-2 flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void recall(true)}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-sharp px-3 text-[12.5px] font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+                    style={{ backgroundColor: BRAND.reject }}
+                  >
+                    {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
+                    Delete and recall
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setDraftBlock(null)}
+                    className="inline-flex h-8 items-center rounded-sharp border border-edge px-3 text-[12.5px] font-medium text-ink-muted transition-colors hover:border-brand-navy/25 hover:text-brand-navy disabled:opacity-60"
+                  >
+                    Keep it
+                  </button>
+                </div>
+              </div>
+            )}
             <button
               type="button"
               disabled={busy}
