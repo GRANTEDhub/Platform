@@ -133,6 +133,21 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
   const { data: grant } = await db.from("grants").select("*").eq("id", grantId).single<Grant>();
   if (!grant) return { ok: false, reason: "Grant not found" };
   if (!grant.is_domestic) return { ok: false, reason: "International grant -- excluded by policy" };
+
+  // GRANT-LEVEL GATES BEFORE THE PROFILE CHECK, because a gated grant has no profile as a
+  // CONSEQUENCE of the gate: the pipeline skips Stage A entirely when willScore is false.
+  // Reporting the missing profile first told the caller to re-shred, which rebuilds
+  // nothing (the gate holds again) while costing a NOFO re-fetch and an extraction call
+  // per press. These two reasons need different responses from a human, and the profile
+  // check alone cannot tell them apart. Mirrors getProspectFeed's own exclusions and
+  // getGrantDisposition's ordering, so all three agree on which fact is the real one.
+  if ((grant.hard_disqualifiers?.length ?? 0) > 0) {
+    return { ok: false, reason: `Not pursued -- ${grant.hard_disqualifiers!.join("; ")}` };
+  }
+  if (grant.skip_reason) {
+    return { ok: false, reason: `Not pursued -- ${grant.skip_reason}` };
+  }
+
   const profile = grant.ideal_applicant_profile;
   if (!profile) return { ok: false, reason: "No ideal applicant profile -- re-shred the grant first" };
 

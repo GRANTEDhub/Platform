@@ -16,6 +16,7 @@ import {
 } from "@/components/grants/grant-detail";
 import { MatchOutcomes, type OutcomeCard } from "@/components/grants/match-outcomes";
 import { getGrantGateStatus, undecidedClientCount } from "@/lib/grants/gate";
+import { RematchButton } from "@/app/(app)/grants/[id]/rematch-button";
 import { getSentAlertsByCards } from "@/lib/alerts/sent-status";
 import { ProspectButton } from "../prospect-button";
 import { CloseProspectingButton } from "../close-prospecting-button";
@@ -67,6 +68,26 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
   // before reaching out to an outside org (potential conflict). Prospecting is
   // otherwise never held by client decisions.
   const pursuing = clientCards.filter((c) => c.decision === "approved").length;
+
+  // Why this grant cannot be prospected, or null when it can. Mirrors getProspectFeed's
+  // own exclusions (gate.ts), which is what makes reaching this page for such a grant
+  // possible at all — the FEED filters these out, so you only land here from a stale tab,
+  // a bookmark, or the back button after a re-shred changed the answer underneath you.
+  //
+  // Order matters: the international exclusion is policy and never re-decidable, so it
+  // outranks the suppression gate, which is a heuristic a fresh shred can revise.
+  const blockedReason: string | null = !grant.is_domestic
+    ? "International — excluded by GRANTED's domestic-only policy."
+    : (grant.hard_disqualifiers?.length ?? 0) > 0
+      ? grant.hard_disqualifiers!.join("; ")
+      : grant.skip_reason
+        ? grant.skip_reason
+        : null;
+
+  // In flight — the same three non-terminal statuses the Ledger detail treats as
+  // processing (Move 2's queue adds 'queued' and 'matching' alongside 'processing').
+  const inFlight =
+    grant.status === "processing" || grant.status === "queued" || grant.status === "matching";
 
   const carryOver: OutcomeCard[] = clientCards.map((c) => ({
     id: c.id,
@@ -123,7 +144,7 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                 <Badge variant="warning">Closed for prospecting</Badge>
               ) : (
                 <div className="flex items-center gap-2">
-                  {gate !== "not_ready" && grant.is_domestic && <ProspectButton grantId={grant.id} />}
+                  {gate !== "not_ready" && !blockedReason && <ProspectButton grantId={grant.id} />}
                   <CloseProspectingButton grantId={grant.id} />
                 </div>
               )}
@@ -135,7 +156,24 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
               </p>
             )}
 
-            {gate === "not_ready" ? (
+            {/* A blocked grant used to fall through to "Run Prospect to search for fitting
+                non-client orgs" — an invitation to press a button that answers with a 400.
+                Naming the real reason is the point: "no ideal applicant profile" and "we
+                decided not to pursue this" need different responses from a human, and the
+                discovery refusal alone cannot tell them apart. */}
+            {blockedReason ? (
+              <>
+                <p className="mt-3 text-sm text-muted-foreground">
+                  Not prospectable — {blockedReason}
+                </p>
+                {grant.is_domestic && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    This gate is re-decided from a fresh read of the NOFO, so it can lift as well
+                    as hold — rebuild the grant profile if you disagree with it.
+                  </p>
+                )}
+              </>
+            ) : gate === "not_ready" ? (
               <p className="mt-3 text-sm text-muted-foreground">
                 Not scored yet — this grant hasn&apos;t finished scoring against the roster, so there&apos;s no
                 profile to discover prospects from.
@@ -209,6 +247,29 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
               <MatchOutcomes cards={carryOver} emptyText="No client matches on this grant." />
             </div>
           </Card>
+
+          {/* Rebuild, here rather than only in the Ledger. Hitting an un-prospectable grant
+              and re-shredding it to get a real answer is a PROSPECTING workflow — it is how
+              this grant's "single national award" suppression was discovered in the first
+              place — and it previously meant leaving Track 2 to do it. Both the page and
+              the route are admin-only already, so this opens no new access.
+
+              Domestic only, matching canCalibrate on the Ledger detail: the international
+              exclusion is policy, so there is nothing for a re-shred to re-decide. Hidden
+              while in flight so it cannot be pressed twice. */}
+          {grant.is_domestic && !inFlight && (
+            <Card className="p-5">
+              <SectionLabel>Calibration</SectionLabel>
+              <p className="mt-3 text-xs text-muted-foreground">
+                Re-run this grant when the read looks wrong. Rebuilding re-decides the
+                prospecting gate from a fresh read of the NOFO, so a suppression can lift as
+                well as hold.
+              </p>
+              <div className="mt-3">
+                <RematchButton grantId={grant.id} />
+              </div>
+            </Card>
+          )}
         </aside>
       </div>
     </div>
