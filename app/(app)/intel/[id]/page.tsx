@@ -82,7 +82,13 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
       ? grant.hard_disqualifiers!.join("; ")
       : grant.skip_reason
         ? grant.skip_reason
-        : null;
+        : // LAST, because it is the only one of these a rebuild can actually clear.
+          // Discovery maps candidate orgs onto the ideal-applicant profile, so with no
+          // profile there are no seats to map onto and discoverProspects refuses. The gate
+          // reasons above are policy or a deliberate suppression; this one is a gap.
+          !grant.ideal_applicant_profile
+          ? "No ideal-applicant profile was built for this grant, so there are no seats to match candidate orgs against."
+          : null;
 
   // In flight — the same three non-terminal statuses the Ledger detail treats as
   // processing (Move 2's queue adds 'queued' and 'matching' alongside 'processing').
@@ -168,8 +174,9 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                 </p>
                 {grant.is_domestic && (
                   <p className="mt-2 text-xs text-muted-foreground">
-                    This gate is re-decided from a fresh read of the NOFO, so it can lift as well
-                    as hold — rebuild the grant profile if you disagree with it.
+                    {!grant.ideal_applicant_profile && !grant.skip_reason
+                      ? "Rebuild the grant profile below to build one — that is exactly what this case needs."
+                      : "This gate is re-decided from a fresh read of the NOFO, so it can lift as well as hold — rebuild the grant profile if you disagree with it."}
                   </p>
                 )}
               </>
