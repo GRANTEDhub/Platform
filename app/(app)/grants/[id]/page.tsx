@@ -10,6 +10,7 @@ import { GrantOverview, GrantKeyFacts } from "@/components/grants/grant-facts";
 import { MatchOutcomes, type OutcomeCard } from "@/components/grants/match-outcomes";
 import { ConsortiumPairings } from "@/components/grants/consortium-pairings";
 import { computeConsortiumPairings, type SeatedClient } from "@/lib/grants/consortium";
+import { getGrantDisposition } from "@/lib/grants/disposition";
 import { AutoRefresh } from "@/components/ui/auto-refresh";
 import { RematchButton } from "./rematch-button";
 import { AddToClientControl } from "./add-to-client";
@@ -114,7 +115,46 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
     grant.ideal_applicant_profile,
   );
 
+  // THE SAME DISPOSITION THE LEDGER LIST SHOWS. This page used to re-derive its own
+  // answer to "what happened to this grant", and got the one case wrong that matters
+  // most: a grant-level suppression (skip_reason) has no ideal_applicant_profile
+  // BECAUSE STAGE A IS SKIPPED BY DESIGN, so a bare `full shred && no profile` test
+  // reads it as a Stage-A failure and tells you to rebuild. Rebuilding is a no-op that
+  // costs a NOFO re-fetch plus an extraction call every press.
+  //
+  // getGrantDisposition already checks skip_reason BEFORE the profile-gap branch,
+  // deliberately, for exactly this reason. Asking it instead of re-deriving is what
+  // stops the two surfaces disagreeing — and it is why the banner below is gated on the
+  // TIER, not on a condition of its own.
+  //
+  // has_ideal_profile is passed rather than Picked because the shared helper supports a
+  // lightweight `is not null` query; this page already selects `*`, so it is free here.
+  const disposition = getGrantDisposition(
+    { ...grant, has_ideal_profile: !!grant.ideal_applicant_profile },
+    clientCards.map((c) => ({
+      card_type: c.card_type,
+      decision: c.decision,
+      org_name: c.clients?.name ?? null,
+    })),
+  );
+
   const canCalibrate = profile.role === "admin" && grant.is_domestic;
+
+  // ONE RematchButton on the page, and this is the precedence that decides whose.
+  // Three banners plus the Calibration card could each render one — Shannon hit two on
+  // screen at once, with the same helper text under both.
+  //
+  // The control belongs beside the message that explains it, so the disposition banner
+  // wins when there is one; the incomplete-scoring banner takes it next; Calibration's
+  // general "re-run after a roster change" copy yields to both. Derived here rather than
+  // inline so the three render sites cannot drift back apart.
+  const dispositionBanner =
+    !processing && (disposition.tier === "profile_gap" || disposition.tier === "not_pursued");
+  // Named for what it decides: whether the incomplete-scoring banner OWNS the control.
+  // That banner's message always renders when scoring errored — only the duplicate button
+  // drops when a disposition banner above is already carrying one.
+  const erroredBannerOwnsRematch = erroredClientCount > 0 && !processing && !dispositionBanner;
+  const bannerOffersRematch = canCalibrate && (dispositionBanner || erroredBannerOwnsRematch);
 
   // Active clients for the manual "Add to Client" control (admin calibration only).
   let activeClients: { id: string; name: string }[] = [];
@@ -196,28 +236,61 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
             </Card>
           )}
 
-          {!processing && !forecasted && grant.status !== "error" &&
-            grant.shred_depth === "full" && !grant.ideal_applicant_profile && (
-              <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
-                <p className="text-sm font-medium text-amber-900">
-                  Profile not built — this grant can&apos;t match
+          {/* Gated on the shared disposition TIER, never on a local condition — see the
+              note beside the getGrantDisposition call. A suppressed or hard-disqualified
+              grant lands in `not_pursued` and renders the panel below instead, which is
+              the whole point: this banner claims Stage A failed and offers a retry, and
+              both are false for a grant we chose not to profile. */}
+          {!processing && disposition.tier === "profile_gap" && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
+              <p className="text-sm font-medium text-amber-900">
+                Profile not built — this grant can&apos;t match
+              </p>
+              {/* The label carries the sub-cause (Stage-A failure vs. unreachable NOFO) and
+                  the ACTION, and the detail carries the recorded error or shred reason. Both
+                  come from the helper so the Ledger row and this page cannot disagree about
+                  what went wrong or what to do about it. */}
+              <p className="mt-1 text-sm text-amber-800">{disposition.label}</p>
+              {disposition.detail && (
+                <p className="mt-2 whitespace-pre-wrap font-mono text-xs text-amber-900/80">
+                  {disposition.detail}
                 </p>
-                <p className="mt-1 text-sm text-amber-800">
-                  The NOFO shredded fully, but building the ideal-applicant profile (Stage A)
-                  failed, so no client can score against it. Rebuild the grant profile to retry.
-                </p>
-                {grant.ideal_profile_error && (
-                  <p className="mt-2 whitespace-pre-wrap font-mono text-xs text-amber-900/80">
-                    {grant.ideal_profile_error}
+              )}
+              {canCalibrate && (
+                <div className="mt-3">
+                  <RematchButton grantId={grant.id} />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Not pursued: international, hard-disqualified, or grant-level suppressed. The
+              engine never scored the roster here, so this panel exists to say so — without
+              it the "Matched clients (0)" card below is the only signal and it reads as a
+              scan that found nobody. The rebuild is offered because a suppression is a
+              HEURISTIC a fresh shred can revise in either direction: this grant's
+              skip_reason only appeared on its second shred, and a third could clear it. */}
+          {!processing && disposition.tier === "not_pursued" && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
+              <p className="text-sm font-medium text-amber-900">
+                Not pursued — the roster was never scored against this grant
+              </p>
+              {disposition.detail && <p className="mt-1 text-sm text-amber-800">{disposition.detail}</p>}
+              {/* canCalibrate already requires is_domestic, so an international grant
+                  offers no rebuild — that exclusion is policy and not re-decidable. */}
+              {canCalibrate && (
+                <>
+                  <p className="mt-2 text-xs text-amber-900/80">
+                    If you disagree, rebuild the grant profile — the gate is re-decided from a
+                    fresh read of the NOFO, so it can lift as well as hold.
                   </p>
-                )}
-                {canCalibrate && (
                   <div className="mt-3">
                     <RematchButton grantId={grant.id} />
                   </div>
-                )}
-              </div>
-            )}
+                </>
+              )}
+            </div>
+          )}
 
           <GrantOverview grant={grant} />
 
@@ -230,7 +303,9 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
                 {erroredClientCount === 1 ? "it is" : "they are"} missing from the record below.
                 Re-match to retry.
               </p>
-              {canCalibrate && (
+              {/* Yields to a disposition banner above — see the precedence note. The
+                  message still renders either way; only the duplicate control drops. */}
+              {canCalibrate && erroredBannerOwnsRematch && (
                 <div className="mt-3">
                   <RematchButton grantId={grant.id} />
                 </div>
@@ -250,7 +325,18 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
                       ? "International opportunity — excluded from matching by policy."
                       : erroredClientCount > 0
                         ? "Scoring was incomplete — see the notice above. Re-match to retry before treating this as a no-match."
-                        : "No qualifying matches (score 2+) for the current roster."
+                        // NOT SCORED IS NOT NO-MATCH. A grant-level gate (skip_reason /
+                        // hard disqualifier) means runMatching never ran, so the default
+                        // copy below — "no qualifying matches for the current roster" —
+                        // would report a roster scan that never happened. That misreads as
+                        // a real negative result, which is worse than saying nothing.
+                        : disposition.tier === "not_pursued"
+                          ? `Not scored — ${disposition.detail ?? "this grant was gated before matching"}.`
+                          // Same reasoning, different cause: no profile means there were no
+                          // seats to score against, so nobody could have qualified.
+                          : disposition.tier === "profile_gap"
+                            ? "Not scored — no ideal-applicant profile was built, so there were no seats to score against."
+                            : "No qualifying matches (score 2+) for the current roster."
                 }
               />
             </CardContent>
@@ -264,14 +350,22 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
             <Card>
               <CardHeader><CardTitle>Calibration</CardTitle></CardHeader>
               <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <p className="text-xs text-muted-foreground">
-                    Re-run this grant after a roster or scoring change. Off the daily queue —
-                    this is the record, not a working view.
-                  </p>
-                  <RematchButton grantId={grant.id} />
-                </div>
-                <div className="space-y-1 border-t pt-3">
+                {/* Rendered ONLY when no banner above is already offering it. Three copies
+                    of RematchButton could be on screen at once (profile gap, not pursued,
+                    incomplete scoring, and this) with the same helper text under each. The
+                    control stays next to the problem it solves — a button beside the
+                    message that explains it is the useful placement — so this general
+                    "re-run after a roster change" copy yields rather than the banners. */}
+                {!bannerOffersRematch && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      Re-run this grant after a roster or scoring change. Off the daily queue —
+                      this is the record, not a working view.
+                    </p>
+                    <RematchButton grantId={grant.id} />
+                  </div>
+                )}
+                <div className={`space-y-1${bannerOffersRematch ? "" : " border-t pt-3"}`}>
                   <p className="text-xs font-medium">Add to a client</p>
                   <p className="mb-2 text-xs text-muted-foreground">
                     Manually match a client the engine didn&apos;t surface. Scores on demand and
