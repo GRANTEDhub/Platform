@@ -193,11 +193,15 @@ export function ClientMasthead({
             </p>
             {/* Only with a book to be a percentage OF. At zero grants "100% never
                 looked at" is arithmetically true and completely wrong.
-                CONSOLE ONLY: "never looked at" is a statement about OUR assessment rate.
-                Aimed at a client it would read as an accusation about theirs. */}
-            {variant === "console" && book.total > 0 && (
+                THE SAME FIGURE, DIFFERENT SENTENCE. "never looked at" is a statement about
+                OUR assessment rate and aimed at a client reads as an accusation about
+                theirs; "still to review" is the same arithmetic said about work in front of
+                them. Both are 100 - assessedPct, which on the portal is the share of their
+                grants still sitting in alerts. */}
+            {book.total > 0 && (
               <p className="shrink-0 text-[11px] text-white/[0.55]">
-                <span className="font-semibold text-brand-orange">{100 - book.assessedPct}%</span> never looked at
+                <span className="font-semibold text-brand-orange">{100 - book.assessedPct}%</span>{" "}
+                {variant === "console" ? "never looked at" : "still to review"}
               </p>
             )}
           </div>

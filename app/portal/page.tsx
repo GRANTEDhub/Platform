@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { format, parseISO } from "date-fns";
 import { Bell } from "lucide-react";
 import { requireClient } from "@/lib/auth";
@@ -166,6 +167,19 @@ export default async function PortalHome() {
     "client",
   );
 
+  // The Grant Report card's three header figures, same as the console's and computed the
+  // same way — over the client's LIVE set (passed excluded, which is a closed decision).
+  // No `freshness`: "Updated 6d ago" reads as a promise about how often we look, and the
+  // fact it is derived from is a staff-only match_attempts timestamp anyway.
+  const liveCards = cards.filter((c) => c.decision !== "passed");
+  const reportMetrics = {
+    open: liveCards.filter((c) => c.decision === "pending").length,
+    decided: cards.filter((c) => c.decision === "approved").length,
+    avgFit: liveCards.length
+      ? (liveCards.reduce((n, c) => n + c.fit_score, 0) / liveCards.length).toFixed(1)
+      : null,
+  };
+
   const base = "/portal/grants";
 
   // Grant Report card: strongest live matches first, soonest deadline as the tiebreak.
@@ -228,6 +242,17 @@ export default async function PortalHome() {
               nextDeadlineLabel={nextDeadline !== "—" ? nextDeadline : null}
               backHref="/portal/grants"
               backLabel="Grant Report"
+              // Same slot the console uses for Edit profile / Refresh matches. A client gets
+              // Edit profile only — /portal/profile already exists and is theirs to edit —
+              // and never Refresh matches, which spends scorer calls.
+              actions={
+                <Link
+                  href="/portal/profile"
+                  className="inline-flex h-8 shrink-0 items-center rounded-[9px] bg-white px-[14px] text-[13px] font-semibold text-brand-navy transition-opacity duration-[120ms] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome"
+                >
+                  Edit profile
+                </Link>
+              }
             />
           }
           actionItems={actionItems}
@@ -236,6 +261,7 @@ export default async function PortalHome() {
           report={{
             rows: reportRows,
             total: nonPassed.length,
+            metrics: reportMetrics,
             emptyNote: "Your team is still working through opportunities. Matches will appear here as they are released.",
           }}
           drafts={{
