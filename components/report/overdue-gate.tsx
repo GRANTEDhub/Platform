@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { BRAND } from "@/lib/brand";
+import { isOverdue } from "@/lib/report/shape";
 
 // The overdue confirmation, shared by all three terminal actions on the grant review
 // screen: Generate concept proposal, Release to client, Send grant alert.
@@ -27,10 +28,6 @@ import { BRAND } from "@/lib/brand";
 // in the product (the Grant Report's closed rows, the bulk sweep) stays at < 0 — this
 // component's warning threshold is deliberately wider than that definition, not a
 // redefinition of it.
-
-export function isOverdue(daysLeft: number | null): boolean {
-  return daysLeft !== null && daysLeft <= 0;
-}
 
 export interface OverdueGateConfig {
   cardId: string;

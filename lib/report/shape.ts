@@ -102,6 +102,22 @@ export function deadlineDaysLeft(raw: string | null | undefined): number | null 
   return Math.ceil((d.getTime() - Date.now()) / 86_400_000);
 }
 
+// Whether a deadline is close enough to block a terminal action: today or already gone.
+//
+// DELIBERATELY WIDER THAN "CLOSED" (`daysLeft < 0`), which drives the Grant Report's
+// closed rows, the header stat and the bulk archive sweep. A grant due TODAY is still
+// winnable -- federal deadlines carry a cut-off time we do not store -- so it warns but is
+// never archivable. Two thresholds, one of them intentionally not the other.
+//
+// LIVES HERE, NOT BESIDE THE DIALOG THAT USES IT. It was exported from
+// components/report/overdue-gate.tsx, which carries "use client" -- and every export of a
+// client module becomes a client REFERENCE, so the server component calling it threw on
+// every request ("server-side exception", digest only, no build error). Shipping it next
+// to deadlineDaysLeft keeps it callable from both sides, which is what it needs to be.
+export function isOverdue(daysLeft: number | null): boolean {
+  return daysLeft !== null && daysLeft <= 0;
+}
+
 export interface ReportItem {
   id: string; // review_card id — the link target
   grantId: string | null;
