@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { FileText, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 // "Send Email" release composer for an account-managed client. Opens on mount
@@ -106,6 +106,24 @@ export function ReleaseEmailPanel({
               Releases this grant to the client&apos;s portal and sends a custom note with the
               one-page alert attached. The portal link sends as a clickable link. Edit below, then send.
             </p>
+            {/* PREVIEW THE ATTACHMENT BEFORE SENDING. The alert path has always let you read
+                the one-pager first; this path attached it sight-unseen and only said so while
+                sending. Same route the alert modal uses, which STREAMS THE SAVED DRAFT — so
+                what you read here is byte-for-byte what gets attached, not a second render
+                that might differ.
+                It also removes the wait: the send generates the PDF when the card has no
+                saved draft yet, and previewing creates that draft, so a previewed send is
+                fast. New tab rather than an inline frame — a PDF viewer inside a modal
+                inside a zero-scroll screen is worse than the browser's own. */}
+            <a
+              href={`/api/alerts/${cardId}/pdf`}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 inline-flex h-7 items-center gap-1.5 rounded-sharp border border-edge px-2.5 text-[11.5px] font-semibold text-brand-navy transition-colors hover:border-brand-navy/30"
+            >
+              <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+              Preview the one-pager
+            </a>
             {loading ? (
               <div className="mt-6 flex items-center gap-2 py-8 text-sm text-muted-foreground">
                 <Loader2 className="h-5 w-5 animate-spin text-brand-orange" /> Preparing the draft…
