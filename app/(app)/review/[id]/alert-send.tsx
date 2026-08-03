@@ -9,6 +9,7 @@ import { PriorEmailGate } from "@/components/alerts/prior-email-gate";
 import { DecisionConfirmation } from "./decision-confirmation";
 import type { GrantSummary } from "@/app/api/review/[id]/route";
 import type { ReOutreach } from "@/lib/alerts/send-core";
+import { useOverdueGate, type OverdueGateConfig } from "@/components/report/overdue-gate";
 
 // Grant-alert send: the SINGLE send path for a client card. The draft (short
 // editable text body + the one-page PDF) is generated once and SAVED; preview and
@@ -23,6 +24,7 @@ export function AlertSend({
   contactName,
   autoOpen = false,
   onClose,
+  overdue,
 }: {
   cardId: string;
   sentAt?: string | null;
@@ -33,10 +35,18 @@ export function AlertSend({
   // the trigger. onClose fires when the modal is dismissed so the parent can reset.
   autoOpen?: boolean;
   onClose?: () => void;
+  // Deadline context for the overdue confirmation, on the STANDALONE (prospect) path
+  // only. Omitted when rendered from ReleaseToClientBar's dropdown, which already gated
+  // the click — passing it there would prompt twice inside one workflow.
+  overdue?: OverdueGateConfig;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [autoOpened, setAutoOpened] = useState(false);
+  const { guard, gate } = useOverdueGate(
+    overdue ?? { cardId, daysLeft: null, deadlineLabel: null, backHref: "" },
+    "Send the grant alert",
+  );
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [regenBusy, setRegenBusy] = useState(false);
@@ -207,6 +217,7 @@ export function AlertSend({
   // Reject) -- no outer card of its own.
   return (
     <>
+      {gate}
       {/* No inline trigger when driven from the dropdown (autoOpen) -- the menu item
           is the trigger and the modal opens on mount. */}
       {!autoOpen && (
@@ -225,13 +236,13 @@ export function AlertSend({
                 <Button className="flex-1" disabled title="Already alerted">
                   ✓ Alerted
                 </Button>
-                <Button variant="outline" onClick={openModal} disabled={busy}>
+                <Button variant="outline" onClick={() => guard(openModal)} disabled={busy}>
                   ↻ Regenerate
                 </Button>
               </div>
             </>
           ) : (
-            <Button className="w-full" onClick={openModal} disabled={busy}>
+            <Button className="w-full" onClick={() => guard(openModal)} disabled={busy}>
               Send grant alert
             </Button>
           )}

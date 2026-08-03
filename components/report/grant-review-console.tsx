@@ -29,6 +29,12 @@ import type { EligibilityVerdict } from "@/lib/intellengine/eligibility";
 export interface ReviewMeta {
   label: string;
   value: string;
+  // Rendered as a filled red cell. The ONLY tone this row has, and it exists for one
+  // fact: the deadline is today or gone. A closed grant used to render its date in the
+  // same navy as the award range and the term, so the single piece of information that
+  // invalidates the whole page read as ordinary metadata — and the page's three
+  // terminal actions sat one click away.
+  tone?: "danger";
 }
 
 export interface ReviewKeyDetail {
@@ -229,10 +235,27 @@ function OverviewCard({
             // run long ("Up to 5 years (expected start 9/30/2026, end 9/29/2031)"). Without
             // the gutter a wrapped value ran straight into the next cell's figure, so
             // "Awards expected 91" read as part of the term.
-            <div key={m.label} className="min-w-[110px] flex-1 pr-4">
-              <p className={EYEBROW}>{m.label}</p>
+            <div
+              key={m.label}
+              className={
+                m.tone === "danger"
+                  ? "min-w-[110px] flex-1 rounded-sharp px-2.5 py-1.5"
+                  : "min-w-[110px] flex-1 pr-4"
+              }
+              // Filled rather than outlined, and it takes its own gutter back: an
+              // outline at this size reads as a focus ring, and the cell has to win
+              // against four neighbours at the same weight.
+              style={m.tone === "danger" ? { backgroundColor: BRAND.reject, color: "#FFFFFF" } : undefined}
+            >
+              {/* white/90, not the /55–/72 the ink surfaces use for an eyebrow: on this
+                  fill those land at 3.6–3.9:1 and this is 10px bold uppercase, the worst
+                  case for it. /90 is 4.72:1. Case and tracking carry the hierarchy here,
+                  not opacity. */}
+              <p className={m.tone === "danger" ? `${EYEBROW} !text-white/90` : EYEBROW}>{m.label}</p>
               <p
-                className="mt-[5px] line-clamp-2 text-[14px] font-semibold tabular-nums text-brand-navy"
+                className={`mt-[5px] line-clamp-2 text-[14px] font-semibold tabular-nums ${
+                  m.tone === "danger" ? "text-white" : "text-brand-navy"
+                }`}
                 title={m.value}
               >
                 {m.value}
@@ -390,11 +413,27 @@ function FactorRow({ factor, last }: { factor: ReviewFactor; last: boolean }) {
       className={`flex items-start justify-between gap-3.5 py-1 ${last ? "" : "border-b border-brand-navy/[0.05]"}`}
       style={factor.lead ? { backgroundColor: "rgba(228,118,31,0.07)", margin: "0 -20px", padding: "4px 20px" } : undefined}
     >
-      <span
-        className={`min-w-0 flex-1 text-[13px] text-brand-navy ${factor.lead ? "font-semibold" : ""}`}
-        title={factor.rationale ?? undefined}
-      >
-        {factor.label}
+      <span className="min-w-0 flex-1">
+        <span
+          className={`block text-[13px] text-brand-navy ${factor.lead ? "font-semibold" : ""}`}
+          title={factor.rationale ?? undefined}
+        >
+          {factor.label}
+        </span>
+        {/* THE REASON, VISIBLE, on an unassessed row only. "Not assessed" with the
+            explanation hidden in a hover title is unactionable — and the explanation is
+            almost always a CLIENT-RECORD GAP, not a scorer failure. enforceFactorDataFloors
+            writes exactly this sentence when the fields a factor depends on are blank
+            ("No annual budget or match/cost-share capacity on file."), so the row can point
+            at what to go fill in rather than just reporting a hole.
+            Assessed rows keep the rationale in the title: their bar and word already carry
+            the finding, and six visible sentences would bury the one lit factor the panel
+            exists to surface. */}
+        {factor.filled === 0 && factor.rationale && (
+          <span className="mt-[3px] block text-[11px] leading-[1.4] text-ink-muted [text-wrap:pretty]">
+            {factor.rationale}
+          </span>
+        )}
       </span>
       <div className="shrink-0 text-right">
         <span className="flex gap-[3px]" aria-hidden="true">

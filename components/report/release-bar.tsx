@@ -6,6 +6,7 @@ import { ChevronDown, FileText, Mail } from "lucide-react";
 import { BRAND } from "@/lib/brand";
 import { AlertSend } from "@/app/(app)/review/[id]/alert-send";
 import { ReleaseEmailPanel } from "./release-email-panel";
+import { useOverdueGate, type OverdueGateConfig } from "./overdue-gate";
 
 // "Your decision" — staff's Gate-2 control for an account-managed client (0059), and the
 // terminal act of the grant review screen. The call here is "release to the client", not
@@ -27,6 +28,7 @@ export function ReleaseToClientBar({
   released,
   backHref,
   returnNote,
+  overdue,
 }: {
   cardId: string;
   released: boolean;
@@ -35,6 +37,10 @@ export function ReleaseToClientBar({
   backHref: string;
   // "Either way you'll go back to the Grant Report — 9 left." The caller owns the count.
   returnNote: string;
+  // Deadline context for the overdue confirmation. The heaviest of the three gated
+  // actions: releasing puts the grant in the client's own Grant Alerts, and an alert
+  // about a grant that closed last week is not something a later archive takes back.
+  overdue: OverdueGateConfig;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -42,6 +48,10 @@ export function ReleaseToClientBar({
   const [menuOpen, setMenuOpen] = useState(false);
   const [mode, setMode] = useState<null | "alert" | "email">(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  // Guarded at setMode, not inside the send handlers: every release path — the primary
+  // button and both menu items — goes through it, so one wrap covers all three and a new
+  // release mode cannot be added past the gate by accident.
+  const { guard, gate } = useOverdueGate(overdue, "Release it to the client");
 
   // Outside-click + Escape close for the menu (mirrors the notification bell).
   useEffect(() => {
@@ -105,7 +115,7 @@ export function ReleaseToClientBar({
         <button
           type="button"
           disabled={busy}
-          onClick={() => setMode("alert")}
+          onClick={() => guard(() => setMode("alert"))}
           className="inline-flex h-[42px] flex-1 items-center justify-center gap-2 rounded-sharp bg-brand-orangeFill text-[14px] font-semibold text-white transition-colors duration-[120ms] hover:bg-brand-orangeFillHover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
         >
           Release to client
@@ -132,7 +142,7 @@ export function ReleaseToClientBar({
               sub="The branded one-page PDF."
               onClick={() => {
                 setMenuOpen(false);
-                setMode("alert");
+                guard(() => setMode("alert"));
               }}
             />
             <MenuItem
@@ -142,7 +152,7 @@ export function ReleaseToClientBar({
               sub="A custom note, no PDF."
               onClick={() => {
                 setMenuOpen(false);
-                setMode("email");
+                guard(() => setMode("email"));
               }}
             />
           </div>
@@ -162,7 +172,11 @@ export function ReleaseToClientBar({
       <p className="mt-[11px] text-[11px] leading-[1.45] text-ink-muted">{returnNote}</p>
       {error && <p className="mt-2 text-[12px]" style={{ color: BRAND.reject }}>{error}</p>}
 
-      {/* Both drivers open their own modal on mount; onClose resets the dropdown. */}
+      {gate}
+
+      {/* Both drivers open their own modal on mount; onClose resets the dropdown. AlertSend
+          gets NO `overdue` here on purpose — setMode is already gated above, and passing it
+          would prompt a second time inside the same workflow. */}
       {mode === "alert" && <AlertSend cardId={cardId} autoOpen onClose={() => setMode(null)} />}
       {mode === "email" && <ReleaseEmailPanel cardId={cardId} backHref={backHref} onClose={() => setMode(null)} />}
     </section>

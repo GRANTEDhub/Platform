@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AlertTriangle, Loader2, Pencil, RefreshCw, Sparkles } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { SectionTitle } from "./primitives";
@@ -39,6 +40,7 @@ export function ConceptProposalPanel({
   cardId: string;
   initial: ConceptProposalRow | null;
 }) {
+  const router = useRouter();
   const [row, setRow] = useState<ConceptProposalRow | null>(initial);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -58,6 +60,25 @@ export function ConceptProposalPanel({
     const t = setInterval(refresh, 4000);
     return () => clearInterval(t);
   }, [row?.status, refresh]);
+
+  // TELL THE SERVER TREE IT SETTLED. This panel polls into its OWN state, so
+  // everything rendered from the server's copy of the status keeps whatever it was
+  // handed at click time. ConceptCard up in the rail is the visible casualty: it sat
+  // on "Generating…" with a spinner indefinitely after the proposal was finished,
+  // and only a manual page reload cleared it.
+  //
+  // Fires ONCE per generating -> terminal transition. Gated on the previous status
+  // rather than the current one, because router.refresh() re-renders the parent and
+  // feeds this component a new `initial` — refreshing on every terminal render would
+  // be a refresh loop.
+  const prevStatus = useRef(row?.status);
+  useEffect(() => {
+    const was = prevStatus.current;
+    prevStatus.current = row?.status;
+    if (was === "generating" && (row?.status === "ready" || row?.status === "error")) {
+      router.refresh();
+    }
+  }, [row?.status, router]);
 
   const generate = useCallback(async () => {
     // A fresh AI draft would discard manual edits -- confirm first when the
