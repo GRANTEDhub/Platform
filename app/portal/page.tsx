@@ -1,11 +1,10 @@
 import { format, parseISO } from "date-fns";
-import { TrendingUp, Eye, Target, CalendarClock } from "lucide-react";
+import { Bell } from "lucide-react";
 import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import {
-  ClientDashboard,
-  type DashStat,
-} from "@/components/clients/client-dashboard";
+import { ClientDashboard, type DashPinnedRow } from "@/components/clients/client-dashboard";
+import { ClientMasthead } from "@/components/clients/client-masthead";
+import { rollUpPortal } from "@/lib/clients/dashboard-summary";
 import { type DashReportRow } from "@/components/clients/client-grant-report-card";
 import { type DashDraft } from "@/components/clients/client-draft-progress";
 import { buildCommunityView } from "@/lib/clients/community";
@@ -99,14 +98,32 @@ export default async function PortalHome() {
     .map((c) => ({ c, days: deadlineDaysLeft(c.grant?.submission_deadline), date: c.grant?.submission_deadline ?? null }))
     .filter((x): x is { c: (typeof nonPassed)[number]; days: number; date: string } => x.days !== null && x.days >= 0)
     .sort((a, b) => a.days - b.days);
-  const dueSoon = upcoming.filter((x) => x.days <= 30).length;
   const nextDeadline = upcoming[0] ? format(parseISO(upcoming[0].date), "MMM d") : "—";
 
-  const stats: DashStat[] = [
-    { label: "Active grants", value: String(counts.approved), sub: dueSoon ? `${dueSoon} due in 30 days` : "being pursued", icon: TrendingUp },
-    { label: "In review", value: String(counts.pending), sub: "awaiting decision", icon: Eye },
-    { label: "Matched", value: String(nonPassed.length), sub: "opportunities", icon: Target },
-    { label: "Next deadline", value: nextDeadline, sub: null, icon: CalendarClock, accent: true },
+  // The client's own funnel, in their language — four stages, starting at the alerts we
+  // have sent them rather than at our own unassessed queue. See rollUpPortal.
+  const book = rollUpPortal(cards);
+  const alertsToReview = book.stages.find((s) => s.key === "triage")?.count ?? 0;
+  const nextDeadlineDays = upcoming[0]?.days ?? null;
+
+  // ALWAYS PRESENT, count or no count. Grant Alerts is the front of their whole process —
+  // a grant cannot reach their Grant Report until they mark it interested — so the row
+  // that says how many are waiting must be a fixture rather than something that appears
+  // only when non-zero. At zero it reads as caught up, which is information too.
+  const pinnedRows: DashPinnedRow[] = [
+    {
+      id: "grant-alerts",
+      title: "Grant alerts pending your review",
+      description:
+        alertsToReview > 0
+          ? "Open each one, then mark it interested to move it into your Grant Report, or pass on it."
+          : "Nothing waiting. New matches land here first.",
+      count: alertsToReview,
+      icon: Bell,
+      tone: "triage",
+      href: alertsToReview > 0 ? "/portal/triage" : null,
+      actionLabel: "Review alerts",
+    },
   ];
 
   const base = "/portal/grants";
@@ -148,9 +165,30 @@ export default async function PortalHome() {
           isStaff={false}
           roadmapHref={base}
           intellEngineHref="/intellengine"
-          stats={stats}
+          // Same masthead component staff get, variant="portal" swapping the four figures
+          // and the stage labels. No backlog sparkline: it measures our throughput.
+          hero={
+            <ClientMasthead
+              name={org.clientName}
+              meta={subLine}
+              statusLabel={managed ? "premium" : "client"}
+              variant="portal"
+              portalFigures={{
+                alerts: alertsToReview,
+                inReport: counts.pending,
+                approved: counts.approved,
+              }}
+              book={book}
+              decided={counts.approved}
+              nextDeadlineDays={nextDeadlineDays}
+              backlog={null}
+              nextDeadlineLabel={nextDeadline !== "—" ? nextDeadline : null}
+              backHref="/portal/grants"
+              backLabel="Grant Report"
+            />
+          }
           actionItems={actionItems}
-          activity={counts}
+          pinnedRows={pinnedRows}
           report={{
             rows: reportRows,
             total: nonPassed.length,
@@ -164,7 +202,6 @@ export default async function PortalHome() {
           // signals their proposals cite, so they see what grounds the narrative.
           // Pure read; `client` is null only if the row vanished mid-session.
           community={client ? buildCommunityView(client) : undefined}
-          bookingUrl={process.env.NEXT_PUBLIC_BOOKING_URL ?? null}
         />
       </div>
     </div>

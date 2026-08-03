@@ -98,3 +98,70 @@ export function rollUpClient(cards: PricedCard[]): BookRollup {
     hasEstimates,
   };
 }
+
+// ── The CLIENT's own funnel ──────────────────────────────────────────────────
+// Same BookRollup shape so the masthead renders it with no special casing, but built from
+// the client's predicates and labelled in their language.
+//
+// FOUR STAGES, NOT FIVE, and the difference is the whole point. The console's leading
+// stage is `triage` = "unassessed" = pending OUR review, which is precisely the thing a
+// client must not be shown. Theirs starts one step later, at the alerts we have sent them
+// and they have not opened yet.
+//
+// Reuses the console's stage KEYS rather than inventing new ones, because the keys are
+// what index STAGE_ON_INK — so the client's bar gets the same monotonic ramp, with the
+// leading stage in orange for the same reason it is orange on the console: it is the one
+// that is owed. `pursuit` is deliberately unused; a client does not distinguish
+// "approved" from "routed", so both fold into Approved and the empty stage drops out of
+// the bar (segments filter on count > 0).
+//
+// NO MONEY. Award ceilings are program-level maxima, and a client reading "$31M" against
+// their own name would read it as theirs. dollars/money stay null, which the masthead
+// already renders as a dash, and unpriced stays 0 so the "N unpriced" clause never fires.
+const PORTAL_ORDER: { key: PipelineStageKey; label: string }[] = [
+  { key: "triage", label: "Alerts to review" },
+  { key: "client", label: "In your report" },
+  { key: "approved", label: "Approved" },
+  { key: "passed", label: "Passed" },
+];
+
+export interface PortalStageCard {
+  decision: PipelineCard["decision"];
+  interested_at: string | null;
+}
+
+export function rollUpPortal(cards: PortalStageCard[]): BookRollup {
+  const counts: Record<PipelineStageKey, number> = {
+    triage: 0,
+    client: 0,
+    approved: 0,
+    pursuit: 0,
+    passed: 0,
+  };
+
+  for (const c of cards) {
+    // Order mirrors stageOf: terminal first, so a card that has advanced is never
+    // reported at an earlier stage.
+    if (c.decision === "passed") counts.passed += 1;
+    else if (c.decision === "approved") counts.approved += 1;
+    else if (c.interested_at !== null) counts.client += 1;
+    else counts.triage += 1;
+  }
+
+  const total = cards.length;
+  return {
+    stages: PORTAL_ORDER.map(({ key, label }) => ({
+      key,
+      label,
+      count: counts[key],
+      dollars: null,
+      money: null,
+    })),
+    total,
+    // Everything past their own alerts queue: what they have actually looked at. Same
+    // meaning as the console's figure, measured from their side of the handoff.
+    assessedPct: total > 0 ? Math.round(((total - counts.triage) / total) * 100) : 0,
+    unpriced: 0,
+    hasEstimates: false,
+  };
+}

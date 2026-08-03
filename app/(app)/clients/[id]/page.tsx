@@ -739,7 +739,6 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
       }
       actionItems={consoleActionItems}
       pinnedRows={pinnedRows}
-      activity={counts}
       report={{
         rows: reportRows,
         metrics: reportMetrics,
@@ -764,7 +763,6 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
       // The scorer sits in the rail -- it used to be the loudest thing on the page for a
       // tool that is not daily-use.
       scorer={isLead ? undefined : <CheckGrant clientId={client.id} clientName={client.name} />}
-      bookingUrl={process.env.NEXT_PUBLIC_BOOKING_URL ?? null}
       matchNote={matchNote}
     />
   );

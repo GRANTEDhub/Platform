@@ -23,7 +23,6 @@ import { ClientActivity } from "@/components/clients/client-activity";
 import type { CommunityView } from "@/lib/clients/community";
 import type { ActivityEvent } from "@/lib/clients/activity";
 import type { AmbientNote } from "@/lib/clients/ambient-note";
-import { HeroBand } from "@/components/layout/hero-band";
 import { BRAND, INK, STAGE } from "@/lib/brand";
 import type { PipelineStageKey } from "@/lib/clients/pipeline";
 
@@ -123,10 +122,8 @@ export function ClientDashboard({
   roadmapHref,
   intellEngineHref,
   hero,
-  stats,
   actionItems,
   pinnedRows,
-  activity,
   report,
   drafts,
   community,
@@ -136,9 +133,6 @@ export function ClientDashboard({
   draftNext,
   scorer,
   attentionNote,
-  bookingUrl,
-  editHref,
-  refresh,
   matchNote,
 }: {
   name: string;
@@ -149,16 +143,13 @@ export function ClientDashboard({
   // (IntellEngine). Renders a shortcut tile only when provided (client portal
   // passes it; the staff dashboard doesn't).
   intellEngineHref?: string;
-  // Replaces the HeroBand + stat-tile block entirely when provided. The staff console
-  // passes the grant pipeline here; the client portal passes nothing and keeps the hero.
+  // The masthead — ClientMasthead on both sides, `variant` picking whose funnel it
+  // states. Full-bleed and outside the body gutter: it is chrome continuous with the
+  // command band, not content. Both callers pass one; there is no fallback hero any more.
   hero?: React.ReactNode;
-  // Optional because a `hero` replaces them. Required-but-ignored would have meant the
-  // staff page computing four tiles nothing renders.
-  stats?: DashStat[];
   actionItems: DashActionItem[];
   // Console-only: the always-present queue rows above the dynamic items.
   pinnedRows?: DashPinnedRow[];
-  activity: { pending: number; approved: number; passed: number };
   // Left-column cards. Both are optional, and when one is absent its old shortcut
   // tile renders in the bottom row instead -- so a caller that passes neither gets
   // exactly the previous dashboard rather than a gap where a card should be.
@@ -188,84 +179,48 @@ export function ClientDashboard({
   // so it supplies the sentence rather than this component asserting a platform-wide
   // invariant it cannot check.
   attentionNote?: string | null;
-  bookingUrl: string | null;
-  // Staff-only: Edit profile.
-  editHref?: string | null;
-  refresh?: React.ReactNode; // staff-only refresh control
   matchNote?: React.ReactNode; // staff-only in-progress indicator
 }) {
-  const scheduleHref = bookingUrl || `mailto:${SUPPORT}?subject=Schedule%20a%20strategy%20call`;
-
-  // Console: full-bleed 34px gutters and 20px vertical, continuous with the context bar
-  // above it. Portal: the centred max-w-7xl column it has always used.
-  if (isStaff) {
-    return (
-      // The ink direction's ground, page-scoped exactly as on the Portfolio — see
-      // SURFACE.ground in lib/brand.ts. `hero` (the masthead) is full-bleed and sits
-      // OUTSIDE the gutter: it is chrome continuous with the command band, not content.
-      <div className="flex min-h-full flex-col bg-ground">
-        {hero}
-        {matchNote}
-        <div className="relative flex flex-1 flex-col overflow-hidden px-[34px] pb-[15px] pt-[13px]">
-          <ConsoleDecor ghost={ghost} />
-          <div className="relative z-[1] flex min-h-0 flex-1 flex-col">
-            <ConsoleBody
-              actionItems={actionItems}
-              pinnedRows={pinnedRows}
-              report={report}
-              drafts={drafts}
-              community={community}
-              events={events}
-              ambient={ambient}
-              draftNext={draftNext}
-              scorer={scorer}
-              attentionNote={attentionNote}
-              roadmapHref={roadmapHref}
-              intellEngineHref={intellEngineHref}
-            />
-          </div>
+  // ONE BODY FOR BOTH ACTORS. This used to fork: the console got the approved design and
+  // the portal kept its old centred column, because the design said nothing about the
+  // portal and applying the console layout would have silently restyled a client-facing
+  // surface. That convergence is now the instruction — the two are meant to be identical
+  // so a change lands on both instead of the portal drifting a release behind.
+  //
+  // `isStaff` now gates CONTROLS ONLY (Edit profile, Refresh matches, the in-progress
+  // note), not layout. Everything else that differs is a prop the caller supplies or
+  // omits: the portal passes no `scorer`, no `events`, no `ambient`, no `draftNext`, and a
+  // portal-variant masthead as its `hero`.
+  return (
+    // The ink direction's ground, page-scoped exactly as on the Portfolio — see
+    // SURFACE.ground in lib/brand.ts. `hero` (the masthead) is full-bleed and sits
+    // OUTSIDE the gutter: it is chrome continuous with the command band, not content.
+    <div className="flex min-h-full flex-col bg-ground">
+      {hero}
+      {isStaff && matchNote}
+      <div className="relative flex flex-1 flex-col overflow-hidden px-[34px] pb-[15px] pt-[13px]">
+        <ConsoleDecor ghost={ghost} />
+        <div className="relative z-[1] flex min-h-0 flex-1 flex-col">
+          <ConsoleBody
+            actionItems={actionItems}
+            pinnedRows={pinnedRows}
+            report={report}
+            drafts={drafts}
+            community={community}
+            events={events}
+            ambient={ambient}
+            draftNext={draftNext}
+            scorer={scorer}
+            attentionNote={attentionNote}
+            roadmapHref={roadmapHref}
+            intellEngineHref={intellEngineHref}
+          />
         </div>
       </div>
-    );
-  }
-
-  return (
-    <div className="mx-auto max-w-7xl px-8 py-8">
-      {hero ?? (
-        <HeroBand
-          title={name}
-          subtitle={subLine ?? undefined}
-          right={
-            editHref || refresh ? (
-              <div className="flex items-center gap-3">
-                {editHref && (
-                  <Link
-                    href={editHref}
-                    className="rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
-                  >
-                    Edit profile
-                  </Link>
-                )}
-                {refresh}
-              </div>
-            ) : undefined
-          }
-          stats={(stats ?? []).map((s) => ({ value: s.value, label: s.label, sub: s.sub, accent: s.accent }))}
-        />
-      )}
-      <PortalBody
-        actionItems={actionItems}
-        activity={activity}
-        report={report}
-        drafts={drafts}
-        community={community}
-        roadmapHref={roadmapHref}
-        intellEngineHref={intellEngineHref}
-        scheduleHref={scheduleHref}
-      />
     </div>
   );
 }
+
 
 // The body's ornament: one faint rule down the column gutter, hairline margins at the
 // page edges, and the unassessed count bled off the bottom-right at 3% ink.
@@ -595,136 +550,7 @@ function AttentionRow({ item, last }: { item: DashActionItem; last: boolean }) {
   return <li>{item.href ? <Link href={item.href} className="block hover:bg-page/60">{row}</Link> : row}</li>;
 }
 
-// ── Portal body — unchanged ─────────────────────────────────────────────────
-// Byte-for-byte the layout the client portal has been shipping. It is separated out
-// rather than shared so that console work cannot alter a client-facing surface by
-// accident; see the note at the top of the file.
-function PortalBody({
-  actionItems,
-  activity,
-  report,
-  drafts,
-  community,
-  roadmapHref,
-  intellEngineHref,
-  scheduleHref,
-}: {
-  actionItems: DashActionItem[];
-  activity: { pending: number; approved: number; passed: number };
-  report?: { rows: DashReportRow[]; total: number; emptyNote: string; metrics?: DashReportMetrics };
-  drafts?: { list: DashDraft[]; emptyNote: string };
-  community?: CommunityView;
-  roadmapHref: string;
-  intellEngineHref?: string;
-  scheduleHref: string;
-}) {
-  return (
-    <>
-      <div className="mt-8 grid gap-6 lg:grid-cols-3 lg:items-start">
-        <div className="space-y-6 lg:col-span-2">
-          <Card className="p-6 shadow-card sm:p-7">
-            <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Needs attention</h2>
-            {actionItems.length === 0 ? (
-              <p className="mt-4 text-sm text-muted-foreground">Nothing needs your attention right now.</p>
-            ) : (
-              <ul className="mt-4 space-y-2">
-                {actionItems.map((it) => (
-                  <ActionRow key={it.id} item={it} />
-                ))}
-              </ul>
-            )}
-          </Card>
 
-          {report && (
-            <ClientGrantReportCard
-              rows={report.rows}
-              total={report.total}
-              reportHref={roadmapHref}
-              emptyNote={report.emptyNote}
-            />
-          )}
-
-          {drafts && intellEngineHref && (
-            <ClientDraftProgress
-              drafts={drafts.list}
-              intellEngineHref={intellEngineHref}
-              emptyNote={drafts.emptyNote}
-            />
-          )}
-        </div>
-
-        <div className="space-y-6">
-          {community && <ClientCommunityContext view={community} />}
-
-          <Card className="p-6 shadow-card sm:p-7">
-            <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Grant activity</h2>
-            <div className="mt-4">
-              <ClientMatchChart
-                data={[
-                  { label: "In review", count: activity.pending, color: BRAND.slate },
-                  { label: "Pursuing", count: activity.approved, color: BRAND.orange },
-                  { label: "Passed", count: activity.passed, color: BRAND.taupe },
-                ]}
-              />
-            </div>
-          </Card>
-        </div>
-      </div>
-
-      <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {!report && (
-          <QuickAction featured href={roadmapHref} icon={Target} title="Grant Report" sub="Review your matched opportunities" />
-        )}
-        {!drafts && intellEngineHref && (
-          <QuickAction href={intellEngineHref} icon={Sparkles} title="IntellEngine" sub="Draft a proposal — AI assistance coming soon" />
-        )}
-        <QuickAction external href={scheduleHref} icon={CalendarPlus} title="Schedule with an advisor" sub="Book a grant strategy call" />
-        <QuickAction external href={`mailto:${SUPPORT}?subject=Question%20for%20my%20GRANTED%20team`} icon={MessageSquare} title="Message your team" sub="In-app messaging — coming soon" />
-        <QuickAction external href={`mailto:${SUPPORT}?subject=Help`} icon={LifeBuoy} title="Help" sub="FAQ & support" />
-      </div>
-    </>
-  );
-}
-
-// Each item gets its OWN bordered box: text left, status right.
-//
-// The right slot deliberately does NOT show a priority flag -- priorities are not a
-// concept we have defined, so "High" on everything was decoration pretending to be
-// information. It carries, in order of preference: live progress (spinner), the
-// onboarding stage, a date, or an open affordance for a navigable item.
-function ActionRow({ item }: { item: DashActionItem }) {
-  const body = (
-    <div className="flex items-center justify-between gap-4 rounded-md bg-white px-4 py-3 ring-1 ring-brand-navy/[0.08] transition-shadow hover:shadow-card">
-      <div className="min-w-0">
-        <p className="text-sm font-medium text-brand-navy">{item.title}</p>
-        {item.tag && (
-          <span className="mt-1 inline-block rounded-full bg-brand-navy/[0.06] px-2.5 py-0.5 text-[11px] font-medium text-brand-navy">
-            {item.tag}
-          </span>
-        )}
-      </div>
-      <div className="flex shrink-0 items-center gap-2 text-right">
-        {item.busy ? (
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-brand-orange">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            In progress
-          </span>
-        ) : item.stage ? (
-          <span className="text-xs font-medium text-muted-foreground">
-            Step {item.stage.step} of {item.stage.total}
-          </span>
-        ) : item.date ? (
-          <span className="text-xs text-muted-foreground">{item.date}</span>
-        ) : item.href ? (
-          <span aria-hidden="true" className="text-sm text-brand-orange">
-            →
-          </span>
-        ) : null}
-      </div>
-    </div>
-  );
-  return <li>{item.href ? <Link href={item.href} className="block">{body}</Link> : body}</li>;
-}
 
 function QuickAction({
   href,

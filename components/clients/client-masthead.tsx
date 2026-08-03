@@ -33,6 +33,7 @@ export function ClientMasthead({
   name,
   meta,
   statusLabel,
+  variant = "console",
   book,
   decided,
   nextDeadlineDays,
@@ -41,12 +42,24 @@ export function ClientMasthead({
   backHref,
   backLabel,
   actions,
+  portalFigures,
 }: {
   name: string;
   // Already-joined descriptor (org type · city, state · client since). Joined by the
   // caller because only it knows which facts exist for this record.
   meta: string | null;
   statusLabel: string;
+  // WHOSE FUNNEL THIS IS. Same construction, same positions, different four figures --
+  // one component rather than two so a change to the masthead lands on both surfaces.
+  //
+  // The console's figures are internal by definition: "Unassessed" MEANS pending our
+  // review, and the money estimate and "Portfolio assessed" are our throughput. A client
+  // must not be shown any of the three, so `portal` swaps all four for facts about their
+  // own decisions and drops the backlog sparkline, which measures us and not them.
+  variant?: "console" | "portal";
+  // Required when variant="portal". The client's own four counts, computed by the page
+  // because only it knows the client-side predicates (see lib/clients/pipeline.ts).
+  portalFigures?: { alerts: number; inReport: number; approved: number };
   book: BookRollup;
   // Committed to: approved plus in-pursuit. Passed is NOT decided here — it is a closed
   // decision, and counting it would make a client who was mostly rejected look mostly
@@ -72,7 +85,8 @@ export function ClientMasthead({
   // yesterday has one spike and seven baselines, which reads as a broken chart rather
   // than as new work. The unplaceable check keeps it from charting whichever subset
   // happens to have engine history, which is a different quantity.
-  const showBacklog = backlog !== null && backlog.drawable && backlog.unplaceable <= book.total / 2;
+  const showBacklog =
+    variant === "console" && backlog !== null && backlog.drawable && backlog.unplaceable <= book.total / 2;
 
   return (
     <div className="relative z-[1] shrink-0 bg-brand-chrome px-[34px] pb-3.5">
@@ -116,41 +130,72 @@ export function ClientMasthead({
       <div aria-hidden="true" className="mt-[3px] h-px bg-white/[0.22]" />
 
       <div className="flex flex-wrap items-end gap-y-4 pt-3">
-        {/* The one figure that carries money, and it carries the estimate marker inline
-            rather than in a caption underneath. Award ranges are program-level ceilings,
-            not this client's expected receipts — see lib/clients/dashboard-summary.ts. */}
-        <Figure
-          value={unassessed?.count ?? 0}
-          label={unassessed?.money ? `Unassessed · ${unassessed.money} est.` : "Unassessed"}
-          color={BRAND.orange}
-          className="pr-[26px]"
-        />
-        <Rule />
-        <Figure value={decided} label="Decided" className="px-[26px]" />
-        <Rule />
-        <Figure value={nextDeadlineDays} suffix="d" label="To next deadline" className="px-[26px]" />
-        <Rule />
-        <Figure
-          value={book.assessedPct}
-          suffix="%"
-          label="Portfolio assessed"
-          color={STAGE.approved.onDark}
-          className="px-[26px]"
-        />
+        {variant === "console" ? (
+          <>
+            {/* The one figure that carries money, and it carries the estimate marker inline
+                rather than in a caption underneath. Award ranges are program-level ceilings,
+                not this client's expected receipts — see lib/clients/dashboard-summary.ts. */}
+            <Figure
+              value={unassessed?.count ?? 0}
+              label={unassessed?.money ? `Unassessed · ${unassessed.money} est.` : "Unassessed"}
+              color={BRAND.orange}
+              className="pr-[26px]"
+            />
+            <Rule />
+            <Figure value={decided} label="Decided" className="px-[26px]" />
+            <Rule />
+            <Figure value={nextDeadlineDays} suffix="d" label="To next deadline" className="px-[26px]" />
+            <Rule />
+            <Figure
+              value={book.assessedPct}
+              suffix="%"
+              label="Portfolio assessed"
+              color={STAGE.approved.onDark}
+              className="px-[26px]"
+            />
+          </>
+        ) : (
+          <>
+            {/* Orange on the FIRST figure either way, because in both funnels the leading
+                figure is the one that is owed — theirs is alerts they have not opened, ours
+                is grants we have not assessed. Same signal, different owner. */}
+            <Figure
+              value={portalFigures?.alerts ?? 0}
+              label="Alerts to review"
+              color={BRAND.orange}
+              className="pr-[26px]"
+            />
+            <Rule />
+            <Figure value={portalFigures?.inReport ?? 0} label="In your report" className="px-[26px]" />
+            <Rule />
+            <Figure value={nextDeadlineDays} suffix="d" label="To next deadline" className="px-[26px]" />
+            <Rule />
+            <Figure
+              value={portalFigures?.approved ?? 0}
+              label="Approved for pursuit"
+              color={STAGE.approved.onDark}
+              className="px-[26px]"
+            />
+          </>
+        )}
         <Rule />
 
         <div className="min-w-[280px] flex-1 px-[26px]">
           <div className="flex items-baseline justify-between gap-3">
             <p className="text-[9.5px] font-bold uppercase tracking-[0.14em] text-white/[0.58]">
-              Client pipeline · {book.total} {book.total === 1 ? "grant" : "grants"}
+              {variant === "console" ? "Client pipeline" : "Your grants"} · {book.total}{" "}
+              {book.total === 1 ? "grant" : "grants"}
               {/* How much of the money figure above is silent. A $31M pipeline with three
                   unpriced grants is a different fact from one with none, and this is the
-                  only line with room to say so. */}
+                  only line with room to say so. Portal carries no money, so it never fires
+                  (rollUpPortal reports unpriced: 0). */}
               {book.unpriced > 0 && ` · ${book.unpriced} unpriced`}
             </p>
             {/* Only with a book to be a percentage OF. At zero grants "100% never
-                looked at" is arithmetically true and completely wrong. */}
-            {book.total > 0 && (
+                looked at" is arithmetically true and completely wrong.
+                CONSOLE ONLY: "never looked at" is a statement about OUR assessment rate.
+                Aimed at a client it would read as an accusation about theirs. */}
+            {variant === "console" && book.total > 0 && (
               <p className="shrink-0 text-[11px] text-white/[0.55]">
                 <span className="font-semibold text-brand-orange">{100 - book.assessedPct}%</span> never looked at
               </p>
