@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { NotificationBell } from "./notification-bell";
+import { PortalSearch } from "./portal-search";
 import type { ClientNotifications } from "@/lib/portal/notifications";
 
 // Shared client-facing header (logo, primary nav, notification bell, org name,
@@ -82,6 +83,11 @@ export function PortalHeader({
           {showClientChrome && <NavLinks pathname={pathname} className="hidden items-center gap-[2px] md:flex" />}
         </div>
         <div className="flex items-center gap-3">
+          {/* Search sits where the console's does: right-hand group, leading the band's
+              controls. Gated on showClientChrome for the same reason the nav is — a staff
+              admin previewing IntellEngine has no membership, so there is nothing of
+              theirs to search. */}
+          {showClientChrome && <PortalSearch />}
           {orgName && <span className="hidden text-[13px] font-medium text-white/[0.72] lg:inline">{orgName}</span>}
           {notifications && <NotificationBell count={notifications.count} items={notifications.items} />}
           <form action="/auth/signout" method="post">

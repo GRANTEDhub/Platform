@@ -5,6 +5,7 @@ import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { ClientDashboard, type DashPinnedRow } from "@/components/clients/client-dashboard";
 import { ClientMasthead } from "@/components/clients/client-masthead";
+import { CheckGrant } from "@/components/clients/check-grant";
 import { rollUpPortal } from "@/lib/clients/dashboard-summary";
 import { type DashReportRow } from "@/components/clients/client-grant-report-card";
 import { type DashDraft } from "@/components/clients/client-draft-progress";
@@ -257,6 +258,11 @@ export default async function PortalHome() {
           }
           actionItems={actionItems}
           pinnedRows={pinnedRows}
+          // The rail's scorer, same component and same slot the console uses. REPORT-ONLY
+          // for a client: the route refuses to write a review_card from the portal, so this
+          // answers "does this fit us" without putting a grant in their own Grant Report
+          // that nobody on our side released. See app/api/clients/[id]/check-grant/route.ts.
+          scorer={<CheckGrant clientId={org.clientId} clientName={org.clientName} variant="portal" />}
           events={events}
           report={{
             rows: reportRows,

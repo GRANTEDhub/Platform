@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient, createServiceClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/server";
 import { extractSimplerGovOpportunityId } from "@/lib/grants/engine";
 import { loadOpenGrantPool, rankGrantsForNeed } from "@/lib/grants/need-search";
+import { resolveCheckGrantAccess } from "@/lib/clients/check-grant-access";
 
 // The described-need path runs one cheap LLM rerank over the open pool, so give the
 // route headroom beyond the default.
@@ -19,6 +20,12 @@ export const maxDuration = 60;
 //   - a name / keyword / FON -> ilike search over the ledger
 // A link or grant we haven't ingested yet returns notInLedger:true — ingesting brand
 // -new grants on the fly (shred pipeline) is P2.
+//
+// OPEN TO A PORTAL MEMBER for their own org (resolveCheckGrantAccess), so the client
+// dashboard's "Score a grant" reaches the same resolver staff use. What it returns is
+// ledger rows for PUBLIC federal opportunities — nothing client-owned — and the one
+// client-scoped field on them, `onRoadmap`, is already keyed to params.id, which access
+// control has pinned to the caller's own org. Staff stay admin-only, as before.
 
 const CANDIDATE_COLS = "id, title, funder, submission_deadline, status, source_url";
 
@@ -37,11 +44,28 @@ type DB = ReturnType<typeof createServiceClient>;
 
 // Flag candidates already on THIS client's roadmap so staff see "we've already matched
 // this one" instead of re-checking a known match. Best-effort; never throws.
-async function flagOnRoadmap(db: DB, clientId: string, candidates: Candidate[]): Promise<void> {
+//
+// `releasedOnly` is the 0059 gate, and it applies when the CLIENT is the one searching: an
+// "On roadmap" chip against an unreleased card would announce a match their account manager
+// has not released yet — the same leak the scorer's existing-card short-circuit guards, in
+// a badge instead of a verdict. Staff see every card, as before.
+async function flagOnRoadmap(
+  db: DB,
+  clientId: string,
+  candidates: Candidate[],
+  releasedOnly: boolean,
+): Promise<void> {
   const ids = candidates.map((c) => c.grantId);
   if (ids.length === 0) return;
-  const { data } = await db.from("review_cards").select("grant_id").eq("client_id", clientId).in("grant_id", ids);
-  const matched = new Set((data ?? []).map((r) => (r as { grant_id: string }).grant_id));
+  let q: any = db
+    .from("review_cards")
+    .select("grant_id")
+    .eq("client_id", clientId)
+    .neq("card_type", "prospect")
+    .in("grant_id", ids);
+  if (releasedOnly) q = q.not("sme_released_at", "is", null);
+  const { data } = await q;
+  const matched = new Set((data ?? []).map((r: { grant_id: string }) => r.grant_id));
   for (const c of candidates) if (matched.has(c.grantId)) c.onRoadmap = true;
 }
 
@@ -58,20 +82,21 @@ function toCandidate(row: Record<string, unknown>): Candidate {
 }
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-  if (profile?.role !== "admin") return NextResponse.json({ error: "Admins only" }, { status: 403 });
+  const access = await resolveCheckGrantAccess(params.id, { staffRole: "admin" });
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
 
   const body = (await req.json().catch(() => ({}))) as { query?: string };
   const query = (body.query ?? "").trim();
   if (!query) return NextResponse.json({ error: "Enter a grant name, keyword, or link." }, { status: 400 });
 
   const db = createServiceClient();
+  // The 0059 release gate applies to the roadmap chip when the client is searching — see
+  // flagOnRoadmap. Read once, up front, so both exit paths below honour it.
+  let releasedOnly = false;
+  if (access.actor === "client") {
+    const { data: c } = await db.from("clients").select("account_managed").eq("id", params.id).maybeSingle();
+    releasedOnly = !!(c as { account_managed?: boolean } | null)?.account_managed;
+  }
   const looksLikeUrl = /^https?:\/\//i.test(query) || /grants\.gov/i.test(query);
 
   // ── URL path: map a Simpler/Grants.gov link to the ledger row by opportunity id ──
@@ -82,7 +107,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       const row = (data ?? [])[0];
       if (row) {
         const cands = [toCandidate(row)];
-        await flagOnRoadmap(db, params.id, cands);
+        await flagOnRoadmap(db, params.id, cands, releasedOnly);
         return NextResponse.json({ kind: "url", candidates: cands });
       }
       return NextResponse.json({
@@ -147,7 +172,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     merged.push({ ...toCandidate(g as unknown as Record<string, unknown>), reason: m.reason });
   }
   const candidates = merged.slice(0, 8);
-  await flagOnRoadmap(db, params.id, candidates);
+  await flagOnRoadmap(db, params.id, candidates, releasedOnly);
   return NextResponse.json({
     kind: "name",
     candidates,

@@ -39,12 +39,32 @@ type Candidate = {
 
 type Verdict = "fit" | "weak" | "no" | "excluded";
 
+// The grant stated as facts, straight off the ledger row — see grantFactSummary in
+// lib/grants/format.ts. Present on every verdict, including a "no": a reader checking an
+// unfamiliar grant needs to know WHAT it is before "not a fit" means anything.
+type GrantSummary = {
+  description: string | null;
+  facts: { label: string; value: string }[];
+  focusAreas: string[];
+  eligibleEntities: string[];
+  sourceUrl: string | null;
+  grantStatus: string | null;
+};
+
 type RunResult = {
   grant: { id: string; title: string | null; funder: string | null };
+  summary?: GrantSummary | null;
   alreadyMatched?: boolean;
+  cardId?: string | null;
   persisted: boolean;
+  // True when this actor's check never writes anything (a client scoring their own org).
+  // Distinct from persisted:false, which for staff means "scored but didn't qualify".
+  reportOnly?: boolean;
   verdict: Verdict;
   reason?: string | null;
+  // WHY the score is what it is — eligibility read + derivation. The only part of the
+  // payload that can explain a NON-fit; why_this_org is a fit's bullets and is empty here.
+  rationale?: string | null;
   fit_score: number;
   proposed_role?: string | null;
   recommended_prime?: string | null;
@@ -64,7 +84,19 @@ const VERDICT_META: Record<Verdict, { label: string; icon: typeof CheckCircle2; 
   excluded: { label: "Excluded", icon: XCircle, ring: "ring-destructive/30 bg-destructive/5", text: "text-destructive" },
 };
 
-export function CheckGrant({ clientId, clientName }: { clientId: string; clientName: string }) {
+export function CheckGrant({
+  clientId,
+  clientName,
+  variant = "console",
+}: {
+  clientId: string;
+  clientName: string;
+  // Which actor is holding it. The CARD is identical either way — same 318px rail slot,
+  // same field, same overlay — and so is the scoring path. What changes is the outcome
+  // wording, because the outcome genuinely differs: staff get a roadmap write on a
+  // qualifying fit, a client gets a read. See the reportOnly note in the API route.
+  variant?: "console" | "portal";
+}) {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [phase, setPhase] = useState<"idle" | "resolving" | "candidates" | "scoring" | "result">("idle");
@@ -265,7 +297,13 @@ export function CheckGrant({ clientId, clientName }: { clientId: string; clientN
                         <p className="truncate text-xs text-ink-subtle">
                           {c.funder ?? "Unknown funder"}
                           {c.submission_deadline ? ` · due ${c.submission_deadline}` : ""}
-                          {!c.ready ? ` · still processing (${c.status})` : ""}
+                          {/* The raw pipeline status is ours, not the client's — they get
+                              the fact (the read may be thin) without our queue's vocabulary. */}
+                          {!c.ready
+                            ? variant === "console"
+                              ? ` · still processing (${c.status})`
+                              : " · still being analyzed"
+                            : ""}
                         </p>
                         {c.reason && <p className="mt-1 text-xs text-brand-navy/70">{c.reason}</p>}
                       </div>
@@ -288,7 +326,9 @@ export function CheckGrant({ clientId, clientName }: { clientId: string; clientN
                 </p>
               )}
 
-              {phase === "result" && result && <Result result={result} clientId={clientId} />}
+              {phase === "result" && result && (
+                <Result result={result} clientId={clientId} variant={variant} />
+              )}
             </div>
           </div>
         </div>
@@ -297,9 +337,25 @@ export function CheckGrant({ clientId, clientName }: { clientId: string; clientN
   );
 }
 
-function Result({ result, clientId }: { result: RunResult; clientId: string }) {
+function Result({
+  result,
+  clientId,
+  variant,
+}: {
+  result: RunResult;
+  clientId: string;
+  variant: "console" | "portal";
+}) {
   const meta = VERDICT_META[result.verdict];
   const Icon = meta.icon;
+  // Where the existing card lives for THIS actor. Two different routes to the same card,
+  // and a client following the console's /clients/... link would just get a 403.
+  const cardHref =
+    result.cardId
+      ? variant === "portal"
+        ? `/portal/grants/${result.cardId}`
+        : `/clients/${clientId}/roadmap/${result.cardId}`
+      : null;
   return (
     <div className="space-y-4">
       <div className={`flex items-start gap-3 rounded-xl px-4 py-3 ring-1 ${meta.ring}`}>
@@ -322,7 +378,19 @@ function Result({ result, clientId }: { result: RunResult; clientId: string }) {
       </div>
 
       {result.alreadyMatched && (
-        <p className="text-xs text-muted-foreground">Already on this client&apos;s roadmap — showing the current read.</p>
+        <p className="text-xs text-muted-foreground">
+          {variant === "portal" ? "Already in your Grant Report" : "Already on this client's roadmap"} — showing the
+          current read.
+          {cardHref && (
+            <>
+              {" "}
+              <Link href={cardHref} className="font-medium text-brand-orangeDeep hover:underline">
+                Open it
+              </Link>
+              .
+            </>
+          )}
+        </p>
       )}
       {!result.alreadyMatched && result.persisted && (
         <p className="text-sm text-brand-navy">
@@ -333,18 +401,46 @@ function Result({ result, clientId }: { result: RunResult; clientId: string }) {
           .
         </p>
       )}
+      {/* Three different facts, and collapsing them would misreport two of them. A client's
+          check NEVER writes (reportOnly), which is not the same as a staff check that
+          scored and didn't qualify. */}
       {!result.alreadyMatched && !result.persisted && result.verdict !== "excluded" && (
-        <p className="text-xs text-muted-foreground">Not added to the roadmap — surfaced for review only.</p>
+        <p className="text-xs text-muted-foreground">
+          {result.reportOnly
+            ? "This is a read, not a request — checking a grant here doesn't add it to your Grant Report. Tell your account manager if you want to pursue it."
+            : "Not added to the roadmap — surfaced for review only."}
+        </p>
       )}
+
+      {/* THE SUMMARY, above the rationale. The grant may be one the reader has never
+          opened, and "not a fit" is not an answer until you know what it was not a fit
+          for. Facts only — every value is a ledger field, formatted by the same helpers
+          the grant pages use. */}
+      {result.summary && <Summary summary={result.summary} />}
 
       {result.why_this_org.length > 0 && (
         <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Why this org</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {variant === "portal" ? "Why this fits you" : "Why this org"}
+          </p>
           <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-brand-navy">
             {result.why_this_org.map((w, i) => (
               <li key={i}>{w}</li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* The fit rationale — the eligibility read plus how the score was derived. On a
+          weak or no verdict this is the ONLY thing that explains the answer: why_this_org
+          carries a fit's bullets and comes back empty. Header wording follows the verdict
+          so the section states its own conclusion. */}
+      {result.rationale && (
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {result.verdict === "fit" ? "Fit rationale" : "Why it doesn't fit"}
+          </p>
+          <p className="mt-1 whitespace-pre-line text-sm leading-[1.55] text-brand-navy">{result.rationale}</p>
         </div>
       )}
 
@@ -370,6 +466,58 @@ function Result({ result, clientId }: { result: RunResult; clientId: string }) {
         <p className="text-xs text-muted-foreground">
           Inferred (verify): {result.inferred_fields.join(", ")}
         </p>
+      )}
+    </div>
+  );
+}
+
+// The grant, as facts. A two-column label/value list rather than the grant pages' stat
+// tiles: this sits in a 576px modal that already has a verdict banner above it, and four
+// tiles plus a description would push the rationale below the fold.
+//
+// The source link is the last row and is deliberately present on every verdict — the org
+// rule is that deadlines and eligibility get verified against the official source, so a
+// summary that cannot be checked against one is the wrong shape for this surface.
+function Summary({ summary }: { summary: GrantSummary }) {
+  return (
+    <div className="rounded-lg border border-hairline-strong px-4 py-3">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">The grant</p>
+
+      <dl className="mt-2 grid grid-cols-1 gap-x-4 gap-y-1.5 sm:grid-cols-2">
+        {summary.facts.map((f) => (
+          <div key={f.label} className="flex items-baseline justify-between gap-3 border-b border-hairline pb-1">
+            <dt className="shrink-0 text-[11.5px] text-ink-subtle">{f.label}</dt>
+            <dd className="min-w-0 truncate text-[12.5px] font-medium text-brand-navy" title={f.value}>
+              {f.value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+
+      {summary.description && (
+        <p className="mt-2.5 text-[12.5px] leading-[1.55] text-brand-navy [text-wrap:pretty]">{summary.description}</p>
+      )}
+
+      {summary.eligibleEntities.length > 0 && (
+        <p className="mt-2 text-[11.5px] text-ink-subtle">
+          <span className="font-semibold">Who can apply:</span> {summary.eligibleEntities.join(", ")}
+        </p>
+      )}
+      {summary.focusAreas.length > 0 && (
+        <p className="mt-1 text-[11.5px] text-ink-subtle">
+          <span className="font-semibold">Focus:</span> {summary.focusAreas.join(", ")}
+        </p>
+      )}
+
+      {summary.sourceUrl && (
+        <a
+          href={summary.sourceUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 inline-block text-[11.5px] font-semibold text-brand-orangeDeep hover:underline"
+        >
+          Verify on the official listing →
+        </a>
       )}
     </div>
   );
