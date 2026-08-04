@@ -2,6 +2,7 @@ import Link from "next/link";
 import {
   ArrowRight,
   CalendarPlus,
+  Check,
   ChevronRight,
   LifeBuoy,
   Loader2,
@@ -23,7 +24,7 @@ import { ClientActivity } from "@/components/clients/client-activity";
 import type { CommunityView } from "@/lib/clients/community";
 import type { ActivityEvent } from "@/lib/clients/activity";
 import type { AmbientNote } from "@/lib/clients/ambient-note";
-import { BRAND, INK, STAGE } from "@/lib/brand";
+import { BRAND, STAGE } from "@/lib/brand";
 import type { PipelineStageKey } from "@/lib/clients/pipeline";
 
 // The shared, actor-aware client dashboard — the per-client hub. Staff open it via
@@ -69,15 +70,20 @@ export type DashAffordance =
   | { kind: "none" }
   | { kind: "blocked" };
 
-// A PINNED queue row. Unlike a DashActionItem these always render, at zero as much as at
-// twenty, so the card has a floor height and the left column stops collapsing when a
-// client happens to be quiet -- the same reasoning as the pipeline card's five always-
-// present slots. The count IS the state: at zero the row says so and its control goes
-// grey and inert rather than the row disappearing.
+// A PINNED queue row. Unlike a DashActionItem these render at zero as well as at twenty,
+// so the card has a floor height and the column below it stops changing size when a client
+// happens to be quiet -- the same reasoning as the pipeline card's five always-present
+// slots. The count IS the state: at zero the row reports the queue as clear (see PinnedRow)
+// rather than disappearing.
 //
-// A queue only earns a pinned row if it EXISTS. A permanently-zero row with a permanently
-// dead button is the "Submitted" pipeline stage and the "Soon" nav links all over again --
-// so in-app messaging does not get one until in-app messaging is built.
+// AT ZERO IT YIELDS ITS SLOT, though. With the card fixed at three rows, a cleared queue
+// that insisted on its place would push a real piece of work off the card -- so ordering
+// puts live pinned rows first, then dynamic items, then cleared pinned rows.
+//
+// A queue only earns a pinned row if it EXISTS. A permanently-zero row for a feature that
+// was never built is the "Submitted" pipeline stage and the "Soon" nav links all over
+// again -- so in-app messaging does not get one until in-app messaging is built, however
+// convenient a third row would be for the layout.
 export interface DashPinnedRow {
   id: string;
   title: string;
@@ -153,7 +159,14 @@ export function ClientDashboard({
   // Left-column cards. Both are optional, and when one is absent its old shortcut
   // tile renders in the bottom row instead -- so a caller that passes neither gets
   // exactly the previous dashboard rather than a gap where a card should be.
-  report?: { rows: DashReportRow[]; total: number; emptyNote: string; metrics?: DashReportMetrics };
+  report?: {
+    rows: DashReportRow[];
+    total: number;
+    emptyNote: string;
+    metrics?: DashReportMetrics;
+    // Console only: what the row band calls the rows. See ClientGrantReportCard.
+    rowsLabel?: string;
+  };
   drafts?: { list: DashDraft[]; emptyNote: string };
   // Rail: community need-context read from client_profile.community_context.
   community?: CommunityView;
@@ -278,7 +291,13 @@ function ConsoleBody({
 }: {
   actionItems: DashActionItem[];
   pinnedRows?: DashPinnedRow[];
-  report?: { rows: DashReportRow[]; total: number; emptyNote: string; metrics?: DashReportMetrics };
+  report?: {
+    rows: DashReportRow[];
+    total: number;
+    emptyNote: string;
+    metrics?: DashReportMetrics;
+    rowsLabel?: string;
+  };
   drafts?: { list: DashDraft[]; emptyNote: string };
   community?: CommunityView;
   events?: ActivityEvent[];
@@ -319,6 +338,7 @@ function ConsoleBody({
               reportHref={roadmapHref}
               emptyNote={report.emptyNote}
               metrics={report.metrics}
+              rowsLabel={report.rowsLabel}
             />
           )}
           {drafts && intellEngineHref && (
@@ -358,7 +378,12 @@ function ConsoleBody({
 // WHY A CEILING: the same chain in reverse. A client with five attention rows would squeeze
 // the panels below the console's height, so the page would keep changing shape with the
 // data — the instability this redesign exists to remove.
-const MIN_ROWS = 2;
+//
+// FLOOR AND CEILING ARE BOTH 3, so the card is one height on both sides of the product,
+// always. A floor of 2 got the portal closer but not equal: the console's card naturally
+// carries three rows, so a sparse client record still handed the panels below it a row's
+// worth of extra space. Equal by construction beats equal-when-the-data-cooperates.
+const MIN_ROWS = 3;
 const MAX_ROWS = 3;
 
 // "Needs your attention" — a tinted-header card whose rows encode urgency in their
@@ -384,11 +409,16 @@ function AttentionCard({
   // counted row makes.
   const live = rows.filter((r) => r.count > 0).length + items.length + (ambient ? 1 : 0);
 
-  // One list, pinned first, so the always-present Grant Alerts row can never be the thing
-  // the ceiling truncates.
+  // ORDER IS THE PRIORITY RULE, and the middle group is the point: a pinned queue AT ZERO
+  // yields its slot to a real dynamic item, and only keeps it if there is room left over.
+  // So the card is always three rows, and it spends them on things that actually want you
+  // before it spends them on saying a queue is empty.
+  //
+  // Live pinned rows lead and can therefore never be what the ceiling truncates.
   const slots: ({ kind: "pinned"; row: DashPinnedRow } | { kind: "item"; item: DashActionItem })[] = [
-    ...rows.map((row) => ({ kind: "pinned" as const, row })),
+    ...rows.filter((r) => r.count > 0).map((row) => ({ kind: "pinned" as const, row })),
     ...items.map((item) => ({ kind: "item" as const, item })),
+    ...rows.filter((r) => r.count === 0).map((row) => ({ kind: "pinned" as const, row })),
   ];
   const shown = slots.slice(0, MAX_ROWS);
   const heldBack = slots.length - shown.length;
@@ -503,20 +533,28 @@ function AmbientRow({ note }: { note: AmbientNote }) {
   );
 }
 
-// A pinned queue row. Its control is the state indicator: orange and live when the queue
-// has something in it, grey and genuinely disabled at zero. A disabled control here is
-// honest in a way the "Soon" nav links were not -- the destination exists and works, there
-// is simply nothing in the queue right now, and that is a fact about today's data rather
-// than a feature that was never built.
+// A pinned queue row, in one of two states.
+//
+// LIVE: stage-tinted tile, the count, an orange control naming where it goes.
+//
+// CLEAR: the queue is empty, and the row says so as GOOD NEWS rather than as a dead
+// button. It used to render a grey, genuinely-disabled pill carrying the same action
+// label -- honest, but three of those stacked up read as a broken card rather than a
+// finished one. Now the tile turns green with a check, the count chip goes away (zero is
+// not a quantity worth a badge), and the trailing slot reads "All clear". Nothing to click,
+// and nothing pretending to be clickable.
+//
+// A check glyph rather than an emoji: it inherits the stage palette, scales with the type,
+// and renders identically everywhere — none of which an emoji does.
 function PinnedRow({ row, last }: { row: DashPinnedRow; last: boolean }) {
   const live = row.count > 0 && row.href !== null;
-  const Icon = row.icon;
+  const Icon = live ? row.icon : Check;
   return (
     <li className={`flex items-center gap-[13px] px-5 py-3 ${last ? "" : "border-b border-hairline"}`}>
       <span
         aria-hidden="true"
         className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-pill"
-        style={{ backgroundColor: live ? STAGE[row.tone].tint : "rgba(11,30,58,0.04)" }}
+        style={{ backgroundColor: live ? STAGE[row.tone].tint : STAGE.pursuit.tint }}
       >
         <Icon
           className="h-[15px] w-[15px]"
@@ -525,23 +563,21 @@ function PinnedRow({ row, last }: { row: DashPinnedRow; last: boolean }) {
               ? row.tone === "client"
                 ? STAGE.client.text
                 : STAGE[row.tone].color
-              : INK.faint,
+              : STAGE.pursuit.color,
           }}
         />
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <p className="text-sm font-semibold text-brand-navy">{row.title}</p>
-          <span
-            className="shrink-0 rounded-full px-1.5 py-px text-[11px] font-bold leading-[1.4] tabular-nums"
-            style={
-              live
-                ? { backgroundColor: STAGE.triage.color, color: "#fff" }
-                : { backgroundColor: "rgba(11,30,58,0.05)", color: INK.subtle }
-            }
-          >
-            {row.count}
-          </span>
+          {live && (
+            <span
+              className="shrink-0 rounded-full px-1.5 py-px text-[11px] font-bold leading-[1.4] tabular-nums"
+              style={{ backgroundColor: STAGE.triage.color, color: "#fff" }}
+            >
+              {row.count}
+            </span>
+          )}
         </div>
         <p className="mt-0.5 text-xs text-ink-subtle">{row.description}</p>
       </div>
@@ -555,11 +591,11 @@ function PinnedRow({ row, last }: { row: DashPinnedRow; last: boolean }) {
         </Link>
       ) : (
         <span
-          aria-disabled="true"
-          className="inline-flex h-8 shrink-0 cursor-default items-center rounded-sharp px-3.5 text-[12.5px] font-semibold"
-          style={{ backgroundColor: "rgba(11,30,58,0.05)", color: INK.faint }}
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 text-[12.5px] font-semibold"
+          style={{ color: STAGE.pursuit.color }}
         >
-          {row.actionLabel}
+          <Check className="h-3.5 w-3.5" aria-hidden="true" />
+          All clear
         </span>
       )}
     </li>
