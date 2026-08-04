@@ -8,12 +8,18 @@ import { markCardRead } from "@/lib/report/read-state";
 //
 // WHY THIS IS A ROUTE AND NOT A LINE IN THE PAGE RENDER. It was a line in the page render,
 // and the row stayed unread until you manually refreshed the report. `export const dynamic
-// = "force-dynamic"` governs the SERVER; it does nothing about Next's client-side Router
-// Cache, which serves the report's already-fetched RSC payload when you navigate back. So
-// the stamp landed in the database and the list you returned to was the one from before it.
-// revalidatePath is what invalidates that client cache, and it is only callable from a
-// route handler or server action -- never from a render. Moving the write here also gets a
-// mutation out of the render path, which it should never have been in.
+// = "force-dynamic"` governs the SERVER and says nothing about Next's client-side Router
+// Cache, which serves the report's already-fetched RSC payload when you navigate back -- so
+// the stamp landed in the database and the list you returned to predated it. Moving the
+// write here also gets a mutation out of a render path, where it should never have been.
+//
+// AND revalidatePath BELOW IS ONLY HALF THE FIX. In a ROUTE HANDLER it clears the server-side
+// Data and Full Route caches; it does NOT clear the browser's Router Cache. Only a SERVER
+// ACTION's response carries that invalidation, and a plain fetch() to a route handler does
+// not. The caller (<MarkRead>) therefore calls router.refresh() on success, which is what
+// actually clears the client cache. Removing either half leaves a stale report on the way
+// back -- the exact symptom this route exists to fix, and one that shipped once already
+// because revalidatePath looked sufficient.
 //
 // THE SIDE IS DERIVED FROM THE SESSION, NEVER FROM THE BODY. A profiles row means staff; a
 // client member has none. If the body named the side, a portal user could pass "staff" and
