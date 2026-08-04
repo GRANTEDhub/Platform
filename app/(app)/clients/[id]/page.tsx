@@ -610,13 +610,19 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
     now,
   });
 
-  // Grant Report card: the strongest live matches, highest fit first, then soonest
-  // deadline as the tiebreak (among equal fits, the one with a clock on it is the one
-  // to look at). Passed cards are excluded -- they are a closed decision, and the card
-  // is about what is still open. Staff see every non-passed card including ones not
-  // yet released to the client, which is exactly what their own roadmap list shows.
+  // Grant Report card: what is PENDING OUR REVIEW, highest fit first, then soonest
+  // deadline as the tiebreak (among equal fits, the one with a clock on it is the one to
+  // look at).
+  //
+  // TRIAGE ONLY, which is narrower than the card used to be. It listed every non-passed
+  // match, so a grant already released to the client kept sitting at the top of our own
+  // to-do card -- correctly labelled "with client", and still the first thing on the
+  // dashboard, which is the opposite of what a queue is for. stageOf is the same cascade
+  // the roadmap list and the pipeline bar use, so "ours" here means exactly what it means
+  // everywhere else: not passed, not approved, and not yet alerted or marked interested.
   const REPORT_ROWS = 3;
-  const reportRows: DashReportRow[] = [...liveCards]
+  const pendingOurReview = liveCards.filter((c) => stageOf(c) === "triage");
+  const reportRows: DashReportRow[] = [...pendingOurReview]
     .sort((a, b) => {
       if (b.fit_score !== a.fit_score) return b.fit_score - a.fit_score;
       const da = deadlineDaysLeft(a.grant?.submission_deadline);
@@ -743,9 +749,18 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
         rows: reportRows,
         metrics: reportMetrics,
         total: liveCards.length,
+        // The rows are the triage subset now, so the band says so rather than describing a
+        // sort order over a list it no longer shows in full.
+        rowsLabel: "Pending your review",
+        // THREE DIFFERENT EMPTIES, because they call for three different next moves. Now
+        // that the rows are triage-only, "nothing left for us to review" is a common and
+        // GOOD state -- and reporting it as "no matches yet, run grant matches" would send
+        // someone to re-run a scorer on a client whose whole book is already with them.
         emptyNote: matchInProgress
           ? "Matching is running — opportunities will appear here as they are scored."
-          : "No matches yet. Run grant matches to surface opportunities.",
+          : liveCards.length > 0
+            ? "Nothing left for you to review — every open match is with the client or approved. Open the report to see them."
+            : "No matches yet. Run grant matches to surface opportunities.",
       }}
       drafts={{
         list: drafts,

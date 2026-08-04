@@ -77,6 +77,7 @@ export function ClientGrantReportCard({
   emptyNote,
   variant = "portal",
   metrics,
+  rowsLabel,
 }: {
   // Already sorted and truncated by the caller — it knows the audience's visibility
   // rules (an account-managed client must not see unreleased cards at all).
@@ -91,6 +92,11 @@ export function ClientGrantReportCard({
   variant?: "console" | "portal";
   // Console only. Omitted when there is nothing to count.
   metrics?: DashReportMetrics;
+  // Console only: what the row band claims the rows ARE. The default describes a sort
+  // order, which was accurate while the card listed every live match; a caller that
+  // narrows the set (the console now shows only what is pending OUR review) has to say so,
+  // or the band quietly mislabels a filtered list as the whole one.
+  rowsLabel?: string;
 }) {
   if (variant === "console") {
     return (
@@ -100,6 +106,7 @@ export function ClientGrantReportCard({
         reportHref={reportHref}
         emptyNote={emptyNote}
         metrics={metrics}
+        rowsLabel={rowsLabel}
       />
     );
   }
@@ -163,12 +170,14 @@ function ConsoleReportCard({
   reportHref,
   emptyNote,
   metrics,
+  rowsLabel,
 }: {
   rows: DashReportRow[];
   total: number;
   reportHref: string;
   emptyNote: string;
   metrics?: DashReportMetrics;
+  rowsLabel?: string;
 }) {
   const remaining = Math.max(0, total - rows.length);
   return (
@@ -204,7 +213,7 @@ function ConsoleReportCard({
             style={{ backgroundColor: "rgba(11,30,58,0.035)" }}
           >
             <p className="text-[10px] font-bold uppercase tracking-[0.11em] text-ink-muted">
-              Highest fit right now
+              {rowsLabel ?? "Highest fit right now"}
             </p>
             {metrics?.freshness && (
               <p className="shrink-0 text-[11px] text-ink-muted">Updated {metrics.freshness}</p>

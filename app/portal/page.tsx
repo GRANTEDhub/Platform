@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { format, parseISO } from "date-fns";
-import { Bell } from "lucide-react";
+import { Bell, ClipboardCheck } from "lucide-react";
 import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { ClientDashboard, type DashPinnedRow } from "@/components/clients/client-dashboard";
@@ -99,11 +99,12 @@ export default async function PortalHome() {
     profileConfirmed: !!client?.profile_confirmed_at,
   });
 
-  // The grant-alerts item is dropped because the PINNED row below says the same thing and
-  // is always present. The bell keeps its own copy (it has no pinned rows), so the shared
-  // derivation still emits it -- this filters only what this page renders, and only the one
-  // row that would otherwise appear twice on the same card.
-  const actionItems = allActionItems.filter((i) => i.id !== "grant-alerts");
+  // Both of these are dropped because a PINNED row below says the same thing and is always
+  // present. The bell keeps its own copies (it has no pinned rows), so the shared derivation
+  // still emits them -- this filters only what this page renders, and only the rows that
+  // would otherwise appear twice on the same card.
+  const DUPLICATED_BY_PINNED = new Set(["grant-alerts", "grant-report-pending"]);
+  const actionItems = allActionItems.filter((i) => !DUPLICATED_BY_PINNED.has(i.id));
 
   // Upcoming deadlines (real) among live matches -- drives the deadline stat + the
   // action-items list.
@@ -123,6 +124,14 @@ export default async function PortalHome() {
   // a grant cannot reach their Grant Report until they mark it interested — so the row
   // that says how many are waiting must be a fixture rather than something that appears
   // only when non-zero. At zero it reads as caught up, which is information too.
+  // TWO PINNED ROWS, one per stage of the client's own funnel, so the card names both
+  // things that can be waiting on them rather than only the front of the queue. At zero
+  // each reads as cleared and yields its slot to a real dynamic item (see the ordering note
+  // on DashPinnedRow), which is what keeps a three-row card spent on actual work.
+  //
+  // There is deliberately no third "messages" row. In-app messaging does not exist, and a
+  // permanently-zero row for an unbuilt feature is the "Soon" nav link again -- the card
+  // reaches its three rows through the floor instead.
   const pinnedRows: DashPinnedRow[] = [
     {
       id: "grant-alerts",
@@ -136,6 +145,20 @@ export default async function PortalHome() {
       tone: "triage",
       href: alertsToReview > 0 ? "/portal/triage" : null,
       actionLabel: "Review alerts",
+    },
+    {
+      id: "report-pending",
+      title: "Grants awaiting your decision",
+      description:
+        counts.pending > 0
+          ? "In your Grant Report, past the alerts gate — choose how you want to pursue each one, or pass."
+          : "Nothing waiting. Grants you mark interested land here.",
+      count: counts.pending,
+      icon: ClipboardCheck,
+      // The client stage, so this row and its pipeline column read as the same thing.
+      tone: "client",
+      href: counts.pending > 0 ? "/portal/grants" : null,
+      actionLabel: "Open report",
     },
   ];
 
