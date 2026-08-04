@@ -58,7 +58,13 @@ export function deriveClientNotifications({
   // New Grant Alerts: matched but not yet triaged (past neither the interest
   // gate nor an archive). Awaiting decision: interested-but-undecided, sitting
   // in the Grant Report. Mirrors app/portal/page.tsx exactly.
-  const newAlerts = visible.filter((c) => c.interested_at === null && c.decision !== "passed").length;
+  // THE DECK'S PREDICATE, EXACTLY. This counted `decision !== "passed"`, which also
+  // includes an APPROVED card that was never triaged -- and app/portal/triage filters on
+  // `decision === "pending"`. They diverged on the standard-client path, where sending the
+  // alert records decision='approved' on the client's behalf: the bell said "you have 1
+  // grant to review" and the deck it linked to was empty. A count that sends someone to a
+  // screen with nothing on it is worse than no count.
+  const newAlerts = visible.filter((c) => c.interested_at === null && c.decision === "pending").length;
   const pending = visible.filter((c) => c.interested_at !== null && c.decision === "pending").length;
 
   const items: ClientNotificationItem[] = [];
