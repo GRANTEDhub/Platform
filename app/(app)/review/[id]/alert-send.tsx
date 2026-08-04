@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PriorEmailGate } from "@/components/alerts/prior-email-gate";
-import { DecisionConfirmation } from "./decision-confirmation";
+import { DecisionConfirmation, ReleaseConfirmation } from "./decision-confirmation";
 import type { GrantSummary } from "@/app/api/review/[id]/route";
 import type { ReOutreach } from "@/lib/alerts/send-core";
 import { useOverdueGate, type OverdueGateConfig } from "@/components/report/overdue-gate";
@@ -66,6 +66,9 @@ export function AlertSend({
   // at the To: field), so on that path this stays set and unread.
   const [priorEmailedAt, setPriorEmailedAt] = useState<string | null>(null);
   const [summary, setSummary] = useState<GrantSummary | null>(null);
+  // The managed-release outcome, which returns no grant_summary and so cannot use the
+  // decision confirmation. Null until a release actually succeeds.
+  const [release, setRelease] = useState<{ sent: boolean; to?: string | null } | null>(null);
   // Cold re-contact gate: on a COLD send (prospect/lead) to an address we've emailed
   // before, Send is locked until the sender picks a path. "acknowledged" keeps the
   // cold body; "follow_up" swaps to the follow-up variant (composed server-side at
@@ -198,6 +201,15 @@ export function AlertSend({
         setSummary(d.grant_summary as GrantSummary);
         return;
       }
+      // MANAGED RELEASE: no grant_summary by design (a release is not a terminal
+      // decision), which previously meant the one path that always succeeds ended with
+      // the modal closing and nothing else -- no acknowledgement, still parked on the
+      // card. Confirm it and move on, the same way an approve does. Gated on `released`
+      // so a plain not-sent outcome still falls through to the status line below.
+      if (d.released) {
+        setRelease({ sent: !!d.sent, to: d.to ?? null });
+        return;
+      }
       setStatus(d.send_status ?? (d.sent ? `Alert sent to ${d.to}.` : "Not sent."));
       if (d.sent) {
         setOpen(false);
@@ -211,6 +223,7 @@ export function AlertSend({
   }
 
   if (summary) return <DecisionConfirmation summary={summary} />;
+  if (release) return <ReleaseConfirmation sent={release.sent} to={release.to} />;
 
   // Alerted state: a grant_alerts row is sent AND has a recorded recipient.
   // LIVE state, not history: sentAt/sentTo are the CARD's own copy, which recall clears.

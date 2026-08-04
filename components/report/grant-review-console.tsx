@@ -433,12 +433,16 @@ function FactorRow({ factor, last }: { factor: ReviewFactor; last: boolean }) {
     <div
       className={`flex items-start justify-between gap-3.5 py-1 ${last ? "" : "border-b border-brand-navy/[0.05]"}`}
       style={factor.lead ? { backgroundColor: "rgba(228,118,31,0.07)", margin: "0 -20px", padding: "4px 20px" } : undefined}
+      // ON THE WHOLE ROW, not on the label. The title used to sit on the inner label span,
+      // so the rationale only appeared over the few characters of the factor NAME -- while
+      // the thing that looks hoverable, and the thing a reader actually points at, is the
+      // segmented bar and its rating word on the right. Hovering those hit no title at all,
+      // which read as "the hover is broken" rather than "you are hovering the wrong pixels."
+      // match-score.tsx (the client side) already carries it on the row for this reason.
+      title={factor.rationale ?? undefined}
     >
       <span className="min-w-0 flex-1">
-        <span
-          className={`block text-[13px] text-brand-navy ${factor.lead ? "font-semibold" : ""}`}
-          title={factor.rationale ?? undefined}
-        >
+        <span className={`block text-[13px] text-brand-navy ${factor.lead ? "font-semibold" : ""}`}>
           {factor.label}
         </span>
         {/* THE REASON, VISIBLE, on an unassessed row only. "Not assessed" with the
