@@ -124,29 +124,53 @@ export function plainTextToHtml(
     .map((l) => ({ href: safeHref(l.url), label: escapeHtml(l.label.trim() || l.url), url: l.url.trim() }))
     .filter((l): l is { href: string; label: string; url: string } => l.href !== null);
 
-  const paragraphs = text
-    .replace(/\r\n/g, "\n")
-    .split(/\n{2,}/)
-    .map((block) => {
-      const lines = block.split("\n").map((line) => {
-        // The URL line becomes the anchor. Compared on the TRIMMED line so leading
-        // whitespace in the draft does not defeat the match.
-        const hit = links.find((l) => line.trim() === l.url);
-        if (hit) return `<a href="${hit.href}">${hit.label}</a>`;
-        return escapeHtml(line);
-      });
-      // <br> inside a paragraph, not between paragraphs: a plain-text draft uses single
-      // newlines for a wrapped address block or a label-then-value pair, and turning
-      // those into paragraph breaks doubles the spacing the sender saw in the composer.
-      return `<p style="margin:0 0 14px">${lines.join("<br>")}</p>`;
+  function paragraph(block: string): string {
+    const lines = block.split("\n").map((line) => {
+      // The URL line becomes the anchor. Compared on the TRIMMED line so leading
+      // whitespace in the draft does not defeat the match.
+      const hit = links.find((l) => line.trim() === l.url);
+      if (hit) return `<a href="${hit.href}">${hit.label}</a>`;
+      return escapeHtml(line);
     });
+    // <br> inside a paragraph, not between paragraphs: a plain-text draft uses single
+    // newlines for a wrapped address block or a label-then-value pair, and turning
+    // those into paragraph breaks doubles the spacing the sender saw in the composer.
+    return `<p style="margin:0 0 14px">${lines.join("<br>")}</p>`;
+  }
 
   const box = opts?.box ? renderBox(opts.box) : null;
+  const decisionUrls = opts?.box ? [opts.box.interestedUrl.trim(), opts.box.passUrl.trim()] : [];
+  const carriesDecision = (block: string) =>
+    block.split("\n").some((line) => decisionUrls.includes(line.trim()));
+
+  // THE BOX REPLACES THE TEXT BLOCK IT IS DERIVED FROM, in place. It used to be
+  // prepended above the whole note, which put the decision before the salutation had
+  // even introduced the grant -- and left the plain-text version of the same block
+  // sitting after the sign-off. Substituting in place means the two parts agree on
+  // ORDER as well as content, and wherever a sender moves the block in the composer the
+  // box follows it.
+  const out: string[] = [];
+  let placed = false;
+  for (const block of text.replace(/\r\n/g, "\n").split(/\n{2,}/)) {
+    if (box && carriesDecision(block)) {
+      // First such block becomes the box; any later one is dropped rather than rendered
+      // as bare URLs under it (only reachable if a sender split the block apart).
+      if (!placed) {
+        out.push(box);
+        placed = true;
+      }
+      continue;
+    }
+    out.push(paragraph(block));
+  }
+  // Belt and braces: callers check bodyCarriesDecisionUrls before passing a box, so this
+  // is unreachable in practice -- but if it ever were reached, the buttons go at the END
+  // of the note, never back above the greeting.
+  if (box && !placed) out.push(box);
 
   return [
     `<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.55;color:#0B1E3A">`,
-    ...(box ? [box] : []),
-    ...paragraphs,
+    ...out,
     `</div>`,
   ].join("");
 }
