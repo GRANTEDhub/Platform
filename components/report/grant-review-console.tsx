@@ -109,7 +109,7 @@ export function GrantReviewConsole({
   scoreFootnote: string;
   // The agree/disagree control. A client component, passed in.
   //
-  // NULL ON THE PORTAL. Score feedback is staff calibration — it writes match_feedback
+  // POPULATED ON BOTH SIDES, BUT NEVER A FEEDBACK CONTROL ON THE PORTAL. Score feedback is staff calibration — it writes match_feedback
   // attributed to a profiles row, which a portal member does not have, so it would 403 on
   // press. The client's equivalent already exists as the optional reason on a Pass in
   // DecisionBar, which routes to the same calibration store.
@@ -394,8 +394,18 @@ function RationaleCard({
 
       {/* THE ONLY FLEXIBLE CHILD, so this is what clips if anything above it grows. Row
           padding is 4px and the footnote is pinned — check the six rows still fit before
-          shipping any change to the card above. */}
-      <div className="flex min-h-0 flex-1 flex-col px-5 pb-3.5">
+          shipping any change to the card above.
+
+          overflow-y-auto BECAUSE THE ROWS CAN NOW GROW FROM THE INSIDE. The six-row budget was
+          calculated against a native `title` tooltip, which is an overlay and never
+          participates in layout. FactorRow's <details> disclosure does: opening one inserts a
+          paragraph into normal flow, and the parent <section> is a fixed-height
+          overflow-hidden box, so past the pinned footnote's slack the expanded reason (or a
+          lower row) was silently clipped — the third variant of the clip #300 and #306 chased,
+          reintroduced by the fix for it. Scrolling here is right rather than budgeting slack:
+          opening a disclosure is a momentary, deliberate act, not part of the steady-state
+          layout that has to fit. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pb-3.5">
         <p className={`mb-[3px] border-t border-hairline-strong pt-[11px] ${EYEBROW} tracking-[0.13em]`}>
           Fit factors
         </p>
