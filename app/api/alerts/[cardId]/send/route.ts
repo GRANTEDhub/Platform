@@ -68,10 +68,15 @@ export async function POST(req: NextRequest, { params }: { params: { cardId: str
     return NextResponse.json({ error: "Prospect/lead outreach is admin-only" }, { status: 403 });
   }
 
-  // Guard 1 -- a sent card stays sent. If this card already has a delivered
-  // alert, refuse BEFORE (re)generating a draft or emailing, so the
-  // Regenerate->Send path can't cold-email a client/prospect a second time.
-  const priorSent = await findSentAlert(params.cardId);
+  // Guard 1 -- a sent card stays sent, so the Regenerate->Send path cannot email a
+  // client/prospect a second time. Refused BEFORE (re)generating a draft or emailing.
+  //
+  // KEYED ON THE CARD'S OWN sent_at, which is the LIVE state, not on the existence of a
+  // grant_alerts row, which is HISTORY. Recall clears the card's copy and deliberately
+  // leaves grant_alerts intact as the durable send record -- so reading history here made
+  // a recalled card permanently un-sendable, which defeats the entire point of recall.
+  // grant_alerts is still what supplies the DATE in the message below.
+  const priorSent = ctx.card.sent_at !== null ? await findSentAlert(params.cardId) : null;
   if (priorSent) {
     const on = priorSent.sent_at
       ? ` on ${new Date(priorSent.sent_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}`

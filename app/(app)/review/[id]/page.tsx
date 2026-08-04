@@ -114,8 +114,11 @@ export default async function CardDetailPage({
           isAdmin ? (
             <AlertSend
               cardId={card.id}
-              sentAt={sentAlert?.sentAt ?? null}
-              sentTo={sentAlert?.sentTo ?? null}
+              // LIVE: the card's own copy, which recall clears. The grant_alerts row is
+              // history and must not disable sending on a recalled card.
+              sentAt={card.sent_at ?? null}
+              sentTo={card.sent_to ?? null}
+              recalledFrom={card.sent_at === null && sentAlert ? sentAlert : null}
               contactName={contactName}
             />
           ) : null

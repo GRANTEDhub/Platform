@@ -21,6 +21,7 @@ export function AlertSend({
   cardId,
   sentAt,
   sentTo,
+  recalledFrom,
   contactName,
   autoOpen = false,
   onClose,
@@ -29,6 +30,9 @@ export function AlertSend({
   cardId: string;
   sentAt?: string | null;
   sentTo?: string | null;
+  // A prior send that was RECALLED: history exists, the card's own copy is cleared. Shown
+  // as a note so nobody re-sends obliviously, but it never disables the send.
+  recalledFrom?: { sentAt: string; sentTo: string } | null;
   contactName?: string | null;
   // When true (used from the account-managed "Release to client" dropdown), open
   // the modal on mount and render NO inline trigger button -- the dropdown item is
@@ -209,6 +213,11 @@ export function AlertSend({
   if (summary) return <DecisionConfirmation summary={summary} />;
 
   // Alerted state: a grant_alerts row is sent AND has a recorded recipient.
+  // LIVE state, not history: sentAt/sentTo are the CARD's own copy, which recall clears.
+  // Keying this on the grant_alerts row instead left a recalled card with a permanently
+  // disabled Send button. `recalledFrom` carries the surviving history so the modal can
+  // still say the client was emailed once -- as information, not as a block.
+  //
   // Guards on sentTo -- a sent row with no recipient is a data problem, not a
   // clean delivery, so it must not paint the sent state.
   const alerted = !!(sentTo && sentTo.trim());
@@ -345,6 +354,21 @@ export function AlertSend({
             {alerted && (
               <p className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
                 This alert was already sent. Regenerate rebuilds the draft for preview only — it won’t be re-sent.
+              </p>
+            )}
+
+            {/* RECALLED: the client WAS emailed once, and that email cannot be unsent. The
+                card was pulled back deliberately, so sending again is allowed -- but not
+                silently. Amber rather than red: this is a fact to weigh, not an error. */}
+            {!alerted && recalledFrom && (
+              <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                {recalledFrom.sentTo} was emailed about this grant on{" "}
+                {new Date(recalledFrom.sentAt).toLocaleDateString("en-US", {
+                  year: "numeric",
+                  month: "short",
+                  day: "numeric",
+                })}
+                , then the card was recalled. Sending now is a second email about the same grant.
               </p>
             )}
 

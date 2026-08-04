@@ -51,6 +51,11 @@ type CardRow = {
   reasoning_context: { consortium_rationale?: string; fit_score_derivation?: string } | null;
   decision: string;
   sme_released_at: string | null;
+  // The card's OWN send copy -- the live "has this been sent" state. Recall clears it and
+  // leaves the grant_alerts row alone, so this is what may gate a re-send, never the
+  // history row (see AlertSend's note).
+  sent_at: string | null;
+  sent_to: string | null;
   grant_id: string | null;
   grants: GrantEmbed | GrantEmbed[] | null;
 };
@@ -88,7 +93,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   const { data } = await supabase
     .from("review_cards")
     .select(
-      "id, fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, reasoning_context, decision, sme_released_at, grant_id, grants(id, source_url, title, funder, fon, assistance_listings, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, description, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status)",
+      "id, fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, reasoning_context, decision, sme_released_at, sent_at, sent_to, grant_id, grants(id, source_url, title, funder, fon, assistance_listings, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, description, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status)",
     )
     .eq("id", params.cardId)
     .eq("client_id", params.id)
@@ -318,8 +323,9 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
               </p>
               <AlertSend
                 cardId={params.cardId}
-                sentAt={sentAlert?.sentAt ?? null}
-                sentTo={sentAlert?.sentTo ?? null}
+                sentAt={card.sent_at ?? null}
+                sentTo={card.sent_to ?? null}
+                recalledFrom={card.sent_at === null && sentAlert ? sentAlert : null}
                 contactName={client?.name ?? null}
                 overdue={overdueConfig}
               />
