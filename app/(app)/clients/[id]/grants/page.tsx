@@ -110,7 +110,7 @@ export default async function ClientGrantsPage({
         <div className="grid grid-cols-3 gap-4">
           <Stat label="New" value={String(count("pending"))} hint="awaiting review" />
           <Stat label="Approved" value={String(count("approved"))} hint="cleared to send" />
-          <Stat label="Rejected" value={String(count("passed"))} hint="passed" />
+          <Stat label="Passed" value={String(count("passed"))} hint="declined" />
         </div>
 
         <ClientGrantsBatch

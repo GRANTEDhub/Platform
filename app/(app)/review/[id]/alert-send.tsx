@@ -217,7 +217,7 @@ export function AlertSend({
   const coldReContact = isColdSend && !!priorEmailedAt;
 
   // Rendered inline inside the DecisionPanel (as its primary action, above
-  // Reject) -- no outer card of its own.
+  // Pass) -- no outer card of its own.
   return (
     <>
       {gate}

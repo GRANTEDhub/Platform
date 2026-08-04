@@ -30,11 +30,27 @@ const ROW_H = 66;
 const ROW_GAP = 8;
 const VISIBLE_ROWS = 9;
 
-const BUCKETS: { key: StaffBucket; label: string }[] = [
+// TABS PER ACTOR, and the sets differ in length rather than only in wording. A client has
+// no release gate, so staffBucket never returns "admin" for them -- an "Awaiting release"
+// tab would be permanently empty and would also be about OUR queue, not theirs.
+//
+// "Passed" on both sides, replacing "Rejected". The stored value has always been
+// decision='passed'; only the label said otherwise, and "Rejected" is the wrong word for a
+// client deciding not to pursue. It is reserved for a submitted application that did not
+// win, which is a state the platform does not track yet.
+const CONSOLE_BUCKETS: { key: StaffBucket; label: string }[] = [
   { key: "admin", label: "Awaiting release" },
   { key: "client", label: "With client" },
   { key: "pursued", label: "Pursued" },
-  { key: "rejected", label: "Rejected" },
+  { key: "rejected", label: "Passed" },
+];
+
+// "Awaiting review" is the ones in their report they have not decided how to pursue --
+// their untriaged matches are in Grant Alerts, not here (the list requires interested_at).
+const PORTAL_BUCKETS: { key: StaffBucket; label: string }[] = [
+  { key: "client", label: "Awaiting review" },
+  { key: "pursued", label: "Pursuing" },
+  { key: "rejected", label: "Passed" },
 ];
 
 const SORTS: { key: QueueSort; label: string }[] = [
@@ -50,10 +66,18 @@ export function GrantReportConsole({
   rows,
   refreshedLabel,
   canArchive,
+  variant = "console",
+  backLabel,
 }: {
   clientName: string;
   clientHref: string;
   basePath: string;
+  // Which actor's queue this is. Drives the tab set, the default tab, the stats the
+  // header reports and the copy -- NOT the layout, which is identical by design.
+  variant?: "console" | "portal";
+  // What the back link reads as. Defaults to clientName (staff came from that client);
+  // the portal came from its own dashboard.
+  backLabel?: string;
   rows: QueueRow[];
   // "4h ago" — when matching last produced a card for this client. Null when never.
   refreshedLabel: string | null;
@@ -62,13 +86,18 @@ export function GrantReportConsole({
   canArchive: boolean;
 }) {
   const router = useRouter();
-  const [bucket, setBucket] = useState<StaffBucket>("admin");
+  const portal = variant === "portal";
+  const buckets = portal ? PORTAL_BUCKETS : CONSOLE_BUCKETS;
+  // The actor's own queue: what is still waiting on them. Also the bucket the header
+  // stats describe, so they never report on somebody else's work.
+  const primary: StaffBucket = portal ? "client" : "admin";
+  const [bucket, setBucket] = useState<StaffBucket>(primary);
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<QueueSort>("deadline");
   const [archiving, setArchiving] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
 
-  const roll = useMemo(() => rollUpQueue(rows), [rows]);
+  const roll = useMemo(() => rollUpQueue(rows, primary), [rows, primary]);
   const counts = { admin: roll.awaiting, client: roll.withClient, pursued: roll.pursued, rejected: roll.rejected };
 
   const visible = useMemo(() => {
@@ -123,14 +152,16 @@ export function GrantReportConsole({
               className="inline-flex items-center gap-[7px] rounded-sharp text-[12px] font-medium text-ink-muted transition-colors hover:text-brand-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
             >
               <ArrowLeft className="h-[13px] w-[13px]" aria-hidden="true" />
-              {clientName}
+              {backLabel ?? clientName}
             </Link>
             <h1 className="mt-[7px] font-serif text-[23px] font-bold leading-none tracking-[-0.012em] text-brand-navy">
               Grant Report
             </h1>
             <p className="mt-[7px] text-[12.5px] text-ink-muted">
-              {roll.awaiting} awaiting your release · {roll.withClient} with the client
-              {refreshedLabel && ` · last refreshed ${refreshedLabel}`}
+              {portal
+                ? `${roll.awaiting} awaiting your review · ${roll.pursued} you are pursuing`
+                : `${roll.awaiting} awaiting your release · ${roll.withClient} with the client`}
+              {!portal && refreshedLabel && ` · last refreshed ${refreshedLabel}`}
             </p>
           </div>
 
@@ -149,7 +180,11 @@ export function GrantReportConsole({
               // than presenting a partial mean as a whole one.
               title={roll.unscored > 0 ? `${roll.unscored} awaiting grants are not scored and are excluded` : undefined}
             />
-            <Divider />
+            {/* CONSOLE ONLY. An award ceiling is what the PROGRAMME will fund at most, and a
+                client reading "$17M" against their own name reads it as money coming to them.
+                Same call as the portal masthead, which carries no money for the same reason. */}
+            {!portal && <Divider />}
+            {!portal && (
             <Stat
               value={roll.ceiling ?? "–"}
               label="Combined ceiling"
@@ -159,12 +194,13 @@ export function GrantReportConsole({
                   : "No published award figures on this queue"
               }
             />
+            )}
             {firstHref && (
               <Link
                 href={firstHref}
                 className="inline-flex h-9 shrink-0 items-center gap-2 rounded-sharp bg-brand-orangeFill px-[17px] text-[13px] font-semibold text-white transition-colors duration-[120ms] hover:bg-brand-orangeFillHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
               >
-                Start review
+                {portal ? "Start reviewing" : "Start review"}
                 <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
               </Link>
             )}
@@ -189,7 +225,7 @@ export function GrantReportConsole({
             </div>
 
             <div className="flex items-center gap-[2px] bg-brand-navy/[0.055] p-[3px]">
-              {BUCKETS.map((b) => (
+              {buckets.map((b) => (
                 <button
                   key={b.key}
                   type="button"
@@ -260,7 +296,7 @@ export function GrantReportConsole({
           )}
 
           {visible.length === 0 ? (
-            <EmptyQueue bucket={bucket} searching={q.trim().length > 0} awaiting={roll.awaiting} />
+            <EmptyQueue bucket={bucket} searching={q.trim().length > 0} awaiting={roll.awaiting} portal={portal} />
           ) : (
             <div
               // Sized to an exact multiple of the row pitch so a tenth row is fully
@@ -434,10 +470,12 @@ function EmptyQueue({
   bucket,
   searching,
   awaiting,
+  portal,
 }: {
   bucket: StaffBucket;
   searching: boolean;
   awaiting: number;
+  portal: boolean;
 }) {
   if (searching) {
     return (
@@ -447,18 +485,29 @@ function EmptyQueue({
     );
   }
 
-  const copy: Record<StaffBucket, { head: string; sub: string }> = {
-    admin: {
-      head: "The queue is clear",
-      sub:
-        awaiting === 0
-          ? "Every matched grant has been reviewed. New ones land here as the engine scores them."
-          : "Nothing left awaiting release.",
-    },
-    client: { head: "Nothing with the client", sub: "Released grants appear here until the client decides." },
-    pursued: { head: "Nothing in pursuit yet", sub: "Grants the client commits to appear here." },
-    rejected: { head: "Nothing rejected", sub: "Passed grants are kept here rather than deleted." },
-  };
+  // Per actor, because every one of these sentences names who is waiting on whom.
+  const copy: Record<StaffBucket, { head: string; sub: string }> = portal
+    ? {
+        admin: { head: "Nothing here", sub: "This view is not part of your process." },
+        client: {
+          head: "You are all caught up",
+          sub: "Grants you mark interested in Grant Alerts arrive here for your decision.",
+        },
+        pursued: { head: "Nothing in pursuit yet", sub: "Grants you decide to pursue appear here." },
+        rejected: { head: "Nothing passed", sub: "Grants you pass on are kept here rather than deleted." },
+      }
+    : {
+        admin: {
+          head: "The queue is clear",
+          sub:
+            awaiting === 0
+              ? "Every matched grant has been reviewed. New ones land here as the engine scores them."
+              : "Nothing left awaiting release.",
+        },
+        client: { head: "Nothing with the client", sub: "Released grants appear here until the client decides." },
+        pursued: { head: "Nothing in pursuit yet", sub: "Grants the client commits to appear here." },
+        rejected: { head: "Nothing passed", sub: "Passed grants are kept here rather than deleted." },
+      };
   const { head, sub } = copy[bucket];
 
   return (

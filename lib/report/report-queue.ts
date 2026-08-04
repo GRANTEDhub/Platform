@@ -45,7 +45,7 @@ export interface QueueRollup {
 
 export function buildQueue(
   items: ReportItem[],
-  opts: { hasReleaseGate: boolean; concernIds?: Set<string> },
+  opts: { hasReleaseGate: boolean; concernIds?: Set<string>; primaryBucket?: StaffBucket },
 ): QueueRow[] {
   return items.map((item) => {
     const closed = item.deadlineDaysLeft !== null && item.deadlineDaysLeft < 0;
@@ -54,7 +54,10 @@ export function buildQueue(
       item,
       bucket,
       closed,
-      closedUnreviewed: closed && bucket === "admin",
+      // "Closed without anyone acting on it" -- so it keys on the ACTOR's own queue, not
+      // always staff's. For a client that is "client" (in their report, undecided); a
+      // deadline that passed while a grant sat there is exactly as worth flagging to them.
+      closedUnreviewed: closed && bucket === (opts.primaryBucket ?? "admin"),
       concern: opts.concernIds?.has(item.id) ?? false,
       ceiling: ceilingOf(item),
     };
@@ -71,8 +74,12 @@ function ceilingOf(item: ReportItem): number | null {
   return parseAmount(parts[parts.length - 1]) ?? parseAmount(parts[0]);
 }
 
-export function rollUpQueue(rows: QueueRow[]): QueueRollup {
-  const awaiting = rows.filter((r) => r.bucket === "admin");
+// `primary` is the bucket the stats describe -- the actor's own queue, i.e. the grants
+// still waiting on THEM. Staff: "admin", the ones not yet released. A client has no
+// release gate, so nothing is ever in "admin" for them and every stat would read zero;
+// theirs is "client", the ones in their report they have not decided on.
+export function rollUpQueue(rows: QueueRow[], primary: StaffBucket = "admin"): QueueRollup {
+  const awaiting = rows.filter((r) => r.bucket === primary);
   const scored = awaiting.filter((r) => r.item.fitScore !== null);
   const avg = scored.length
     ? scored.reduce((s, r) => s + (r.item.fitScore ?? 0), 0) / scored.length
@@ -84,7 +91,7 @@ export function rollUpQueue(rows: QueueRow[]): QueueRollup {
     withClient: rows.filter((r) => r.bucket === "client").length,
     pursued: rows.filter((r) => r.bucket === "pursued").length,
     rejected: rows.filter((r) => r.bucket === "rejected").length,
-    closedUnreviewed: rows.filter((r) => r.closedUnreviewed).length,
+    closedUnreviewed: rows.filter((r) => r.bucket === primary && r.closed).length,
     dueSoon: awaiting.filter((r) => r.item.deadlineSoon).length,
     avgFit: avg === null ? null : avg.toFixed(1),
     unscored: awaiting.length - scored.length,
