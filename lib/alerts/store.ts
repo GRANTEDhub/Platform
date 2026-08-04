@@ -10,6 +10,7 @@ import { senderFirstName } from "./sender";
 import { renderAlertPdf, renderHorizonPdf, launchAlertBrowser } from "./render";
 import { mergeAlertPdfs } from "./merge-pdf";
 import { getForecastHorizon } from "@/lib/grants/forecast-relevance";
+import { mintDecisionUrls, decisionTextBlock } from "./decide-links";
 import type { AlertContext } from "./generate";
 import type { AlertData, AlertEnrichment } from "./types";
 import type { Client } from "@/types/database";
@@ -180,8 +181,70 @@ export async function getOrCreateDraftAlert(
   opts?: { withHorizon?: boolean },
 ): Promise<GrantAlertRow> {
   const existing = await getDraftAlert(ctx.card.id);
-  if (existing) return opts?.withHorizon ? ensureHorizon(ctx, existing) : existing;
-  return generateDraftAlert(ctx, userId, origin, opts);
+  const draft = existing
+    ? opts?.withHorizon
+      ? await ensureHorizon(ctx, existing)
+      : existing
+    : await generateDraftAlert(ctx, userId, origin, opts);
+  // Decision links ride the same single-send path as the horizon, and for the same
+  // reason: minted once, frozen in the draft, so the preview shows the exact URLs that
+  // go out. Backfills a draft made before this existed.
+  return opts?.withHorizon ? ensureDecisionLinks(ctx, draft, userId, origin) : draft;
+}
+
+// Mint the one-click Interested / Not-for-us links and FREEZE them on the draft --
+// URLs in alert_data, the matching lines appended to email_body -- so preview == sent.
+// Idempotent: presence of decisionUrls means already minted, and a second call is a
+// no-op rather than a second token.
+//
+// ACCOUNT-MANAGED CLIENT CARDS ONLY, and the condition is the point rather than a tier
+// check for its own sake: for a standard client, sending IS the approval (clientSend
+// records decision='approved'), so an email asking "interested?" would be asking a
+// question we already answered on their behalf. A managed send is a RELEASE and leaves
+// the decision genuinely open, which is the only state where these links mean anything.
+//
+// Any failure is swallowed. The one-pager is the essential artifact; a missing pair of
+// links degrades to the alert exactly as it was before this feature, never a send
+// blocker, and the next draft view retries.
+async function ensureDecisionLinks(
+  ctx: AlertContext,
+  alert: GrantAlertRow,
+  userId: string | null,
+  origin: string,
+): Promise<GrantAlertRow> {
+  if (!ctx.client || ctx.card.card_type === "prospect" || ctx.isLead) return alert;
+  if (!ctx.client.account_managed) return alert;
+  const data = (alert.alert_data ?? {}) as AlertData;
+  if (data.decisionUrls) return alert; // minted + frozen already
+
+  const db = createServiceClient();
+  try {
+    const urls = await mintDecisionUrls(db, {
+      clientId: ctx.client.id,
+      grantId: ctx.grant.id,
+      origin,
+      createdBy: userId,
+      deadline: ctx.grant.submission_deadline,
+    });
+    if (!urls) return alert;
+
+    const newData = { ...data, decisionUrls: urls };
+    // Appended to the SAVED body, not at send time: the composer must show what goes
+    // out. It also makes the block editable -- delete the lines in the preview and the
+    // HTML box disappears too, because the renderer only draws it when both URLs are
+    // still in the text (bodyCarriesDecisionUrls).
+    const newBody = `${(alert.email_body ?? "").trimEnd()}\n${decisionTextBlock(urls)}\n`;
+    const { data: updated } = await db
+      .from("grant_alerts")
+      .update({ alert_data: newData, email_body: newBody })
+      .eq("id", alert.id)
+      .select()
+      .single<GrantAlertRow>();
+    return updated ?? { ...alert, alert_data: newData, email_body: newBody };
+  } catch (err) {
+    console.error(`[decide-links] mint failed for alert ${alert.id}; sending without them:`, err);
+    return alert;
+  }
 }
 
 // Compute the forecasted "on the horizon" set for a client/lead draft and FREEZE it

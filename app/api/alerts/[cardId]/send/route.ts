@@ -23,6 +23,8 @@ import {
   type ReOutreach,
 } from "@/lib/alerts/send-core";
 import { buildProspectEmailBody } from "@/lib/alerts/data";
+import { bodyCarriesDecisionUrls } from "@/lib/alerts/decide-links";
+import { formatDeadline } from "@/lib/grants/format";
 import { conceptHookForCard } from "@/lib/concept/store";
 import { senderFirstName } from "@/lib/alerts/sender";
 import { computeGrantSummary } from "@/lib/review/summary";
@@ -370,7 +372,23 @@ async function clientSend(a: {
       }
       try {
         const pdf = await assembleOutwardAlertPdf(alert);
-        const result = await sendGrantAlertEmail({ to: recipient, subject, body: emailBody, pdf });
+        // The decision box renders ONLY when the body actually still carries both URLs.
+        // The lines are in the editable saved draft, so a sender who deletes them means
+        // it: the buttons go with them rather than the HTML part offering an action the
+        // text part never mentions.
+        const urls = (alert.alert_data as { decisionUrls?: { interested: string; pass: string } | null } | null)
+          ?.decisionUrls;
+        const decision =
+          urls && bodyCarriesDecisionUrls(emailBody, urls)
+            ? {
+                grantTitle: ctx.grant.title || "New grant opportunity",
+                deadline: ctx.grant.submission_deadline ? formatDeadline(ctx.grant.submission_deadline) : null,
+                interestedUrl: urls.interested,
+                passUrl: urls.pass,
+                portalUrl: `${appBaseUrl()}/portal/grants/${cardId}`,
+              }
+            : null;
+        const result = await sendGrantAlertEmail({ to: recipient, subject, body: emailBody, pdf, decision });
         await finalizeClientCardSent(supabase, cardId, alert.id, result.to, subject, emailBody);
         sent = true;
         send_status = `alert sent to ${result.to}`;

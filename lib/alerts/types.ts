@@ -58,4 +58,10 @@ export interface AlertData {
   // prospect drafts (no client row) and batch-prepared drafts (horizon is single-only).
   forecastHorizon?: ForecastHorizonItem[];
   horizonStoragePath?: string | null;
+  // ACCOUNT-MANAGED CLIENT ALERTS ONLY: the one-click Interested / Not-for-us links.
+  // Minted at draft time and frozen here, like schedulingUrl, so the preview shows the
+  // exact URLs that go out (preview == sent). Absent on a standard-client alert -- that
+  // send records decision='approved' on their behalf, so there is nothing left to ask --
+  // and absent on prospect/lead alerts, which have no card decision to record.
+  decisionUrls?: { interested: string; pass: string } | null;
 }
