@@ -90,6 +90,14 @@ export function bodyCarriesDecisionUrls(body: string, urls: DecisionUrls): boole
   return lines.includes(urls.interested.trim()) && lines.includes(urls.pass.trim());
 }
 
+// Does the body already carry SOME decision link, whether or not it is the current pair?
+// The guard against appending a second block: a regenerated draft mints a fresh pair, and
+// a body still holding the old URLs would otherwise end up with two sets of buttons in the
+// text and no way for the reader to know which one is live.
+export function bodyMentionsDecidePath(body: string): boolean {
+  return /\/decide\/[A-Za-z0-9_-]+\/(interested|pass)\b/.test(body);
+}
+
 // Hash for the RPC. Re-exported here so the landing page imports one module and
 // cannot accidentally send the raw token to Postgres -- record_card_decision_by_token
 // takes the hash, exactly as resolveToken reads it.

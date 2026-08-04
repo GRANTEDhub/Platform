@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 // Account-managed clients (0059) only see a card here once staff has released it
 // (sme_released_at set) -- their account manager's own Grant Alerts/Report pass
 // happens first, invisibly to the client, on the staff roadmap pages.
-export default async function PortalTriage() {
+export default async function PortalTriage({ searchParams }: { searchParams: { card?: string } }) {
   const { memberships } = await requireClient();
   const org = memberships[0];
   const supabase = createClient();
@@ -53,7 +53,16 @@ export default async function PortalTriage() {
 
   return (
     <HubShell variant="texture">
-      <SwipeDeck items={items} detailBasePath="/portal/grants" backHref="/portal/grants" clientName={org.clientName} />
+      <SwipeDeck
+        items={items}
+        detailBasePath="/portal/grants"
+        backHref="/portal/grants"
+        clientName={org.clientName}
+        // ?card= comes from the alert email: open on the grant we wrote to them about.
+        // A card they have already answered is not in `items`, so the deck falls back to
+        // the front of the queue rather than 404-ing an old link.
+        startCardId={searchParams?.card}
+      />
     </HubShell>
   );
 }

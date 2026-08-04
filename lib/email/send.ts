@@ -115,6 +115,11 @@ export async function sendOutreachEmail(opts: {
   // the bare URL line (see plainTextToHtml); pass it and you get HTML, omit it and the
   // email stays text-only exactly as before.
   htmlLink?: HtmlLink | null;
+  // The one-click decision box, rendered above the body. Same contract as
+  // sendGrantAlertEmail's: its URLs must already be in `body` (the caller checks with
+  // bodyCarriesDecisionUrls), because the text is the source. Passing this ALSO turns on
+  // the HTML part, so a release note can carry the box without needing an htmlLink.
+  decision?: DecisionBox | null;
   // Optional attachments, same shape Resend takes. Used to hang the grant-alert one-pager
   // on a custom release note so the client can read it without signing in.
   attachments?: { filename: string; content: Buffer }[];
@@ -134,7 +139,15 @@ export async function sendOutreachEmail(opts: {
   const cleanBody = sanitizeOutreachEmail(opts.body, opts.contactName ?? null);
 
   const resend = new Resend(process.env.RESEND_PLATFORM_API);
-  const html = opts.htmlLink ? plainTextToHtml(cleanBody, { links: [opts.htmlLink] }) : undefined;
+  // Derived from the SANITIZED body -- the same string that goes out as the text part --
+  // so the two can never disagree. Either input alone is enough to produce an HTML part.
+  const html =
+    opts.htmlLink || opts.decision
+      ? plainTextToHtml(cleanBody, {
+          links: opts.htmlLink ? [opts.htmlLink] : [],
+          box: opts.decision ?? null,
+        })
+      : undefined;
   const attachments = opts.attachments?.length ? opts.attachments : undefined;
   const { data, error } = await resend.emails.send({
     from: FROM,
