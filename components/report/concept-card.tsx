@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Loader2, Sparkles } from "lucide-react";
+import { ArrowRight, Loader2, Pencil, Sparkles } from "lucide-react";
 import { BRAND } from "@/lib/brand";
 import { useOverdueGate, type OverdueGateConfig } from "./overdue-gate";
+import { requestConceptEdit } from "./concept-edit-signal";
 import type { ConceptProposalStatus } from "@/types/database";
 
 // The concept-proposal card in the grant review rail.
@@ -85,13 +86,31 @@ export function ConceptCard({
       </p>
 
       {status === "ready" ? (
-        <a
-          href={anchorHref}
-          className="mt-2.5 inline-flex h-[34px] w-full items-center justify-center gap-[7px] rounded-sharp border border-edge text-[12.5px] font-semibold text-brand-navy transition-colors hover:border-brand-navy/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
-        >
-          View the draft
-          <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-        </a>
+        // VIEW AND EDIT, side by side. Reading the draft and correcting it are the same
+        // errand often enough that having to scroll to the panel and find its Edit control
+        // was a step for nothing. The panel keeps its own Edit -- this adds a second door,
+        // it does not move the first one.
+        //
+        // BOTH ARE ANCHORS to the panel, so the scroll is native in both cases; Edit just
+        // also asks the panel to open its editor on arrival (see concept-edit-signal).
+        // View stays the wider of the two: it is the more common of the two intents.
+        <div className="mt-2.5 grid grid-cols-[1fr_auto] gap-[6px]">
+          <a
+            href={anchorHref}
+            className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-sharp border border-edge text-[12.5px] font-semibold text-brand-navy transition-colors hover:border-brand-navy/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+          >
+            View the draft
+            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+          </a>
+          <a
+            href={anchorHref}
+            onClick={() => requestConceptEdit(cardId)}
+            className="inline-flex h-[34px] items-center justify-center gap-[6px] rounded-sharp border border-edge px-[11px] text-[12.5px] font-semibold text-brand-navy transition-colors hover:border-brand-navy/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+          >
+            <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+            Edit
+          </a>
+        </div>
       ) : (
         <button
           type="button"

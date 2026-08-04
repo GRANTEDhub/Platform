@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { SectionTitle } from "./primitives";
 import { ConceptProposalEditor } from "./concept-proposal-editor";
 import { ConceptProposalView } from "./concept-proposal-view";
+import { onConceptEditRequest } from "./concept-edit-signal";
 import type { ConceptProposalRow } from "@/types/database";
 
 // Staff-only display of the auto-generated concept proposal (migration 0060),
@@ -110,6 +111,15 @@ export function ConceptProposalPanel({
 
   const status = row?.status;
   const proposal = row?.proposal_data ?? null;
+
+  // Opened from the rail card's Edit, which anchors here and sends this. Gated on the
+  // proposal actually being ready: the editor has nothing to edit otherwise, and a stray
+  // signal must not put the panel into a state its own Edit button could not reach.
+  const editable = status === "ready" && proposal !== null;
+  useEffect(() => {
+    if (!editable) return;
+    return onConceptEditRequest(cardId, () => setEditing(true));
+  }, [cardId, editable]);
 
   return (
     <Card elevation="card" className="p-6 sm:p-7">
