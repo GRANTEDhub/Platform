@@ -24,7 +24,7 @@ import { ClientActivity } from "@/components/clients/client-activity";
 import type { CommunityView } from "@/lib/clients/community";
 import type { ActivityEvent } from "@/lib/clients/activity";
 import type { AmbientNote } from "@/lib/clients/ambient-note";
-import { BRAND, STAGE } from "@/lib/brand";
+import { BRAND, STAGE, stageTone } from "@/lib/brand";
 import type { PipelineStageKey } from "@/lib/clients/pipeline";
 
 // The shared, actor-aware client dashboard — the per-client hub. Staff open it via
@@ -227,6 +227,9 @@ export function ClientDashboard({
             attentionNote={attentionNote}
             roadmapHref={roadmapHref}
             intellEngineHref={intellEngineHref}
+            // The one place the actor changes COLOUR rather than content: the client-facing
+            // stage palette is brand-only (see STAGE_PORTAL).
+            variant={isStaff ? "console" : "portal"}
           />
         </div>
       </div>
@@ -288,6 +291,7 @@ function ConsoleBody({
   attentionNote,
   roadmapHref,
   intellEngineHref,
+  variant,
 }: {
   actionItems: DashActionItem[];
   pinnedRows?: DashPinnedRow[];
@@ -307,11 +311,12 @@ function ConsoleBody({
   attentionNote?: string | null;
   roadmapHref: string;
   intellEngineHref?: string;
+  variant: "console" | "portal";
 }) {
   return (
     <div className="grid min-h-0 flex-1 gap-[15px] xl:grid-cols-[1fr_318px] xl:items-stretch">
       <div className="flex min-h-0 min-w-0 flex-col gap-[15px]">
-        <AttentionCard items={actionItems} pinned={pinnedRows} note={attentionNote} ambient={ambient} />
+        <AttentionCard items={actionItems} pinned={pinnedRows} note={attentionNote} ambient={ambient} variant={variant} />
 
         {/* Side by side, equal width, equal height. IntellEngine is the shorter of the
             two by content: it stretches, its content stays top-aligned, and the slack
@@ -395,11 +400,13 @@ function AttentionCard({
   pinned,
   note,
   ambient,
+  variant,
 }: {
   items: DashActionItem[];
   pinned?: DashPinnedRow[];
   note?: string | null;
   ambient?: AmbientNote | null;
+  variant: "console" | "portal";
 }) {
   const rows = pinned ?? [];
   // The header badge counts THINGS THAT WANT YOU, not rows on screen: a pinned queue at
@@ -452,7 +459,7 @@ function AttentionCard({
       <ul>
         {shown.map((s, i) =>
           s.kind === "pinned" ? (
-            <PinnedRow key={s.row.id} row={s.row} last={heldBack === 0 && i === lastIndex} />
+            <PinnedRow key={s.row.id} row={s.row} last={heldBack === 0 && i === lastIndex} variant={variant} />
           ) : (
             <AttentionRow key={s.item.id} item={s.item} last={heldBack === 0 && i === lastIndex} />
           ),
@@ -553,22 +560,20 @@ function AmbientRow({ note }: { note: AmbientNote }) {
 // gold, at any count.
 //
 // So nothing about the left side changes with the count. Only the trailing control does.
-function PinnedRow({ row, last }: { row: DashPinnedRow; last: boolean }) {
+function PinnedRow({ row, last, variant }: { row: DashPinnedRow; last: boolean; variant: "console" | "portal" }) {
   const live = row.count > 0 && row.href !== null;
   const Icon = row.icon;
+  const tone = stageTone(row.tone, variant);
   return (
     <li className={`flex items-center gap-[13px] px-5 py-3 ${last ? "" : "border-b border-hairline"}`}>
       <span
         aria-hidden="true"
         className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-pill"
-        style={{ backgroundColor: STAGE[row.tone].tint }}
+        style={{ backgroundColor: tone.tint }}
       >
-        <Icon
-          className="h-[15px] w-[15px]"
-          // stage-client's raw colour fails contrast, so its text companion carries the
-          // glyph -- the same rule the pipeline dots follow.
-          style={{ color: row.tone === "client" ? STAGE.client.text : STAGE[row.tone].color }}
-        />
+        {/* `glyph`, not `color`: a fill that reads as a 3px rule is not automatically
+            legible as a 15px icon on its own pale tint. See stageTone. */}
+        <Icon className="h-[15px] w-[15px]" style={{ color: tone.glyph }} />
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
