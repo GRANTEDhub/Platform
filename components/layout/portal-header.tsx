@@ -15,10 +15,15 @@ import type { ClientNotifications } from "@/lib/portal/notifications";
 // way home. Nav + bell only render when `notifications` is non-null, i.e. a real
 // client member: a staff admin previewing IntellEngine (no membership) sees just
 // the bare header (logo + sign out), exactly as before.
+// IntellEngine sits beside Grant Report because that is where the client's process goes
+// next: a grant they approved becomes a draft. It is NOT under /portal -- the hub has its
+// own route tree and mounts this same header -- which is exactly why it belongs in the nav
+// rather than only being reachable from a dashboard tile.
 const NAV: { href: string; label: string }[] = [
   { href: "/portal", label: "Dashboard" },
   { href: "/portal/triage", label: "Grant Alerts" },
   { href: "/portal/grants", label: "Grant Report" },
+  { href: "/intellengine", label: "IntellEngine" },
 ];
 
 function isActive(pathname: string, href: string): boolean {

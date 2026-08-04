@@ -346,6 +346,21 @@ function ConsoleBody({
   );
 }
 
+// The card holds between MIN and MAX rows, always. Below the floor it pads with a quiet
+// row; above the ceiling it truncates and says how many it held back.
+//
+// WHY A FLOOR: this card's height sets the height of everything under it, because the
+// Grant Report / IntellEngine pair is `flex-1` beneath it. A one-row card handed those two
+// panels ~60px more than the console gives them, which is the size difference in the comps
+// — the panels were not too tall, the card above them was too short. Padding to two rows
+// fixes the pair without touching either panel's own rules.
+//
+// WHY A CEILING: the same chain in reverse. A client with five attention rows would squeeze
+// the panels below the console's height, so the page would keep changing shape with the
+// data — the instability this redesign exists to remove.
+const MIN_ROWS = 2;
+const MAX_ROWS = 3;
+
 // "Needs your attention" — a tinted-header card whose rows encode urgency in their
 // trailing control. THE CARD NEVER DISAPPEARS: when the queue clears it keeps its frame
 // and shows a caught-up row instead. A card that vanishes makes the page collapse to a
@@ -368,6 +383,21 @@ function AttentionCard({
   // names a specific piece of work and points at it, which is the same claim every other
   // counted row makes.
   const live = rows.filter((r) => r.count > 0).length + items.length + (ambient ? 1 : 0);
+
+  // One list, pinned first, so the always-present Grant Alerts row can never be the thing
+  // the ceiling truncates.
+  const slots: ({ kind: "pinned"; row: DashPinnedRow } | { kind: "item"; item: DashActionItem })[] = [
+    ...rows.map((row) => ({ kind: "pinned" as const, row })),
+    ...items.map((item) => ({ kind: "item" as const, item })),
+  ];
+  const shown = slots.slice(0, MAX_ROWS);
+  const heldBack = slots.length - shown.length;
+  // The caught-up line occupies a row's worth of space, so it counts toward the floor.
+  const occupied = slots.length === 0 ? 1 : shown.length + (heldBack > 0 ? 1 : 0);
+  const fillers = Math.max(0, MIN_ROWS - occupied);
+  // Index of the last thing in the list, so exactly one element loses its bottom rule.
+  const lastIndex = shown.length + fillers - 1;
+
   return (
     <section className="shrink-0 overflow-hidden rounded-sharp border border-edge bg-white">
       <div
@@ -390,21 +420,45 @@ function AttentionCard({
       </div>
 
       <ul>
-        {rows.map((r) => (
-          <PinnedRow key={r.id} row={r} last={false} />
-        ))}
-        {items.map((it, i) => (
-          <AttentionRow key={it.id} item={it} last={i === items.length - 1} />
+        {shown.map((s, i) =>
+          s.kind === "pinned" ? (
+            <PinnedRow key={s.row.id} row={s.row} last={heldBack === 0 && i === lastIndex} />
+          ) : (
+            <AttentionRow key={s.item.id} item={s.item} last={heldBack === 0 && i === lastIndex} />
+          ),
+        )}
+        {/* The floor. Deliberately says something rather than being blank: a blank row in a
+            list reads as a rendering fault, and this one is load-bearing (see MIN_ROWS), so
+            it has to look intentional. min-h matches a real two-line row so the card lands
+            on the same height whether it padded or not. */}
+        {Array.from({ length: fillers }).map((_, i) => (
+          <li
+            key={`filler-${i}`}
+            className={`flex min-h-[62px] items-center px-5 py-3 ${
+              heldBack === 0 && shown.length + i === lastIndex ? "" : "border-b border-hairline"
+            }`}
+          >
+            <p className="text-[13px] text-ink-muted">Nothing else waiting.</p>
+          </li>
         ))}
       </ul>
 
       {/* ONE LINE, not an empty card. The card keeps its frame either way -- a card that
           vanishes changes the page's shape -- but the previous 8-row-tall centred block
           made "nothing to do" the largest thing on the screen. */}
-      {rows.length === 0 && items.length === 0 && (
+      {slots.length === 0 && (
         <p className="px-5 py-3 text-[13px] text-ink-muted">
           <span className="font-semibold text-brand-navy">You&apos;re caught up.</span> New matches land here as
           grants are scored.
+        </p>
+      )}
+
+      {/* NOT A SILENT TRUNCATION. The ceiling exists for layout, so the rows it drops have
+          to be counted out loud — and the sentence is true rather than reassuring: these
+          rows come back on their own as the ones above them clear. */}
+      {heldBack > 0 && (
+        <p className="border-t border-hairline px-5 py-2 text-[11.5px] text-ink-subtle">
+          +{heldBack} more — {heldBack === 1 ? "it appears" : "they appear"} as the rows above clear.
         </p>
       )}
 
