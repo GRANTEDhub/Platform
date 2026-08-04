@@ -8,12 +8,13 @@ import { BRAND } from "@/lib/brand";
 // Return this one card to unread. Console only — see the mark-unread route for why staff
 // never clear the client's side.
 //
-// IT NAVIGATES AWAY RATHER THAN REFRESHING, and that is load-bearing rather than a UX
-// preference. Opening this page is what marks the card read: the server component calls
-// markCardRead on render. A router.refresh() would re-run that render and immediately
-// re-stamp the row read, so the button would appear to do nothing at all. Leaving for the
-// report both avoids the re-stamp and lands you where the change is visible — the row you
-// just marked, now white with its unread dot back.
+// IT NAVIGATES TO THE REPORT rather than staying put, so you land where the change is
+// visible — the row you just marked, white with its unread dot back.
+//
+// Staying put would also fight itself: opening this page is what marks the card read. That
+// stamp now happens in <MarkRead>'s one-shot effect rather than in the page render, so a
+// refresh no longer re-stamps (the ref guard holds across it) — but there is still nothing
+// to see here, and the report is where the state lives.
 export function MarkUnreadButton({ cardId, backHref }: { cardId: string; backHref: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -30,6 +31,12 @@ export function MarkUnreadButton({ cardId, backHref }: { cardId: string; backHre
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Couldn't mark it unread");
+      // REFRESH BEFORE NAVIGATING, for the same reason MarkRead refreshes at all: the route
+      // handler's revalidatePath does not touch the browser's Router Cache, so pushing
+      // straight to the report would render the cached copy -- with this row still grey,
+      // making the button look like it did nothing. refresh() invalidates that cache first,
+      // so the push lands on a fresh fetch.
+      router.refresh();
       router.push(backHref);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't mark it unread");

@@ -428,35 +428,65 @@ function RationaleCard({
 // The rating word sits UNDER the bar, not beside it. Beside, the name and the bar pin to
 // opposite edges and a gap opens down the middle of the list that the eye reads as a
 // column of nothing.
+// One factor row, and the reason behind it.
+//
+// THE RATIONALE IS A DISCLOSURE NOW, NOT A TOOLTIP. Two passes tried to make a hover work
+// here — first by moving the styled tooltip out of an overflow-hidden ancestor, then by
+// putting a native `title` on the whole row instead of just the label — and it was still
+// reported as not working. A native tooltip was the wrong mechanism regardless of where it
+// was attached: it needs a ~1s dwell, it does not exist on touch, it cannot be styled, and
+// when the underlying text is missing it shows NOTHING, which is indistinguishable from
+// broken. That last property is what made this hard to diagnose twice.
+//
+// <details>/<summary> fixes all of it with no JavaScript, which matters because this file is
+// a SERVER component (no "use client", so no useState here). The reason renders in normal
+// flow, so no ancestor's overflow can clip it, it works on touch, and it is keyboard
+// operable for free.
+//
+// AND WHEN THERE IS NO RATIONALE, THE ROW SAYS SO. `rationale` is required in the scorer's
+// tool schema, so a null should be rare — but silence is exactly what cost two debugging
+// rounds, so absence is now stated rather than rendered as a control that does nothing.
 function FactorRow({ factor, last }: { factor: ReviewFactor; last: boolean }) {
-  return (
-    <div
-      className={`flex items-start justify-between gap-3.5 py-1 ${last ? "" : "border-b border-brand-navy/[0.05]"}`}
-      style={factor.lead ? { backgroundColor: "rgba(228,118,31,0.07)", margin: "0 -20px", padding: "4px 20px" } : undefined}
-      // ON THE WHOLE ROW, not on the label. The title used to sit on the inner label span,
-      // so the rationale only appeared over the few characters of the factor NAME -- while
-      // the thing that looks hoverable, and the thing a reader actually points at, is the
-      // segmented bar and its rating word on the right. Hovering those hit no title at all,
-      // which read as "the hover is broken" rather than "you are hovering the wrong pixels."
-      // match-score.tsx (the client side) already carries it on the row for this reason.
-      title={factor.rationale ?? undefined}
-    >
+  // An unassessed row already prints its reason in full (see below), so wrapping it in a
+  // disclosure would hide text that is deliberately always visible.
+  const inline = factor.filled === 0 && !!factor.rationale;
+  const expandable = !!factor.rationale && !inline;
+  const rowStyle = factor.lead
+    ? { backgroundColor: "rgba(228,118,31,0.07)", margin: "0 -20px", padding: "4px 20px" }
+    : undefined;
+
+  const content = (
+    <>
       <span className="min-w-0 flex-1">
         <span className={`block text-[13px] text-brand-navy ${factor.lead ? "font-semibold" : ""}`}>
           {factor.label}
+          {/* NAMES THE CREAM HIGHLIGHT. Exactly one row lights, and it is the factor
+              capping the score — the same one the rationale paragraph above bolds. Without
+              a label the tint reads as a rendering glitch on a random row, which is how it
+              was reported. */}
+          {factor.lead && (
+            <span
+              className="ml-2 align-[1px] text-[9px] font-bold uppercase tracking-[0.1em]"
+              style={{ color: BRAND.orangeDeep }}
+            >
+              caps the score
+            </span>
+          )}
         </span>
         {/* THE REASON, VISIBLE, on an unassessed row only. "Not assessed" with the
-            explanation hidden in a hover title is unactionable — and the explanation is
+            explanation hidden behind a control is unactionable — and the explanation is
             almost always a CLIENT-RECORD GAP, not a scorer failure. enforceFactorDataFloors
             writes exactly this sentence when the fields a factor depends on are blank
             ("No annual budget or match/cost-share capacity on file."), so the row can point
-            at what to go fill in rather than just reporting a hole.
-            Assessed rows keep the rationale in the title: their bar and word already carry
-            the finding, and six visible sentences would bury the one lit factor the panel
-            exists to surface. */}
-        {factor.filled === 0 && factor.rationale && (
+            at what to go fill in rather than just reporting a hole. */}
+        {inline && (
           <span className="mt-[3px] block text-[11px] leading-[1.4] text-ink-muted [text-wrap:pretty]">
             {factor.rationale}
+          </span>
+        )}
+        {!factor.rationale && (
+          <span className="mt-[3px] block text-[10.5px] italic leading-[1.4] text-ink-faint">
+            No rationale recorded for this factor.
           </span>
         )}
       </span>
@@ -479,12 +509,45 @@ function FactorRow({ factor, last }: { factor: ReviewFactor; last: boolean }) {
         >
           {factor.word}
         </p>
+        {expandable && (
+          <span className="mt-[3px] block text-[10px] text-ink-faint group-open:hidden">why</span>
+        )}
       </div>
-      <span className="sr-only">
-        {factor.label}: {factor.word}
-        {factor.rationale ? `. ${factor.rationale}` : ""}
-      </span>
-    </div>
+    </>
+  );
+
+  const srOnly = (
+    <span className="sr-only">
+      {factor.label}: {factor.word}
+      {factor.rationale ? `. ${factor.rationale}` : ". No rationale recorded."}
+    </span>
+  );
+
+  if (!expandable) {
+    return (
+      <div
+        className={`flex items-start justify-between gap-3.5 py-1 ${last ? "" : "border-b border-brand-navy/[0.05]"}`}
+        style={rowStyle}
+      >
+        {content}
+        {srOnly}
+      </div>
+    );
+  }
+
+  return (
+    <details className={`group ${last ? "" : "border-b border-brand-navy/[0.05]"}`} style={rowStyle}>
+      {/* list-none + the webkit marker reset: the default disclosure triangle would sit
+          outside the row's grid and break the label column's alignment. The "why" hint in
+          the right-hand column is the affordance instead, and it hides once open. */}
+      <summary className="flex cursor-pointer list-none items-start justify-between gap-3.5 py-1 [&::-webkit-details-marker]:hidden">
+        {content}
+        {srOnly}
+      </summary>
+      <p className="pb-1.5 pr-[136px] text-[11px] leading-[1.45] text-ink-muted [text-wrap:pretty]">
+        {factor.rationale}
+      </p>
+    </details>
   );
 }
 
