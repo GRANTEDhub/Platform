@@ -15,7 +15,7 @@ import { getSentAlertForCard } from "@/lib/alerts/sent-status";
 import { viewFitFactors } from "@/lib/report/fit-factors";
 import { computeEligibility } from "@/lib/intellengine/eligibility";
 import { FIT_BAND, deadlineDaysLeft, isOverdue } from "@/lib/report/shape";
-import { markCardRead } from "@/lib/report/read-state";
+import { MarkRead } from "@/components/report/mark-read";
 import { formatAwardRange, compactCostShare } from "@/lib/grants/format";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import type { Client, FactorScores, Grant } from "@/types/database";
@@ -105,12 +105,6 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   const card = data as CardRow | null;
   const g = grantOf(card?.grants ?? null);
   if (!card || !g) notFound();
-
-  // OPENING THE CARD IS THE READ (staff side only — the portal stamps its own column on
-  // its own page). After notFound, so a 404 never marks anything read. Not awaited into
-  // the render: nothing below depends on it, and the row's own list already repaints on
-  // the next visit. First read wins, so this is idempotent.
-  void markCardRead(supabase, params.cardId, "staff");
 
   const { data: client } = await supabase
     .from("clients")
@@ -318,6 +312,9 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
           <div className="flex flex-wrap items-center justify-between gap-3">
             <ScoreFeedback cardId={params.cardId} initial={myFeedback} />
             <MarkUnreadButton cardId={params.cardId} backHref={backHref} />
+            {/* Opening this page is the read. Renders nothing; the route it calls also
+                revalidates the report list, so going back shows the row already grey. */}
+            <MarkRead cardId={params.cardId} />
           </div>
         }
         decision={

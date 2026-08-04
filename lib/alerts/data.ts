@@ -65,8 +65,19 @@ export function clampAtSentence(raw: string, max: number): string {
 // is sized to ~2 sentences at 14.5px across the 700px measure. Over that it drives the
 // stat strip down and the alert stops being one letter page. Clamping a clean paraphrase
 // on a sentence boundary yields a good opening; clamping the old merge did not.
-const CONCEPT_MAX = 400;
-const INTRO_MAX = 320;
+// BOTH RAISED, and the whitespace is why. Pinning the decision band to the bottom of the
+// letter page (grant-alert-client.hbs) left the page's slack in one visible gap between the
+// concept grid and the band. The answer is to spend that space on CONTENT rather than
+// redistribute it: a fuller hero and a fuller concept box both grow into the gap, and the
+// band stays where it belongs. These are ceilings, not targets -- a genuinely short grant
+// still renders short, and the band simply sits lower.
+//
+// Still bounded, because the alert is ONE letter page and always must be. INTRO_MAX is
+// sized to ~3-4 sentences at 14.5px across the 700px measure; CONCEPT_MAX to the taller
+// of the two grid columns. Raising either much further starts pushing the stat strip and
+// then the band off the page, which is the failure these constants exist to prevent.
+const CONCEPT_MAX = 620;
+const INTRO_MAX = 520;
 
 function introSource(g: Grant): string {
   const brief = (g.description_brief || "").trim();

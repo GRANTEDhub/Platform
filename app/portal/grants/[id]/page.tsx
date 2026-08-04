@@ -11,7 +11,7 @@ import { getConceptProposal } from "@/lib/concept/store";
 import { viewFitFactors } from "@/lib/report/fit-factors";
 import { computeEligibility } from "@/lib/intellengine/eligibility";
 import { FIT_BAND, deadlineDaysLeft, isOverdue } from "@/lib/report/shape";
-import { markCardRead } from "@/lib/report/read-state";
+import { MarkRead } from "@/components/report/mark-read";
 import { formatAwardRange, compactCostShare } from "@/lib/grants/format";
 import { BRAND } from "@/lib/brand";
 import type { Client, FactorScores, Grant, CardDecision, PursuitPath } from "@/types/database";
@@ -121,12 +121,6 @@ export default async function PortalGrantDetail({
   const card = data as CardRow | null;
   const g = grantOf(card?.grants ?? null);
   if (!card || !g) notFound();
-
-  // OPENING THE GRANT IS THE READ (client side only). Writes client_read_at through the
-  // USER client, which is what the 0070 guard branch authorises — a service-role write
-  // here would be refused, since that branch reads auth.uid(). After notFound so a 404
-  // marks nothing, and not awaited: a read stamp must never gate the page rendering.
-  void markCardRead(supabase, params.id, "client");
 
   const tier = client?.account_managed ? "premium" : "base";
   // Premium clients see their team's concept proposal and may edit it. concept_proposals
@@ -265,7 +259,10 @@ export default async function PortalGrantDetail({
         // No "your feedback tunes future scoring" line: that control is staff-only here, so
         // promising it would describe something the client cannot do.
         scoreFootnote="Machine-scored · six factors weighted equally · your GRANTED team reviewed it before sending."
-        feedback={null}
+        // Renders nothing visible. Opening this page is the read, and the route it posts to
+        // writes client_read_at ONLY -- the side is derived from the session, so this cannot
+        // touch staff's column even though the two pages mount the same component.
+        feedback={<MarkRead cardId={params.id} />}
         decision={
           <section className="shrink-0 rounded-sharp border border-edge bg-white px-[19px] pb-4 pt-[15px]">
             <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-muted">Your decision</p>

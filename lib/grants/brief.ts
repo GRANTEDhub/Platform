@@ -26,6 +26,17 @@ const MAX_WORDS = 250;
 // Below this there is nothing to paraphrase -- a title-only husk would make the model
 // invent a program. Those grants keep falling back to whatever description they have.
 const MIN_SOURCE_CHARS = 120;
+// How much raw_text to hand the model when `description` alone is too thin. raw_text holds
+// up to 100k chars of the published NOFO (pipeline.ts), which is far more than this job
+// needs -- the shape of the program is established in the opening pages, and the concept
+// builder already reads an excerpt for the same reason (lib/concept/schema.ts).
+const RAW_EXCERPT_CHARS = 8000;
+// A generated brief under this is a stub, not a description, and must not be cached: the
+// whole point of the column is that it says more than the agency's clipped one-liner.
+// Rejecting returns null, which leaves description_brief_at unadvanced and retries on the
+// next sweep. Was 20 -- high enough to catch an echoed title, too low to catch a brief
+// that technically parses but tells a reader nothing.
+const MIN_BRIEF_WORDS = 45;
 
 const SYSTEM = `You write plain-language program descriptions for GRANTED, a U.S. grant-consulting firm.
 
@@ -34,7 +45,7 @@ funding provided to [who receives it] for [what purpose] by doing [what activiti
 
 Rules:
 - Follow that shape in substance, not as a fill-in-the-blank template. Write real prose in complete sentences.
-- ${MAX_WORDS} words maximum. Aim for 120-200.
+- Between 120 and 200 words. ${MAX_WORDS} is a hard maximum, and anything under 60 words is too short to be useful -- a reader who sees only your description must come away understanding what the program pays for.
 - Do NOT state dollar amounts, award ranges, deadlines, dates, match/cost-share percentages, or the number of awards. Those are rendered separately from verified fields, and a number written here would be a second, unverified copy.
 - Do NOT name any specific applicant organization, assess anyone's fit, or recommend a role (prime, sub, partner). This description is shown to every client matched to the grant.
 - Do NOT restate eligibility rules; a separate section covers who can apply. One clause on the general class of recipient ("community health centers", "county governments") is fine.
@@ -49,6 +60,9 @@ export interface BriefableGrant {
   title: string | null;
   funder: string | null;
   description: string | null;
+  // The published NOFO text. Read only when `description` is too thin to paraphrase --
+  // see briefSource.
+  raw_text?: string | null;
   focus_areas: string[] | null;
   program_type: string | null;
 }
@@ -88,11 +102,39 @@ function tidy(raw: string): string {
   return unwrapped.replace(/^["'“”]+|["'“”]+$/g, "").trim();
 }
 
+// WHAT THE MODEL IS ALLOWED TO READ, and why it is not just `description`.
+//
+// THIS IS THE BUG BEHIND "the description is about ten words". `description` is often the
+// agency's own clipped one-liner -- under MIN_SOURCE_CHARS -- so generation returned null,
+// nothing was ever written, and every reader fell back to that same one-liner. Permanently:
+// the sweep re-picked the grant, re-measured the same short string, and skipped it again.
+// The fallback was working exactly as designed and hiding a grant that could never
+// generate. (Those are the "skipped" in the sweep's log line.)
+//
+// raw_text is the published NOFO itself, stored by the ingest pipeline. Reading an excerpt
+// of it is not a licence to invent: it is MORE of the grant's own words, which is what the
+// prompt's faithfulness rule asks for. Appended rather than substituted, because when
+// `description` is a real paragraph it is the cleaner, already-summarised source and should
+// still lead.
+//
+// raw_text is API JSON rather than prose for some grants (see backfill-entity-types). That
+// is left as-is deliberately: it is still the grant's own published field values, the model
+// reads it as context, and pre-parsing every shape it might take would be a second shredder.
+function briefSource(grant: BriefableGrant): string {
+  const description = (grant.description || "").trim();
+  if (description.length >= MIN_SOURCE_CHARS) return description;
+
+  const raw = (grant.raw_text || "").trim();
+  if (!raw) return description;
+  const excerpt = raw.slice(0, RAW_EXCERPT_CHARS);
+  return description ? `${description}\n\n${excerpt}` : excerpt;
+}
+
 // Generate the paraphrase. Returns null on any failure or an unusable result -- the
 // caller must treat null as "leave the column alone and retry later", never as "write
 // an empty brief".
 export async function generateGrantBrief(grant: BriefableGrant): Promise<string | null> {
-  const source = (grant.description || "").trim();
+  const source = briefSource(grant);
   if (source.length < MIN_SOURCE_CHARS) return null;
 
   try {
@@ -124,8 +166,9 @@ export async function generateGrantBrief(grant: BriefableGrant): Promise<string 
         .map((b) => (b as { text: string }).text)
         .join(""),
     );
-    // A one-liner means the model refused or echoed the title; not worth caching.
-    if (text.split(/\s+/).length < 20) return null;
+    // A stub means the model refused, echoed the title, or had too little to work with --
+    // none of which is worth caching over a retry. See MIN_BRIEF_WORDS.
+    if (text.split(/\s+/).length < MIN_BRIEF_WORDS) return null;
     return clampWords(text, MAX_WORDS);
   } catch {
     return null;
@@ -165,7 +208,12 @@ export async function ensureGrantBrief(
   }
 }
 
-const SELECT = "id, title, funder, description, focus_areas, program_type";
+// raw_text is here because briefSource falls back to it when `description` is too thin --
+// which was the whole reason grants with a clipped one-line description could never
+// generate a brief. It is the largest column on the table (up to 100k chars), so the sweep
+// pays for it per claimed row; at PER_RUN_CAP=25 that is a bounded cost, and skipping the
+// grants that need it most is the alternative.
+const SELECT = "id, title, funder, description, raw_text, focus_areas, program_type";
 
 export interface BriefSweepResult {
   written: number;
