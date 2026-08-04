@@ -6,6 +6,7 @@ import { ReleaseToClientBar } from "@/components/report/release-bar";
 import { ConceptProposalPanel } from "@/components/report/concept-proposal-panel";
 import { ConceptCard } from "@/components/report/concept-card";
 import { ScoreFeedback } from "@/components/report/score-feedback";
+import { MarkUnreadButton } from "@/components/report/mark-unread-button";
 import { ScoreFactorsBackfill } from "@/components/report/score-factors-backfill";
 import { GrantReviewConsole, type ReviewKeyDetail, type ReviewMeta } from "@/components/report/grant-review-console";
 import { AlertSend } from "@/app/(app)/review/[id]/alert-send";
@@ -14,6 +15,7 @@ import { getSentAlertForCard } from "@/lib/alerts/sent-status";
 import { viewFitFactors } from "@/lib/report/fit-factors";
 import { computeEligibility } from "@/lib/intellengine/eligibility";
 import { FIT_BAND, deadlineDaysLeft, isOverdue } from "@/lib/report/shape";
+import { markCardRead } from "@/lib/report/read-state";
 import { formatAwardRange, compactCostShare } from "@/lib/grants/format";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import type { Client, FactorScores, Grant } from "@/types/database";
@@ -103,6 +105,12 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   const card = data as CardRow | null;
   const g = grantOf(card?.grants ?? null);
   if (!card || !g) notFound();
+
+  // OPENING THE CARD IS THE READ (staff side only — the portal stamps its own column on
+  // its own page). After notFound, so a 404 never marks anything read. Not awaited into
+  // the render: nothing below depends on it, and the row's own list already repaints on
+  // the next visit. First read wins, so this is idempotent.
+  void markCardRead(supabase, params.cardId, "staff");
 
   const { data: client } = await supabase
     .from("clients")
@@ -302,7 +310,16 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         scoreFootnote={`Machine-scored${
           surfacedAt ? ` ${format(parseISO(surfacedAt), "MMM d")}` : ""
         } · six factors weighted equally · your feedback tunes future scoring, not this score.`}
-        feedback={<ScoreFeedback cardId={params.cardId} initial={myFeedback} />}
+        // Rides in the `feedback` slot rather than earning a new prop on GrantReviewConsole:
+        // that component is shared pixel-for-pixel with the portal, and this slot is already
+        // the staff-only one (a portal member has no profiles row to write feedback against,
+        // so the portal passes null). Marking unread is likewise the reviewer's own control.
+        feedback={
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <ScoreFeedback cardId={params.cardId} initial={myFeedback} />
+            <MarkUnreadButton cardId={params.cardId} backHref={backHref} />
+          </div>
+        }
         decision={
           client?.account_managed ? (
             <ReleaseToClientBar

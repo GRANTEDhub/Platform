@@ -39,7 +39,7 @@ export default async function ClientRoadmapTriage({ params }: { params: { id: st
   query = managed ? query.is("sme_interested_at", null) : query.is("interested_at", null);
   const { data } = await query;
 
-  const items = toReportItems((data ?? []) as unknown as ReportCardRow[]);
+  const items = toReportItems((data ?? []) as unknown as ReportCardRow[], "staff");
 
   return (
     <HubShell variant="texture">

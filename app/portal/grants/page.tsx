@@ -35,13 +35,13 @@ export default async function PortalGrantReport() {
   const { data } = await supabase
     .from("review_cards")
     .select(
-      "id, grant_id, fit_score, proposed_role, decision, factor_scores, pursuit_path, grants(title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate, focus_areas)",
+      "id, grant_id, fit_score, proposed_role, decision, factor_scores, pursuit_path, client_read_at, grants(title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate, focus_areas)",
     )
     .eq("client_id", org.clientId)
     .neq("card_type", "prospect")
     .not("interested_at", "is", null);
 
-  const baseItems = toReportItems((data ?? []) as unknown as ReportCardRow[]);
+  const baseItems = toReportItems((data ?? []) as unknown as ReportCardRow[], "client");
 
   // Same concept-proposal reveal as Grant Alerts, now that the grant is in the
   // Report: premium clients see the read-only proposal, base clients the upsell

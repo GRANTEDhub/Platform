@@ -38,7 +38,7 @@ export default async function PortalTriage({ searchParams }: { searchParams: { c
   if (client?.account_managed) query = query.not("sme_released_at", "is", null);
   const { data } = await query;
 
-  const baseItems = toReportItems((data ?? []) as unknown as ReportCardRow[]);
+  const baseItems = toReportItems((data ?? []) as unknown as ReportCardRow[], "client");
 
   // Premium (account-managed) clients see their team's finalized concept proposal
   // right on the alert card, read-only; base clients get the upsell teaser. The
