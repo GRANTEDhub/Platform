@@ -41,7 +41,7 @@ export interface PipelineCard {
   decision: CardDecision;
   interested_at: string | null;
   // Released to the client's portal (written by /api/review/[id] and its
-  // release-email sibling).
+  // one release send path).
   sme_released_at: string | null;
   // The alert email physically went out (written by lib/alerts/send-core).
   sent_at: string | null;

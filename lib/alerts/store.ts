@@ -210,15 +210,12 @@ export async function getOrCreateDraftAlert(
 // Any failure is swallowed. The one-pager is the essential artifact; a missing pair of
 // links degrades to the alert exactly as it was before this feature, never a send
 // blocker, and the next draft view retries.
-// Mint (or read back) the decision URLs and persist them in alert_data. Exported
-// because the RELEASE-NOTE path needs them too: /api/review/[id]/release-email composes
-// its own hand-written body, so it wants the URLs without the alert body's block being
-// appended. Both send paths must offer the buttons -- the release bar has TWO buttons
-// ("Send alert" and "Send Email") and wiring only one of them is exactly how a shipped
-// feature turned out to be invisible on the path actually in use.
+// Mint (or read back) the decision URLs and persist them in alert_data. Private again:
+// it was exported for the release-note send path, and that path is gone -- there is one
+// release send now, so there is one place the buttons have to be wired.
 //
 // Idempotent: a stored pair is returned as-is, never re-minted.
-export async function ensureDecisionUrls(
+async function ensureDecisionUrls(
   ctx: AlertContext,
   alert: GrantAlertRow,
   userId: string | null,

@@ -87,15 +87,6 @@ export function decisionTextBlock(urls: DecisionUrls): string {
   ].join("\n");
 }
 
-// Put the block BEFORE THE SIGN-OFF rather than at the end of the body. Appending put
-// the decision after "Best, / GRANTED", which reads as a postscript to a finished
-// letter -- and in the HTML part the box then landed outside the note entirely. The
-// decision belongs where the reader is asked for it: after the last thing we tell them
-// and before we sign our name.
-//
-// Anchored on the LAST "Best," line so a body that happens to use the word earlier is
-// unaffected. No sign-off (a hand-edited note that dropped it) falls back to appending,
-// which is the previous behaviour and never loses the buttons.
 // The block's non-URL lines, so a previously-written block can be found and removed
 // wherever it sits. Kept beside decisionTextBlock deliberately -- if that copy changes,
 // this list is the thing that has to change with it.
@@ -134,6 +125,15 @@ export function normalizeDecisionBlock(body: string, urls: DecisionUrls): string
   return insertDecisionBlock(stripDecisionBlock(body), urls);
 }
 
+// Put the block BEFORE THE SIGN-OFF rather than at the end of the body. Appending put
+// the decision after "Best, / GRANTED", which reads as a postscript to a finished
+// letter -- and in the HTML part the box then landed outside the note entirely. The
+// decision belongs where the reader is asked for it: after the last thing we tell them
+// and before we sign our name.
+//
+// Anchored on the LAST "Best," line so a body that happens to use the word earlier is
+// unaffected. No sign-off (a hand-edited note that dropped it) falls back to appending,
+// which is the previous behaviour and never loses the buttons.
 export function insertDecisionBlock(body: string, urls: DecisionUrls): string {
   const block = decisionTextBlock(urls);
   const lines = body.replace(/\r\n/g, "\n").split("\n");
@@ -156,14 +156,6 @@ export function insertDecisionBlock(body: string, urls: DecisionUrls): string {
 export function bodyCarriesDecisionUrls(body: string, urls: DecisionUrls): boolean {
   const lines = body.split(/\r?\n/).map((l) => l.trim());
   return lines.includes(urls.interested.trim()) && lines.includes(urls.pass.trim());
-}
-
-// Does the body already carry SOME decision link, whether or not it is the current pair?
-// The guard against appending a second block: a regenerated draft mints a fresh pair, and
-// a body still holding the old URLs would otherwise end up with two sets of buttons in the
-// text and no way for the reader to know which one is live.
-export function bodyMentionsDecidePath(body: string): boolean {
-  return /\/decide\/[A-Za-z0-9_-]+\/(interested|pass)\b/.test(body);
 }
 
 // Hash for the RPC. Re-exported here so the landing page imports one module and
