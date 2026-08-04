@@ -180,21 +180,24 @@ export function GrantReportConsole({
               // than presenting a partial mean as a whole one.
               title={roll.unscored > 0 ? `${roll.unscored} awaiting grants are not scored and are excluded` : undefined}
             />
-            {/* CONSOLE ONLY. An award ceiling is what the PROGRAMME will fund at most, and a
-                client reading "$17M" against their own name reads it as money coming to them.
-                Same call as the portal masthead, which carries no money for the same reason. */}
-            {!portal && <Divider />}
-            {!portal && (
+            <Divider />
+            {/* LABELLED DIFFERENTLY FOR A CLIENT, not hidden from them. An award ceiling is
+                what the PROGRAMME will fund at most, so "Combined ceiling" against their own
+                organisation's name invites reading it as money coming to them. "Program
+                maximums" says whose number it is in the label itself rather than relying on
+                a hover, and the title spells out that it is not a forecast. Staff keep the
+                shorter label -- they already know what a ceiling is. */}
             <Stat
               value={roll.ceiling ?? "–"}
-              label="Combined ceiling"
+              label={portal ? "Program maximums" : "Combined ceiling"}
               title={
                 roll.ceiling
-                  ? `Estimated award ceilings${roll.ceilingUnpriced > 0 ? ` · ${roll.ceilingUnpriced} carry no published figure` : ""}`
+                  ? portal
+                    ? `The most each program would award any applicant, added up. NOT a forecast of what you will receive.${roll.ceilingUnpriced > 0 ? ` ${roll.ceilingUnpriced} carry no published figure.` : ""}`
+                    : `Estimated award ceilings${roll.ceilingUnpriced > 0 ? ` · ${roll.ceilingUnpriced} carry no published figure` : ""}`
                   : "No published award figures on this queue"
               }
             />
-            )}
             {firstHref && (
               <Link
                 href={firstHref}
