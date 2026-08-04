@@ -43,7 +43,11 @@ import type { Prospect } from "@/types/database";
 //     Convert + send are ATOMIC on a real send only: on preview / disabled /
 //     allowlist-blocked, nothing converts and nothing is marked sent.
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// 300, not 60. This is now the ONLY client release send, and on a card with no saved draft
+// getOrCreateDraftAlert runs an enrichment LLM call plus a Chromium render. The composer
+// normally generates the draft when it opens, so it is warm by send time -- but 60s was a
+// real edge on a cold card, and the deleted release-note path had 300 for exactly this.
+export const maxDuration = 300;
 
 export async function POST(req: NextRequest, { params }: { params: { cardId: string } }) {
   const supabase = createClient();

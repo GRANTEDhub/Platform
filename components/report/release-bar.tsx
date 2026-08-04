@@ -1,29 +1,33 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronDown, FileText, Loader2, Mail } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { BRAND } from "@/lib/brand";
 import { AlertSend } from "@/app/(app)/review/[id]/alert-send";
-import { ReleaseEmailPanel } from "./release-email-panel";
 import { useOverdueGate, type OverdueGateConfig } from "./overdue-gate";
 
 // "Your decision" — staff's Gate-2 control for an account-managed client (0059), and the
 // terminal act of the grant review screen. The call here is "release to the client", not
 // a pursue decision: the client makes that later, on their own copy of this page.
 //
-// A SPLIT BUTTON, not two peers. Releasing is what happens on most grants, and the two
-// ways to do it differ only in what lands in the inbox; making them equal-weight siblings
-// asked the reviewer to decide the format before deciding the answer. Reject sits below
-// as a full-width secondary — routine and reversible, so it is bordered rather than
-// filled, and it is not the shadcn destructive red (see BRAND.reject).
+// ONE FULL-WIDTH PRIMARY. This was a split button while there were two ways to release;
+// with one, the chevron would have opened a menu of a single item. Reject sits below as a
+// full-width secondary — routine and reversible, so it is bordered rather than filled, and
+// it is not the shadcn destructive red (see BRAND.reject).
 //
-// Two ways to notify:
-//   - Send alert -- the branded one-page PDF (the existing AlertSend flow).
-//   - Send email -- a custom, editable plain-text note, no PDF.
-// BOTH set sme_released_at (the card moves to the client's Grant Alerts) and NEITHER
-// approves -- the client still decides pursuit. Reject is terminal (decision='passed').
+// ONE WAY TO NOTIFY, and it used to be two. "Send alert" (the PDF) and "Send email" (a
+// custom note) were a split button, on the premise that they differed in what landed in
+// the inbox. They stopped differing: once the note path also attached the one-pager, the
+// only real distinction left was its default copy -- while the alert composer had an
+// editable To, subject and body all along. So the choice was between two spellings of the
+// same action, and the note path was the one that did NOT write the durable send record,
+// which meant the "Alerted" badge, the sent-card re-send guard and recall's "client was
+// emailed on <date>" line were all silently wrong depending on which button you pressed.
+//
+// Releasing sets sme_released_at (the card moves to the client's Grant Alerts) and does
+// NOT approve -- the client still decides pursuit. Reject is terminal (decision='passed').
 export function ReleaseToClientBar({
   cardId,
   released,
@@ -46,9 +50,7 @@ export function ReleaseToClientBar({
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [mode, setMode] = useState<null | "alert" | "email">(null);
-  const wrapRef = useRef<HTMLDivElement>(null);
+  const [mode, setMode] = useState<null | "alert">(null);
   // Guarded at setMode, not inside the send handlers: every release path — the primary
   // button and both menu items — goes through it, so one wrap covers all three and a new
   // release mode cannot be added past the gate by accident.
@@ -101,23 +103,6 @@ export function ReleaseToClientBar({
       setBusy(false);
     }
   }
-
-  // Outside-click + Escape close for the menu (mirrors the notification bell).
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setMenuOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [menuOpen]);
 
   async function reject() {
     setBusy(true);
@@ -266,55 +251,19 @@ export function ReleaseToClientBar({
     >
       <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-muted">Your decision</p>
       <p className="mt-2 text-[12.5px] leading-[1.55] text-ink-muted">
-        Release to the client&apos;s Grant Alerts as a one-page PDF or a custom note — or reject to archive it now.
+        Release to the client&apos;s Grant Alerts with the one-page PDF — edit the note before it goes — or reject to
+        archive it now.
       </p>
 
-      <div ref={wrapRef} className="relative mt-[13px] flex items-stretch gap-[2px]">
+      <div className="mt-[13px]">
         <button
           type="button"
           disabled={busy}
           onClick={() => guard(() => setMode("alert"))}
-          className="inline-flex h-[42px] flex-1 items-center justify-center gap-2 rounded-sharp bg-brand-orangeFill text-[14px] font-semibold text-white transition-colors duration-[120ms] hover:bg-brand-orangeFillHover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+          className="inline-flex h-[42px] w-full items-center justify-center gap-2 rounded-sharp bg-brand-orangeFill text-[14px] font-semibold text-white transition-colors duration-[120ms] hover:bg-brand-orangeFillHover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
         >
-          Release to client
+          Edit &amp; Send Alert
         </button>
-        <button
-          type="button"
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          aria-label="Choose how to release"
-          disabled={busy}
-          onClick={() => setMenuOpen((v) => !v)}
-          className="inline-flex h-[42px] w-[38px] shrink-0 items-center justify-center rounded-sharp bg-brand-orangeFill text-white transition-colors duration-[120ms] hover:bg-brand-orangeFillHover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
-        >
-          <ChevronDown className="h-4 w-4" aria-hidden="true" />
-        </button>
-        {menuOpen && (
-          <div
-            role="menu"
-            className="absolute right-0 top-full z-50 mt-1 w-64 overflow-hidden rounded-sharp border border-edge bg-white shadow-overlay"
-          >
-            <MenuItem
-              icon={<FileText className="mt-0.5 h-4 w-4 shrink-0" style={{ color: BRAND.orangeDeep }} />}
-              title="Send alert"
-              sub="The branded one-page PDF."
-              onClick={() => {
-                setMenuOpen(false);
-                guard(() => setMode("alert"));
-              }}
-            />
-            <MenuItem
-              bordered
-              icon={<Mail className="mt-0.5 h-4 w-4 shrink-0" style={{ color: BRAND.orangeDeep }} />}
-              title="Send email"
-              sub="A custom note, no PDF."
-              onClick={() => {
-                setMenuOpen(false);
-                guard(() => setMode("email"));
-              }}
-            />
-          </div>
-        )}
       </div>
 
       <button
@@ -336,36 +285,6 @@ export function ReleaseToClientBar({
           gets NO `overdue` here on purpose — setMode is already gated above, and passing it
           would prompt a second time inside the same workflow. */}
       {mode === "alert" && <AlertSend cardId={cardId} autoOpen onClose={() => setMode(null)} />}
-      {mode === "email" && <ReleaseEmailPanel cardId={cardId} backHref={backHref} onClose={() => setMode(null)} />}
     </section>
-  );
-}
-
-function MenuItem({
-  icon,
-  title,
-  sub,
-  onClick,
-  bordered,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  sub: string;
-  onClick: () => void;
-  bordered?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      onClick={onClick}
-      className={`flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-brand-navy/[0.04] ${bordered ? "border-t border-hairline" : ""}`}
-    >
-      {icon}
-      <span>
-        <span className="block text-[13px] font-semibold text-brand-navy">{title}</span>
-        <span className="block text-[12px] text-ink-muted">{sub}</span>
-      </span>
-    </button>
   );
 }
