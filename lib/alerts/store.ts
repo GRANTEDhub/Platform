@@ -119,7 +119,16 @@ export async function generateDraftAlert(
     if (minted) alertData.schedulingUrl = `${origin}/go/${minted.rawToken}`;
   }
 
-  const pdf = await renderAlertPdf(alertData, browserPromise);
+  // WARM CLIENT -> the client template. A prospect card or a lead is cold outreach and
+  // keeps the outreach one (how-to-get-started steps + the booking link), because that
+  // reader has no portal and no account manager.
+  const isColdOutreach = ctx.card.card_type === "prospect" || ctx.isLead;
+  if (!isColdOutreach && origin) {
+    // The band's one reliable way through. Same deep link the email body carries, so both
+    // artifacts point at the same screen.
+    alertData.portalUrl = `${origin}/portal/triage?card=${ctx.card.id}`;
+  }
+  const pdf = await renderAlertPdf(alertData, browserPromise, isColdOutreach ? "outreach" : "client");
   console.info(
     `[alert-draft-timing] card=${ctx.card.id} enrichWall=${enrichedAt - draftStartedAt}ms renderWall=${Date.now() - enrichedAt}ms`,
   );

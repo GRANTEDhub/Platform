@@ -64,4 +64,9 @@ export interface AlertData {
   // send records decision='approved' on their behalf, so there is nothing left to ask --
   // and absent on prospect/lead alerts, which have no card decision to record.
   decisionUrls?: { interested: string; pass: string } | null;
+  // CLIENT template only. The matcher's concept_synopsis, clamped for the layout, and the
+  // portal deep link the "Your call" band points at. Absent on the prospect/lead template,
+  // which has no concept to show and no portal to send anyone to.
+  conceptSynopsis?: string | null;
+  portalUrl?: string | null;
 }
