@@ -12,7 +12,7 @@ import { Resend } from "resend";
 import { isRecipientAllowed } from "@/lib/email/guard";
 import { sanitizeOutreachEmail } from "@/lib/email/sanitize";
 import type { ReviewCard, Client } from "@/types/database";
-import { plainTextToHtml, type HtmlLink } from "./html";
+import { plainTextToHtml, type HtmlLink, type DecisionBox } from "./html";
 
 // Sends from the verified Resend domain (send.grantedco.com). Replies are
 // directed to a monitored human inbox so the conversation happens over email
@@ -134,7 +134,7 @@ export async function sendOutreachEmail(opts: {
   const cleanBody = sanitizeOutreachEmail(opts.body, opts.contactName ?? null);
 
   const resend = new Resend(process.env.RESEND_PLATFORM_API);
-  const html = opts.htmlLink ? plainTextToHtml(cleanBody, opts.htmlLink) : undefined;
+  const html = opts.htmlLink ? plainTextToHtml(cleanBody, { links: [opts.htmlLink] }) : undefined;
   const attachments = opts.attachments?.length ? opts.attachments : undefined;
   const { data, error } = await resend.emails.send({
     from: FROM,
@@ -209,6 +209,13 @@ export async function sendGrantAlertEmail(opts: {
   body: string;
   pdf: Buffer;
   filename?: string;
+  // Set to send multipart text+HTML with the decision box on top. The box's URLs must
+  // already be in `body` -- the caller checks that (bodyCarriesDecisionUrls), because
+  // the text is the source and a box offering buttons the text never mentions is the
+  // two parts disagreeing. Omit it and the alert stays text-only exactly as before.
+  decision?: DecisionBox | null;
+  // Bare URL lines in `body` to render as labelled anchors in the HTML part.
+  htmlLinks?: HtmlLink[];
 }): Promise<SentResult> {
   const to = (opts.to ?? "").trim();
   if (!isDeliverableEmail(to)) throw new Error(`No deliverable recipient: "${opts.to ?? "(null)"}"`);
@@ -217,12 +224,16 @@ export async function sendGrantAlertEmail(opts: {
   }
   const subject = opts.subject?.trim() || "A new grant was published";
   const resend = new Resend(process.env.RESEND_PLATFORM_API);
+  // Derived from the SAME body string that goes out as the text part, so a hand-edit in
+  // the composer cannot ship in one part and not the other.
+  const html = opts.decision ? plainTextToHtml(opts.body, { box: opts.decision, links: opts.htmlLinks }) : undefined;
   const { data, error } = await resend.emails.send({
     from: FROM,
     to,
     replyTo: REPLY_TO,
     subject,
     text: opts.body,
+    ...(html ? { html } : {}),
     attachments: [{ filename: opts.filename || "GRANTED-Grant-Alert.pdf", content: opts.pdf }],
   });
   if (error) throw new Error(`Resend send failed: ${error.message}`);

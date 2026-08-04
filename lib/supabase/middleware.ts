@@ -32,6 +32,10 @@ export async function updateSession(request: NextRequest) {
   const isPublicAsset =
     pathname.startsWith("/auth") ||
     pathname.startsWith("/go") ||
+    // The alert email's one-click decision landing. Same contract as /go: tokenized,
+    // service-role, exposes no admin data -- and the whole point is that the client
+    // does not have to sign in, so a /login redirect would defeat the feature.
+    pathname.startsWith("/decide") ||
     pathname.startsWith("/intake") ||
     pathname.startsWith("/sign") ||
     pathname === "/favicon.ico";
