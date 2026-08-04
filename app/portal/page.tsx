@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { ClientDashboard, type DashPinnedRow } from "@/components/clients/client-dashboard";
 import { ClientMasthead } from "@/components/clients/client-masthead";
 import { CheckGrant } from "@/components/clients/check-grant";
+import { AutoRefresh } from "@/components/ui/auto-refresh";
 import { rollUpPortal } from "@/lib/clients/dashboard-summary";
 import { type DashReportRow } from "@/components/clients/client-grant-report-card";
 import { type DashDraft } from "@/components/clients/client-draft-progress";
@@ -195,10 +196,17 @@ export default async function PortalHome() {
   // same way — over the client's LIVE set (passed excluded, which is a closed decision).
   // No `freshness`: "Updated 6d ago" reads as a promise about how often we look, and the
   // fact it is derived from is a staff-only match_attempts timestamp anyway.
-  const liveCards = cards.filter((c) => c.decision !== "passed");
+  // THE REPORT'S OWN SET, which is not the same as "every non-passed card". /portal/grants
+  // filters `interested_at is not null` -- a grant only reaches their Report once they mark
+  // it interested in Grant Alerts. This card was built from every non-passed card, so a
+  // brand-new alert appeared in the dashboard's Grant Report box AND in Grant Alerts, and
+  // then was missing from the Report when you opened it. Same bug the console card had
+  // (#291); it just never got applied on this side.
+  const inReport = cards.filter((c) => c.interested_at !== null);
+  const liveCards = inReport.filter((c) => c.decision !== "passed");
   const reportMetrics = {
     open: liveCards.filter((c) => c.decision === "pending").length,
-    decided: cards.filter((c) => c.decision === "approved").length,
+    decided: inReport.filter((c) => c.decision === "approved").length,
     avgFit: liveCards.length
       ? (liveCards.reduce((n, c) => n + c.fit_score, 0) / liveCards.length).toFixed(1)
       : null,
@@ -211,7 +219,10 @@ export default async function PortalHome() {
   // released rows -- so an unreleased match cannot surface here any more than it can in
   // the counts above.
   const REPORT_ROWS = 3;
-  const reportRows: DashReportRow[] = [...nonPassed]
+  // AWAITING THEIR REVIEW, matching the Report's own default tab -- the rows are their
+  // queue, not everything they hold. An approved grant is not waiting on them.
+  const awaitingReview = liveCards.filter((c) => c.decision === "pending");
+  const reportRows: DashReportRow[] = [...awaitingReview]
     .sort((a, b) => {
       if (b.fit_score !== a.fit_score) return b.fit_score - a.fit_score;
       const da = deadlineDaysLeft(a.grant?.submission_deadline);
@@ -240,7 +251,22 @@ export default async function PortalHome() {
   // divs, the inner one with no height class, so min-h-full resolved against auto height
   // and the Grant Report and IntellEngine panels collapsed to their content.
   return (
-        <ClientDashboard
+    <>
+      {/* A NEW ALERT ARRIVES WITHOUT A PAGE LOAD. The email lands, and the dashboard kept
+          showing pre-send counts until someone hit refresh -- so a client sitting on this
+          tab could watch the alert email arrive and see nothing here. The page is
+          force-dynamic, so each refresh re-reads.
+
+          60s, not the 4s the console uses for a running match: this is ambient freshness
+          for a queue that changes when WE send something, not progress on a job the viewer
+          just started.
+
+          A SIBLING, NOT A WRAPPER. AutoRefresh renders null, so the layout's flex <main>
+          still sees exactly one real child -- wrapping ClientDashboard in a div is what
+          collapsed the panels before (its min-h-full needs a definite-height parent).
+          matchNote would have been the tidier slot but it is gated on isStaff. */}
+      <AutoRefresh enabled intervalMs={60_000} />
+      <ClientDashboard
           name={org.clientName}
           subLine={subLine}
           isStaff={false}
@@ -289,7 +315,7 @@ export default async function PortalHome() {
           events={events}
           report={{
             rows: reportRows,
-            total: nonPassed.length,
+            total: liveCards.length,
             metrics: reportMetrics,
             emptyNote: "Your team is still working through opportunities. Matches will appear here as they are released.",
           }}
@@ -301,6 +327,7 @@ export default async function PortalHome() {
           // signals their proposals cite, so they see what grounds the narrative.
           // Pure read; `client` is null only if the row vanished mid-session.
           community={client ? buildCommunityView(client) : undefined}
-        />
+      />
+    </>
   );
 }
