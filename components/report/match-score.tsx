@@ -40,6 +40,15 @@ function FactorRow({ label, score }: { label: string; score: FactorScore }) {
   const filled = score.rating === "insufficient_data" ? 0 : FACTOR_SEGMENTS[score.rating];
   return (
     <li
+      // NATIVE title AS WELL AS the styled tooltip. The tooltip is an absolutely
+      // positioned `bottom-full` div revealed by group-hover, which means any ancestor
+      // with overflow:hidden clips it out of existence -- and the redesign added
+      // overflow-hidden to the console body and to most cards, so it silently stopped
+      // appearing on both sides. Chasing the clipping ancestor would mean unpicking
+      // layout that is doing real work; a native title always renders, at the cost of
+      // the browser's own styling and a short delay. The styled version still shows
+      // wherever it is not clipped.
+      title={score.rationale ?? undefined}
       className={`group relative flex items-center justify-between gap-3 rounded-md px-1.5 py-1.5 transition-colors hover:bg-brand-cream/70 ${
         insufficient ? "opacity-60" : ""
       }`}
