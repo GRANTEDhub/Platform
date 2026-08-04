@@ -49,29 +49,32 @@ export function clampAtSentence(raw: string, max: number): string {
   return `${head.slice(0, space > 0 ? space : max).replace(/[,;:]$/, "")}…`;
 }
 
-// THE HERO DESCRIPTION, with more context than description_short alone usually carries.
-// description_short is written by the matcher (engine.ts, protected) and is often a single
-// clipped line; when it is thin, this extends it with the grant's OWN description rather
-// than inventing anything, then clamps. INTRO_MAX is sized to ~2 sentences at 14.5px across
-// the 700px hero measure -- enough to say what the programme does without pushing the stat
-// strip down.
+// THE HERO DESCRIPTION. Grant-level, never client-level.
+//
+// It used to build from card.description_short, extended with grants.description when
+// thin. description_short is written by the matcher (engine.ts, protected) and is
+// CLIENT-SLANTED -- "UAMS NorthWest applies as prime to disburse SDS scholarships..." --
+// so the hero read as a second concept proposal sitting directly above the real concept
+// box, and the box below it was the only one of the two that was actually a concept.
+// description_brief (migration 0069, lib/grants/brief.ts) is the plain-language
+// paraphrase of what the PROGRAM funds, shared with the console and portal detail pages,
+// so all three now describe the grant the same way and none of them pre-empts the
+// concept.
+//
+// INTRO_MAX still clamps: the brief runs up to ~250 words for a detail page, and the hero
+// is sized to ~2 sentences at 14.5px across the 700px measure. Over that it drives the
+// stat strip down and the alert stops being one letter page. Clamping a clean paraphrase
+// on a sentence boundary yields a good opening; clamping the old merge did not.
 const CONCEPT_MAX = 400;
 const INTRO_MAX = 320;
-const INTRO_THIN = 180;
 
-function introSource(g: Grant, card: ReviewCard): string {
-  const short = (card.description_short || "").trim();
-  const full = (g.description || "").trim();
-  if (!short) return clampAtSentence(full, INTRO_MAX);
-  if (short.length >= INTRO_THIN || !full) return clampAtSentence(short, INTRO_MAX);
-  // Extend, but never duplicate: if the long description already opens with the short one,
-  // use the long one on its own.
-  const merged = full.startsWith(short.replace(/[.…]$/, "")) ? full : `${short.replace(/\s*…$/, "")} ${full}`;
-  return clampAtSentence(merged, INTRO_MAX);
+function introSource(g: Grant): string {
+  const brief = (g.description_brief || "").trim();
+  return clampAtSentence(brief || (g.description || "").trim(), INTRO_MAX);
 }
 
-function buildIntroHtml(g: Grant, card: ReviewCard): string {
-  const raw = introSource(g, card);
+function buildIntroHtml(g: Grant): string {
+  const raw = introSource(g);
   if (!raw) return sanitizeText(g.title || "A new grant opportunity was published.");
   const clean = sanitizeRichText(raw);
   const funder = (g.funder || "").trim();
@@ -177,7 +180,7 @@ export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichme
     // ── facts (deterministic) ──
     fiscalYear: fiscalYear(g),
     fon: g.fon || null,
-    introHtml: buildIntroHtml(g, card),
+    introHtml: buildIntroHtml(g),
     // CLAMPED FOR THE LAYOUT, not for the scorer -- the concept box is a fixed column in a
     // two-up grid, and past ~7 lines it drives the whole grid taller and pushes the decision
     // band off the page. 400 is real headroom (a typical synopsis runs ~290), so this bites
@@ -205,10 +208,14 @@ export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichme
 // The deterministic grant-announcement sentence shared by the client and prospect
 // email bodies: title + a trimmed funds clause + award + deadline. Facts only, so
 // both surfaces announce the grant identically.
-function grantAnnouncement(g: Grant, card: ReviewCard): string {
+function grantAnnouncement(g: Grant): string {
   const award = formatAwardRange(g.award_range_min, g.award_range_max);
   const deadline = formatDeadline(g.submission_deadline);
-  const funds = (card.description_short || g.description || "").trim();
+  // Same grant-level source as the PDF hero, for the same reason: this renders as
+  // "It funds <clause>", and description_short turned that into "It funds UAMS NorthWest
+  // applies as prime to disburse SDS scholarships" -- a concept proposal wearing a
+  // description's grammar.
+  const funds = (g.description_brief || g.description || "").trim();
   // Bound the funds clause to keep the announcement short, but cut on a WORD
   // boundary (truncateWords), never mid-word -- a hard slice(0, 160) clipped
   // "coding" to "codi". When truncated the trailing "…" signals it; otherwise
@@ -234,7 +241,7 @@ export function buildAlertEmailBody(g: Grant, card: ReviewCard, portalUrl?: stri
     "",
     "A new opportunity came through that may be a fit:",
     "",
-    grantAnnouncement(g, card),
+    grantAnnouncement(g),
     "",
     // The PDF first (it needs no sign-in), the portal second. Before this the alert
     // offered ONLY the attachment, so a client who wanted to act had to open a PDF and
@@ -290,7 +297,7 @@ export function buildProspectEmailBody(
   const pdfLine = hasSchedulingLink
     ? "The full alert, including a link to schedule a call, is attached as a one-page PDF."
     : "The full alert is attached as a one-page PDF.";
-  const lines = ["Hello,", "", intro, "", grantAnnouncement(g, card), ""];
+  const lines = ["Hello,", "", intro, "", grantAnnouncement(g), ""];
   if (conceptHook?.trim()) lines.push(`One idea to explore: ${conceptHook.trim()}`, ""); // teaser hook, editable
   if (!followUp) lines.push(PROSPECT_CREDENTIAL, ""); // first-contact credential; dropped on a follow-up
   lines.push(pdfLine, "", "Best,", "GRANTED");

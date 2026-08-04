@@ -35,7 +35,7 @@ export const dynamic = "force-dynamic";
 type GrantEmbed = Pick<
   Grant,
   | "id" | "source_url" | "title" | "funder" | "fon" | "assistance_listings" | "focus_areas"
-  | "submission_deadline" | "period_of_performance" | "cost_share" | "num_awards" | "description"
+  | "submission_deadline" | "period_of_performance" | "cost_share" | "num_awards" | "description" | "description_brief"
   | "award_range_min" | "award_range_max" | "award_range_is_estimate"
   | "eligible_entity_types" | "geographic_eligibility" | "ineligible_entities" | "hard_disqualifiers"
   | "skip_reason" | "grant_status"
@@ -93,7 +93,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   const { data } = await supabase
     .from("review_cards")
     .select(
-      "id, fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, reasoning_context, decision, sme_released_at, sent_at, sent_to, grant_id, grants(id, source_url, title, funder, fon, assistance_listings, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, description, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status)",
+      "id, fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, reasoning_context, decision, sme_released_at, sent_at, sent_to, grant_id, grants(id, source_url, title, funder, fon, assistance_listings, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, description, description_brief, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status)",
     )
     .eq("id", params.cardId)
     .eq("client_id", params.id)
@@ -276,7 +276,10 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
             .join(" · ") || null
         }
         title={g.title || "Untitled opportunity"}
-        summary={g.description}
+        // The generated plain-language paraphrase (0069) when we have one, else the
+        // agency's own prose. Same fallback on the client's portal detail, so the two
+        // sides cannot describe the same grant differently.
+        summary={g.description_brief || g.description}
         meta={meta}
         eligibility={eligibility}
         rationale={rationale}

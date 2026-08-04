@@ -4,6 +4,7 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { uploadPdf, downloadPdf, removeObjects } from "@/lib/storage";
 import { mintAccessToken } from "@/lib/tokens";
 import { enrichAlert } from "./enrich";
+import { ensureGrantBrief } from "@/lib/grants/brief";
 import { conceptHookForCard } from "@/lib/concept/store";
 import { buildAlertData, buildAlertEmailBody, buildProspectEmailBody } from "./data";
 import { senderFirstName } from "./sender";
@@ -87,11 +88,25 @@ export async function generateDraftAlert(
   // browser down here so a Chromium process is never leaked.
   const draftStartedAt = Date.now();
   const browserPromise = launchAlertBrowser();
-  const enrichment = await enrichAlert(ctx.grant, ctx.card).catch((err) => {
-    void browserPromise.then((b) => b.close()).catch(() => {});
-    throw err;
-  });
+  // The grant-level description (0069) and the narrative enrichment are two independent
+  // LLM calls, so run them together rather than serially. ensureGrantBrief never throws --
+  // it returns null and every reader falls back to grants.description -- so only enrich
+  // can fail the draft, and that path still tears the browser down.
+  //
+  // Generated INLINE here rather than waiting for the hourly sweep because the alert is
+  // the one artifact a client actually reads: a grant ingested twenty minutes ago must not
+  // go out describing itself in the agency's clipped one-liner.
+  const [enrichment, brief] = await Promise.all([
+    enrichAlert(ctx.grant, ctx.card).catch((err) => {
+      void browserPromise.then((b) => b.close()).catch(() => {});
+      throw err;
+    }),
+    ensureGrantBrief(db, ctx.grant),
+  ]);
   const enrichedAt = Date.now();
+  // Carry the just-generated brief onto the in-memory grant row so the hero AND the
+  // email's "It funds" clause both use it on THIS send, not only on the next one.
+  if (brief && !ctx.grant.description_brief) ctx.grant.description_brief = brief;
   const alertData = buildAlertData(ctx.grant, ctx.card, enrichment);
 
   // Cold-outreach alerts carry a clickable booking link in the PDF, minted HERE at
