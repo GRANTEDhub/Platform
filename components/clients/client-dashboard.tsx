@@ -544,10 +544,15 @@ function AmbientRow({ note }: { note: AmbientNote }) {
 // not a quantity worth a badge), and the trailing slot reads "All clear". Nothing to click,
 // and nothing pretending to be clickable.
 //
-// THE ROW KEEPS ITS OWN ICON when clear. It briefly swapped to a check, which made every
-// cleared row look identical and threw away the one glyph that says WHICH queue this is --
-// and it was redundant, because the trailing slot already carries a check and "All clear".
-// The tile just goes green.
+// THE ROW KEEPS ITS OWN ICON AND ITS OWN STAGE COLOUR when clear. Two earlier passes each
+// took away one of those: first the glyph became a check (so every cleared row looked
+// identical), then the colour went green (so both rows looked identical again, just in a
+// different hue). Both were redundant, because the trailing slot already carries a check
+// and "All clear" -- that is where "cleared" is said. The icon's job is to say WHICH queue
+// this row is, and colour is half of how it says it: alerts read orange, the report reads
+// gold, at any count.
+//
+// So nothing about the left side changes with the count. Only the trailing control does.
 function PinnedRow({ row, last }: { row: DashPinnedRow; last: boolean }) {
   const live = row.count > 0 && row.href !== null;
   const Icon = row.icon;
@@ -556,17 +561,13 @@ function PinnedRow({ row, last }: { row: DashPinnedRow; last: boolean }) {
       <span
         aria-hidden="true"
         className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-pill"
-        style={{ backgroundColor: live ? STAGE[row.tone].tint : STAGE.pursuit.tint }}
+        style={{ backgroundColor: STAGE[row.tone].tint }}
       >
         <Icon
           className="h-[15px] w-[15px]"
-          style={{
-            color: live
-              ? row.tone === "client"
-                ? STAGE.client.text
-                : STAGE[row.tone].color
-              : STAGE.pursuit.color,
-          }}
+          // stage-client's raw colour fails contrast, so its text companion carries the
+          // glyph -- the same rule the pipeline dots follow.
+          style={{ color: row.tone === "client" ? STAGE.client.text : STAGE[row.tone].color }}
         />
       </span>
       <div className="min-w-0 flex-1">
