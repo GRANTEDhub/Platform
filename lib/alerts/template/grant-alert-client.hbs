@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{headline}}</title>
+<!-- THE ACTIVE-CLIENT ALERT. The sibling grant-alert.hbs is the PROSPECT/LEAD one and
+     keeps the how-to-get-started steps and the discovery-call booking link -- cold
+     outreach to someone with no portal and no account manager needs both. A serviced
+     client needs neither: the only thing we want from them is whether to pursue it.
+
+     Brand fonts are embedded as local @font-face data URIs at render time (see
+     lib/alerts/render.ts). No CDN <link>: serverless Chromium may have no egress to
+     fonts.gstatic.com, and a competing/blocked CDN face is what garbled the glyphs.
+     Design's mock specified Inter Tight / Source Serif 4; the embedded faces are the
+     same two roles this template names, so the layout is the mock's and the type is
+     ours. -->
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #e8e2d8; }
+  @page { size: letter; margin: 0; }
+  @media print {
+    html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    html, body { background: #fff; }
+    .brief-page { box-shadow: none !important; margin: 0 !important; }
+  }
+</style>
+</head>
+<body>
+<div class="brief-page" style="width:816px; min-height:1056px; margin:24px auto; padding:22px 0 0 0; background:#fff; color:#0B1E3A; font-family:'Inter Tight', sans-serif; box-shadow:0 18px 50px rgba(11,30,58,0.18); display:flex; flex-direction:column;">
+
+  <!-- ===================== TOP BAR ===================== -->
+  <div style="display:flex; align-items:center; justify-content:space-between; padding:0 46px;">
+    <div style="display:flex; align-items:center; gap:11px;">
+      <img src="assets/granted-mark-navy.png" alt="GRANTED logo" width="31" height="31" style="display:block; flex-shrink:0;">
+      <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:23px; letter-spacing:0.04em; color:#0B1E3A;">GRANTED</span>
+      <span style="width:1px; height:15px; background:#E4761F; display:inline-block;"></span>
+      <span style="font-family:'Source Serif 4', serif; font-style:italic; font-weight:700; font-size:14px; color:#E4761F;">More Grants. Less Grind.</span>
+    </div>
+    <span style="font-size:10.5px; font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:#0B1E3A; opacity:0.55;">{{alertLabel}}</span>
+  </div>
+
+  <div style="height:1px; background:#0B1E3A; opacity:0.12; margin:14px 46px 0 46px;"></div>
+
+  <!-- ===================== HERO ===================== -->
+  <!-- The chips moved UP here from their own section: on a client alert the fundable
+       items are context for the description, not a section of their own. -->
+  <div style="padding:18px 46px 14px 46px;">
+    <div style="font-size:11px; font-weight:600; letter-spacing:0.15em; text-transform:uppercase; color:#E4761F; margin-bottom:9px;">
+      {{programName}}{{#if programShort}} &middot; {{programShort}}{{/if}}{{#if fiscalYear}} &middot; {{fiscalYear}}{{/if}}{{#if fon}} &middot; FON {{fon}}{{/if}}
+    </div>
+    <h1 style="font-family:'Source Serif 4', serif; font-weight:700; font-size:37px; line-height:1.04; letter-spacing:-0.02em; margin:0 0 11px 0; color:#0B1E3A;">
+      {{headline}}
+    </h1>
+    <div style="font-size:14.5px; line-height:1.55; margin:0 0 11px 0; max-width:700px; color:#2a3a52; text-wrap:pretty;">{{{introHtml}}}{{#if statePassThrough}} In {{state}} it runs through the {{administeringAgency}} as a pass-through, so your application competes only against other in-state organizations, not the entire country.{{/if}}</div>
+    {{#if whatItFunds.length}}
+    <div style="display:flex; flex-wrap:wrap; gap:6px;">
+      {{#each whatItFunds}}
+      <span style="font-size:11.5px; font-weight:500; color:#0B1E3A; background:#faf7f2; border:1px solid rgba(11,30,58,0.12); border-radius:2px; padding:5px 9px;">{{this}}</span>
+      {{/each}}
+    </div>
+    {{/if}}
+  </div>
+
+  <!-- ===================== STATS STRIP ===================== -->
+  <div style="display:grid; grid-template-columns:repeat({{stats.length}}, 1fr); background:rgba(11,30,58,0.85); margin:0 46px;">
+    {{#each stats}}
+    <div style="padding:11px 14px; {{#unless @last}}border-right:1px solid rgba(250,247,242,0.18); {{/unless}}display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:4px;{{#if this.highlight}} background:rgba(179,84,30,0.85);{{/if}}">
+      <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:20px; line-height:1; color:#fff; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{this.value}}</span>
+      <span style="font-size:9.5px; font-weight:600; letter-spacing:0.09em; text-transform:uppercase; color:{{#if this.highlight}}#fff{{else}}#f4d8c6{{/if}};">{{this.label}}</span>
+    </div>
+    {{/each}}
+  </div>
+  {{#if statsFootnote}}
+  <div style="font-size:10px; line-height:1.4; margin:6px 46px 0 46px; color:#6b7688;">{{statsFootnote}}</div>
+  {{/if}}
+
+  <!-- ============= CONCEPT PROPOSAL + WHO CAN APPLY ============= -->
+  <!-- Replaces the prospect template's "What it funds" column. A client already knows
+       what they do; what they have not seen is OUR read of how they would run it. The
+       synopsis is clamped in buildAlertData (CONCEPT_MAX) so it cannot drive this grid
+       taller and push the decision band off the page. -->
+  <div style="display:grid; grid-template-columns:1.35fr 1fr; gap:34px; padding:18px 46px 2px 46px; align-items:stretch;">
+    <div style="background:#faf7f2; border-left:3px solid #E4761F; padding:16px 18px; height:100%;">
+      <div style="font-size:10.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:#E4761F; margin-bottom:10px;">Concept proposal</div>
+      <p style="font-size:13.5px; line-height:1.6; margin:0; color:#2a3a52; text-wrap:pretty;">{{#if conceptSynopsis}}{{conceptSynopsis}}{{else}}We will scope how your organization would run this programme once you tell us to proceed.{{/if}}</p>
+    </div>
+    <div>
+      <div style="font-size:10.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:#E4761F; margin-bottom:10px;">Who can apply</div>
+      <p style="font-size:13px; line-height:1.55; margin:0 0 10px 0; color:#2a3a52;">{{{eligibilityHtml}}}</p>
+      {{#if eligibilityNote}}
+      <div style="background:#faf7f2; border-left:3px solid #E4761F; padding:10px 12px;">
+        <div style="font-size:10px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:#E4761F; margin-bottom:3px;">{{eligibilityNote.label}}</div>
+        <div style="font-size:12px; line-height:1.45; color:#2a3a52;">{{eligibilityNote.body}}</div>
+      </div>
+      {{/if}}
+    </div>
+  </div>
+
+  <!-- ===================== YOUR CALL ===================== -->
+  <!-- ONE reliable way through, not two one-click buttons. A PDF's links are not
+       dependable where most people first open the attachment -- Gmail's preview pane
+       (especially on mobile) frequently does not activate them, and a control that
+       looks pressable but is not is the dead affordance this product keeps removing.
+       A PDF also cannot show what you already clicked, and it gets DOWNLOADED, so a
+       decision token would sit in a Downloads folder indefinitely.
+       So one-click lives in the EMAIL (see lib/email/html.ts DecisionBox) and this
+       carries a portal deep link: honest in every viewer, still readable when printed,
+       and it lands a forwarded reader on login rather than on someone else's decision.
+       No booking link -- that is prospect-shaped, and an active client has an account
+       manager rather than a discovery call to schedule. -->
+  <div style="margin-top:auto; margin-bottom:auto; padding:0;">
+    <div style="height:3px; background:#E4761F;"></div>
+    <div style="background:#0B1E3A; color:#faf7f2; padding:22px 46px 20px 46px; display:grid; grid-template-columns:1.25fr 1fr; gap:34px; align-items:center;">
+      <div>
+        <div style="font-size:10.5px; font-weight:700; letter-spacing:0.13em; text-transform:uppercase; color:#e6b89a; margin-bottom:7px;">Your call</div>
+        <p style="font-size:12.5px; line-height:1.55; margin:0 0 8px 0; color:#e2e9f2; text-wrap:pretty;">Tell us how to proceed. <b style="color:#fff;">Interested</b> moves this into your grant report for full analysis; <b style="color:#fff;">Pass</b> clears it off your list.</p>
+        <div style="font-size:10.5px; line-height:1.45; color:#adbcd0;">You can answer in one click straight from the alert email, or just reply to it. Not ready this cycle? Pass and we position you for the next one.</div>
+      </div>
+      <div>
+        {{#if portalUrl}}
+        <a href="{{portalUrl}}" style="display:flex; align-items:center; justify-content:space-between; gap:10px; background:#E4761F; color:#fff; text-decoration:none; padding:13px 16px; border-radius:3px;">
+          <span style="font-size:14px; font-weight:600; letter-spacing:0.01em;">Review and decide in your portal</span>
+          <span style="font-size:16px; line-height:1;">&rarr;</span>
+        </a>
+        {{else}}
+        <div style="border:1px solid rgba(250,247,242,0.35); border-radius:3px; padding:13px 16px; font-size:13px; line-height:1.45; color:#cdd6e2;">Answer from the alert email, or reply to it and we will record your decision.</div>
+        {{/if}}
+      </div>
+    </div>
+    <div style="height:3px; background:#E4761F;"></div>
+  </div>
+
+  <!-- ===================== FOOTER ===================== -->
+  <!-- Light and compact, replacing the prospect footer's navy block and firm blurb. A
+       client does not need to be told who we are. -->
+  <div style="height:1px; background:#0B1E3A; opacity:0.12; margin:0 46px;"></div>
+  <div style="background:#fff; color:#0B1E3A; padding:14px 46px 16px 46px; display:flex; align-items:center; justify-content:space-between; gap:30px;">
+    <div style="display:flex; align-items:center; gap:10px;">
+      <img src="assets/granted-mark-navy.png" alt="GRANTED logo" width="27" height="27" style="display:block; flex-shrink:0;">
+      <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:18px; letter-spacing:0.03em; color:#0B1E3A;">GRANTED</span>
+      <span style="font-family:'Source Serif 4', serif; font-style:italic; font-size:14px; color:#E4761F;">More Grants. Less Grind.</span>
+    </div>
+    <div style="display:flex; align-items:center; gap:14px;">
+      <span style="font-size:12.5px; font-weight:600; color:#0B1E3A;">grantedco.com</span>
+      <span style="width:1px; height:13px; background:rgba(11,30,58,0.2); display:inline-block;"></span>
+      <span style="font-size:12.5px; font-weight:500; color:#E4761F;">support@grantedco.com</span>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

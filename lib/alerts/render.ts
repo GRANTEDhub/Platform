@@ -14,7 +14,6 @@ import type { AlertData } from "./types";
 // PUPPETEER_EXECUTABLE_PATH (falls back to the preinstalled Playwright chromium).
 
 const ROOT = process.cwd();
-let cachedTemplate: HandlebarsTemplateDelegate<AlertData> | null = null;
 let cachedAssets: { navy: string; white: string } | null = null;
 let cachedFontCss: string | null = null;
 
@@ -47,12 +46,26 @@ async function loadFontCss(): Promise<string> {
   return cachedFontCss;
 }
 
-async function loadTemplate() {
-  if (!cachedTemplate) {
-    const raw = await fs.readFile(path.join(ROOT, "lib/alerts/template/grant-alert.hbs"), "utf8");
-    cachedTemplate = Handlebars.compile<AlertData>(raw);
-  }
-  return cachedTemplate;
+// TWO TEMPLATES, one per audience. "client" is the active-client alert (concept proposal,
+// decide-in-your-portal band, no how-to-get-started, no booking link); "outreach" is the
+// prospect/lead one, unchanged. Cached separately -- a single cache slot would serve
+// whichever audience rendered first to both, which is the worst possible failure here.
+export type AlertTemplate = "client" | "outreach";
+
+const TEMPLATE_FILE: Record<AlertTemplate, string> = {
+  client: "lib/alerts/template/grant-alert-client.hbs",
+  outreach: "lib/alerts/template/grant-alert.hbs",
+};
+
+const cachedTemplates = new Map<AlertTemplate, HandlebarsTemplateDelegate<AlertData>>();
+
+async function loadTemplate(which: AlertTemplate) {
+  const hit = cachedTemplates.get(which);
+  if (hit) return hit;
+  const raw = await fs.readFile(path.join(ROOT, TEMPLATE_FILE[which]), "utf8");
+  const compiled = Handlebars.compile<AlertData>(raw);
+  cachedTemplates.set(which, compiled);
+  return compiled;
 }
 
 // The two logo marks are inlined as data URIs -- relative asset paths can't
@@ -72,11 +85,14 @@ async function loadAssets() {
   return cachedAssets;
 }
 
-export async function renderAlertHtml(data: AlertData): Promise<string> {
-  const [tpl, assets, fontCss] = await Promise.all([loadTemplate(), loadAssets(), loadFontCss()]);
+export async function renderAlertHtml(data: AlertData, which: AlertTemplate = "outreach"): Promise<string> {
+  const [tpl, assets, fontCss] = await Promise.all([loadTemplate(which), loadAssets(), loadFontCss()]);
+  // replaceAll, not replace: the client template uses the navy mark TWICE (header and
+  // footer), and a single replace left the second one pointing at an unresolvable
+  // relative path -- a silently broken image in the footer of every client alert.
   return tpl(data)
-    .replace("assets/granted-mark-navy.png", assets.navy)
-    .replace("assets/granted-mark-white.png", assets.white)
+    .replaceAll("assets/granted-mark-navy.png", assets.navy)
+    .replaceAll("assets/granted-mark-white.png", assets.white)
     // Inject the embedded @font-face rules right before </head> so they win over
     // the CDN <link> (which stays as a harmless progressive-enhancement fallback).
     .replace("</head>", `<style>${fontCss}</style></head>`);
@@ -111,9 +127,13 @@ export async function launchAlertBrowser(): Promise<Browser> {
 // here. Either way this owns the browser and closes it. Stage timings are logged
 // (greppable `[alert-render-timing]`): `browserWait` is ~0 when pre-warmed vs the full
 // cold-start when not, so the logs show exactly where the wall-clock goes.
-export async function renderAlertPdf(data: AlertData, browserPromise?: Promise<Browser>): Promise<Buffer> {
+export async function renderAlertPdf(
+  data: AlertData,
+  browserPromise?: Promise<Browser>,
+  which: AlertTemplate = "outreach",
+): Promise<Buffer> {
   const t0 = Date.now();
-  const html = await renderAlertHtml(data);
+  const html = await renderAlertHtml(data, which);
   const tHtml = Date.now();
   const browser = await (browserPromise ?? launchAlertBrowser());
   const tBrowser = Date.now();

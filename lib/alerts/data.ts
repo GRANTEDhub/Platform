@@ -36,8 +36,42 @@ function fiscalYear(g: Grant): string {
 // ol/li/br, everything else stripped) so the client never sees raw tags in the
 // alert PDF, then linkify the funder name to the source URL if both are present
 // and the name appears in the copy (a safe post-sanitize substitution).
+// Cut at the last SENTENCE end before `max`, falling back to the last word boundary. A
+// hard slice mid-word reads as a truncation bug rather than an excerpt, and mid-sentence
+// reads as missing content.
+export function clampAtSentence(raw: string, max: number): string {
+  const s = raw.replace(/\s+/g, " ").trim();
+  if (s.length <= max) return s;
+  const head = s.slice(0, max);
+  const stop = Math.max(head.lastIndexOf(". "), head.lastIndexOf("? "), head.lastIndexOf("! "));
+  if (stop > max * 0.55) return head.slice(0, stop + 1);
+  const space = head.lastIndexOf(" ");
+  return `${head.slice(0, space > 0 ? space : max).replace(/[,;:]$/, "")}…`;
+}
+
+// THE HERO DESCRIPTION, with more context than description_short alone usually carries.
+// description_short is written by the matcher (engine.ts, protected) and is often a single
+// clipped line; when it is thin, this extends it with the grant's OWN description rather
+// than inventing anything, then clamps. INTRO_MAX is sized to ~2 sentences at 14.5px across
+// the 700px hero measure -- enough to say what the programme does without pushing the stat
+// strip down.
+const CONCEPT_MAX = 400;
+const INTRO_MAX = 320;
+const INTRO_THIN = 180;
+
+function introSource(g: Grant, card: ReviewCard): string {
+  const short = (card.description_short || "").trim();
+  const full = (g.description || "").trim();
+  if (!short) return clampAtSentence(full, INTRO_MAX);
+  if (short.length >= INTRO_THIN || !full) return clampAtSentence(short, INTRO_MAX);
+  // Extend, but never duplicate: if the long description already opens with the short one,
+  // use the long one on its own.
+  const merged = full.startsWith(short.replace(/[.…]$/, "")) ? full : `${short.replace(/\s*…$/, "")} ${full}`;
+  return clampAtSentence(merged, INTRO_MAX);
+}
+
 function buildIntroHtml(g: Grant, card: ReviewCard): string {
-  const raw = (card.description_short || g.description || "").trim();
+  const raw = introSource(g, card);
   if (!raw) return sanitizeText(g.title || "A new grant opportunity was published.");
   const clean = sanitizeRichText(raw);
   const funder = (g.funder || "").trim();
@@ -144,6 +178,12 @@ export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichme
     fiscalYear: fiscalYear(g),
     fon: g.fon || null,
     introHtml: buildIntroHtml(g, card),
+    // CLAMPED FOR THE LAYOUT, not for the scorer -- the concept box is a fixed column in a
+    // two-up grid, and past ~7 lines it drives the whole grid taller and pushes the decision
+    // band off the page. 400 is real headroom (a typical synopsis runs ~290), so this bites
+    // rarely rather than constantly. A limit can only fix overflow; short text still leaves
+    // whitespace, which the grid's height:100% absorbs.
+    conceptSynopsis: clampAtSentence((card.concept_synopsis || "").trim(), CONCEPT_MAX) || null,
     stats: buildStats(g),
     statsFootnote: awardsFootnote,
     // Concise, grounded eligibility from the model; deterministic tight fallback.
