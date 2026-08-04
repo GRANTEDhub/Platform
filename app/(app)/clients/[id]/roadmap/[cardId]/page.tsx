@@ -305,9 +305,10 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
           surfacedAt ? ` ${format(parseISO(surfacedAt), "MMM d")}` : ""
         } · six factors weighted equally · your feedback tunes future scoring, not this score.`}
         // Rides in the `feedback` slot rather than earning a new prop on GrantReviewConsole:
-        // that component is shared pixel-for-pixel with the portal, and this slot is already
-        // the staff-only one (a portal member has no profiles row to write feedback against,
-        // so the portal passes null). Marking unread is likewise the reviewer's own control.
+        // that component is shared pixel-for-pixel with the portal, and no CONTROL in this slot
+        // is ever the client's (a portal member has no profiles row to write feedback against,
+        // and marking unread is the reviewer's own action). The portal does populate the slot,
+        // but only with the invisible <MarkRead> stamp -- never anything pressable.
         feedback={
           <div className="flex flex-wrap items-center justify-between gap-3">
             <ScoreFeedback cardId={params.cardId} initial={myFeedback} />

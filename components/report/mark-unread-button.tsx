@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Mail } from "lucide-react";
 import { BRAND } from "@/lib/brand";
+import { awaitReadStamp } from "./read-stamp-queue";
 
 // Return this one card to unread. Console only — see the mark-unread route for why staff
 // never clear the client's side.
@@ -24,6 +25,11 @@ export function MarkUnreadButton({ cardId, backHref }: { cardId: string; backHre
     setBusy(true);
     setError(null);
     try {
+      // WAIT OUT ANY STAMP STILL IN FLIGHT for this card before clearing. Opening this page
+      // fires a read stamp; clicking here immediately can otherwise let the clear land first,
+      // after which the stamp's `.is(col, null)` filter matches the freshly-nulled column and
+      // re-stamps it read -- so the row silently flips back after you have navigated away.
+      await awaitReadStamp(cardId);
       const res = await fetch("/api/review/mark-unread", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

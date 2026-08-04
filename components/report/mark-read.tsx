@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { trackReadStamp } from "./read-stamp-queue";
 
 // Fire-and-forget: opening a grant marks it read on whichever side you are.
 //
@@ -20,35 +21,45 @@ import { useRouter } from "next/navigation";
 // refresh() invalidates the Router Cache and re-fetches the current route, so the report
 // entry is gone by the time a back-navigation asks for it.
 //
-// GUARDED AGAINST FIRING TWICE. React Strict Mode double-invokes effects in development, and
-// refresh() itself re-renders the server component tree -- without the ref that is a loop.
-// The ref survives refresh() because refresh preserves client state, so this runs once per
-// real mount. The write is idempotent anyway (first read wins), so a duplicate POST would be
-// harmless rather than wrong.
+// THE GUARD IS KEYED BY CARD, NOT A BOOLEAN, and that distinction is a real bug's worth of
+// difference. A plain once-per-mount flag assumes a fresh mount per grant, which does not hold:
+// the portal header's search (portal-search.tsx) pushes straight from /portal/grants/A to
+// /portal/grants/B. That is a soft navigation within ONE dynamic route template, and with an
+// unkeyed {children} in app/portal/layout.tsx and no template.tsx, React reconciles this
+// component by position instead of remounting it. The ref survives, so a boolean flag would
+// still be true and every grant reached that way would silently never be stamped read.
+// Comparing the ref to cardId makes the guard mean what it should: once per CARD.
+//
+// It still covers what a boolean did -- React Strict Mode's double invocation, and the
+// re-render that refresh() itself triggers (refresh preserves client state, so the ref
+// persists across it and cannot loop). The write is idempotent anyway (first read wins), so a
+// duplicate POST would be harmless rather than wrong.
 //
 // No error handling and no loading state on purpose: a read stamp is bookkeeping. If it fails
 // the row stays unread, which is honest and self-corrects on the next visit, and nothing on
 // screen should flicker for it.
 export function MarkRead({ cardId }: { cardId: string }) {
   const router = useRouter();
-  const fired = useRef(false);
+  const stamped = useRef<string | null>(null);
 
   useEffect(() => {
-    if (fired.current) return;
-    fired.current = true;
-    void fetch("/api/review/mark-read", {
+    if (stamped.current === cardId) return;
+    stamped.current = cardId;
+    const post = fetch("/api/review/mark-read", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ cardId }),
-    })
-      .then((res) => {
-        // Only on a real write. Refreshing after a 401/500 would spend a round trip to
-        // re-render identical output.
-        if (res.ok) router.refresh();
-      })
-      .catch(() => {
-        // Deliberately silent -- see above.
-      });
+    }).then((res) => {
+      // Only on a real write. Refreshing after a 401/500 would spend a round trip to
+      // re-render identical output.
+      if (res.ok) router.refresh();
+      return res;
+    });
+    // Registered so Mark unread can wait this out rather than race it -- see the queue module.
+    trackReadStamp(cardId, post);
+    post.catch(() => {
+      // Deliberately silent -- see above.
+    });
   }, [cardId, router]);
 
   return null;
