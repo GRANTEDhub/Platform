@@ -169,6 +169,51 @@ export const STAGE = {
   passed: { color: "#C9C2B8", tint: "rgba(11,30,58,0.06)", muted: "#DCD6CC" },
 } as const;
 
+// THE CLIENT-FACING STAGE PALETTE. A partial override of STAGE, applied only on the portal
+// (see stageTone) so the console is untouched.
+//
+// WHY IT DIFFERS AT ALL. STAGE's gold, teal and green are not brand colours -- they
+// accumulated because five staff stages needed telling apart. On the client side there are
+// only FOUR stages, every one carries a written label, and `pursuit` never renders at all
+// (rollUpPortal does not use it, and their Report folds approved-and-pursuing into
+// "Pursuing"). So hue is reinforcement there rather than the signal, and it can be
+// brand-only:
+//
+//   orange  you owe something   (triage -- unchanged, and it matches the masthead's rule
+//                                that the leading figure is the one that is owed)
+//   navy    in motion           (client, then approved a step lighter)
+//   grey    closed              (passed -- unchanged)
+//
+// It also fixes a real defect rather than only a taste one. STAGE.client's gold fails
+// contrast as a small glyph on its own tint, which is why STAGE.client.text exists as a
+// darker companion -- a workaround for a value never checked against that use. Navy is the
+// darkest thing in the palette, so both of these clear it comfortably.
+export const STAGE_PORTAL = {
+  client: { color: "#0B1E3A", tint: "rgba(11,30,58,0.07)", border: "rgba(11,30,58,0.14)", text: "#0B1E3A" },
+  approved: { color: "#3F5B7A", tint: "rgba(63,91,122,0.08)", border: "rgba(63,91,122,0.16)" },
+} as const;
+
+// A stage's presentation for one actor. Anything STAGE_PORTAL does not override falls
+// through to STAGE, so triage and passed are literally the same values on both sides.
+//
+// `glyph` is separate from `color` because "a fill that passes on its own tint" and "a fill
+// that reads as a 3px rule" are different questions. On the console it stays
+// STAGE.client.text for the client stage (the rule the pipeline dots already follow).
+export function stageTone(
+  key: keyof typeof STAGE,
+  variant: "console" | "portal" = "console",
+): { color: string; tint: string; border: string; glyph: string } {
+  const base = STAGE[key] as { color: string; tint: string; border?: string; text?: string };
+  const over = variant === "portal" ? (STAGE_PORTAL as Record<string, typeof base | undefined>)[key] : undefined;
+  const src = over ?? base;
+  return {
+    color: src.color,
+    tint: src.tint,
+    border: src.border ?? "rgba(11,30,58,0.12)",
+    glyph: src.text ?? src.color,
+  };
+}
+
 // ── Stage on ink ────────────────────────────────────────────────────────────
 // The five stages rendered on the dark masthead — and deliberately NOT the STAGE scale.
 //
