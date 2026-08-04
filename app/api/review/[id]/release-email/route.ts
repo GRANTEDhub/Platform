@@ -6,7 +6,7 @@ import { appBaseUrl } from "@/lib/site-url";
 import { loadAlertContext } from "@/lib/alerts/generate";
 import { getOrCreateDraftAlert, assembleOutwardAlertPdf, getDraftAlert, ensureDecisionUrls } from "@/lib/alerts/store";
 import {
-  decisionTextBlock,
+  insertDecisionBlock,
   bodyCarriesDecisionUrls,
   bodyMentionsDecidePath,
   type DecisionUrls,
@@ -92,7 +92,7 @@ function defaultSubject(title: string | null): string {
 // not how someone you already work with does. Matches buildAlertEmailBody (the PDF path),
 // so the two client-facing emails now open the same way.
 function defaultBody(ctx: ReleaseCtx, url: string, decision: DecisionUrls | null): string {
-  return [
+  const body = [
     "Hello,",
     "",
     `Your GRANTED team flagged a new grant match we think is worth a look: ${ctx.grantTitle?.trim() || "a new opportunity"}.`,
@@ -102,10 +102,6 @@ function defaultBody(ctx: ReleaseCtx, url: string, decision: DecisionUrls | null
     // presented as the only way in.
     "The one-page alert is attached, so you can read it without signing in. The full details are in your portal:",
     url,
-    // The one-click block, in the TEXT, because the text is the source and the HTML box is
-    // derived from it. Editable like the rest of the draft: delete these lines in the
-    // composer and the buttons go with them.
-    ...(decision ? [decisionTextBlock(decision)] : []),
     "",
     "Happy to talk it through whenever you're ready.",
     "",
@@ -115,6 +111,11 @@ function defaultBody(ctx: ReleaseCtx, url: string, decision: DecisionUrls | null
     "Best,",
     "GRANTED",
   ].join("\n");
+  // The one-click block, in the TEXT, because the text is the source and the HTML box is
+  // derived from it. Editable like the rest of the draft: delete these lines in the
+  // composer and the buttons go with them. Placed immediately before the sign-off by the
+  // shared helper, so this path and the alert path put it in the same spot.
+  return decision ? insertDecisionBlock(body, decision) : body;
 }
 
 // The anchor text for the portal URL in the HTML part. The grant name reads as the thing
@@ -221,7 +222,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         const alreadyIn = decisionUrls ? bodyCarriesDecisionUrls(body, decisionUrls) : false;
         const finalBody =
           decisionUrls && !alreadyIn && !bodyMentionsDecidePath(body)
-            ? `${body.trimEnd()}\n${decisionTextBlock(decisionUrls)}\n`
+            ? insertDecisionBlock(body, decisionUrls)
             : body;
         const decision =
           decisionUrls && bodyCarriesDecisionUrls(finalBody, decisionUrls)

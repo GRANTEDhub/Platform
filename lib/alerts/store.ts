@@ -12,8 +12,7 @@ import { mergeAlertPdfs } from "./merge-pdf";
 import { getForecastHorizon } from "@/lib/grants/forecast-relevance";
 import {
   mintDecisionUrls,
-  decisionTextBlock,
-  bodyCarriesDecisionUrls,
+  normalizeDecisionBlock,
   type DecisionUrls,
 } from "./decide-links";
 import type { AlertContext } from "./generate";
@@ -262,22 +261,25 @@ async function ensureDecisionLinks(
 ): Promise<GrantAlertRow> {
   const { urls, alert: withUrls } = await ensureDecisionUrls(ctx, alert, userId, origin);
   if (!urls) return withUrls;
-  // KEYED ON THE BODY, not on whether the URLs are new. The release-note path mints the
+
+  // KEYED ON THE BODY, not on whether the URLs are new -- the release-note path mints the
   // same pair without touching email_body, so "URLs exist" does not imply "the alert body
-  // mentions them" -- and without the lines in the text, the box will not render at all
-  // (bodyCarriesDecisionUrls). Checking the body directly makes this correct whichever
-  // path minted first.
-  if (bodyCarriesDecisionUrls(withUrls.email_body ?? "", urls)) return withUrls;
+  // mentions them", and with no lines in the text the box does not render at all.
+  //
+  // NORMALIZED rather than merely inserted-if-absent, so POSITION is self-correcting. The
+  // first version appended the block after "Best, / GRANTED"; now that the HTML box renders
+  // wherever the text block sits, an untouched old draft would keep showing the buttons
+  // below the sign-off forever. normalizeDecisionBlock strips any existing block and
+  // reinserts it before the sign-off, and is idempotent -- so a body already correct
+  // compares equal and skips the write entirely.
+  const currentBody = withUrls.email_body ?? "";
+  const newBody = normalizeDecisionBlock(currentBody, urls);
+  if (newBody === currentBody) return withUrls;
 
   const db = createServiceClient();
   try {
     const data = (withUrls.alert_data ?? {}) as AlertData;
     const newData = { ...data, decisionUrls: urls };
-    // Appended to the SAVED body, not at send time: the composer must show what goes
-    // out. It also makes the block editable -- delete the lines in the preview and the
-    // HTML box disappears too, because the renderer only draws it when both URLs are
-    // still in the text (bodyCarriesDecisionUrls).
-    const newBody = `${(withUrls.email_body ?? "").trimEnd()}\n${decisionTextBlock(urls)}\n`;
     const { data: updated } = await db
       .from("grant_alerts")
       .update({ alert_data: newData, email_body: newBody })
@@ -286,7 +288,7 @@ async function ensureDecisionLinks(
       .single<GrantAlertRow>();
     return updated ?? { ...withUrls, alert_data: newData, email_body: newBody };
   } catch (err) {
-    console.error(`[decide-links] body append failed for alert ${withUrls.id}; sending without them:`, err);
+    console.error(`[decide-links] body rewrite failed for alert ${withUrls.id}; sending without them:`, err);
     return withUrls;
   }
 }
