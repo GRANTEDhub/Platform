@@ -33,7 +33,7 @@ const TIER_FILTERS: { value: DispositionTier | "all"; label: string }[] = [
   { value: "all", label: "All" },
   { value: "matched_alerted", label: "Alerted" },
   { value: "matched_pending", label: "In review" },
-  { value: "matched_rejected", label: "Rejected" },
+  { value: "matched_rejected", label: "Passed" },
   { value: "no_match", label: "No match" },
   { value: "profile_gap", label: "Profile gap" },
   { value: "not_pursued", label: "Not pursued" },

@@ -96,7 +96,7 @@ export default async function CardDetailPage({
     </div>
   );
 
-  // Review actions box (top-right, beside the banner): step toggle + Send/Reject
+  // Review actions box (top-right, beside the banner): step toggle + Send/Pass
   // only. Score feedback (Agree/Flag) lives in the rail below, not here.
   const reviewActions = (
     <div className="flex h-full flex-col gap-4">

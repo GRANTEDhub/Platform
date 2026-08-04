@@ -1,9 +1,7 @@
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { GrantReport } from "@/components/report/grant-report";
-import { HubShell } from "@/components/layout/hub-background";
+import { GrantReportConsole } from "@/components/report/grant-report-console";
+import { buildQueue } from "@/lib/report/report-queue";
 import { toReportItems, withConcept, type ReportCardRow } from "@/lib/report/shape";
 import { getConceptProposalsByCardIds } from "@/lib/concept/store";
 
@@ -54,31 +52,36 @@ export default async function PortalGrantReport() {
       ? await getConceptProposalsByCardIds(baseItems.map((i) => i.id))
       : new Map();
   const items = withConcept(baseItems, tier, byCard);
-  // Subtitle counts the ACTIVE opportunities only -- passed grants live under the
-  // "Passed" filter and shouldn't inflate the headline count.
-  const activeCount = items.filter((i) => i.decision !== "passed").length;
-  const subtitle =
-    activeCount === 0
-      ? "Your matched opportunities will appear here, ranked by fit."
-      : `${activeCount} matched ${activeCount === 1 ? "opportunity" : "opportunities"} · Ranked by fit`;
 
+  // SAME COMPONENT AS STAFF, variant="portal". The client used GrantReport, the last
+  // pre-redesign list in the product; the two are meant to be one screen so a change lands
+  // on both instead of the portal drifting a release behind.
+  //
+  // hasReleaseGate FALSE, and that is the whole reason the tab sets differ in length: with
+  // no gate staffBucket never returns "admin", so a client's grants fall into
+  // client / pursued / rejected -- awaiting their review, being pursued, passed. Their
+  // untriaged matches are not here at all (the query requires interested_at); those live
+  // in Grant Alerts.
+  const rows = buildQueue(items, { hasReleaseGate: false, primaryBucket: "client" });
   return (
-    <HubShell variant="texture" width="7xl">
-      <Link
-        href="/portal"
-        className="mb-6 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-brand-navy"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Dashboard
-      </Link>
-      <GrantReport
-        items={items}
-        heading={`${org.clientName} · Grant Report`}
-        subtitle={subtitle}
-        basePath="/portal/grants"
-        clientName={org.clientName}
-        tier={tier}
-      />
-    </HubShell>
+    // NO HubShell and no wrapper back-link: GrantReportConsole is a full-height screen that
+    // renders its own header (back link, title, stats) exactly as it does for staff, and the
+    // portal layout's <main> is flex-1 with the scroll — the same definite-height parent the
+    // console gives it. Wrapping it in a centred texture column is what made the old list a
+    // different-looking screen.
+    <GrantReportConsole
+      variant="portal"
+      clientName={org.clientName}
+      clientHref="/portal"
+      backLabel="Dashboard"
+      basePath="/portal/grants"
+      rows={rows}
+      // Staff-only: "last refreshed" comes from match_attempts, which is staff-only under
+      // RLS (0055), and it reads as a promise about how often we look.
+      refreshedLabel={null}
+      // Bulk-archiving closed grants is a staff queue action. A client's own passed
+      // deadlines are theirs to decide on one at a time.
+      canArchive={false}
+    />
   );
 }

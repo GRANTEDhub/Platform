@@ -13,7 +13,7 @@ import { useOverdueGate, type OverdueGateConfig } from "./overdue-gate";
 // a pursue decision: the client makes that later, on their own copy of this page.
 //
 // ONE FULL-WIDTH PRIMARY. This was a split button while there were two ways to release;
-// with one, the chevron would have opened a menu of a single item. Reject sits below as a
+// with one, the chevron would have opened a menu of a single item. Pass sits below as a
 // full-width secondary — routine and reversible, so it is bordered rather than filled, and
 // it is not the shadcn destructive red (see BRAND.reject).
 //
@@ -27,7 +27,7 @@ import { useOverdueGate, type OverdueGateConfig } from "./overdue-gate";
 // emailed on <date>" line were all silently wrong depending on which button you pressed.
 //
 // Releasing sets sme_released_at (the card moves to the client's Grant Alerts) and does
-// NOT approve -- the client still decides pursuit. Reject is terminal (decision='passed').
+// NOT approve -- the client still decides pursuit. Pass is terminal (decision='passed').
 export function ReleaseToClientBar({
   cardId,
   released,
@@ -273,7 +273,7 @@ export function ReleaseToClientBar({
         className="mt-[9px] inline-flex h-[38px] w-full items-center justify-center rounded-sharp border text-[13px] font-semibold transition-colors duration-[120ms] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
         style={{ borderColor: "rgba(180,70,47,0.3)", color: BRAND.reject }}
       >
-        {busy ? "Saving…" : "Reject"}
+        {busy ? "Saving…" : "Pass"}
       </button>
 
       <p className="mt-[11px] text-[11px] leading-[1.45] text-ink-muted">{returnNote}</p>

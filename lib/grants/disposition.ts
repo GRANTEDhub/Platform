@@ -170,6 +170,8 @@ export function getGrantDisposition(grant: DispGrant, cards: DispositionCard[]):
   if (cards.some((c) => !DECIDED.has(c.decision)))
     return { tier: "matched_pending", label: "In review", detail: orgs(cards) };
 
-  // All decided, none approved -> all rejected.
-  return { tier: "matched_rejected", label: "Rejected", detail: orgs(cards) };
+  // All decided, none approved -> everyone passed on it. "Passed", not "Rejected": this
+  // derives from card decision='passed', which is a client declining to pursue. "Rejected"
+  // is reserved for a submitted application that did not win.
+  return { tier: "matched_rejected", label: "Passed", detail: orgs(cards) };
 }
