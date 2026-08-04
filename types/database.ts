@@ -376,6 +376,12 @@ export interface Grant {
   program_award_checked_at: string | null;
   title: string | null;
   description: string | null;
+  // Plain-language GRANT-LEVEL paraphrase of what the program funds (migration 0069),
+  // generated once by lib/grants/brief.ts and read by the console detail, the portal
+  // detail, and the alert PDF hero. Null = not generated yet; every reader falls back to
+  // `description`. Enrichment only -- never read by the occupancy/seat scorer.
+  description_brief: string | null;
+  description_brief_at: string | null;
   total_funding: string | null;
   award_range_min: string | null;
   award_range_max: string | null;

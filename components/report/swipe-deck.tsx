@@ -143,18 +143,30 @@ export function SwipeDeck({
           Account manager review — the client does not see this pass
         </div>
       )}
-      <div className="mb-5 flex items-center justify-between">
+      <div className="mb-5 flex items-center justify-between gap-3">
         <Link href={backHref} className="text-sm font-medium text-muted-foreground hover:text-brand-navy">
           ← Grant Report
         </Link>
-        <span className="text-sm text-muted-foreground">
-          {index + 1} of {total}
-        </span>
+        {/* BROWSE LIVES HERE, beside the counter it moves, at every width.
+            It used to be a pair of arrows absolutely positioned OUTSIDE the card
+            (-left-4 / -right-4) behind a `hidden sm:flex`, which meant: it did not exist at
+            all on a phone, it hung in the page margin where it was easy to miss on a
+            laptop, and with a single alert it rendered disabled at 30% opacity -- which
+            reads as "not unlocked yet" rather than "nowhere to go". Now the control appears
+            only when there IS somewhere to go, and it sits next to the "N of M" it drives.
+            The keyboard handler above still works for anyone who finds it; nothing in the
+            copy advertises it, because it silently does nothing on a one-card deck and that
+            is what made it look broken. */}
+        <div className="flex items-center gap-2">
+          {total > 1 && <BrowseButton side="left" disabled={index === 0} onClick={() => go(-1)} />}
+          <span className="text-sm tabular-nums text-muted-foreground">
+            {index + 1} of {total}
+          </span>
+          {total > 1 && <BrowseButton side="right" disabled={index >= total - 1} onClick={() => go(1)} />}
+        </div>
       </div>
 
       <div className="relative">
-        <NavArrow side="left" disabled={index === 0} onClick={() => go(-1)} />
-        <NavArrow side="right" disabled={index >= total - 1} onClick={() => go(1)} />
         <BrowseCard
           key={current.id}
           item={current}
@@ -167,13 +179,18 @@ export function SwipeDeck({
       </div>
 
       <p className="mt-3 text-center text-[11px] text-muted-foreground">
-        ← / → · arrow keys · or swipe to browse — Pass or Interested to decide
+        {total > 1
+          ? "Use the arrows or swipe to browse — Pass or Interested to decide"
+          : "Pass or Interested to decide"}
       </p>
     </div>
   );
 }
 
-function NavArrow({ side, disabled, onClick }: { side: "left" | "right"; disabled: boolean; onClick: () => void }) {
+// Rendered only when the deck holds more than one alert, so it is never a control that
+// looks pressable and isn't. Still disabled at the two ends of the deck -- there IS
+// browsing to do, just not in that direction.
+function BrowseButton({ side, disabled, onClick }: { side: "left" | "right"; disabled: boolean; onClick: () => void }) {
   const Icon = side === "left" ? ChevronLeft : ChevronRight;
   return (
     <button
@@ -181,11 +198,11 @@ function NavArrow({ side, disabled, onClick }: { side: "left" | "right"; disable
       onClick={onClick}
       disabled={disabled}
       aria-label={side === "left" ? "Previous alert" : "Next alert"}
-      className={`absolute top-1/2 z-10 hidden -translate-y-1/2 items-center justify-center rounded-full border border-brand-navy/15 bg-white/90 p-2 shadow-soft transition sm:flex ${
-        side === "left" ? "-left-4" : "-right-4"
-      } ${disabled ? "cursor-not-allowed opacity-30" : "hover:border-brand-navy/35 hover:bg-white"}`}
+      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-brand-navy/15 bg-white shadow-soft transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 ${
+        disabled ? "cursor-not-allowed opacity-30" : "hover:border-brand-navy/35 hover:bg-brand-cream/60"
+      }`}
     >
-      <Icon className="h-5 w-5 text-brand-navy" />
+      <Icon className="h-4 w-4 text-brand-navy" />
     </button>
   );
 }
@@ -387,7 +404,7 @@ function CardFace({
               </button>
             </div>
             <p className="mt-2.5 text-center text-[11px] text-muted-foreground">
-              Browse: ← / → or swipe · Decide: Pass / Interested
+              Browse: arrows or swipe · Decide: Pass / Interested
             </p>
             <p className="mx-auto mt-3 max-w-md text-center text-[11px] leading-relaxed text-muted-foreground/80">
               Grant Alerts are a quick snapshot and concept proposal to gauge your interest. Marking one
