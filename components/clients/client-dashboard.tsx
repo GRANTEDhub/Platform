@@ -544,11 +544,13 @@ function AmbientRow({ note }: { note: AmbientNote }) {
 // not a quantity worth a badge), and the trailing slot reads "All clear". Nothing to click,
 // and nothing pretending to be clickable.
 //
-// A check glyph rather than an emoji: it inherits the stage palette, scales with the type,
-// and renders identically everywhere — none of which an emoji does.
+// THE ROW KEEPS ITS OWN ICON when clear. It briefly swapped to a check, which made every
+// cleared row look identical and threw away the one glyph that says WHICH queue this is --
+// and it was redundant, because the trailing slot already carries a check and "All clear".
+// The tile just goes green.
 function PinnedRow({ row, last }: { row: DashPinnedRow; last: boolean }) {
   const live = row.count > 0 && row.href !== null;
-  const Icon = live ? row.icon : Check;
+  const Icon = row.icon;
   return (
     <li className={`flex items-center gap-[13px] px-5 py-3 ${last ? "" : "border-b border-hairline"}`}>
       <span

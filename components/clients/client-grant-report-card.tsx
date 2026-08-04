@@ -204,8 +204,13 @@ function ConsoleReportCard({
         )}
       </div>
 
+      {/* THE FOOTER IS A FIXTURE, the rows are not. It used to sit inside the has-rows
+          branch, so an empty card lost both the count and the way into the report -- which
+          is exactly when someone wants to go look. Now only the row band and the list are
+          conditional; the footer always renders, reading "0 in the full report" when there
+          is nothing yet. */}
       {rows.length === 0 ? (
-        <p className="px-5 pb-5 text-sm text-ink-subtle">{emptyNote}</p>
+        <p className="px-5 pb-4 text-sm text-ink-subtle">{emptyNote}</p>
       ) : (
         <>
           <div
@@ -224,22 +229,26 @@ function ConsoleReportCard({
               <ConsoleReportRow key={r.cardId} row={r} />
             ))}
           </ul>
-          {/* mt-auto: this card is the taller of the side-by-side pair, but if the other
-              one ever wins, the footer stays pinned to the bottom instead of floating. */}
-          <div className="mt-auto flex items-center justify-between gap-2.5 px-5 py-3">
-            <p className="text-[11.5px] text-ink-subtle">
-              {remaining > 0 ? `${remaining} more in the full report` : "That is the full report"}
-            </p>
-            <Link
-              href={reportHref}
-              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sharp bg-brand-navy px-3.5 text-[12.5px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
-            >
-              Open report
-              <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-            </Link>
-          </div>
         </>
       )}
+      {/* mt-auto: this card is the taller of the side-by-side pair, but if the other
+          one ever wins, the footer stays pinned to the bottom instead of floating. */}
+      <div className="mt-auto flex items-center justify-between gap-2.5 px-5 py-3">
+        <p className="text-[11.5px] text-ink-subtle">
+          {remaining > 0
+            ? `${remaining} more in the full report`
+            : total === 0
+              ? "0 in the full report"
+              : "That is the full report"}
+        </p>
+        <Link
+          href={reportHref}
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sharp bg-brand-navy px-3.5 text-[12.5px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+        >
+          Open report
+          <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+        </Link>
+      </div>
     </section>
   );
 }

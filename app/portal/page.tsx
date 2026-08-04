@@ -289,7 +289,12 @@ export default async function PortalHome() {
               decided={counts.approved}
               nextDeadlineDays={nextDeadlineDays}
               backlog={null}
-              nextDeadlineLabel={nextDeadline !== "—" ? nextDeadline : null}
+              // ALWAYS PRESENT, even with no dated deadline ahead: the slot beside Edit
+              // profile went empty the moment nothing was upcoming, so the masthead's
+              // right side changed shape depending on the data. "None upcoming" is
+              // information; a missing row is not. nextDeadline is already "—" when there
+              // is nothing, so only the wording needs the floor.
+              nextDeadlineLabel={nextDeadline !== "—" ? nextDeadline : "None upcoming"}
               backHref="/portal/grants"
               backLabel="Grant Report"
               // Same slot the console uses for Edit profile / Refresh matches. A client gets
