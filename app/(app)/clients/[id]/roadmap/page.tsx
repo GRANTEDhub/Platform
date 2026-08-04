@@ -52,7 +52,7 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
   let query: any = supabase
     .from("review_cards")
     .select(
-      "id, grant_id, fit_score, proposed_role, decision, factor_scores, sme_released_at, before_you_approve, grants(title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate, focus_areas)",
+      "id, grant_id, fit_score, proposed_role, decision, factor_scores, sme_released_at, before_you_approve, staff_read_at, grants(title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate, focus_areas)",
     )
     .eq("client_id", params.id)
     .neq("card_type", "prospect");
@@ -63,7 +63,7 @@ export default async function ClientRoadmapPage({ params }: { params: { id: stri
   const { data } = await query;
 
   const rowsRaw = (data ?? []) as unknown as (ReportCardRow & ConcernRow)[];
-  const items = toReportItems(rowsRaw);
+  const items = toReportItems(rowsRaw, "staff");
   const concernIds = new Set(rowsRaw.filter((r) => (r.before_you_approve ?? []).length > 0).map((r) => r.id));
 
   // When matching last produced a card for this client — the header's "last refreshed".

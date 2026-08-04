@@ -129,6 +129,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       sme_released_by: null,
       sent_at: null,
       sent_to: null,
+      // BOTH sides of read state (0070), in this same write. A recall rewinds the card to
+      // pre-send, so a row left grey would claim someone had read something that is no
+      // longer there to read -- on the client's side especially, where the card leaves
+      // their Report entirely. It goes back out looking new because it IS new again.
+      staff_read_at: null,
+      client_read_at: null,
     })
     .eq("id", params.id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

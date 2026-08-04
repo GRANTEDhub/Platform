@@ -160,7 +160,24 @@ export interface ReportItem {
   // admin-only table -- toReportItem leaves it undefined, so staff surfaces that
   // don't stamp it render no reveal.
   concept?: ConceptReveal;
+  // Has THIS SIDE read the row. Resolved from staff_read_at or client_read_at by the
+  // ReadSide passed to toReportItems -- never both, and the renderer is not told which
+  // column it came from. See ReadSide for why that indirection is the point.
+  read: boolean;
 }
+
+// Which dashboard is being rendered, and therefore which read column is the truth.
+// review_cards carries staff_read_at and client_read_at independently (migration
+// 0070) because the console and the portal are separate products that happen to
+// render the same rows through the same component.
+//
+// This is a REQUIRED argument rather than an inferred one on purpose. Every call site
+// has to name its audience, the shaped item exposes one boolean instead of two
+// timestamps, and the shared component cannot render the wrong side even if a page
+// over-selects both columns -- the only way to cross the wires is to pass the wrong
+// literal here, which is one reviewable token in a diff rather than a silent leak
+// through a field that happened to be selected.
+export type ReadSide = "staff" | "client";
 
 // What the client-facing "concept proposal" button needs to decide what to show:
 // premium clients get the real read-only proposal (once ready); base clients get
@@ -197,6 +214,11 @@ export type ReportCardRow = Pick<
   concept_synopsis?: string | null;
   sme_released_at?: string | null;
   pursuit_path?: PursuitPath | null;
+  // Both optional: a surface selects only its own side's column, and a row that never
+  // selected either shapes to read: false -- an unread row, which is the honest
+  // default for a list that has no read state to show.
+  staff_read_at?: string | null;
+  client_read_at?: string | null;
   grants:
     | (Pick<
         Grant,
@@ -214,7 +236,7 @@ function toPlain(html: string | null | undefined, max = 240): string | null {
   return text.length > max ? `${text.slice(0, max).replace(/\s+\S*$/, "")}…` : text;
 }
 
-export function toReportItem(card: ReportCardRow): ReportItem {
+export function toReportItem(card: ReportCardRow, side: ReadSide): ReportItem {
   const g = card.grants;
   const days = deadlineDaysLeft(g?.submission_deadline);
   const fit = (card.fit_score ?? null) as 1 | 2 | 3 | null;
@@ -242,13 +264,14 @@ export function toReportItem(card: ReportCardRow): ReportItem {
     programIdea: toPlain(card.concept_synopsis, 220),
     smeReleased: !!card.sme_released_at,
     pursuitPath: card.pursuit_path ?? null,
+    read: !!(side === "staff" ? card.staff_read_at : card.client_read_at),
   };
 }
 
 // Rank: strongest fit first, then soonest real deadline (rolling/TBD sink to the
 // bottom), then title for a stable order.
-export function toReportItems(cards: ReportCardRow[]): ReportItem[] {
-  return cards.map(toReportItem).sort((a, b) => {
+export function toReportItems(cards: ReportCardRow[], side: ReadSide): ReportItem[] {
+  return cards.map((c) => toReportItem(c, side)).sort((a, b) => {
     // Unscored sinks below every scored card. It is not a zero — it is an absence,
     // and ranking it first or last by accident is how it gets read as one.
     const af = a.fitScore ?? -1;

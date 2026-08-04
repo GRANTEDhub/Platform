@@ -11,6 +11,7 @@ import { getConceptProposal } from "@/lib/concept/store";
 import { viewFitFactors } from "@/lib/report/fit-factors";
 import { computeEligibility } from "@/lib/intellengine/eligibility";
 import { FIT_BAND, deadlineDaysLeft, isOverdue } from "@/lib/report/shape";
+import { markCardRead } from "@/lib/report/read-state";
 import { formatAwardRange, compactCostShare } from "@/lib/grants/format";
 import { BRAND } from "@/lib/brand";
 import type { Client, FactorScores, Grant, CardDecision, PursuitPath } from "@/types/database";
@@ -120,6 +121,12 @@ export default async function PortalGrantDetail({
   const card = data as CardRow | null;
   const g = grantOf(card?.grants ?? null);
   if (!card || !g) notFound();
+
+  // OPENING THE GRANT IS THE READ (client side only). Writes client_read_at through the
+  // USER client, which is what the 0070 guard branch authorises — a service-role write
+  // here would be refused, since that branch reads auth.uid(). After notFound so a 404
+  // marks nothing, and not awaited: a read stamp must never gate the page rendering.
+  void markCardRead(supabase, params.id, "client");
 
   const tier = client?.account_managed ? "premium" : "base";
   // Premium clients see their team's concept proposal and may edit it. concept_proposals

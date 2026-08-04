@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, ArrowLeft, ArrowRight, ChevronRight, Loader2, Search } from "lucide-react";
-import { BRAND, INK, RATING } from "@/lib/brand";
+import { BRAND, INK, RATING, SURFACE } from "@/lib/brand";
 import { rollUpQueue, sortQueue, type QueueRow, type QueueSort } from "@/lib/report/report-queue";
 import type { StaffBucket } from "@/lib/report/shape";
 import { cn } from "@/lib/utils";
@@ -96,6 +96,11 @@ export function GrantReportConsole({
   const [sort, setSort] = useState<QueueSort>("deadline");
   const [archiving, setArchiving] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
+  // Bulk mark-as-unread. Console only: the client's read state is stamped when they open a
+  // grant and is not staff's to rewrite, so the portal renders no checkboxes and no action.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [marking, setMarking] = useState(false);
+  const [markError, setMarkError] = useState<string | null>(null);
 
   const roll = useMemo(() => rollUpQueue(rows, primary), [rows, primary]);
   const counts = { admin: roll.awaiting, client: roll.withClient, pursued: roll.pursued, rejected: roll.rejected };
@@ -114,6 +119,37 @@ export function GrantReportConsole({
 
   const closedRows = rows.filter((r) => r.closedUnreviewed);
   const firstHref = visible[0] ? `${basePath}/${visible[0].item.id}` : null;
+
+  function toggleSelect(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function markUnread() {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    setMarking(true);
+    setMarkError(null);
+    try {
+      const res = await fetch("/api/review/mark-unread", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cardIds: ids }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Couldn't mark those unread");
+      setSelected(new Set());
+      router.refresh();
+    } catch (err) {
+      setMarkError(err instanceof Error ? err.message : "Couldn't mark those unread");
+    } finally {
+      setMarking(false);
+    }
+  }
 
   async function archiveClosed() {
     if (
@@ -270,6 +306,20 @@ export function GrantReportConsole({
                 </select>
               </label>
 
+              {/* Appears only with a selection, so the header does not carry a permanently
+                  disabled control for a mode nobody is in. */}
+              {!portal && selected.size > 0 && (
+                <button
+                  type="button"
+                  disabled={marking}
+                  onClick={() => void markUnread()}
+                  className="inline-flex items-center gap-1.5 text-[12px] text-ink-muted transition-colors hover:text-brand-navy disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+                >
+                  {marking && <Loader2 className="h-[13px] w-[13px] animate-spin" aria-hidden="true" />}
+                  Mark <strong className="font-semibold text-brand-navy">{selected.size}</strong> unread
+                </button>
+              )}
+
               {/* A REAL ACTION, not a nudge. A prompt that only points at the problem is
                   the dead affordance this redesign keeps removing — and the count above
                   already points at it. */}
@@ -298,6 +348,12 @@ export function GrantReportConsole({
             </p>
           )}
 
+          {markError && (
+            <p className="shrink-0 pb-2 text-[12px]" style={{ color: BRAND.reject }}>
+              {markError}
+            </p>
+          )}
+
           {visible.length === 0 ? (
             <EmptyQueue bucket={bucket} searching={q.trim().length > 0} awaiting={roll.awaiting} portal={portal} />
           ) : (
@@ -310,7 +366,13 @@ export function GrantReportConsole({
             >
               <div className="flex flex-col" style={{ gap: ROW_GAP }}>
                 {visible.map((row) => (
-                  <QueueCard key={row.item.id} row={row} href={`${basePath}/${row.item.id}`} />
+                  <QueueCard
+                    key={row.item.id}
+                    row={row}
+                    href={`${basePath}/${row.item.id}`}
+                    selected={selected.has(row.item.id)}
+                    onToggleSelect={portal ? undefined : toggleSelect}
+                  />
                 ))}
               </div>
             </div>
@@ -389,7 +451,19 @@ function fitTone(score: 1 | 2 | 3 | null): { ring: string; fill?: string; num: s
   return { ring: "rgba(228,118,31,0.55)", fill: "rgba(228,118,31,0.08)", num: BRAND.orangeDeep, word: BRAND.orangeDeep };
 }
 
-function QueueCard({ row, href }: { row: QueueRow; href: string }) {
+function QueueCard({
+  row,
+  href,
+  selected,
+  onToggleSelect,
+}: {
+  row: QueueRow;
+  href: string;
+  // Selection is console-only. Absent onToggleSelect = no checkbox column at all, which is
+  // how the portal renders: a client's read state is automatic and not theirs to edit.
+  selected?: boolean;
+  onToggleSelect?: (id: string) => void;
+}) {
   const { item, closed, concern } = row;
   const tone = fitTone(item.fitScore);
   const days = item.deadlineDaysLeft;
@@ -401,17 +475,52 @@ function QueueCard({ row, href }: { row: QueueRow; href: string }) {
   // correct it. An explicit tint keeps every value's contrast under our control.
   const edge = closed ? BRAND.orangeDeep : concern ? BRAND.orange : "#D8D4CB";
 
+  // READ RECEDES TO THE PAGE GROUND; UNREAD IS WHITE AND CARRIES A DOT. `item.read` is
+  // whichever side this surface is (staff_read_at or client_read_at, resolved in the
+  // shaping layer) — this component is not told which, and must not be.
+  //
+  // The tint alone would not carry it. SURFACE.page and the closed tint are two nearby
+  // creams, and closed already owns a background treatment, so on a closed row the two
+  // would be indistinguishable — closed wins the tint below, since its orangeDeep left
+  // edge is what actually says "closed" and a terminal row's read state is moot. The
+  // POSITIVE marker on unread is what makes the state legible either way: orange, which
+  // this palette already uses to mean "you owe something", against no marker once read.
+  const unread = !item.read;
+
+  // THE CHECKBOX IS A SIBLING OF THE LINK, NOT A CHILD OF IT. An <input> inside an <a> is
+  // invalid HTML and behaves accordingly — the label's click activates the anchor, so
+  // ticking a row would navigate to it. The wrapper carries the row's frame (height,
+  // tint, edge) and the anchor fills what is left, so the checkbox column is inside the
+  // row's background without being inside its click target.
   return (
-    <Link
-      href={href}
-      className="flex shrink-0 items-center gap-[18px] border border-edge px-[18px] transition-colors duration-[120ms] hover:border-brand-navy/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 [scroll-snap-align:start]"
+    <div
+      className="flex shrink-0 items-stretch border border-edge transition-colors duration-[120ms] hover:border-brand-navy/25 [scroll-snap-align:start]"
       style={{
         height: ROW_H,
-        backgroundColor: closed ? "#F4F1EA" : "#FFFFFF",
+        backgroundColor: closed ? "#F4F1EA" : unread ? "#FFFFFF" : SURFACE.page,
         borderLeftWidth: "3px",
         borderLeftColor: edge,
       }}
     >
+      {onToggleSelect && (
+        <label
+          className="flex shrink-0 cursor-pointer items-center pl-[14px] pr-[2px]"
+          // The row title is the only durable name for this checkbox; without it a screen
+          // reader reads a column of bare "checkbox, not checked".
+          aria-label={`Select ${item.title}`}
+        >
+          <input
+            type="checkbox"
+            checked={!!selected}
+            onChange={() => onToggleSelect(item.id)}
+            className="h-[14px] w-[14px] cursor-pointer accent-brand-orange focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60"
+          />
+        </label>
+      )}
+      <Link
+        href={href}
+        className="flex min-w-0 flex-1 items-center gap-[18px] px-[18px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+      >
       <div className="flex w-[150px] shrink-0 items-center gap-[11px]">
         <span
           className="flex h-[46px] w-[46px] shrink-0 flex-col items-center justify-center rounded-full"
@@ -434,8 +543,18 @@ function QueueCard({ row, href }: { row: QueueRow; href: string }) {
       </div>
 
       <div className="min-w-0 flex-1">
-        <p className="truncate font-serif text-[15.5px] font-bold text-brand-navy" title={item.title}>
-          {item.title}
+        <p className="flex items-center gap-[7px] font-serif text-[15.5px] font-bold text-brand-navy" title={item.title}>
+          {unread && (
+            // aria-hidden + the sr-only word below: a bare coloured dot is not a label, and
+            // "unread" has to reach a screen reader as a word rather than as a colour.
+            <span
+              className="h-[6px] w-[6px] shrink-0 rounded-full"
+              style={{ backgroundColor: BRAND.orange }}
+              aria-hidden="true"
+            />
+          )}
+          {unread && <span className="sr-only">Unread. </span>}
+          <span className="truncate">{item.title}</span>
         </p>
         <p className="mt-[5px] truncate text-[11.5px] text-ink-muted">{item.funder ?? "Funder not stated"}</p>
       </div>
@@ -462,7 +581,8 @@ function QueueCard({ row, href }: { row: QueueRow; href: string }) {
       </div>
 
       <ChevronRight className="h-4 w-4 shrink-0" style={{ color: INK.faint }} aria-hidden="true" />
-    </Link>
+      </Link>
+    </div>
   );
 }
 
