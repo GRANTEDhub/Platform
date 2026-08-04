@@ -10,7 +10,12 @@ import { senderFirstName } from "./sender";
 import { renderAlertPdf, renderHorizonPdf, launchAlertBrowser } from "./render";
 import { mergeAlertPdfs } from "./merge-pdf";
 import { getForecastHorizon } from "@/lib/grants/forecast-relevance";
-import { mintDecisionUrls, decisionTextBlock } from "./decide-links";
+import {
+  mintDecisionUrls,
+  decisionTextBlock,
+  bodyCarriesDecisionUrls,
+  type DecisionUrls,
+} from "./decide-links";
 import type { AlertContext } from "./generate";
 import type { AlertData, AlertEnrichment } from "./types";
 import type { Client } from "@/types/database";
@@ -140,7 +145,7 @@ export async function generateDraftAlert(
   } else {
     // Baked at DRAFT time, like the prospect booking link, so preview == sent. `origin`
     // is appBaseUrl()-derived by every caller -- never a Vercel deploy host.
-    emailBody = buildAlertEmailBody(ctx.grant, ctx.card, `${origin}/portal/grants/${ctx.card.id}?from=alerts`);
+    emailBody = buildAlertEmailBody(ctx.grant, ctx.card, `${origin}/portal/triage?card=${ctx.card.id}`);
   }
 
   const id = randomUUID();
@@ -206,16 +211,24 @@ export async function getOrCreateDraftAlert(
 // Any failure is swallowed. The one-pager is the essential artifact; a missing pair of
 // links degrades to the alert exactly as it was before this feature, never a send
 // blocker, and the next draft view retries.
-async function ensureDecisionLinks(
+// Mint (or read back) the decision URLs and persist them in alert_data. Exported
+// because the RELEASE-NOTE path needs them too: /api/review/[id]/release-email composes
+// its own hand-written body, so it wants the URLs without the alert body's block being
+// appended. Both send paths must offer the buttons -- the release bar has TWO buttons
+// ("Send alert" and "Send Email") and wiring only one of them is exactly how a shipped
+// feature turned out to be invisible on the path actually in use.
+//
+// Idempotent: a stored pair is returned as-is, never re-minted.
+export async function ensureDecisionUrls(
   ctx: AlertContext,
   alert: GrantAlertRow,
   userId: string | null,
   origin: string,
-): Promise<GrantAlertRow> {
-  if (!ctx.client || ctx.card.card_type === "prospect" || ctx.isLead) return alert;
-  if (!ctx.client.account_managed) return alert;
+): Promise<{ urls: DecisionUrls | null; alert: GrantAlertRow }> {
+  if (!ctx.client || ctx.card.card_type === "prospect" || ctx.isLead) return { urls: null, alert };
+  if (!ctx.client.account_managed) return { urls: null, alert };
   const data = (alert.alert_data ?? {}) as AlertData;
-  if (data.decisionUrls) return alert; // minted + frozen already
+  if (data.decisionUrls) return { urls: data.decisionUrls, alert };
 
   const db = createServiceClient();
   try {
@@ -226,24 +239,55 @@ async function ensureDecisionLinks(
       createdBy: userId,
       deadline: ctx.grant.submission_deadline,
     });
-    if (!urls) return alert;
+    if (!urls) return { urls: null, alert };
+    const newData = { ...data, decisionUrls: urls };
+    const { data: updated } = await db
+      .from("grant_alerts")
+      .update({ alert_data: newData })
+      .eq("id", alert.id)
+      .select()
+      .single<GrantAlertRow>();
+    return { urls, alert: updated ?? { ...alert, alert_data: newData } };
+  } catch (err) {
+    console.error(`[decide-links] mint failed for alert ${alert.id}; sending without them:`, err);
+    return { urls: null, alert };
+  }
+}
 
+async function ensureDecisionLinks(
+  ctx: AlertContext,
+  alert: GrantAlertRow,
+  userId: string | null,
+  origin: string,
+): Promise<GrantAlertRow> {
+  const { urls, alert: withUrls } = await ensureDecisionUrls(ctx, alert, userId, origin);
+  if (!urls) return withUrls;
+  // KEYED ON THE BODY, not on whether the URLs are new. The release-note path mints the
+  // same pair without touching email_body, so "URLs exist" does not imply "the alert body
+  // mentions them" -- and without the lines in the text, the box will not render at all
+  // (bodyCarriesDecisionUrls). Checking the body directly makes this correct whichever
+  // path minted first.
+  if (bodyCarriesDecisionUrls(withUrls.email_body ?? "", urls)) return withUrls;
+
+  const db = createServiceClient();
+  try {
+    const data = (withUrls.alert_data ?? {}) as AlertData;
     const newData = { ...data, decisionUrls: urls };
     // Appended to the SAVED body, not at send time: the composer must show what goes
     // out. It also makes the block editable -- delete the lines in the preview and the
     // HTML box disappears too, because the renderer only draws it when both URLs are
     // still in the text (bodyCarriesDecisionUrls).
-    const newBody = `${(alert.email_body ?? "").trimEnd()}\n${decisionTextBlock(urls)}\n`;
+    const newBody = `${(withUrls.email_body ?? "").trimEnd()}\n${decisionTextBlock(urls)}\n`;
     const { data: updated } = await db
       .from("grant_alerts")
       .update({ alert_data: newData, email_body: newBody })
-      .eq("id", alert.id)
+      .eq("id", withUrls.id)
       .select()
       .single<GrantAlertRow>();
-    return updated ?? { ...alert, alert_data: newData, email_body: newBody };
+    return updated ?? { ...withUrls, alert_data: newData, email_body: newBody };
   } catch (err) {
-    console.error(`[decide-links] mint failed for alert ${alert.id}; sending without them:`, err);
-    return alert;
+    console.error(`[decide-links] body append failed for alert ${withUrls.id}; sending without them:`, err);
+    return withUrls;
   }
 }
 

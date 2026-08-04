@@ -30,6 +30,7 @@ export function SwipeDeck({
   backHref,
   interestMode = "client",
   clientName,
+  startCardId,
 }: {
   items: ReportItem[];
   detailBasePath: string; // detail = `${detailBasePath}/${id}`
@@ -41,9 +42,18 @@ export function SwipeDeck({
   // right sets sme_interested_at instead — staff's OWN separate first pass for an
   // account-managed client (0059). Pass is identical either way (decision='passed').
   interestMode?: "client" | "sme";
+  // Open on this card instead of the first one. Set from ?card= so the alert email lands
+  // on the grant it was written about rather than on whatever happens to be at the front
+  // of the queue. Unknown / already-decided id falls back to 0 -- a stale link from an old
+  // email should still open the deck, not an error.
+  startCardId?: string;
 }) {
   const [queue, setQueue] = useState(items);
-  const [index, setIndex] = useState(0);
+  const [index, setIndex] = useState(() => {
+    if (!startCardId) return 0;
+    const at = items.findIndex((i) => i.id === startCardId);
+    return at >= 0 ? at : 0;
+  });
   const decided = items.length - queue.length;
   const total = queue.length;
   const current = queue[index];

@@ -385,7 +385,11 @@ async function clientSend(a: {
                 deadline: ctx.grant.submission_deadline ? formatDeadline(ctx.grant.submission_deadline) : null,
                 interestedUrl: urls.interested,
                 passUrl: urls.pass,
-                portalUrl: `${appBaseUrl()}/portal/grants/${cardId}`,
+                // Grant Alerts, deep-linked to this grant — NOT /portal/grants/[cardId].
+                // The Report list filters on `interested_at is not null`, so a card we are
+                // releasing is not in it, and that page asks the Report-stage question
+                // (Pursue / Save / Pass) rather than the alert-stage one.
+                portalUrl: `${appBaseUrl()}/portal/triage?card=${cardId}`,
               }
             : null;
         const result = await sendGrantAlertEmail({ to: recipient, subject, body: emailBody, pdf, decision });
