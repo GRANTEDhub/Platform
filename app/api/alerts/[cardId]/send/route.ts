@@ -401,7 +401,21 @@ async function clientSend(a: {
                 portalUrl: `${appBaseUrl()}/portal/triage?card=${cardId}`,
               }
             : null;
-        const result = await sendGrantAlertEmail({ to: recipient, subject, body: emailBody, pdf, decision });
+        // htmlLinks was missing, so the portal URL in the body rendered as a bare URL
+        // while the decision box above it had real buttons. plainTextToHtml matches the
+        // line VERBATIM, so this has to be the SAME string buildAlertEmailBody baked at
+        // draft time -- both are `${appBaseUrl()}/portal/triage?card=<id>`.
+        const portalLine = `${appBaseUrl()}/portal/triage?card=${cardId}`;
+        const title = (ctx.grant.title ?? "").trim();
+        const short = title.length > 50 ? `${title.slice(0, 50).replace(/\s+\S*$/, "").trim()}…` : title;
+        const result = await sendGrantAlertEmail({
+          to: recipient,
+          subject,
+          body: emailBody,
+          pdf,
+          decision,
+          htmlLinks: [{ url: portalLine, label: short ? `Review ${short} in your portal` : "Review it in your portal" }],
+        });
         await finalizeClientCardSent(supabase, cardId, alert.id, result.to, subject, emailBody);
         sent = true;
         send_status = `alert sent to ${result.to}`;
