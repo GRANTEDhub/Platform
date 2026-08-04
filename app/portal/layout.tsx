@@ -35,11 +35,14 @@ export default async function PortalLayout({
   const notifications = org ? await getClientNotifications(org.clientId) : null;
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex h-screen flex-col overflow-hidden">
       <PortalHeader orgName={orgName} notifications={notifications} />
       {/* Each portal page provides its own HubShell backdrop (list = crisp,
           detail/swipe = warm), mirroring the staff roadmap surfaces. */}
-      <main className="flex-1">{children}</main>
+      {/* flex-1 + the scroll HERE, mirroring the staff shell: the nav band stays put and
+          the body scrolls under it. flex-1 is also what gives the dashboard a definite
+          height to stretch its cards into. */}
+      <main className="flex-1 overflow-y-auto [scrollbar-gutter:stable]">{children}</main>
     </div>
   );
 }

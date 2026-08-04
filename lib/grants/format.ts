@@ -149,3 +149,65 @@ export function rubricRows(rubric: Record<string, unknown> | null | undefined): 
       return { name, points };
     });
 }
+
+// A grant, stated as facts, for a surface that has nothing else on screen to explain
+// it -- the "Score a grant" fit check, where the grant may be one the reader has never
+// seen. The card pages get their facts from GrantBody/GrantStatTiles; this is the same
+// numbers reduced to a serializable payload an API route can hand a client component.
+//
+// Estimate labelling follows the hero tiles: "Award range · est." when the ledger says
+// the figure was inferred rather than published (org rule -- award amounts are labelled
+// as estimates, never asserted).
+export interface GrantFactSummary {
+  description: string | null;
+  facts: { label: string; value: string }[];
+  focusAreas: string[];
+  eligibleEntities: string[];
+  sourceUrl: string | null;
+  grantStatus: string | null;
+}
+
+type SummaryFields = Pick<
+  Grant,
+  | "description" | "funder" | "fon" | "source_url" | "grant_status"
+  | "award_range_min" | "award_range_max" | "award_range_is_estimate"
+  | "num_awards" | "cost_share" | "submission_deadline" | "period_of_performance"
+  | "focus_areas" | "eligible_entity_types" | "geographic_eligibility"
+>;
+
+// Cut long NOFO prose at a sentence boundary where there is one nearby, else at a word
+// boundary. A hard slice mid-word reads as a truncation bug rather than an excerpt.
+function excerpt(raw: string | null | undefined, max = 700): string | null {
+  const s = (raw ?? "").replace(/\s+/g, " ").trim();
+  if (!s) return null;
+  if (s.length <= max) return s;
+  const head = s.slice(0, max);
+  const stop = head.lastIndexOf(". ");
+  if (stop > max * 0.6) return head.slice(0, stop + 1);
+  const space = head.lastIndexOf(" ");
+  return `${head.slice(0, space > 0 ? space : max)}…`;
+}
+
+export function grantFactSummary(g: SummaryFields): GrantFactSummary {
+  const award = formatAwardRange(g.award_range_min, g.award_range_max);
+  const cs = compactCostShare(g.cost_share);
+  const facts: { label: string; value: string }[] = [
+    { label: "Funder", value: g.funder || "—" },
+    { label: `Award range${g.award_range_is_estimate ? " · est." : ""}`, value: award },
+    { label: "Match required", value: cs },
+    { label: "Deadline", value: formatDeadline(g.submission_deadline) },
+  ];
+  if (g.num_awards) facts.push({ label: "Est. awards", value: g.num_awards });
+  if (g.period_of_performance) facts.push({ label: "Project period", value: g.period_of_performance });
+  if (g.fon) facts.push({ label: "Opportunity no.", value: g.fon });
+  if (g.geographic_eligibility) facts.push({ label: "Geography", value: g.geographic_eligibility });
+
+  return {
+    description: excerpt(g.description),
+    facts,
+    focusAreas: (g.focus_areas ?? []).filter((s) => s?.trim()).slice(0, 8),
+    eligibleEntities: (g.eligible_entity_types ?? []).filter((s) => s?.trim()).slice(0, 8),
+    sourceUrl: g.source_url,
+    grantStatus: g.grant_status,
+  };
+}

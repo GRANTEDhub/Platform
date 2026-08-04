@@ -23,7 +23,6 @@ import { ClientActivity } from "@/components/clients/client-activity";
 import type { CommunityView } from "@/lib/clients/community";
 import type { ActivityEvent } from "@/lib/clients/activity";
 import type { AmbientNote } from "@/lib/clients/ambient-note";
-import { HeroBand } from "@/components/layout/hero-band";
 import { BRAND, INK, STAGE } from "@/lib/brand";
 import type { PipelineStageKey } from "@/lib/clients/pipeline";
 
@@ -123,10 +122,8 @@ export function ClientDashboard({
   roadmapHref,
   intellEngineHref,
   hero,
-  stats,
   actionItems,
   pinnedRows,
-  activity,
   report,
   drafts,
   community,
@@ -136,9 +133,6 @@ export function ClientDashboard({
   draftNext,
   scorer,
   attentionNote,
-  bookingUrl,
-  editHref,
-  refresh,
   matchNote,
 }: {
   name: string;
@@ -149,16 +143,13 @@ export function ClientDashboard({
   // (IntellEngine). Renders a shortcut tile only when provided (client portal
   // passes it; the staff dashboard doesn't).
   intellEngineHref?: string;
-  // Replaces the HeroBand + stat-tile block entirely when provided. The staff console
-  // passes the grant pipeline here; the client portal passes nothing and keeps the hero.
+  // The masthead — ClientMasthead on both sides, `variant` picking whose funnel it
+  // states. Full-bleed and outside the body gutter: it is chrome continuous with the
+  // command band, not content. Both callers pass one; there is no fallback hero any more.
   hero?: React.ReactNode;
-  // Optional because a `hero` replaces them. Required-but-ignored would have meant the
-  // staff page computing four tiles nothing renders.
-  stats?: DashStat[];
   actionItems: DashActionItem[];
   // Console-only: the always-present queue rows above the dynamic items.
   pinnedRows?: DashPinnedRow[];
-  activity: { pending: number; approved: number; passed: number };
   // Left-column cards. Both are optional, and when one is absent its old shortcut
   // tile renders in the bottom row instead -- so a caller that passes neither gets
   // exactly the previous dashboard rather than a gap where a card should be.
@@ -188,84 +179,48 @@ export function ClientDashboard({
   // so it supplies the sentence rather than this component asserting a platform-wide
   // invariant it cannot check.
   attentionNote?: string | null;
-  bookingUrl: string | null;
-  // Staff-only: Edit profile.
-  editHref?: string | null;
-  refresh?: React.ReactNode; // staff-only refresh control
   matchNote?: React.ReactNode; // staff-only in-progress indicator
 }) {
-  const scheduleHref = bookingUrl || `mailto:${SUPPORT}?subject=Schedule%20a%20strategy%20call`;
-
-  // Console: full-bleed 34px gutters and 20px vertical, continuous with the context bar
-  // above it. Portal: the centred max-w-7xl column it has always used.
-  if (isStaff) {
-    return (
-      // The ink direction's ground, page-scoped exactly as on the Portfolio — see
-      // SURFACE.ground in lib/brand.ts. `hero` (the masthead) is full-bleed and sits
-      // OUTSIDE the gutter: it is chrome continuous with the command band, not content.
-      <div className="flex min-h-full flex-col bg-ground">
-        {hero}
-        {matchNote}
-        <div className="relative flex flex-1 flex-col overflow-hidden px-[34px] pb-[15px] pt-[13px]">
-          <ConsoleDecor ghost={ghost} />
-          <div className="relative z-[1] flex min-h-0 flex-1 flex-col">
-            <ConsoleBody
-              actionItems={actionItems}
-              pinnedRows={pinnedRows}
-              report={report}
-              drafts={drafts}
-              community={community}
-              events={events}
-              ambient={ambient}
-              draftNext={draftNext}
-              scorer={scorer}
-              attentionNote={attentionNote}
-              roadmapHref={roadmapHref}
-              intellEngineHref={intellEngineHref}
-            />
-          </div>
+  // ONE BODY FOR BOTH ACTORS. This used to fork: the console got the approved design and
+  // the portal kept its old centred column, because the design said nothing about the
+  // portal and applying the console layout would have silently restyled a client-facing
+  // surface. That convergence is now the instruction — the two are meant to be identical
+  // so a change lands on both instead of the portal drifting a release behind.
+  //
+  // `isStaff` now gates CONTROLS ONLY (Edit profile, Refresh matches, the in-progress
+  // note), not layout. Everything else that differs is a prop the caller supplies or
+  // omits: the portal passes no `scorer`, no `events`, no `ambient`, no `draftNext`, and a
+  // portal-variant masthead as its `hero`.
+  return (
+    // The ink direction's ground, page-scoped exactly as on the Portfolio — see
+    // SURFACE.ground in lib/brand.ts. `hero` (the masthead) is full-bleed and sits
+    // OUTSIDE the gutter: it is chrome continuous with the command band, not content.
+    <div className="flex min-h-full flex-col bg-ground">
+      {hero}
+      {isStaff && matchNote}
+      <div className="relative flex flex-1 flex-col overflow-hidden px-[34px] pb-[15px] pt-[13px]">
+        <ConsoleDecor ghost={ghost} />
+        <div className="relative z-[1] flex min-h-0 flex-1 flex-col">
+          <ConsoleBody
+            actionItems={actionItems}
+            pinnedRows={pinnedRows}
+            report={report}
+            drafts={drafts}
+            community={community}
+            events={events}
+            ambient={ambient}
+            draftNext={draftNext}
+            scorer={scorer}
+            attentionNote={attentionNote}
+            roadmapHref={roadmapHref}
+            intellEngineHref={intellEngineHref}
+          />
         </div>
       </div>
-    );
-  }
-
-  return (
-    <div className="mx-auto max-w-7xl px-8 py-8">
-      {hero ?? (
-        <HeroBand
-          title={name}
-          subtitle={subLine ?? undefined}
-          right={
-            editHref || refresh ? (
-              <div className="flex items-center gap-3">
-                {editHref && (
-                  <Link
-                    href={editHref}
-                    className="rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
-                  >
-                    Edit profile
-                  </Link>
-                )}
-                {refresh}
-              </div>
-            ) : undefined
-          }
-          stats={(stats ?? []).map((s) => ({ value: s.value, label: s.label, sub: s.sub, accent: s.accent }))}
-        />
-      )}
-      <PortalBody
-        actionItems={actionItems}
-        activity={activity}
-        report={report}
-        drafts={drafts}
-        community={community}
-        roadmapHref={roadmapHref}
-        intellEngineHref={intellEngineHref}
-        scheduleHref={scheduleHref}
-      />
     </div>
   );
 }
+
 
 // The body's ornament: one faint rule down the column gutter, hairline margins at the
 // page edges, and the unassessed count bled off the bottom-right at 3% ink.
@@ -341,8 +296,21 @@ function ConsoleBody({
 
         {/* Side by side, equal width, equal height. IntellEngine is the shorter of the
             two by content: it stretches, its content stays top-aligned, and the slack
-            falls to the bottom of the panel rather than centring it. */}
-        <div className="grid min-h-0 flex-1 gap-[15px] lg:grid-cols-2 lg:items-stretch">
+            falls to the bottom of the panel rather than centring it.
+
+            CAPPED, and the cap is the point. `flex-1` alone hands these panels ALL the
+            space left after the masthead and the attention card — which means their height
+            is a function of how much content sits ABOVE them, not of what is in them. On a
+            staff record that reads fine (17 grants, two attention rows, the panels fill).
+            On a sparse one — a client with one grant and one attention row — the same rule
+            gave them ~57px MORE and left 400px of white inside, and the page looked broken
+            in a way no token change could fix.
+
+            480px is the console's own measured panel height at 1440x900, so a full record
+            is unchanged and a sparse one stops stretching; the leftover falls to the bottom
+            of the page where empty space is supposed to go. flex-1 and min-h-0 stay, so a
+            SHORT viewport still shrinks them rather than overflowing. */}
+        <div className="grid min-h-0 max-h-[480px] flex-1 gap-[15px] lg:grid-cols-2 lg:items-stretch">
           {report && (
             <ClientGrantReportCard
               variant="console"
@@ -378,6 +346,21 @@ function ConsoleBody({
   );
 }
 
+// The card holds between MIN and MAX rows, always. Below the floor it pads with a quiet
+// row; above the ceiling it truncates and says how many it held back.
+//
+// WHY A FLOOR: this card's height sets the height of everything under it, because the
+// Grant Report / IntellEngine pair is `flex-1` beneath it. A one-row card handed those two
+// panels ~60px more than the console gives them, which is the size difference in the comps
+// — the panels were not too tall, the card above them was too short. Padding to two rows
+// fixes the pair without touching either panel's own rules.
+//
+// WHY A CEILING: the same chain in reverse. A client with five attention rows would squeeze
+// the panels below the console's height, so the page would keep changing shape with the
+// data — the instability this redesign exists to remove.
+const MIN_ROWS = 2;
+const MAX_ROWS = 3;
+
 // "Needs your attention" — a tinted-header card whose rows encode urgency in their
 // trailing control. THE CARD NEVER DISAPPEARS: when the queue clears it keeps its frame
 // and shows a caught-up row instead. A card that vanishes makes the page collapse to a
@@ -400,6 +383,21 @@ function AttentionCard({
   // names a specific piece of work and points at it, which is the same claim every other
   // counted row makes.
   const live = rows.filter((r) => r.count > 0).length + items.length + (ambient ? 1 : 0);
+
+  // One list, pinned first, so the always-present Grant Alerts row can never be the thing
+  // the ceiling truncates.
+  const slots: ({ kind: "pinned"; row: DashPinnedRow } | { kind: "item"; item: DashActionItem })[] = [
+    ...rows.map((row) => ({ kind: "pinned" as const, row })),
+    ...items.map((item) => ({ kind: "item" as const, item })),
+  ];
+  const shown = slots.slice(0, MAX_ROWS);
+  const heldBack = slots.length - shown.length;
+  // The caught-up line occupies a row's worth of space, so it counts toward the floor.
+  const occupied = slots.length === 0 ? 1 : shown.length + (heldBack > 0 ? 1 : 0);
+  const fillers = Math.max(0, MIN_ROWS - occupied);
+  // Index of the last thing in the list, so exactly one element loses its bottom rule.
+  const lastIndex = shown.length + fillers - 1;
+
   return (
     <section className="shrink-0 overflow-hidden rounded-sharp border border-edge bg-white">
       <div
@@ -422,21 +420,45 @@ function AttentionCard({
       </div>
 
       <ul>
-        {rows.map((r) => (
-          <PinnedRow key={r.id} row={r} last={false} />
-        ))}
-        {items.map((it, i) => (
-          <AttentionRow key={it.id} item={it} last={i === items.length - 1} />
+        {shown.map((s, i) =>
+          s.kind === "pinned" ? (
+            <PinnedRow key={s.row.id} row={s.row} last={heldBack === 0 && i === lastIndex} />
+          ) : (
+            <AttentionRow key={s.item.id} item={s.item} last={heldBack === 0 && i === lastIndex} />
+          ),
+        )}
+        {/* The floor. Deliberately says something rather than being blank: a blank row in a
+            list reads as a rendering fault, and this one is load-bearing (see MIN_ROWS), so
+            it has to look intentional. min-h matches a real two-line row so the card lands
+            on the same height whether it padded or not. */}
+        {Array.from({ length: fillers }).map((_, i) => (
+          <li
+            key={`filler-${i}`}
+            className={`flex min-h-[62px] items-center px-5 py-3 ${
+              heldBack === 0 && shown.length + i === lastIndex ? "" : "border-b border-hairline"
+            }`}
+          >
+            <p className="text-[13px] text-ink-muted">Nothing else waiting.</p>
+          </li>
         ))}
       </ul>
 
       {/* ONE LINE, not an empty card. The card keeps its frame either way -- a card that
           vanishes changes the page's shape -- but the previous 8-row-tall centred block
           made "nothing to do" the largest thing on the screen. */}
-      {rows.length === 0 && items.length === 0 && (
+      {slots.length === 0 && (
         <p className="px-5 py-3 text-[13px] text-ink-muted">
           <span className="font-semibold text-brand-navy">You&apos;re caught up.</span> New matches land here as
           grants are scored.
+        </p>
+      )}
+
+      {/* NOT A SILENT TRUNCATION. The ceiling exists for layout, so the rows it drops have
+          to be counted out loud — and the sentence is true rather than reassuring: these
+          rows come back on their own as the ones above them clear. */}
+      {heldBack > 0 && (
+        <p className="border-t border-hairline px-5 py-2 text-[11.5px] text-ink-subtle">
+          +{heldBack} more — {heldBack === 1 ? "it appears" : "they appear"} as the rows above clear.
         </p>
       )}
 
@@ -595,136 +617,7 @@ function AttentionRow({ item, last }: { item: DashActionItem; last: boolean }) {
   return <li>{item.href ? <Link href={item.href} className="block hover:bg-page/60">{row}</Link> : row}</li>;
 }
 
-// ── Portal body — unchanged ─────────────────────────────────────────────────
-// Byte-for-byte the layout the client portal has been shipping. It is separated out
-// rather than shared so that console work cannot alter a client-facing surface by
-// accident; see the note at the top of the file.
-function PortalBody({
-  actionItems,
-  activity,
-  report,
-  drafts,
-  community,
-  roadmapHref,
-  intellEngineHref,
-  scheduleHref,
-}: {
-  actionItems: DashActionItem[];
-  activity: { pending: number; approved: number; passed: number };
-  report?: { rows: DashReportRow[]; total: number; emptyNote: string; metrics?: DashReportMetrics };
-  drafts?: { list: DashDraft[]; emptyNote: string };
-  community?: CommunityView;
-  roadmapHref: string;
-  intellEngineHref?: string;
-  scheduleHref: string;
-}) {
-  return (
-    <>
-      <div className="mt-8 grid gap-6 lg:grid-cols-3 lg:items-start">
-        <div className="space-y-6 lg:col-span-2">
-          <Card className="p-6 shadow-card sm:p-7">
-            <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Needs attention</h2>
-            {actionItems.length === 0 ? (
-              <p className="mt-4 text-sm text-muted-foreground">Nothing needs your attention right now.</p>
-            ) : (
-              <ul className="mt-4 space-y-2">
-                {actionItems.map((it) => (
-                  <ActionRow key={it.id} item={it} />
-                ))}
-              </ul>
-            )}
-          </Card>
 
-          {report && (
-            <ClientGrantReportCard
-              rows={report.rows}
-              total={report.total}
-              reportHref={roadmapHref}
-              emptyNote={report.emptyNote}
-            />
-          )}
-
-          {drafts && intellEngineHref && (
-            <ClientDraftProgress
-              drafts={drafts.list}
-              intellEngineHref={intellEngineHref}
-              emptyNote={drafts.emptyNote}
-            />
-          )}
-        </div>
-
-        <div className="space-y-6">
-          {community && <ClientCommunityContext view={community} />}
-
-          <Card className="p-6 shadow-card sm:p-7">
-            <h2 className="font-serif text-[20px] font-semibold text-brand-navy">Grant activity</h2>
-            <div className="mt-4">
-              <ClientMatchChart
-                data={[
-                  { label: "In review", count: activity.pending, color: BRAND.slate },
-                  { label: "Pursuing", count: activity.approved, color: BRAND.orange },
-                  { label: "Passed", count: activity.passed, color: BRAND.taupe },
-                ]}
-              />
-            </div>
-          </Card>
-        </div>
-      </div>
-
-      <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {!report && (
-          <QuickAction featured href={roadmapHref} icon={Target} title="Grant Report" sub="Review your matched opportunities" />
-        )}
-        {!drafts && intellEngineHref && (
-          <QuickAction href={intellEngineHref} icon={Sparkles} title="IntellEngine" sub="Draft a proposal — AI assistance coming soon" />
-        )}
-        <QuickAction external href={scheduleHref} icon={CalendarPlus} title="Schedule with an advisor" sub="Book a grant strategy call" />
-        <QuickAction external href={`mailto:${SUPPORT}?subject=Question%20for%20my%20GRANTED%20team`} icon={MessageSquare} title="Message your team" sub="In-app messaging — coming soon" />
-        <QuickAction external href={`mailto:${SUPPORT}?subject=Help`} icon={LifeBuoy} title="Help" sub="FAQ & support" />
-      </div>
-    </>
-  );
-}
-
-// Each item gets its OWN bordered box: text left, status right.
-//
-// The right slot deliberately does NOT show a priority flag -- priorities are not a
-// concept we have defined, so "High" on everything was decoration pretending to be
-// information. It carries, in order of preference: live progress (spinner), the
-// onboarding stage, a date, or an open affordance for a navigable item.
-function ActionRow({ item }: { item: DashActionItem }) {
-  const body = (
-    <div className="flex items-center justify-between gap-4 rounded-md bg-white px-4 py-3 ring-1 ring-brand-navy/[0.08] transition-shadow hover:shadow-card">
-      <div className="min-w-0">
-        <p className="text-sm font-medium text-brand-navy">{item.title}</p>
-        {item.tag && (
-          <span className="mt-1 inline-block rounded-full bg-brand-navy/[0.06] px-2.5 py-0.5 text-[11px] font-medium text-brand-navy">
-            {item.tag}
-          </span>
-        )}
-      </div>
-      <div className="flex shrink-0 items-center gap-2 text-right">
-        {item.busy ? (
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-brand-orange">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            In progress
-          </span>
-        ) : item.stage ? (
-          <span className="text-xs font-medium text-muted-foreground">
-            Step {item.stage.step} of {item.stage.total}
-          </span>
-        ) : item.date ? (
-          <span className="text-xs text-muted-foreground">{item.date}</span>
-        ) : item.href ? (
-          <span aria-hidden="true" className="text-sm text-brand-orange">
-            →
-          </span>
-        ) : null}
-      </div>
-    </div>
-  );
-  return <li>{item.href ? <Link href={item.href} className="block">{body}</Link> : body}</li>;
-}
 
 function QuickAction({
   href,

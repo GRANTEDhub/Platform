@@ -50,8 +50,17 @@ function within(iso: string, now: number): boolean {
   return Number.isFinite(t) && now - t <= ACTIVITY_WINDOW_DAYS * 86_400_000 && t <= now;
 }
 
-export function deriveActivity(input: ActivityInput): ActivityEvent[] {
+// WHOSE ACTIVITY THIS IS. Every line here describes the same underlying event from one
+// side of the handoff or the other, and the staff wording is wrong on the client's page in
+// both directions: "added to unassessed" names OUR queue, and "Released to the client"
+// describes something done TO them, in the third person, on their own dashboard. Same
+// events, same order, same tones -- one function so a new event kind cannot land on one
+// side and not the other.
+export type ActivityVoice = "staff" | "client";
+
+export function deriveActivity(input: ActivityInput, voice: ActivityVoice = "staff"): ActivityEvent[] {
   const out: ActivityEvent[] = [];
+  const forClient = voice === "client";
 
   // New matches are rolled into ONE row rather than one per grant. Six separate "a grant
   // was matched" lines would fill the card and crowd out the four kinds of event that
@@ -61,8 +70,12 @@ export function deriveActivity(input: ActivityInput): ActivityEvent[] {
     const newest = fresh.reduce((a, b) => (Date.parse(a) >= Date.parse(b) ? a : b));
     out.push({
       id: "matched",
-      title: `${fresh.length} new ${fresh.length === 1 ? "match" : "matches"}`,
-      detail: "added to unassessed",
+      // A client never sees the unassessed queue, and to them a new match IS a new alert
+      // -- the thing waiting in their triage list.
+      title: forClient
+        ? `${fresh.length} new grant ${fresh.length === 1 ? "alert" : "alerts"}`
+        : `${fresh.length} new ${fresh.length === 1 ? "match" : "matches"}`,
+      detail: forClient ? "waiting in your alerts" : "added to unassessed",
       at: newest,
       tone: "triage",
     });
@@ -75,7 +88,7 @@ export function deriveActivity(input: ActivityInput): ActivityEvent[] {
     const newest = passed.reduce((a, b) => (Date.parse(a.at) >= Date.parse(b.at) ? a : b));
     out.push({
       id: "passed",
-      title: `Passed on ${passed.length} ${passed.length === 1 ? "grant" : "grants"}`,
+      title: `${forClient ? "You passed on" : "Passed on"} ${passed.length} ${passed.length === 1 ? "grant" : "grants"}`,
       detail: passed.length === 1 ? passed[0].title : null,
       at: newest.at,
       tone: "passed",
@@ -84,17 +97,37 @@ export function deriveActivity(input: ActivityInput): ActivityEvent[] {
 
   for (const d of input.decided) {
     if (d.decision !== "approved" || !within(d.at, input.now)) continue;
-    out.push({ id: `approved-${d.id}`, title: "Approved for pursuit", detail: d.title, at: d.at, tone: "pursuit" });
+    out.push({
+      id: `approved-${d.id}`,
+      title: forClient ? "You approved this for pursuit" : "Approved for pursuit",
+      detail: d.title,
+      at: d.at,
+      tone: "pursuit",
+    });
   }
 
   for (const r of input.released) {
     if (!within(r.at, input.now)) continue;
-    out.push({ id: `released-${r.id}`, title: "Released to the client", detail: r.title, at: r.at, tone: "client" });
+    out.push({
+      id: `released-${r.id}`,
+      // Same moment, opposite side: we released it, they received it. "Released to the
+      // client" on the client's own dashboard reads as a note about somebody else.
+      title: forClient ? "Your team sent you this grant" : "Released to the client",
+      detail: r.title,
+      at: r.at,
+      tone: "client",
+    });
   }
 
   for (const d of input.drafts) {
     if (!within(d.at, input.now)) continue;
-    out.push({ id: `draft-${d.id}`, title: "IntellEngine draft moved", detail: d.title, at: d.at, tone: "approved" });
+    out.push({
+      id: `draft-${d.id}`,
+      title: forClient ? "Your proposal draft moved" : "IntellEngine draft moved",
+      detail: d.title,
+      at: d.at,
+      tone: "approved",
+    });
   }
 
   return out.sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, ACTIVITY_ROWS);

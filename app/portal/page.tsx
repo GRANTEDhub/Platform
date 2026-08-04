@@ -1,16 +1,18 @@
+import Link from "next/link";
 import { format, parseISO } from "date-fns";
-import { TrendingUp, Eye, Target, CalendarClock } from "lucide-react";
+import { Bell } from "lucide-react";
 import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import {
-  ClientDashboard,
-  type DashStat,
-} from "@/components/clients/client-dashboard";
+import { ClientDashboard, type DashPinnedRow } from "@/components/clients/client-dashboard";
+import { ClientMasthead } from "@/components/clients/client-masthead";
+import { CheckGrant } from "@/components/clients/check-grant";
+import { rollUpPortal } from "@/lib/clients/dashboard-summary";
 import { type DashReportRow } from "@/components/clients/client-grant-report-card";
 import { type DashDraft } from "@/components/clients/client-draft-progress";
 import { buildCommunityView } from "@/lib/clients/community";
 import { deadlineDaysLeft } from "@/lib/report/shape";
 import { deriveClientNotifications } from "@/lib/portal/notifications";
+import { deriveActivity } from "@/lib/clients/activity";
 import type { Client, CardDecision, Grant, IntellEngineDraft } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -25,6 +27,7 @@ type CardRow = {
   id: string;
   fit_score: 1 | 2 | 3;
   decision: CardDecision;
+  decided_at: string | null;
   interested_at: string | null;
   sme_released_at: string | null;
   grants:
@@ -47,7 +50,9 @@ export default async function PortalHome() {
 
   const { data: cardRows } = await supabase
     .from("review_cards")
-    .select("id, fit_score, decision, interested_at, sme_released_at, grants(id, title, funder, submission_deadline)")
+    .select(
+      "id, fit_score, decision, decided_at, interested_at, sme_released_at, grants(id, title, funder, submission_deadline)",
+    )
     .eq("client_id", org.clientId)
     .neq("card_type", "prospect");
 
@@ -60,10 +65,11 @@ export default async function PortalHome() {
     .eq("client_id", org.clientId)
     .order("updated_at", { ascending: false });
 
-  const drafts: DashDraft[] = ((draftRows ?? []) as Pick<
+  const draftRecords = (draftRows ?? []) as Pick<
     IntellEngineDraft,
     "id" | "title" | "status" | "updated_at"
-  >[]).map((d) => ({ id: d.id, title: d.title, status: d.status }));
+  >[];
+  const drafts: DashDraft[] = draftRecords.map((d) => ({ id: d.id, title: d.title, status: d.status }));
 
   const allCards = ((cardRows ?? []) as CardRow[]).map((r) => ({ ...r, grant: grantOf(r.grants) }));
   // For an account-managed client (0059), a card not yet released by staff must
@@ -86,12 +92,18 @@ export default async function PortalHome() {
   // also uses -- one source of truth, so the dashboard and the bell can never
   // disagree. Pass the unfiltered cards; derive re-applies the same
   // account-managed sme_released_at gate internally.
-  const { items: actionItems } = deriveClientNotifications({
+  const { items: allActionItems } = deriveClientNotifications({
     cards: allCards,
     managed,
     nextStep: client?.next_step ?? null,
     profileConfirmed: !!client?.profile_confirmed_at,
   });
+
+  // The grant-alerts item is dropped because the PINNED row below says the same thing and
+  // is always present. The bell keeps its own copy (it has no pinned rows), so the shared
+  // derivation still emits it -- this filters only what this page renders, and only the one
+  // row that would otherwise appear twice on the same card.
+  const actionItems = allActionItems.filter((i) => i.id !== "grant-alerts");
 
   // Upcoming deadlines (real) among live matches -- drives the deadline stat + the
   // action-items list.
@@ -99,15 +111,75 @@ export default async function PortalHome() {
     .map((c) => ({ c, days: deadlineDaysLeft(c.grant?.submission_deadline), date: c.grant?.submission_deadline ?? null }))
     .filter((x): x is { c: (typeof nonPassed)[number]; days: number; date: string } => x.days !== null && x.days >= 0)
     .sort((a, b) => a.days - b.days);
-  const dueSoon = upcoming.filter((x) => x.days <= 30).length;
   const nextDeadline = upcoming[0] ? format(parseISO(upcoming[0].date), "MMM d") : "—";
 
-  const stats: DashStat[] = [
-    { label: "Active grants", value: String(counts.approved), sub: dueSoon ? `${dueSoon} due in 30 days` : "being pursued", icon: TrendingUp },
-    { label: "In review", value: String(counts.pending), sub: "awaiting decision", icon: Eye },
-    { label: "Matched", value: String(nonPassed.length), sub: "opportunities", icon: Target },
-    { label: "Next deadline", value: nextDeadline, sub: null, icon: CalendarClock, accent: true },
+  // The client's own funnel, in their language — four stages, starting at the alerts we
+  // have sent them rather than at our own unassessed queue. See rollUpPortal.
+  const book = rollUpPortal(cards);
+  const alertsToReview = book.stages.find((s) => s.key === "triage")?.count ?? 0;
+  const nextDeadlineDays = upcoming[0]?.days ?? null;
+
+  // ALWAYS PRESENT, count or no count. Grant Alerts is the front of their whole process —
+  // a grant cannot reach their Grant Report until they mark it interested — so the row
+  // that says how many are waiting must be a fixture rather than something that appears
+  // only when non-zero. At zero it reads as caught up, which is information too.
+  const pinnedRows: DashPinnedRow[] = [
+    {
+      id: "grant-alerts",
+      title: "Grant alerts pending your review",
+      description:
+        alertsToReview > 0
+          ? "Open each one, then mark it interested to move it into your Grant Report, or pass on it."
+          : "Nothing waiting. New matches land here first.",
+      count: alertsToReview,
+      icon: Bell,
+      tone: "triage",
+      href: alertsToReview > 0 ? "/portal/triage" : null,
+      actionLabel: "Review alerts",
+    },
   ];
+
+  // Rail: what has moved lately, in the CLIENT's voice — see ActivityVoice in
+  // lib/clients/activity.ts. Same events, same tones, same rollup rules as staff get.
+  //
+  // `carded` is EMPTY and has to be: those timestamps live in match_attempts, which is
+  // staff-only under RLS (0055). For a premium client that costs nothing — a grant
+  // arriving IS the release, which the next line covers. For a standard client, who has no
+  // release step, it means new grants do not announce themselves in the feed; their alerts
+  // count and the pinned row carry that instead.
+  const now = Date.now();
+  const events = deriveActivity(
+    {
+      carded: [],
+      decided: cards
+        .filter((c) => (c.decision === "approved" || c.decision === "passed") && c.decided_at !== null)
+        .map((c) => ({
+          id: c.id,
+          title: c.grant?.title || "Untitled opportunity",
+          decision: c.decision as "approved" | "passed",
+          at: c.decided_at as string,
+        })),
+      released: cards
+        .filter((c) => c.sme_released_at !== null)
+        .map((c) => ({ id: c.id, title: c.grant?.title || "Untitled opportunity", at: c.sme_released_at as string })),
+      drafts: draftRecords.map((d) => ({ id: d.id, title: d.title, at: d.updated_at })),
+      now,
+    },
+    "client",
+  );
+
+  // The Grant Report card's three header figures, same as the console's and computed the
+  // same way — over the client's LIVE set (passed excluded, which is a closed decision).
+  // No `freshness`: "Updated 6d ago" reads as a promise about how often we look, and the
+  // fact it is derived from is a staff-only match_attempts timestamp anyway.
+  const liveCards = cards.filter((c) => c.decision !== "passed");
+  const reportMetrics = {
+    open: liveCards.filter((c) => c.decision === "pending").length,
+    decided: cards.filter((c) => c.decision === "approved").length,
+    avgFit: liveCards.length
+      ? (liveCards.reduce((n, c) => n + c.fit_score, 0) / liveCards.length).toFixed(1)
+      : null,
+  };
 
   const base = "/portal/grants";
 
@@ -139,21 +211,63 @@ export default async function PortalHome() {
   const subLine =
     [client?.org_type?.replace(/_/g, " "), client?.location_city, client?.location_state].filter(Boolean).join(" · ") || null;
 
+  // NO WRAPPER DIVS. ClientDashboard opens with `flex min-h-full flex-col`, and the console
+  // renders it as a DIRECT child of a flex-1 <main> — which is what gives it a definite
+  // height for the flex-1 cards inside to stretch into. The portal used to wrap it in two
+  // divs, the inner one with no height class, so min-h-full resolved against auto height
+  // and the Grant Report and IntellEngine panels collapsed to their content.
   return (
-    <div className="relative min-h-full">
-      <div className="relative">
         <ClientDashboard
           name={org.clientName}
           subLine={subLine}
           isStaff={false}
           roadmapHref={base}
           intellEngineHref="/intellengine"
-          stats={stats}
+          // Same masthead component staff get, variant="portal" swapping the four figures
+          // and the stage labels. No backlog sparkline: it measures our throughput.
+          hero={
+            <ClientMasthead
+              name={org.clientName}
+              meta={subLine}
+              statusLabel={managed ? "premium" : "client"}
+              variant="portal"
+              portalFigures={{
+                alerts: alertsToReview,
+                inReport: counts.pending,
+                approved: counts.approved,
+              }}
+              book={book}
+              decided={counts.approved}
+              nextDeadlineDays={nextDeadlineDays}
+              backlog={null}
+              nextDeadlineLabel={nextDeadline !== "—" ? nextDeadline : null}
+              backHref="/portal/grants"
+              backLabel="Grant Report"
+              // Same slot the console uses for Edit profile / Refresh matches. A client gets
+              // Edit profile only — /portal/profile already exists and is theirs to edit —
+              // and never Refresh matches, which spends scorer calls.
+              actions={
+                <Link
+                  href="/portal/profile"
+                  className="inline-flex h-8 shrink-0 items-center rounded-[9px] bg-white px-[14px] text-[13px] font-semibold text-brand-navy transition-opacity duration-[120ms] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome"
+                >
+                  Edit profile
+                </Link>
+              }
+            />
+          }
           actionItems={actionItems}
-          activity={counts}
+          pinnedRows={pinnedRows}
+          // The rail's scorer, same component and same slot the console uses. REPORT-ONLY
+          // for a client: the route refuses to write a review_card from the portal, so this
+          // answers "does this fit us" without putting a grant in their own Grant Report
+          // that nobody on our side released. See app/api/clients/[id]/check-grant/route.ts.
+          scorer={<CheckGrant clientId={org.clientId} clientName={org.clientName} variant="portal" />}
+          events={events}
           report={{
             rows: reportRows,
             total: nonPassed.length,
+            metrics: reportMetrics,
             emptyNote: "Your team is still working through opportunities. Matches will appear here as they are released.",
           }}
           drafts={{
@@ -164,9 +278,6 @@ export default async function PortalHome() {
           // signals their proposals cite, so they see what grounds the narrative.
           // Pure read; `client` is null only if the row vanished mid-session.
           community={client ? buildCommunityView(client) : undefined}
-          bookingUrl={process.env.NEXT_PUBLIC_BOOKING_URL ?? null}
         />
-      </div>
-    </div>
   );
 }
