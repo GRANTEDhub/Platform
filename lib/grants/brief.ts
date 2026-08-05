@@ -392,7 +392,24 @@ async function requeueThinBriefs(
       batch.map(async (g) => {
         const brief = await generateGrantBrief(g);
         if (brief) {
-          await saveBrief(db, g.id, brief);
+          try {
+            await saveBrief(db, g.id, brief);
+          } catch (e) {
+            // Logged, and NOT stamped -- the same call was left bare here after phase 1's
+            // was hardened, which made a write fault indistinguishable from "the model
+            // returned nothing usable" and quietly contaminated retiredFailed, the counter
+            // this run split out to disambiguate exactly that.
+            //
+            // NOT STAMPED IS DELIBERATE, and it is where this departs from the review's
+            // suggested fix. Stamping would retire the row and keep its thin brief forever
+            // because of one write blip, after a good regeneration had already been paid
+            // for. Phase 1 declines to park on a save failure for that same reason, so
+            // phase 2 declines to stamp on one: the row stays in the window and succeeds
+            // whenever the write does. The log is what makes it distinguishable, in both
+            // phases.
+            console.error(`[grant-brief] requeue save failed grant=${g.id}:`, e instanceof Error ? e.message : e);
+            return false;
+          }
           return true;
         }
         // Keep the old brief, but stamp it so this row leaves the window for good.
