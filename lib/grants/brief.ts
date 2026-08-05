@@ -237,6 +237,31 @@ export interface BriefSweepResult {
 // backlog only ever shrinks and the whole phase costs nothing once empty.
 const THIN_BRIEF_CUTOFF = "2026-08-04T20:20:00Z";
 
+// RESERVED CAPACITY for phase 2, so the backfill cannot starve behind phase 1.
+//
+// The first version gave phase 1 strict priority: phase 2 spent only `cap - claimed`, which
+// is ZERO on any run where the null-brief backlog still fills the cap. With `more=true` run
+// after run that meant the re-do would not begin until the entire corpus had a brief -- an
+// unbounded wait, and it left the terminate path below completely unexercised. Reserving a
+// few slots keeps the priority ordering (20 of 25 still go to grants with NO brief, which is
+// the worse failure) while letting the thin backlog drain in hours instead of never.
+//
+// Reserved ONLY when there is something to reserve for -- see the probe. Once the pre-cutoff
+// window is empty, phase 1 goes back to the full cap rather than idling 5 slots forever.
+const PHASE2_FLOOR = 5;
+
+// Cheap existence probe: head-only count, no rows and no raw_text, so it costs a single
+// index-less count over a few hundred rows rather than a hydrate.
+async function countThinCandidates(db: SupabaseClient): Promise<number> {
+  const { count, error } = await db
+    .from("grants")
+    .select("id", { count: "exact", head: true })
+    .not("description_brief", "is", null)
+    .lt("description_brief_at", THIN_BRIEF_CUTOFF);
+  if (error) throw new Error(`Thin-brief probe failed: ${error.message}`);
+  return count ?? 0;
+}
+
 // Re-do briefs that predate the cutoff AND fall under the current stub floor.
 //
 // RETIRING IS AS IMPORTANT AS REGENERATING. Anything claimed here is stamped -- either
@@ -328,12 +353,22 @@ export async function sweepGrantBriefs(
   opts: { cap: number; batchSize?: number },
 ): Promise<BriefSweepResult> {
   const batchSize = opts.batchSize ?? 5;
+
+  // Probe BEFORE claiming, because the answer changes phase 1's claim size. Total work per
+  // run still never exceeds opts.cap, so maxDuration is unaffected either way.
+  const thinWaiting = await countThinCandidates(db);
+  // opts.cap - 1 floor so phase 1 always keeps at least one slot: a .limit(0) is not
+  // dependably "no rows" and would be a silent full-table claim. Unreachable at
+  // PER_RUN_CAP=25, but this function should not depend on its caller's constant.
+  const reserved = thinWaiting > 0 ? Math.min(PHASE2_FLOOR, thinWaiting, Math.max(opts.cap - 1, 0)) : 0;
+  const phase1Cap = opts.cap - reserved;
+
   const { data, error } = await db
     .from("grants")
     .select(SELECT)
     .is("description_brief", null)
     .order("ingested_at", { ascending: true })
-    .limit(opts.cap);
+    .limit(phase1Cap);
 
   if (error) throw new Error(`Brief sweep query failed: ${error.message}`);
 
@@ -357,12 +392,12 @@ export async function sweepGrantBriefs(
     }
   }
 
-  // Unwritten briefs always come first -- a grant with NO brief shows the raw agency
-  // one-liner, which is the worse of the two failures. Phase 2 only spends what the
-  // null-brief backlog left unused, so it cannot slow the primary drain down.
+  // Unwritten briefs still come first -- a grant with NO brief shows the raw agency
+  // one-liner, which is the worse of the two failures -- but phase 2 gets at least its
+  // reserved slots, plus whatever phase 1 left unused on a light run.
   const { regenerated, retired } = await requeueThinBriefs(
     db,
-    opts.cap - pending.length,
+    Math.max(opts.cap - pending.length, reserved),
     batchSize,
   );
 
@@ -370,9 +405,10 @@ export async function sweepGrantBriefs(
     written,
     skipped,
     processed: pending.length,
-    // `more` covers phase 1 only, which is what the drain cadence keys off. Phase 2 is
-    // one-time and self-terminating, so it never needs another run scheduled for it.
-    more: pending.length === opts.cap,
+    // AGAINST phase1Cap, NOT opts.cap. Reserving slots shrinks the claim, so comparing to
+    // the full cap would read a saturated run (20 of 20) as "nothing left" and stall the
+    // drain silently -- the same shape of bug as the cache-stalled queue in July.
+    more: pending.length === phase1Cap && phase1Cap > 0,
     regenerated,
     retired,
   };
