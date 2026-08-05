@@ -248,13 +248,27 @@ async function recordFailedAttempt(db: SupabaseClient, grantId: string, current:
 // How many rows the cap has taken out of the claim window entirely. Logged so this is a
 // number someone can read, rather than something inferred from a skip-rate trend across
 // hours -- which is how the looping went unnoticed in the first place.
-async function countParked(db: SupabaseClient): Promise<number> {
+//
+// NULL RATHER THAN A THROW. This runs AFTER every write in the sweep has committed, so
+// throwing here would turn a fully successful run into a reported 500 and -- worse -- make
+// the route log an error instead of the counts. A diagnostic must never be able to fail the
+// work it is describing. Null prints as "?", which is honest: the number is unknown, not
+// zero.
+//
+// Deliberately unindexed. The predicate is the complement of the claim index
+// (attempts >= MAX rather than < MAX), so it scans the null-brief rows -- a few hundred on a
+// 958-row table, once an hour. An index existing only to serve a log line is the wrong
+// trade; revisit if grants grows an order of magnitude.
+async function countParked(db: SupabaseClient): Promise<number | null> {
   const { count, error } = await db
     .from("grants")
     .select("id", { count: "exact", head: true })
     .is("description_brief", null)
     .gte("description_brief_attempts", MAX_BRIEF_ATTEMPTS);
-  if (error) throw new Error(`Parked-brief count failed: ${error.message}`);
+  if (error) {
+    console.error(`[grant-brief] parked count failed: ${error.message}`);
+    return null;
+  }
   return count ?? 0;
 }
 
@@ -263,8 +277,9 @@ export interface BriefSweepResult {
   skipped: number;
   processed: number;
   more: boolean;
-  // Rows the attempt cap has removed from the claim window for good.
-  parked: number;
+  // Rows the attempt cap has removed from the claim window for good. Null when the count
+  // query itself failed -- unknown, not zero.
+  parked: number | null;
   // Phase 2 (the one-time re-do of briefs written before the raw_text fallback). All three
   // go to zero permanently once the pre-cutoff window is drained.
   regenerated: number;
@@ -446,7 +461,17 @@ export async function sweepGrantBriefs(
           await recordFailedAttempt(db, g.id, g.description_brief_attempts);
           return false;
         }
-        await saveBrief(db, g.id, brief);
+        try {
+          await saveBrief(db, g.id, brief);
+        } catch (e) {
+          // Logged rather than swallowed into the skip count. The comment above says a write
+          // error is "a real fault worth surfacing" -- but nothing surfaced it: the rejection
+          // just incremented `skipped`, indistinguishable from a grant with nothing to
+          // paraphrase. Still costs no attempt (the brief WAS produced), so it retries next
+          // hour, which is correct for a transient write failure.
+          console.error(`[grant-brief] save failed grant=${g.id}:`, e instanceof Error ? e.message : e);
+          return false;
+        }
         return true;
       }),
     );
