@@ -220,6 +220,102 @@ export interface BriefSweepResult {
   skipped: number;
   processed: number;
   more: boolean;
+  // Phase 2 (the one-time re-do of briefs written before the raw_text fallback). Both go
+  // to zero permanently once the pre-cutoff window is drained.
+  regenerated: number;
+  retired: number;
+}
+
+// PHASE 2 CUTOFF -- the moment the raw_text fallback reached production (#308, deploy
+// 20:11 UTC 2026-08-04; the first sweep on the new code was 20:37). Every brief stamped
+// before this was generated from `description` alone and judged against the old 20-word
+// stub floor, so the thin ones are worth one re-try against the better source. Briefs
+// stamped after it are already current and are never claimed here.
+//
+// A CONSTANT, NOT A ROLLING WINDOW, so this is genuinely one-time: every row it claims
+// leaves the window in the same run (regenerated, or retired below), so the phase-2
+// backlog only ever shrinks and the whole phase costs nothing once empty.
+const THIN_BRIEF_CUTOFF = "2026-08-04T20:20:00Z";
+
+// Re-do briefs that predate the cutoff AND fall under the current stub floor.
+//
+// RETIRING IS AS IMPORTANT AS REGENERATING. Anything claimed here is stamped -- either
+// with a new brief, or (when it is already long enough, or regeneration fails) by simply
+// advancing description_brief_at while keeping the brief it has. Without that, a grant
+// whose text cannot produce 45 words would be re-claimed every hour forever, and this
+// phase would never stop costing an Anthropic call. The row keeps its existing brief
+// either way, so a failure here is never worse than the status quo.
+async function requeueThinBriefs(
+  db: SupabaseClient,
+  budget: number,
+  batchSize: number,
+): Promise<{ regenerated: number; retired: number }> {
+  if (budget <= 0) return { regenerated: 0, retired: 0 };
+
+  // Light query first -- no raw_text, which is the expensive column. Only the rows that
+  // turn out to be thin pay for the full select below.
+  const { data, error } = await db
+    .from("grants")
+    .select("id, description_brief")
+    .not("description_brief", "is", null)
+    .lt("description_brief_at", THIN_BRIEF_CUTOFF)
+    .order("description_brief_at", { ascending: true })
+    .limit(budget);
+  if (error) throw new Error(`Thin-brief claim failed: ${error.message}`);
+
+  const claimed = (data ?? []) as { id: string; description_brief: string | null }[];
+  if (claimed.length === 0) return { regenerated: 0, retired: 0 };
+
+  const wordCount = (s: string) => s.trim().split(/\s+/).filter(Boolean).length;
+  const thin = claimed.filter((r) => wordCount(r.description_brief || "") < MIN_BRIEF_WORDS);
+  const alreadyFine = claimed.filter((r) => !thin.includes(r));
+
+  const stamp = new Date().toISOString();
+  let retired = 0;
+
+  // Bulk-retire the ones that are already long enough: nothing to regenerate, they just
+  // need to leave the window.
+  if (alreadyFine.length > 0) {
+    const { error: retireErr } = await db
+      .from("grants")
+      .update({ description_brief_at: stamp })
+      .in("id", alreadyFine.map((r) => r.id));
+    if (retireErr) throw new Error(`Thin-brief retire failed: ${retireErr.message}`);
+    retired += alreadyFine.length;
+  }
+
+  if (thin.length === 0) return { regenerated: 0, retired };
+
+  const { data: full, error: fullErr } = await db
+    .from("grants")
+    .select(SELECT)
+    .in("id", thin.map((r) => r.id));
+  if (fullErr) throw new Error(`Thin-brief hydrate failed: ${fullErr.message}`);
+
+  const rows = (full ?? []) as BriefableGrant[];
+  let regenerated = 0;
+
+  for (let i = 0; i < rows.length; i += batchSize) {
+    const batch = rows.slice(i, i + batchSize);
+    const results = await Promise.allSettled(
+      batch.map(async (g) => {
+        const brief = await generateGrantBrief(g);
+        if (brief) {
+          await saveBrief(db, g.id, brief);
+          return true;
+        }
+        // Keep the old brief, but stamp it so this row leaves the window for good.
+        await db.from("grants").update({ description_brief_at: stamp }).eq("id", g.id);
+        return false;
+      }),
+    );
+    for (const r of results) {
+      if (r.status === "fulfilled" && r.value) regenerated++;
+      else retired++;
+    }
+  }
+
+  return { regenerated, retired };
 }
 
 // Bounded backfill sweep. Claims the oldest grants with no brief, generates in small
@@ -261,5 +357,23 @@ export async function sweepGrantBriefs(
     }
   }
 
-  return { written, skipped, processed: pending.length, more: pending.length === opts.cap };
+  // Unwritten briefs always come first -- a grant with NO brief shows the raw agency
+  // one-liner, which is the worse of the two failures. Phase 2 only spends what the
+  // null-brief backlog left unused, so it cannot slow the primary drain down.
+  const { regenerated, retired } = await requeueThinBriefs(
+    db,
+    opts.cap - pending.length,
+    batchSize,
+  );
+
+  return {
+    written,
+    skipped,
+    processed: pending.length,
+    // `more` covers phase 1 only, which is what the drain cadence keys off. Phase 2 is
+    // one-time and self-terminating, so it never needs another run scheduled for it.
+    more: pending.length === opts.cap,
+    regenerated,
+    retired,
+  };
 }

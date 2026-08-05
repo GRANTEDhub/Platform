@@ -85,9 +85,23 @@
        block, and a wide light gap under it detached the concept box from the numbers it
        is reading. The box has its own 16px of interior padding, so the perceived space
        above the words is 28px either way -- the 6px comes off the part that was doing
-       nothing. -->
+       nothing.
+
+       min-height ON THE BOX, NOT MORE WORDS IN IT. Raising CONCEPT_MAX (#308) was the
+       wrong lever and did nothing: the matcher's tool schema asks for concept_synopsis in
+       "2-3 sentences" (~200-350 chars), so the text was never near the old 400 ceiling and
+       is not near the new 620 one either. The box read as cramped because a two-sentence
+       panel is short, not because it was being clipped. Making it TALLER than its text is
+       the honest fix -- a deliberate panel rather than a small box adrift in white space --
+       and it keeps this off lib/grants/engine.ts, where changing that instruction risks
+       moving fit scores for a cosmetic gain.
+
+       This does NOT close the gap above the decision band, and nothing here can: the page
+       is a fixed 1056px, the band is pinned to the bottom by design, and #306 already
+       showed that splitting the slack opens two gaps instead of one. Some white space
+       below a short alert is the shape of a one-page letter. -->
   <div style="display:grid; grid-template-columns:1.35fr 1fr; gap:34px; padding:12px 46px 2px 46px; align-items:stretch;">
-    <div style="background:#faf7f2; border-left:3px solid #E4761F; padding:16px 18px; height:100%;">
+    <div style="background:#faf7f2; border-left:3px solid #E4761F; padding:16px 18px; height:100%; min-height:170px; box-sizing:border-box;">
       <div style="font-size:10.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:#E4761F; margin-bottom:10px;">Concept proposal</div>
       <p style="font-size:13.5px; line-height:1.6; margin:0; color:#2a3a52; text-wrap:pretty;">{{#if conceptSynopsis}}{{conceptSynopsis}}{{else}}We will scope how your organization would run this programme once you tell us to proceed.{{/if}}</p>
     </div>
