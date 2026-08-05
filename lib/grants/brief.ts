@@ -413,7 +413,22 @@ async function requeueThinBriefs(
           return true;
         }
         // Keep the old brief, but stamp it so this row leaves the window for good.
-        await db.from("grants").update({ description_brief_at: stamp }).eq("id", g.id);
+        //
+        // THE ERROR IS CHECKED because supabase-js RESOLVES with { error } here rather than
+        // throwing -- so unlike the saveBrief calls above, a failure produces no rejection to
+        // catch and was entirely silent. This stamp is phase 2's ONLY retirement mechanism
+        // (there is no attempt counter on this path), so a silent failure means the row keeps
+        // its pre-cutoff timestamp, gets re-claimed next sweep, and spends another Anthropic
+        // call returning null again -- while retiredFailed increments as though it had been
+        // retired. Stamping remains the right thing to attempt regardless; this only makes a
+        // failure visible. Last unchecked write in the file.
+        const { error: stampErr } = await db
+          .from("grants")
+          .update({ description_brief_at: stamp })
+          .eq("id", g.id);
+        if (stampErr) {
+          console.error(`[grant-brief] requeue retire stamp failed grant=${g.id}: ${stampErr.message}`);
+        }
         return false;
       }),
     );
