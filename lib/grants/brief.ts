@@ -213,17 +213,82 @@ export async function ensureGrantBrief(
 // generate a brief. It is the largest column on the table (up to 100k chars), so the sweep
 // pays for it per claimed row; at PER_RUN_CAP=25 that is a bounded cost, and skipping the
 // grants that need it most is the alternative.
-const SELECT = "id, title, funder, description, raw_text, focus_areas, program_type";
+const SELECT =
+  "id, title, funder, description, raw_text, focus_areas, program_type, description_brief_attempts";
+
+// The sweep needs the attempt count; the shared BriefableGrant does not (ensureGrantBrief's
+// callers pass a grant row that has no reason to carry it), so it rides as a local shape
+// rather than widening the interface.
+type SweepRow = BriefableGrant & { description_brief_attempts: number | null };
+
+// ATTEMPTS BEFORE A ROW IS PARKED. Three is enough to ride out a transient Anthropic error
+// and low enough that a permanently un-generatable grant costs 3 calls in total instead of
+// one an hour forever.
+//
+// DUPLICATED IN THE INDEX PREDICATE (migration 0071). A partial index cannot reference
+// application config, so raising this REQUIRES a new migration widening
+// grants_description_brief_pending_idx to match -- otherwise the planner scans every
+// unwritten row, including the parked ones this exists to stop touching.
+const MAX_BRIEF_ATTEMPTS = 3;
+
+// Record a failed attempt. Read-then-write rather than an atomic increment: the sweep is
+// hourly with maxDuration 300s, so it never overlaps itself, and a lost increment would
+// only mean one extra retry rather than anything incorrect.
+//
+// NEVER THROWS. A failed bump must not turn one grant's skip into the whole run's failure;
+// the worst case is the row is retried once more next hour, which is the old behaviour.
+async function recordFailedAttempt(db: SupabaseClient, grantId: string, current: number | null): Promise<void> {
+  const { error } = await db
+    .from("grants")
+    .update({ description_brief_attempts: (current ?? 0) + 1 })
+    .eq("id", grantId);
+  if (error) console.error(`[grant-brief] attempt bump failed grant=${grantId}: ${error.message}`);
+}
+
+// How many rows the cap has taken out of the claim window entirely. Logged so this is a
+// number someone can read, rather than something inferred from a skip-rate trend across
+// hours -- which is how the looping went unnoticed in the first place.
+//
+// NULL RATHER THAN A THROW. This runs AFTER every write in the sweep has committed, so
+// throwing here would turn a fully successful run into a reported 500 and -- worse -- make
+// the route log an error instead of the counts. A diagnostic must never be able to fail the
+// work it is describing. Null prints as "?", which is honest: the number is unknown, not
+// zero.
+//
+// Deliberately unindexed. The predicate is the complement of the claim index
+// (attempts >= MAX rather than < MAX), so it scans the null-brief rows -- a few hundred on a
+// 958-row table, once an hour. An index existing only to serve a log line is the wrong
+// trade; revisit if grants grows an order of magnitude.
+async function countParked(db: SupabaseClient): Promise<number | null> {
+  const { count, error } = await db
+    .from("grants")
+    .select("id", { count: "exact", head: true })
+    .is("description_brief", null)
+    .gte("description_brief_attempts", MAX_BRIEF_ATTEMPTS);
+  if (error) {
+    console.error(`[grant-brief] parked count failed: ${error.message}`);
+    return null;
+  }
+  return count ?? 0;
+}
 
 export interface BriefSweepResult {
   written: number;
   skipped: number;
   processed: number;
   more: boolean;
-  // Phase 2 (the one-time re-do of briefs written before the raw_text fallback). Both go
-  // to zero permanently once the pre-cutoff window is drained.
+  // Rows the attempt cap has removed from the claim window for good. Null when the count
+  // query itself failed -- unknown, not zero.
+  parked: number | null;
+  // Phase 2 (the one-time re-do of briefs written before the raw_text fallback). All three
+  // go to zero permanently once the pre-cutoff window is drained.
   regenerated: number;
-  retired: number;
+  // SPLIT, because a single `retired` count could not answer the only question that
+  // mattered about the backfill: the first production run reported `regenerated 0,
+  // retired 5` and there was no way to tell whether those 5 briefs were already long
+  // enough (nothing to fix) or had failed to regenerate (something to fix).
+  retiredCurrent: number; // already clears the stub floor -- stamped, never regenerated
+  retiredFailed: number;  // regeneration returned nothing -- keeps its existing brief
 }
 
 // PHASE 2 CUTOFF -- the moment the raw_text fallback reached production (#308, deploy
@@ -274,8 +339,8 @@ async function requeueThinBriefs(
   db: SupabaseClient,
   budget: number,
   batchSize: number,
-): Promise<{ regenerated: number; retired: number }> {
-  if (budget <= 0) return { regenerated: 0, retired: 0 };
+): Promise<{ regenerated: number; retiredCurrent: number; retiredFailed: number }> {
+  if (budget <= 0) return { regenerated: 0, retiredCurrent: 0, retiredFailed: 0 };
 
   // Light query first -- no raw_text, which is the expensive column. Only the rows that
   // turn out to be thin pay for the full select below.
@@ -289,14 +354,15 @@ async function requeueThinBriefs(
   if (error) throw new Error(`Thin-brief claim failed: ${error.message}`);
 
   const claimed = (data ?? []) as { id: string; description_brief: string | null }[];
-  if (claimed.length === 0) return { regenerated: 0, retired: 0 };
+  if (claimed.length === 0) return { regenerated: 0, retiredCurrent: 0, retiredFailed: 0 };
 
   const wordCount = (s: string) => s.trim().split(/\s+/).filter(Boolean).length;
   const thin = claimed.filter((r) => wordCount(r.description_brief || "") < MIN_BRIEF_WORDS);
   const alreadyFine = claimed.filter((r) => !thin.includes(r));
 
   const stamp = new Date().toISOString();
-  let retired = 0;
+  let retiredCurrent = 0;
+  let retiredFailed = 0;
 
   // Bulk-retire the ones that are already long enough: nothing to regenerate, they just
   // need to leave the window.
@@ -306,10 +372,10 @@ async function requeueThinBriefs(
       .update({ description_brief_at: stamp })
       .in("id", alreadyFine.map((r) => r.id));
     if (retireErr) throw new Error(`Thin-brief retire failed: ${retireErr.message}`);
-    retired += alreadyFine.length;
+    retiredCurrent += alreadyFine.length;
   }
 
-  if (thin.length === 0) return { regenerated: 0, retired };
+  if (thin.length === 0) return { regenerated: 0, retiredCurrent, retiredFailed };
 
   const { data: full, error: fullErr } = await db
     .from("grants")
@@ -326,7 +392,24 @@ async function requeueThinBriefs(
       batch.map(async (g) => {
         const brief = await generateGrantBrief(g);
         if (brief) {
-          await saveBrief(db, g.id, brief);
+          try {
+            await saveBrief(db, g.id, brief);
+          } catch (e) {
+            // Logged, and NOT stamped -- the same call was left bare here after phase 1's
+            // was hardened, which made a write fault indistinguishable from "the model
+            // returned nothing usable" and quietly contaminated retiredFailed, the counter
+            // this run split out to disambiguate exactly that.
+            //
+            // NOT STAMPED IS DELIBERATE, and it is where this departs from the review's
+            // suggested fix. Stamping would retire the row and keep its thin brief forever
+            // because of one write blip, after a good regeneration had already been paid
+            // for. Phase 1 declines to park on a save failure for that same reason, so
+            // phase 2 declines to stamp on one: the row stays in the window and succeeds
+            // whenever the write does. The log is what makes it distinguishable, in both
+            // phases.
+            console.error(`[grant-brief] requeue save failed grant=${g.id}:`, e instanceof Error ? e.message : e);
+            return false;
+          }
           return true;
         }
         // Keep the old brief, but stamp it so this row leaves the window for good.
@@ -336,11 +419,11 @@ async function requeueThinBriefs(
     );
     for (const r of results) {
       if (r.status === "fulfilled" && r.value) regenerated++;
-      else retired++;
+      else retiredFailed++;
     }
   }
 
-  return { regenerated, retired };
+  return { regenerated, retiredCurrent, retiredFailed };
 }
 
 // Bounded backfill sweep. Claims the oldest grants with no brief, generates in small
@@ -367,12 +450,13 @@ export async function sweepGrantBriefs(
     .from("grants")
     .select(SELECT)
     .is("description_brief", null)
+    .lt("description_brief_attempts", MAX_BRIEF_ATTEMPTS)
     .order("ingested_at", { ascending: true })
     .limit(phase1Cap);
 
   if (error) throw new Error(`Brief sweep query failed: ${error.message}`);
 
-  const pending = (data ?? []) as BriefableGrant[];
+  const pending = (data ?? []) as SweepRow[];
   let written = 0;
   let skipped = 0;
 
@@ -380,9 +464,31 @@ export async function sweepGrantBriefs(
     const batch = pending.slice(i, i + batchSize);
     const results = await Promise.allSettled(
       batch.map(async (g) => {
-        const brief = await generateGrantBrief(g);
-        if (!brief) return false;
-        await saveBrief(db, g.id, brief);
+        // The try wraps GENERATION ONLY. A throw here is the same outcome as a null as far
+        // as this row is concerned -- no brief -- so it costs an attempt. A saveBrief
+        // failure below is deliberately NOT caught: the brief was produced, so a write
+        // error is a real fault worth surfacing, not a spent attempt.
+        let brief: string | null = null;
+        try {
+          brief = await generateGrantBrief(g);
+        } catch (e) {
+          console.error(`[grant-brief] generation threw grant=${g.id}:`, e instanceof Error ? e.message : e);
+        }
+        if (!brief) {
+          await recordFailedAttempt(db, g.id, g.description_brief_attempts);
+          return false;
+        }
+        try {
+          await saveBrief(db, g.id, brief);
+        } catch (e) {
+          // Logged rather than swallowed into the skip count. The comment above says a write
+          // error is "a real fault worth surfacing" -- but nothing surfaced it: the rejection
+          // just incremented `skipped`, indistinguishable from a grant with nothing to
+          // paraphrase. Still costs no attempt (the brief WAS produced), so it retries next
+          // hour, which is correct for a transient write failure.
+          console.error(`[grant-brief] save failed grant=${g.id}:`, e instanceof Error ? e.message : e);
+          return false;
+        }
         return true;
       }),
     );
@@ -395,7 +501,7 @@ export async function sweepGrantBriefs(
   // Unwritten briefs still come first -- a grant with NO brief shows the raw agency
   // one-liner, which is the worse of the two failures -- but phase 2 gets at least its
   // reserved slots, plus whatever phase 1 left unused on a light run.
-  const { regenerated, retired } = await requeueThinBriefs(
+  const { regenerated, retiredCurrent, retiredFailed } = await requeueThinBriefs(
     db,
     Math.max(opts.cap - pending.length, reserved),
     batchSize,
@@ -404,12 +510,14 @@ export async function sweepGrantBriefs(
   return {
     written,
     skipped,
+    parked: await countParked(db),
     processed: pending.length,
     // AGAINST phase1Cap, NOT opts.cap. Reserving slots shrinks the claim, so comparing to
     // the full cap would read a saturated run (20 of 20) as "nothing left" and stall the
     // drain silently -- the same shape of bug as the cache-stalled queue in July.
     more: pending.length === phase1Cap && phase1Cap > 0,
     regenerated,
-    retired,
+    retiredCurrent,
+    retiredFailed,
   };
 }

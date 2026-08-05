@@ -38,7 +38,8 @@ export async function GET(req: NextRequest) {
     const result = await sweepGrantBriefs(createServiceClient(), { cap: PER_RUN_CAP });
     console.log(
       `[grant-briefs] written ${result.written}, skipped ${result.skipped}, processed ${result.processed}, more=${result.more}` +
-        ` | requeue regenerated ${result.regenerated}, retired ${result.retired}`,
+        ` | parked ${result.parked ?? "?"}` +
+        ` | requeue regenerated ${result.regenerated}, current ${result.retiredCurrent}, failed ${result.retiredFailed}`,
     );
     return NextResponse.json(result);
   } catch (e) {
