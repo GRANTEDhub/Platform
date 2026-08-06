@@ -1,4 +1,5 @@
 import { requireClientOrAdmin } from "@/lib/auth";
+import { requirePursuitVisible } from "@/lib/pursuit/access";
 import { resolveIntellEngineContext } from "@/lib/intellengine/context";
 import { computeEligibility } from "@/lib/intellengine/eligibility";
 import IntellEngineComplianceClient from "./compliance-client";
@@ -7,6 +8,7 @@ export const dynamic = "force-dynamic";
 
 export default async function IntellEngineCompliance({ searchParams }: { searchParams: { draft?: string } }) {
   await requireClientOrAdmin();
+  await requirePursuitVisible();
   // Real per-client NOFO eligibility read for a matched grant (null for a
   // from-scratch draft or a staff preview -- no grant, so no gate is shown).
   const ctx = await resolveIntellEngineContext(searchParams.draft);

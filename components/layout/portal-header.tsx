@@ -19,12 +19,25 @@ import type { ClientNotifications } from "@/lib/portal/notifications";
 // next: a grant they approved becomes a draft. It is NOT under /portal -- the hub has its
 // own route tree and mounts this same header -- which is exactly why it belongs in the nav
 // rather than only being reachable from a dashboard tile.
+//
+// The IntellEngine tab is conditional while Pursuit is gated off for clients
+// (lib/pursuit/access.ts). The flag is read SERVER-SIDE and handed down as a prop rather
+// than read here: this is a "use client" component, so process.env would be undefined at
+// runtime unless the var were NEXT_PUBLIC_, which would bake it into the bundle at build
+// time and make the kill switch a redeploy. Omitted entirely, not disabled -- a greyed
+// tab still advertises the feature, which is the "Soon" nav link this codebase already
+// rejected once.
 const NAV: { href: string; label: string }[] = [
   { href: "/portal", label: "Dashboard" },
   { href: "/portal/triage", label: "Grant Alerts" },
   { href: "/portal/grants", label: "Grant Report" },
-  { href: "/intellengine", label: "IntellEngine" },
 ];
+
+const PURSUIT_NAV = { href: "/intellengine", label: "IntellEngine" };
+
+function navItems(showPursuit: boolean): { href: string; label: string }[] {
+  return showPursuit ? [...NAV, PURSUIT_NAV] : NAV;
+}
 
 function isActive(pathname: string, href: string): boolean {
   // Dashboard is an exact match -- the other tabs live under /portal too, so a
@@ -33,10 +46,18 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(href + "/");
 }
 
-function NavLinks({ pathname, className }: { pathname: string; className?: string }) {
+function NavLinks({
+  pathname,
+  className,
+  showPursuit,
+}: {
+  pathname: string;
+  className?: string;
+  showPursuit: boolean;
+}) {
   return (
     <nav className={className}>
-      {NAV.map((item) => {
+      {navItems(showPursuit).map((item) => {
         const active = isActive(pathname, item.href);
         return (
           <Link
@@ -63,9 +84,14 @@ function NavLinks({ pathname, className }: { pathname: string; className?: strin
 export function PortalHeader({
   orgName,
   notifications,
+  showPursuit = false,
 }: {
   orgName: string | null;
   notifications: ClientNotifications | null;
+  // Whether the IntellEngine tab appears. Resolved server-side by the layout from
+  // pursuitClientAccessEnabled(); defaults to FALSE so a caller that forgets to pass it
+  // hides the tab rather than exposing an unfinished surface.
+  showPursuit?: boolean;
 }) {
   const pathname = usePathname();
   const showClientChrome = notifications !== null;
@@ -85,7 +111,13 @@ export function PortalHeader({
             <span className="font-serif text-[15px] font-bold tracking-[0.03em] text-white">GRANTED</span>
           </Link>
           {/* Desktop nav sits inline; on mobile it drops to a scrollable second row. */}
-          {showClientChrome && <NavLinks pathname={pathname} className="hidden items-center gap-[2px] md:flex" />}
+          {showClientChrome && (
+            <NavLinks
+              pathname={pathname}
+              showPursuit={showPursuit}
+              className="hidden items-center gap-[2px] md:flex"
+            />
+          )}
         </div>
         <div className="flex items-center gap-3">
           {/* Search sits where the console's does: right-hand group, leading the band's
@@ -106,7 +138,11 @@ export function PortalHeader({
         </div>
       </div>
       {showClientChrome && (
-        <NavLinks pathname={pathname} className="flex items-center gap-[2px] overflow-x-auto px-[26px] pb-2 md:hidden" />
+        <NavLinks
+          pathname={pathname}
+          showPursuit={showPursuit}
+          className="flex items-center gap-[2px] overflow-x-auto px-[26px] pb-2 md:hidden"
+        />
       )}
     </header>
   );

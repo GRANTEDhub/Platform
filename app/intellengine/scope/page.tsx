@@ -1,4 +1,5 @@
 import { requireClientOrAdmin } from "@/lib/auth";
+import { requirePursuitVisible } from "@/lib/pursuit/access";
 import { resolveIntellEngineContext } from "@/lib/intellengine/context";
 import { scopeSeedFrom } from "@/lib/intellengine/prepopulate";
 import IntellEngineScopeClient from "./scope-client";
@@ -11,6 +12,7 @@ export default async function IntellEngineScope({
   searchParams: { draft?: string; from?: string };
 }) {
   await requireClientOrAdmin();
+  await requirePursuitVisible();
   // Seed from the released concept proposal (premium) -> grant hints -> blank.
   // Resolves null for a staff preview (no client draft under RLS) -> blank canvas.
   const ctx = await resolveIntellEngineContext(searchParams.draft);

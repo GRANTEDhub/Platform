@@ -1,4 +1,5 @@
 import { requireClient } from "@/lib/auth";
+import { requirePursuitVisible } from "@/lib/pursuit/access";
 import { createClient } from "@/lib/supabase/server";
 import { HubShell } from "@/components/layout/hub-background";
 import { IntellEngineHub, type HubDraft, type HubCandidate } from "@/components/intellengine/hub";
@@ -22,6 +23,7 @@ function grantOf(g: GrantEmbed) {
 // client surface (it needs a client's real drafts + matches).
 export default async function IntellEngineHubPage() {
   const { memberships } = await requireClient();
+  await requirePursuitVisible();
   const org = memberships[0];
   const supabase = createClient();
 

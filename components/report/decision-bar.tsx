@@ -18,6 +18,7 @@ export function DecisionBar({
   deciderLabel,
   tier,
   pursuitPath = null,
+  showPursuitPath = false,
 }: {
   cardId: string;
   decision: CardDecision;
@@ -28,6 +29,10 @@ export function DecisionBar({
   // pursuit chooser (IntellEngine / SME / in-house, migration 0061). Save-for-later
   // and Pass are unchanged. Absent on the staff view, which keeps plain Pursue.
   tier?: "premium" | "base";
+  // Forwarded to PursuitChooser: whether the IntellEngine path is offered. Server-resolved
+  // from pursuitClientAccessEnabled(); false hides that one option, leaving SME and
+  // in-house. Defaults false so a missing prop hides rather than exposes.
+  showPursuitPath?: boolean;
   pursuitPath?: PursuitPath | null;
 }) {
   const router = useRouter();
@@ -71,7 +76,13 @@ export function DecisionBar({
       <div>
         <div className="flex flex-wrap items-center gap-3">
           {tier ? (
-            <PursuitChooser cardId={cardId} pursuitPath={pursuitPath} tier={tier} variant="detail" />
+            <PursuitChooser
+              cardId={cardId}
+              pursuitPath={pursuitPath}
+              tier={tier}
+              variant="detail"
+              showPursuitPath={showPursuitPath}
+            />
           ) : (
             <button
               disabled={busy}

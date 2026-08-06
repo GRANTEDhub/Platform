@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { requireClient } from "@/lib/auth";
+import { requirePursuitVisible } from "@/lib/pursuit/access";
 import { createClient } from "@/lib/supabase/server";
 import { HubShell } from "@/components/layout/hub-background";
 import { IntellEngineLogo } from "@/components/intellengine/logo";
@@ -17,6 +18,7 @@ export const dynamic = "force-dynamic";
 // draft has reached, carrying the draft id so each step can advance its status.
 export default async function IntellEngineDraftLanding({ params }: { params: { draftId: string } }) {
   const { memberships } = await requireClient();
+  await requirePursuitVisible();
   const org = memberships[0];
   const supabase = createClient();
 

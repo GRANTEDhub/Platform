@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { pursuitApiDenied } from "@/lib/pursuit/access";
 import { STEP_ORDER, furthestStatus } from "@/lib/intellengine/drafts";
 import type { IntellEngineDraft, IntellEngineDraftStatus } from "@/types/database";
 
@@ -13,6 +14,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+
+  // Pursuit is gated off for clients (lib/pursuit/access.ts). This route advances a
+  // draft's status as the wizard is walked, so leaving it open would let a client drive
+  // progress through steps they cannot load. Staff are unaffected.
+  if (await pursuitApiDenied()) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   let body: { status?: IntellEngineDraftStatus; title?: string };
   try {

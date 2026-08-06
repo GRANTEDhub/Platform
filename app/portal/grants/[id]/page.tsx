@@ -5,6 +5,7 @@ import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { GrantReviewConsole, type ReviewKeyDetail, type ReviewMeta } from "@/components/report/grant-review-console";
 import { DecisionBar } from "@/components/report/decision-bar";
+import { pursuitClientAccessEnabled } from "@/lib/pursuit/access";
 import { ConceptProposalUpsell } from "@/components/report/concept-upsell";
 import { ClientConceptProposal } from "@/components/report/client-concept-proposal";
 import { getConceptProposal } from "@/lib/concept/store";
@@ -277,6 +278,7 @@ export default async function PortalGrantDetail({
                 deciderLabel={null}
                 tier={tier}
                 pursuitPath={card.pursuit_path}
+                showPursuitPath={pursuitClientAccessEnabled()}
               />
             </div>
           </section>
