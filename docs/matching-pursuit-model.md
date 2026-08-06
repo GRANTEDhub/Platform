@@ -154,9 +154,46 @@ down.
 
 - **Step 2's inversion (§4) was proposed and never explicitly confirmed.** The build
   order above treats it as operative. One word settles it.
-- **Live-risk check, worth doing before anything else ships:** if a client can reach the
-  IntellEngine screens in production today, they hit a file input that silently discards
-  their upload and an editor that silently discards their edits. That is worse than the
-  screens not existing. Whether those routes are client-reachable in prod right now
-  needs confirming.
+- **Live-risk check — RESOLVED, and the answer is the bad one. See §7.**
 - The "hold pending Sam's read" that gated this build order is **stale** — superseded.
+
+---
+
+## 7. The Pursuit screens ARE client-reachable in production
+
+Confirmed against the tree. There is no feature flag anywhere in the path.
+
+**Three entry points, all client-facing:**
+
+- `components/layout/portal-header.tsx:26` — **`{ href: "/intellengine", label: "IntellEngine" }`
+  is a permanent tab in the client portal nav**, sitting beside Dashboard, Grant Alerts,
+  and Grant Report. The file's own comment argues it belongs in the nav rather than only
+  on a dashboard tile.
+- `app/portal/page.tsx:274` — `intellEngineHref="/intellengine"` on the client dashboard.
+- `components/report/pursuit-chooser.tsx:178,184` — the Grant Report's pursuit chooser
+  `router.push`es clients straight in.
+
+**The guards admit clients by design.** `/intellengine` and `/intellengine/[draftId]` use
+`requireClient()`; `scope`, `compliance`, and `build` use `requireClientOrAdmin()`
+(`lib/auth.ts:129`), which returns early for staff and otherwise passes any activated
+`client_members` row. The layout is deliberately ungated — `0656605` moved the check to
+the pages on purpose. From the hub, `resumeStep(status)` routes a draft to
+`scope` / `compliance` / `build` (`components/intellengine/hub.tsx:62`).
+
+**What a client finds there:**
+
+- `app/intellengine/scope/scope-client.tsx` — **zero `fetch`/POST calls.** Editor state is
+  purely local. Its header comment: *"persisting these edits back to the draft is the
+  remaining follow-up… Uploaded files keep only the filename; nothing is stored yet."*
+- `app/intellengine/compliance/compliance-client.tsx:164` — `onChange={() => onVerify(true)}`.
+  `markVerified` is local state with no network call. **The row turns green**, which is an
+  affirmative claim that a compliance document was received and verified, about documents
+  like a 990 or an audit.
+- `intellengine_drafts` (migration 0062) stores only `status`
+  (`scope`/`compliance`/`build`/`complete`) — structural progress, no content.
+
+So a client can type a full project scope, upload their audit, watch the row go green,
+navigate away, and lose all of it — having been told the opposite.
+
+**Not verifiable from the sandbox:** whether any client has actually done this. That needs
+row-level SELECT. Code-path reachability is certain; usage is not known.
