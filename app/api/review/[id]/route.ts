@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { pursuitApiDenied } from "@/lib/pursuit/access";
 import { computeGrantSummary } from "@/lib/review/summary";
 import { recordCardFeedback } from "@/lib/feedback/record";
 import type { CardDecision, PursuitPath } from "@/types/database";
@@ -111,6 +112,22 @@ export async function PATCH(
     const path = body.pursuit_path;
     if (path !== null && !validPaths.includes(path)) {
       return NextResponse.json({ error: "Invalid pursuit path" }, { status: 400 });
+    }
+    // Pursuit is gated off for clients (lib/pursuit/access.ts), and THIS is the write the
+    // hidden chooser option used to make -- the one that stamps decision='approved' +
+    // pursuit_path='intellengine'. Hiding the option card closed the only live caller, but
+    // not the endpoint: a hand-crafted PATCH still lands the card in exactly the state the
+    // gate exists to prevent, a card claiming a pursuit route the client cannot walk. RLS
+    // and guard_card_approval do not help -- the 0061 column-lock permits a client to set
+    // both columns on their own card by design, and neither knows about the flag.
+    //
+    // ONLY the intellengine path is refused. Gating the whole branch would break the two
+    // paths that DO work (sme, in_house), and null has to stay reachable because clearing
+    // is how a client backs out of a choice recorded before the gate went up -- the
+    // self-recovery the chooser's "Remove this choice" control depends on. Checked after
+    // the path match so the common case never pays for the profile lookup.
+    if (path === "intellengine" && (await pursuitApiDenied())) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
     const pursuing = path !== null;
     const { data, error } = await supabase
