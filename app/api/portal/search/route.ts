@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { pursuitClientAccessEnabled } from "@/lib/pursuit/access";
 
 // The client portal's jump-to search — the counterpart of /api/search behind the console
 // command band, scoped to what a client actually has.
@@ -56,6 +57,13 @@ export async function GET(req: Request) {
   // an error, so the field simply finds nothing instead of showing them a failure.
   if (!membership) return NextResponse.json({ grants: [], drafts: [] });
   const clientId = (membership as { client_id: string }).client_id;
+
+  // Past the membership check the caller is a client (staff have no membership and
+  // already returned), so the flag alone decides. The draft query still runs and its
+  // result is dropped rather than being made conditional: keeping Promise.all
+  // homogeneous avoids a union return type for one small indexed query, and the day
+  // the flag flips on there is nothing to unwind.
+  const showDrafts = pursuitClientAccessEnabled();
 
   const raw = (new URL(req.url).searchParams.get("q") ?? "").trim();
   // Strip what carries meaning in PostgREST's filter grammar before interpolating — an
@@ -120,7 +128,7 @@ export async function GET(req: Request) {
     .filter((r): r is NonNullable<typeof r> => r !== null)
     .slice(0, LIMIT);
 
-  return NextResponse.json({ grants, drafts: draftRes.data ?? [] });
+  return NextResponse.json({ grants, drafts: showDrafts ? draftRes.data ?? [] : [] });
 }
 
 // The client's own four states, in the same cascade the portal dashboard reads: a decision

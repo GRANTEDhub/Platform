@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { pursuitClientAccessEnabled } from "@/lib/pursuit/access";
 import type { IntellEngineDraft } from "@/types/database";
 
 // Create (or resume) an IntellEngine proposal draft (migration 0062). Two callers:
@@ -43,6 +44,14 @@ export async function POST(req: NextRequest) {
   // client's behalf, so the org comes from an explicit body.client_id. A CLIENT
   // member drafts for their OWN org (membership), ignoring any body.client_id.
   const { data: profile } = await supabase.from("profiles").select("id").eq("id", user.id).maybeSingle();
+
+  // Pursuit is gated off for clients (lib/pursuit/access.ts). Hiding the chooser does
+  // not close the endpoint it POSTs to, and without this a client could still mint
+  // draft rows for a feature they cannot see. 404 rather than 403, matching what the
+  // pages do -- the route is meant to look absent, not forbidden. Staff unaffected.
+  if (!profile && !pursuitClientAccessEnabled()) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
   let clientId: string | undefined;
   if (profile) {
     clientId = body.client_id ?? undefined;

@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { PortalHeader } from "@/components/layout/portal-header";
+import { pursuitClientAccessEnabled } from "@/lib/pursuit/access";
 import { getClientNotifications, type ClientNotifications } from "@/lib/portal/notifications";
 
 type MembershipRow = { clients: { id: string; name: string } | { id: string; name: string }[] | null };
@@ -43,7 +44,7 @@ export default async function IntellEngineLayout({ children }: { children: React
 
   return (
     <div className="flex min-h-screen flex-col">
-      <PortalHeader orgName={orgName} notifications={notifications} />
+      <PortalHeader orgName={orgName} notifications={notifications} showPursuit={pursuitClientAccessEnabled()} />
       <main className="flex-1">{children}</main>
     </div>
   );

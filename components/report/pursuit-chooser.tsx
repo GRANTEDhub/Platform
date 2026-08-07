@@ -35,11 +35,24 @@ export function PursuitChooser({
   pursuitPath,
   tier,
   variant = "detail",
+  showPursuitPath = false,
 }: {
   cardId: string;
   pursuitPath: PursuitPath | null;
   tier: "premium" | "base";
   variant?: "row" | "detail";
+  // Whether the IntellEngine path is offered at all. Server-resolved from
+  // pursuitClientAccessEnabled() and threaded through DecisionBar, because this is a
+  // "use client" component and cannot read the env var itself.
+  //
+  // Offering the path while the screens are gated would be the worst version of the bug
+  // it is closing: the click records decision='approved' with pursuit_path='intellengine'
+  // and THEN navigates into a 404, leaving the card claiming a pursuit route the client
+  // was never able to walk. Hidden, not locked -- premiumLock already means "upgrade to
+  // reach this", which is a different and answerable proposition.
+  //
+  // Defaults to FALSE, so a caller that forgets the prop hides the path.
+  showPursuitPath?: boolean;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -91,7 +104,15 @@ export function PursuitChooser({
         </button>
       )}
 
-      {open && <ChooserPanel cardId={cardId} pursuitPath={pursuitPath} tier={tier} onClose={() => setOpen(false)} />}
+      {open && (
+        <ChooserPanel
+          cardId={cardId}
+          pursuitPath={pursuitPath}
+          tier={tier}
+          showPursuitPath={showPursuitPath}
+          onClose={() => setOpen(false)}
+        />
+      )}
     </>
   );
 }
@@ -100,11 +121,13 @@ function ChooserPanel({
   cardId,
   pursuitPath,
   tier,
+  showPursuitPath,
   onClose,
 }: {
   cardId: string;
   pursuitPath: PursuitPath | null;
   tier: "premium" | "base";
+  showPursuitPath: boolean;
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -250,16 +273,20 @@ function ChooserPanel({
             </div>
           ) : (
             <>
-              <OptionCard
-                icon={<Sparkles className="h-5 w-5" />}
-                title="Write with IntellEngine"
-                sub="Draft the proposal with GRANTED's AI, starting from your concept proposal."
-                onClick={chooseIntellEngine}
-                busy={busy === "intellengine"}
-                active={pursuitPath === "intellengine"}
-                premiumLock={tier === "base"}
-              />
-              {tier === "base" && showTeaser && <IntellEngineTeaser />}
+              {showPursuitPath && (
+                <>
+                  <OptionCard
+                    icon={<Sparkles className="h-5 w-5" />}
+                    title="Write with IntellEngine"
+                    sub="Draft the proposal with GRANTED's AI, starting from your concept proposal."
+                    onClick={chooseIntellEngine}
+                    busy={busy === "intellengine"}
+                    active={pursuitPath === "intellengine"}
+                    premiumLock={tier === "base"}
+                  />
+                  {tier === "base" && showTeaser && <IntellEngineTeaser />}
+                </>
+              )}
 
               <OptionCard
                 icon={<Users className="h-5 w-5" />}
