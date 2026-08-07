@@ -187,7 +187,15 @@ export default async function PortalHome() {
       released: cards
         .filter((c) => c.sme_released_at !== null)
         .map((c) => ({ id: c.id, title: c.grant?.title || "Untitled opportunity", at: c.sme_released_at as string })),
-      drafts: draftRecords.map((d) => ({ id: d.id, title: d.title, at: d.updated_at })),
+      // Gated with the rest of Pursuit (lib/pursuit/access.ts). This was the one surface on
+      // this page the gate missed: the nav tab, the tile href below, and the drafts panel all
+      // hide, but the feed still emitted "Your proposal draft moved" for any draft touched in
+      // the trailing 14 days -- naming a feature every other surface here now hides. No
+      // click-through (ClientActivity renders plain text, no href), so this is a stale mention
+      // rather than a dead end, but a client should not be told about a screen they cannot open.
+      drafts: pursuitClientAccessEnabled()
+        ? draftRecords.map((d) => ({ id: d.id, title: d.title, at: d.updated_at }))
+        : [],
       now,
     },
     "client",
