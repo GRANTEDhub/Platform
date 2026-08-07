@@ -5,6 +5,7 @@ import { sanitizeRichText } from "@/lib/sanitize/html";
 import { collapseDuplicatedBlock, previewHtml } from "@/lib/grants/description";
 import type { FitFactorView, ReviewFactor } from "@/lib/report/fit-factors";
 import type { EligibilityVerdict } from "@/lib/intellengine/eligibility";
+import { ALLOWABLE_USES_FALLBACK, type AllowableUses } from "@/lib/grants/allowable-uses";
 
 // The grant review screen — one matched grant, one client, one decision.
 //
@@ -59,6 +60,7 @@ export function GrantReviewConsole({
   summary,
   meta,
   eligibility,
+  allowableUses = null,
   rationale,
   factors,
   scoreFactors,
@@ -96,6 +98,13 @@ export function GrantReviewConsole({
   summary: string | null;
   meta: ReviewMeta[];
   eligibility: EligibilityVerdict;
+  // What the money may be spent on (migration 0072), already read through
+  // readAllowableUses() by the page. NULL MEANS RENDER NOTHING AT ALL, which is how the
+  // client portal passes it while ALLOWABLE_USES_CLIENT_VISIBLE is off — distinct from a
+  // parsed value with an empty items array, which renders the "Ask our team" sentinel
+  // because we DID look and the NOFO did not say. Defaults to null so a caller that
+  // forgets it shows nothing rather than a half-built section.
+  allowableUses?: AllowableUses | null;
   // Prose. `blocking` is bolded inside it — see the note at the top of this file.
   rationale: { lead: string | null; blocking: string | null; mitigation: string | null };
   factors: FitFactorView;
@@ -162,6 +171,7 @@ export function GrantReviewConsole({
               summary={summary}
               meta={meta}
               eligibility={eligibility}
+              allowableUses={allowableUses}
             />
             <RationaleCard
               rationale={rationale}
@@ -211,6 +221,7 @@ function OverviewCard({
   summary,
   meta,
   eligibility,
+  allowableUses,
 }: {
   tags: string[];
   agencyLine: string | null;
@@ -218,6 +229,7 @@ function OverviewCard({
   summary: string | null;
   meta: ReviewMeta[];
   eligibility: EligibilityVerdict;
+  allowableUses: AllowableUses | null;
 }) {
   return (
     <section className={`shrink-0 ${CARD} px-5 pb-[15px] pt-4`}>
@@ -240,6 +252,8 @@ function OverviewCard({
       </h1>
 
       <ProgrammeSummary raw={summary} />
+
+      <AllowableUsesBlock value={allowableUses} />
 
       {meta.length > 0 && (
         <div className="mt-[13px] flex flex-wrap items-start gap-y-3 border-t border-hairline-strong pt-3">
@@ -340,6 +354,54 @@ function ProgrammeSummary({ raw }: { raw: string | null }) {
       className="mt-2.5 space-y-2 text-[13px] leading-[1.6] text-ink-muted [text-wrap:pretty] [&_li]:ml-4 [&_li]:list-disc [&_strong]:font-semibold [&_strong]:text-brand-navy"
       dangerouslySetInnerHTML={{ __html: html }}
     />
+  );
+}
+
+// What the money may be spent on. Every line is a verbatim-verified read of the NOFO
+// (lib/grants/allowable-uses.ts) — nothing here is paraphrased into existence, which is why
+// it can sit this close to the programme summary without being mistaken for more of it.
+//
+// THREE STATES, and the distinction is the point:
+//   null            -> render nothing. The caller is not showing this section at all (the
+//                      client portal while the flag is off, or a page that never passes it).
+//   items non-empty -> the list.
+//   items empty     -> the sentinel. We looked and the NOFO did not say plainly, which is a
+//                      different statement from silence and is the one a client can act on
+//                      by asking. `reason` is deliberately NOT surfaced here: no-section,
+//                      no-raw-text and all-dropped are OUR diagnostics, and telling a client
+//                      "the model's quotes failed verification" would be answering a
+//                      question they did not ask with information they cannot use.
+//
+// The quote rides in `title` rather than on the page. It is the evidence, not the content:
+// a reader who wants to check a line can hover it, and a reader who does not is spared a
+// block quote per bullet. Staff get the same treatment as clients here on purpose — if the
+// quote is not good enough to show a client, it should not have passed the gate.
+function AllowableUsesBlock({ value }: { value: AllowableUses | null }) {
+  if (!value) return null;
+
+  return (
+    <div className="mt-[13px] border-t border-hairline-strong pt-3">
+      <h2 className="text-[11px] font-semibold uppercase tracking-[0.07em] text-ink-muted">Allowable uses of funds</h2>
+      {value.items.length === 0 ? (
+        <p className="mt-2 text-[13px] leading-[1.6] text-ink-muted">{ALLOWABLE_USES_FALLBACK}</p>
+      ) : (
+        <ul className="mt-2 space-y-[5px]">
+          {value.items.map((item) => (
+            <li
+              key={item.line}
+              className="flex gap-2 text-[13px] leading-[1.55] text-ink-muted [text-wrap:pretty]"
+              // The verbatim NOFO span this line came from. Absent only on rows written
+              // before quotes were stored, so the attribute is conditional rather than an
+              // empty tooltip.
+              title={item.quote || undefined}
+            >
+              <span aria-hidden="true" className="mt-[7px] h-[3px] w-[3px] shrink-0 rounded-full bg-brand-orange" />
+              <span className="min-w-0">{item.line}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
