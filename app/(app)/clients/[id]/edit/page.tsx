@@ -195,7 +195,7 @@ export default async function EditClientPage({
       .order("created_at", { ascending: false }),
     supabase
       .from("client_members")
-      .select("id, email, role, activated_at")
+      .select("id, email, role, activated_at, setup_link_sent_at")
       .eq("client_id", params.id)
       .order("invited_at", { ascending: true }),
   ]);
