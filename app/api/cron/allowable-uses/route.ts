@@ -50,7 +50,11 @@ export async function GET(req: NextRequest) {
         ` | empty: no-section ${r.noSection}, no-raw-text ${r.noRawText}, all-dropped ${r.allDropped}` +
         ` | failed ${r.failed}, parked ${r.parked ?? "?"}` +
         ` | quotes returned ${r.quotesReturned}, kept ${r.quotesKept}` +
-        ` (normalized) / ${r.quotesKeptStrict} (byte-exact)`,
+        ` (normalized) / ${r.quotesKeptStrict} (byte-exact)` +
+        // The recut's own line, kept on the same log entry so one grep answers both "is the
+        // gate healthy" and "is the better anchoring recovering the rows it was built for".
+        ` | recut improved ${r.recutImproved}, still-empty ${r.recutStillEmpty},` +
+        ` retired-short ${r.recutRetiredShort}, failed ${r.recutFailed}`,
     );
     return NextResponse.json(r);
   } catch (e) {
