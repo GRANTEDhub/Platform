@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
+import { SpinningMark } from "@/components/ui/spinning-mark";
 
 // Where a client lands from their Welcome-email setup link: /auth/confirm has
 // already verified the one-time (recovery) token and set the session by the time
@@ -18,6 +19,9 @@ export default function SetPasswordPage() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
+  // Distinct from `loading`: the password is saved and we are now waiting on the
+  // navigation. Both show the overlay; only this one is allowed to say "Password set".
+  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -27,6 +31,9 @@ export default function SetPasswordPage() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // Belt to the overlay's braces: an Enter keypress can re-fire submit in the tick
+    // before the overlay paints, and updateUser twice is a doubled attempt.
+    if (loading || saved) return;
     if (password.length < 8) {
       setError("Use at least 8 characters.");
       return;
@@ -39,16 +46,46 @@ export default function SetPasswordPage() {
     setError(null);
     const supabase = createClient();
     const { error } = await supabase.auth.updateUser({ password });
-    setLoading(false);
     if (error) {
+      setLoading(false);
       setError(error.message);
       return;
     }
+    // DO NOT clear the busy state here. router.push below is a server round trip --
+    // /portal runs requireClient, then the layout's first-login gate redirects to
+    // /welcome, which is force-dynamic -- so several seconds can pass before the
+    // screen changes. Clearing it handed the client back a live "Set password &
+    // continue" button with no sign anything was happening, and re-clicking it
+    // doubled the attempt. The overlay stays up until the new page replaces us.
+    setSaved(true);
     // Into the portal. The portal layout redirects first-time clients (whose
     // profile isn't confirmed yet) to /welcome for the profile review (#16);
     // returning clients land straight on the dashboard.
     router.push("/portal");
     router.refresh();
+  }
+
+  // Full-screen, and rendered INSTEAD of the card rather than over it: the card's
+  // `backdrop-blur-md` makes it a containing block for fixed-position descendants,
+  // so a `fixed inset-0` overlay nested inside would size to the card, not the
+  // viewport. Replacing the tree sidesteps that entirely and also guarantees the
+  // submit button is gone from the DOM, not merely disabled.
+  if (loading || saved) {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="fixed inset-0 z-[100] flex flex-col items-center justify-center gap-6 bg-white px-6 text-center"
+      >
+        <h2 className="font-serif text-2xl font-semibold text-brand-navy">
+          {saved ? "Password set" : "Setting your password"}
+        </h2>
+        <SpinningMark />
+        <p className="text-sm text-muted-foreground">
+          {saved ? "Taking you to your account" : "One moment…"}
+        </p>
+      </div>
+    );
   }
 
   return (
@@ -103,8 +140,10 @@ export default function SetPasswordPage() {
 
             {error && <p className="text-sm text-destructive">{error}</p>}
 
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "Saving…" : "Set password & continue"}
+            {/* No disabled/"Saving…" state needed: the overlay above returns early for
+                the whole in-flight window, so this button only ever renders idle. */}
+            <Button type="submit" className="w-full">
+              Set password &amp; continue
             </Button>
           </form>
         )}
