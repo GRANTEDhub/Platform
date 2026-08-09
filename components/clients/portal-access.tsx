@@ -2,6 +2,7 @@ import { cn } from "@/lib/utils";
 import {
   inviteClientMember,
   removeClientMember,
+  sendClientSetupLink,
   setClientSeats,
 } from "@/app/(app)/clients/[id]/portal-actions";
 
@@ -10,12 +11,25 @@ export type PortalMember = {
   email: string;
   role: string;
   activated_at: string | null;
+  setup_link_sent_at: string | null;
 };
 
+function sentOn(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+}
+
 // Staff control for a client's portal logins: seats used, the member list (with
-// remove), and an add-login form. All server-action driven — no client JS. The
-// add form provisions the login server-side (open signup is off), so after adding,
-// staff just tell the client to sign in at the login page.
+// per-member "Send setup link" + remove), and an add-login form. All server-action
+// driven — no client JS.
+//
+// Adding provisions the login server-side (open signup is off) but sends NOTHING, so
+// each row carries its own send button: that's how an existing client gets a working
+// way in without staff hand-writing them the URL. Two independent row states answer
+// two different questions —
+//   pending                : has the client ever logged in? (activated_at)
+//   setup link sent <date> : have we ever told them how? (setup_link_sent_at)
+// A row can be provisioned-but-never-emailed indefinitely, which is exactly the
+// invisible state this panel used to leave staff guessing about.
 export function PortalAccess({
   clientId,
   seatLimit,
@@ -66,18 +80,35 @@ export function PortalAccess({
                 <p className="text-xs capitalize text-muted-foreground">
                   {m.role}
                   {m.activated_at ? "" : " · pending"}
+                  {m.setup_link_sent_at && (
+                    <span className="normal-case"> · setup link sent {sentOn(m.setup_link_sent_at)}</span>
+                  )}
                 </p>
               </div>
-              <form action={removeClientMember}>
-                <input type="hidden" name="client_id" value={clientId} />
-                <input type="hidden" name="member_id" value={m.id} />
-                <button
-                  type="submit"
-                  className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-red-600"
-                >
-                  Remove
-                </button>
-              </form>
+              <div className="flex shrink-0 items-center gap-3">
+                {/* Resend is always available: these links are one-time and expire, so a
+                    client who sat on theirs needs a fresh one, not a support thread. */}
+                <form action={sendClientSetupLink}>
+                  <input type="hidden" name="client_id" value={clientId} />
+                  <input type="hidden" name="member_id" value={m.id} />
+                  <button
+                    type="submit"
+                    className="text-xs font-semibold text-brand-orange transition-colors hover:text-brand-navy"
+                  >
+                    {m.setup_link_sent_at ? "Resend setup link" : "Send setup link"}
+                  </button>
+                </form>
+                <form action={removeClientMember}>
+                  <input type="hidden" name="client_id" value={clientId} />
+                  <input type="hidden" name="member_id" value={m.id} />
+                  <button
+                    type="submit"
+                    className="text-xs text-muted-foreground transition-colors hover:text-red-600"
+                  >
+                    Remove
+                  </button>
+                </form>
+              </div>
             </li>
           ))}
         </ul>
@@ -110,7 +141,7 @@ export function PortalAccess({
       <p className="text-xs text-muted-foreground">
         {full
           ? "All seats used — raise the limit above to add more."
-          : "They sign in at the login page with this email — no password needed."}
+          : "Adding a login doesn’t email anyone — use “Send setup link” on the row to let them in."}
       </p>
     </div>
   );
