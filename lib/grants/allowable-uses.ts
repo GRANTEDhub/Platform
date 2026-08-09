@@ -40,20 +40,37 @@ const MIN_QUOTE_CHARS = 24;
 // How much NOFO text to hand the model, centred on the allowable-costs section rather than
 // taken from the top -- see allowableSource.
 const WINDOW_CHARS = 14000;
+// A second window, when a strong cluster of headings sits outside the primary one. Smaller
+// than the primary because it is the hedge, not the main read: allowable costs and funding
+// restrictions are sometimes pages apart, and a single window has to pick one.
+const SECOND_WINDOW_CHARS = 8000;
 // Fallback window when no heading matches, taken from the head like the brief's excerpt.
 const HEAD_CHARS = 10000;
+// Below this, a document has no room for a real allowable-costs section -- it is a
+// Grants.gov synopsis or a forecast stub, not a NOFO. Used ONLY by the recut to skip rows
+// that cannot benefit from better anchoring; generation itself never applies it, because a
+// short document with a real section should still be read.
+//
+// 20k is where the corpus splits cleanly: grants that produced a list average ~45k chars,
+// grants that came back no_section average ~15k, and 403 of the 468 no_section rows sit
+// under this line.
+const RECUT_MIN_RAW_CHARS = 20000;
 
 // The headings a federal NOFO actually uses for this section. Deliberately broad and
 // deliberately including the NEGATIVE forms ("unallowable", "funding restrictions"): those
 // sections sit adjacent to the allowable list far more often than not, so anchoring on them
 // still lands the window in the right place.
+//
+// GLOBAL, because the scorer needs EVERY occurrence, not the first. The first version took
+// the first match of the first pattern that hit anywhere in the document, which let a
+// table-of-contents line beat the real section by forty thousand characters.
 const SECTION_PATTERNS = [
-  /allowable\s+(?:costs?|uses?|activities|expenses?)/i,
-  /unallowable\s+(?:costs?|uses?|activities|expenses?)/i,
-  /funding\s+restrictions?/i,
-  /use\s+of\s+(?:grant\s+)?funds?/i,
-  /eligible\s+(?:costs?|uses?|activities|expenses?)/i,
-  /cost\s+principles?/i,
+  /allowable\s+(?:costs?|uses?|activities|expenses?)/gi,
+  /unallowable\s+(?:costs?|uses?|activities|expenses?)/gi,
+  /funding\s+restrictions?/gi,
+  /use\s+of\s+(?:grant\s+)?funds?/gi,
+  /eligible\s+(?:costs?|uses?|activities|expenses?)/gi,
+  /cost\s+principles?/gi,
 ];
 
 // THE SENTINEL, and it is deliberately not an empty render. A blank section reads as "we
@@ -77,6 +94,16 @@ export interface AllowableUses {
   items: AllowableUseItem[];
   // Null when items is non-empty. Non-null and items empty when there is nothing to show.
   reason: AllowableUsesReason | null;
+  // Which pass produced this row. Absent on rows written by the original sweep; 1 once the
+  // anchoring recut has looked at it.
+  //
+  // A MARKER RATHER THAN A TIMESTAMP CUTOFF, which is where this departs from brief.ts's
+  // THIN_BRIEF_CUTOFF. That constant had to be the moment the new code reached production --
+  // a value you can only know after deploying, and one that silently claims nothing (or
+  // everything) if you guess it wrong. A marker in the row is exact, needs no deploy-time
+  // knowledge, and makes the recut self-limiting: every row it touches leaves the window for
+  // good, so the phase costs nothing once drained.
+  recut?: number;
 }
 
 export interface AllowableUsesGrant {
@@ -118,16 +145,119 @@ Call the tool exactly once.`;
 // gets to look. When no heading matches we fall back to the head rather than skipping the
 // call, because a notice can describe allowable spending without using any of these words,
 // and the attempt cap already bounds what a husk can cost.
-function allowableSource(raw: string): { excerpt: string; anchored: boolean } {
+// A TABLE-OF-CONTENTS LINE IS NOT A SECTION, and it was beating the real one.
+//
+// The measured failure: 43 of the 468 no_section grants had a section heading sitting in
+// their raw_text, and the excerpt never showed it to the model. A NOFO's contents page says
+// "IV. Allowable Costs .......... 41" at character 2,000, the real section starts at 41,000,
+// and a window anchored on the first hit hands over front matter -- so the model answers
+// has_section: false and the page renders "Not clearly specified in the NOFO" about a
+// document that specifies it in detail.
+//
+// A contents entry is recognisable by its shape rather than its wording: the line it sits on
+// is short and ends in a page number, behind either a dot leader or a column gap.
+//
+// DELIBERATELY CONSERVATIVE, because density scoring below is the primary defence and this is
+// belt-and-braces. A false negative costs nothing -- a surviving contents hit has no cluster
+// around it and loses the density vote anyway. A false positive is expensive: it discards a
+// real hit, and the discarded hit is likely to be one of the best ones.
+//
+// Which is exactly what "\s\d{1,4}$" did, caught in test. "...allowable costs are described
+// in 2 CFR 200" is a body sentence, and that citation is boilerplate sitting immediately
+// beside allowable-costs language in most federal notices -- so a single space before a
+// trailing number threw away the highest-value hits in the document. A page number in a real
+// contents table is set off by a dot leader or column alignment, never by one space.
+function looksLikeTocEntry(raw: string, index: number): boolean {
+  const from = raw.lastIndexOf("\n", index) + 1;
+  const to = raw.indexOf("\n", index);
+  const line = raw.slice(from, to === -1 ? raw.length : to).trim();
+  if (line.length > 120) return false;
+  // "IV. Allowable Costs .......... 41"
+  if (/(?:\.\s?){3,}\s*\d{1,4}$/.test(line)) return true;
+  // "Allowable Costs      41" -- column-aligned, two or more spaces or a tab.
+  return /(?:\s{2,}|\t)\d{1,4}$/.test(line);
+}
+
+// Every heading occurrence in the document, contents entries removed.
+function sectionHits(raw: string): number[] {
+  const hits: number[] = [];
   for (const re of SECTION_PATTERNS) {
-    const m = re.exec(raw);
-    if (!m) continue;
-    // Start a little BEFORE the heading: the heading line itself is often the strongest
-    // evidence a section exists, and a window that begins after it throws that away.
-    const start = Math.max(0, m.index - 500);
-    return { excerpt: raw.slice(start, start + WINDOW_CHARS), anchored: true };
+    // Fresh lastIndex per document: these regexes are module-level and global, so a stale
+    // lastIndex from a previous grant would silently skip the head of this one.
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(raw)) !== null) {
+      if (!looksLikeTocEntry(raw, m.index)) hits.push(m.index);
+      // A zero-length match cannot happen with these patterns, but an unguarded global exec
+      // loop is one edit away from spinning forever.
+      if (m.index === re.lastIndex) re.lastIndex++;
+    }
   }
-  return { excerpt: raw.slice(0, HEAD_CHARS), anchored: false };
+  return hits.sort((a, b) => a - b);
+}
+
+// WHERE TO LOOK, and why not the top of the document, and why not the first match either.
+//
+// The brief's excerpt takes the first 8000 characters, which is right for its job -- the
+// shape of a program is established in the opening pages. Allowable costs are not: in a
+// federal NOFO they sit in Section B or C, routinely 40k+ characters in.
+//
+// Selection is by DENSITY, not position. The real section mentions these phrases repeatedly
+// within a few pages; a passing reference or a surviving contents line does not. So each hit
+// is scored by how many other hits fall inside a window of it, and the densest wins. Ties go
+// to the LATER hit, because front matter precedes body text.
+//
+// A SECOND WINDOW when a strong cluster sits outside the first. "Allowable Costs" and
+// "Funding Restrictions" are frequently pages apart, and with one window the loser is
+// invisible. Bounded at one extra window so a pathological document cannot inflate the call.
+//
+// The model still decides whether a real section is present; this only decides where it gets
+// to look. And because verification runs against the FULL raw_text rather than the excerpt, a
+// window that lands badly can only ever cost lines -- it can never admit a quote that is not
+// in the document.
+function allowableSource(raw: string): { excerpt: string; anchored: boolean } {
+  const hits = sectionHits(raw);
+  if (hits.length === 0) return { excerpt: raw.slice(0, HEAD_CHARS), anchored: false };
+
+  const density = (at: number) => hits.filter((h) => Math.abs(h - at) <= WINDOW_CHARS).length;
+  let best = hits[0];
+  let bestScore = density(best);
+  for (const h of hits) {
+    const score = density(h);
+    // >= so a later hit wins a tie: body text follows front matter.
+    if (score >= bestScore) {
+      best = h;
+      bestScore = score;
+    }
+  }
+
+  // Start a little BEFORE the heading: the heading line itself is often the strongest
+  // evidence a section exists, and a window that begins after it throws that away.
+  const start = Math.max(0, best - 500);
+  const end = start + WINDOW_CHARS;
+  let excerpt = raw.slice(start, end);
+
+  // The hedge. Only for a hit with real company (density >= 2) that the primary window does
+  // not already cover -- a lone mention elsewhere is not worth a second read.
+  const outside = hits.filter((h) => (h < start || h >= end) && density(h) >= 2);
+  if (outside.length > 0) {
+    let second = outside[0];
+    let secondScore = density(second);
+    for (const h of outside) {
+      const score = density(h);
+      if (score >= secondScore) {
+        second = h;
+        secondScore = score;
+      }
+    }
+    const s2 = Math.max(0, second - 500);
+    // The marker is there so the model cannot read across the join as continuous prose and
+    // quote a span that spuriously bridges two pages -- such a quote would fail verification
+    // against raw_text anyway, but wasting a line on it is avoidable.
+    excerpt += `\n\n[...]\n\n${raw.slice(s2, s2 + SECOND_WINDOW_CHARS)}`;
+  }
+
+  return { excerpt, anchored: true };
 }
 
 // THE NORMALIZER — the whole gate turns on this, so it is spelled out.
@@ -321,6 +451,112 @@ async function saveAllowableUses(db: SupabaseClient, grantId: string, value: All
   if (error) throw new Error(`Failed to save allowable uses: ${error.message}`);
 }
 
+// ── The anchoring recut ─────────────────────────────────────────────────────────────────
+//
+// WHY A RECUT IS PART OF THE FIX AND NOT A FOLLOW-UP. All 468 no_section rows already have
+// allowable_uses written and allowable_uses_at stamped, so the main claim will never touch
+// them again. Better anchoring on its own would apply only to grants ingested from here on
+// and would leave the existing corpus exactly as wrong as it is now. The measured 43
+// recoverable grants are all in that written set.
+//
+// SCOPED TO DOCUMENTS THAT CAN BENEFIT. 403 of the 468 are synopsis and forecast stubs under
+// RECUT_MIN_RAW_CHARS -- re-asking them would spend 403 Anthropic calls to confirm what we
+// already know. Those are stamped and retired WITHOUT a call, which is the same
+// retire-as-well-as-regenerate discipline requeueThinBriefs needed: a row that cannot improve
+// must still leave the window, or the phase never stops costing something.
+const RECUT_FLOOR = 5;
+
+// Cheap head-only probe. No rows, and critically no raw_text -- the largest column on the
+// table. Runs before the main claim because the answer changes its size.
+async function countRecutCandidates(db: SupabaseClient): Promise<number> {
+  const { count, error } = await db
+    .from("grants")
+    .select("id", { count: "exact", head: true })
+    .filter("allowable_uses->>reason", "eq", "no_section")
+    .filter("allowable_uses->>recut", "is", null);
+  if (error) throw new Error(`Recut probe failed: ${error.message}`);
+  return count ?? 0;
+}
+
+interface RecutResult {
+  // Re-read and now carries at least one verified line. The number this phase exists for.
+  improved: number;
+  // Re-read and still no section. The anchoring was not the problem for these.
+  stillEmpty: number;
+  // Too short to have a section at all -- stamped, never re-asked, no API call spent.
+  retiredShort: number;
+  // Generation failed outright. Left unstamped so it is retried next run.
+  failed: number;
+}
+
+async function recutNoSection(db: SupabaseClient, budget: number): Promise<RecutResult> {
+  const out: RecutResult = { improved: 0, stillEmpty: 0, retiredShort: 0, failed: 0 };
+  if (budget <= 0) return out;
+
+  const { data, error } = await db
+    .from("grants")
+    .select("id, title, funder, raw_text, allowable_uses")
+    .filter("allowable_uses->>reason", "eq", "no_section")
+    .filter("allowable_uses->>recut", "is", null)
+    .order("allowable_uses_at", { ascending: true })
+    .limit(budget);
+  if (error) throw new Error(`Recut claim failed: ${error.message}`);
+
+  const claimed = (data ?? []) as (SweepRow & { allowable_uses: unknown })[];
+
+  for (const g of claimed) {
+    const raw = (g.raw_text || "").trim();
+
+    // Retire without a call. Keeps the existing value, adds only the marker, so the row's
+    // meaning is unchanged and it simply stops being asked.
+    if (raw.length < RECUT_MIN_RAW_CHARS) {
+      try {
+        await saveAllowableUses(db, g.id, { items: [], reason: "no_section", recut: 1 });
+        out.retiredShort++;
+      } catch (e) {
+        console.error(`[allowable-uses] recut retire failed grant=${g.id}:`, e instanceof Error ? e.message : e);
+        out.failed++;
+      }
+      continue;
+    }
+
+    let result: Awaited<ReturnType<typeof generateAllowableUses>> = null;
+    try {
+      result = await generateAllowableUses(g);
+    } catch (e) {
+      console.error(`[allowable-uses] recut generation threw grant=${g.id}:`, e instanceof Error ? e.message : e);
+    }
+    // Unstamped on failure, so a transient API error is retried rather than burning the row's
+    // one chance at a better window.
+    if (!result) {
+      out.failed++;
+      continue;
+    }
+
+    const improved = result.value.items.length > 0;
+    try {
+      await saveAllowableUses(db, g.id, { ...result.value, recut: 1 });
+    } catch (e) {
+      console.error(`[allowable-uses] recut save failed grant=${g.id}:`, e instanceof Error ? e.message : e);
+      out.failed++;
+      continue;
+    }
+    // BEFORE/AFTER, per grant. The whole point of the recut is whether the new anchoring
+    // actually moves a row that used to read no_section, so the line says which way it went.
+    console.log(
+      `[allowable-uses] recut grant=${g.id} raw=${raw.length}c ` +
+        (improved
+          ? `no_section -> ${result.value.items.length} item(s)` +
+            (result.audit ? ` (returned ${result.audit.returned}, dropped ${result.audit.droppedNormalized})` : "")
+          : `still ${result.value.reason}`),
+    );
+    if (improved) out.improved++;
+    else out.stillEmpty++;
+  }
+
+  return out;
+}
+
 const SELECT = "id, title, funder, raw_text, allowable_uses_attempts";
 
 type SweepRow = AllowableUsesGrant & { allowable_uses_attempts: number | null };
@@ -375,6 +611,12 @@ export interface AllowableUsesSweepResult {
   quotesReturned: number;
   quotesKept: number;
   quotesKeptStrict: number;
+  // The anchoring recut over rows already written as no_section. All four go to zero
+  // permanently once the unmarked window is drained.
+  recutImproved: number;
+  recutStillEmpty: number;
+  recutRetiredShort: number;
+  recutFailed: number;
 }
 
 // Bounded backfill sweep. Claims the oldest grants with no list, generates in small batches,
@@ -387,13 +629,30 @@ export async function sweepAllowableUses(
 ): Promise<AllowableUsesSweepResult> {
   const batchSize = opts.batchSize ?? 5;
 
+  // Probe BEFORE claiming, because the answer changes the main claim's size. Total work per
+  // run still never exceeds opts.cap either way, so maxDuration is unaffected.
+  //
+  // RESERVED CAPACITY, not leftovers. #311 is the record of giving a second phase
+  // `cap - claimed`: that is zero on every run where the first phase fills the cap, so the
+  // backfill never begins and its 0/0 reads as success rather than starvation. Grants with NO
+  // list still come first -- they show nothing at all, which is the worse failure -- but the
+  // recut gets its floor.
+  //
+  // Reserved ONLY when there is something to reserve for, so once the recut window is empty
+  // the main claim goes back to the full cap instead of idling slots forever.
+  const recutWaiting = await countRecutCandidates(db);
+  // The max(cap - 1, 0) floor keeps at least one slot for the main claim: .limit(0) is not
+  // dependably "no rows" and would be a silent unbounded claim.
+  const reserved = recutWaiting > 0 ? Math.min(RECUT_FLOOR, recutWaiting, Math.max(opts.cap - 1, 0)) : 0;
+  const mainCap = opts.cap - reserved;
+
   const { data, error } = await db
     .from("grants")
     .select(SELECT)
     .is("allowable_uses", null)
     .lt("allowable_uses_attempts", MAX_ALLOWABLE_USES_ATTEMPTS)
     .order("ingested_at", { ascending: true })
-    .limit(opts.cap);
+    .limit(mainCap);
   if (error) throw new Error(`Allowable-uses sweep query failed: ${error.message}`);
 
   const pending = (data ?? []) as SweepRow[];
@@ -404,11 +663,18 @@ export async function sweepAllowableUses(
     noRawText: 0,
     allDropped: 0,
     failed: 0,
-    more: pending.length === opts.cap,
+    // Against mainCap, not opts.cap: with slots reserved for the recut, a full main claim is
+    // mainCap rows, and comparing to opts.cap would report more=false on a run that in fact
+    // left work behind.
+    more: pending.length === mainCap && mainCap > 0,
     parked: null,
     quotesReturned: 0,
     quotesKept: 0,
     quotesKeptStrict: 0,
+    recutImproved: 0,
+    recutStillEmpty: 0,
+    recutRetiredShort: 0,
+    recutFailed: 0,
   };
 
   for (let i = 0; i < pending.length; i += batchSize) {
@@ -469,6 +735,16 @@ export async function sweepAllowableUses(
       else result.written++;
     }
   }
+
+  // Reserved slots, plus whatever the main claim left unused on a light run.
+  const recut = await recutNoSection(db, reserved + Math.max(mainCap - pending.length, 0));
+  result.recutImproved = recut.improved;
+  result.recutStillEmpty = recut.stillEmpty;
+  result.recutRetiredShort = recut.retiredShort;
+  result.recutFailed = recut.failed;
+  // more stays true while the recut has anything left, so the drain is visible in one field
+  // rather than having to be inferred from the recut counters going quiet.
+  if (recutWaiting > recut.improved + recut.stillEmpty + recut.retiredShort) result.more = true;
 
   result.parked = await countParked(db);
   return result;
