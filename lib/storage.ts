@@ -126,10 +126,17 @@ export async function removeObjects(bucket: string, paths: string[]): Promise<vo
 // removeObjects takes one bucket at a time. Extracted after review on #330 noted the draft
 // cascade and the client cascade had each hand-rolled the same Map-and-loop.
 //
-// Best-effort like removeObjects itself: callers use this after the rows are already gone, so
-// a stranded object is invisible rather than a failure worth reporting.
+// THE PER-BUCKET try/catch LIVES HERE, not at the call sites, which is what makes this worth
+// extracting rather than just deduplicating. Both callers run it AFTER their rows are already
+// deleted, so a storage failure must never surface as "delete failed" -- it is logged and
+// leaves orphaned bytes. Owning that here means one bucket failing still attempts the rest,
+// every caller gets the same guarantee, and no caller needs its own wrapper.
+//
+// `context` prefixes the log so a failure is still attributable to the operation that caused
+// it, which is what the hand-rolled version at each site was providing.
 export async function removeObjectsGrouped(
   objects: { storage_bucket: string | null; storage_path: string | null }[],
+  context = "storage-cleanup",
 ): Promise<void> {
   const byBucket = new Map<string, string[]>();
   for (const o of objects) {
@@ -139,7 +146,14 @@ export async function removeObjectsGrouped(
     else byBucket.set(o.storage_bucket, [o.storage_path]);
   }
   for (const [bucket, paths] of byBucket) {
-    await removeObjects(bucket, paths);
+    try {
+      await removeObjects(bucket, paths);
+    } catch (err) {
+      console.error(
+        `[${context}] storage cleanup failed bucket=${bucket} count=${paths.length}:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
 }
 
