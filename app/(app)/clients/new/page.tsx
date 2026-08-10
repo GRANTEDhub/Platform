@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireAdmin } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { PageHeader } from "@/components/layout/page-header";
 import { FormExitGuard } from "@/components/clients/form-exit-guard";
 import { ClientForm } from "../client-form";
@@ -17,7 +17,11 @@ export default async function NewClientPage({
 }: {
   searchParams: { kind?: string };
 }) {
-  await requireAdmin();
+  // Any staff (0077), matching clients_insert. Note this form also runs in prospect mode
+  // (?kind=prospect), so creating a PROSPECT record rides along -- deliberately. Creating a
+  // record is not contacting one: cold outreach to non-clients stays admin-only, both in
+  // the send route and in the prospects RLS.
+  await requireUser();
   // No record-type toggle anymore: the entry point fixes the kind. This is the
   // "Add client" door (prospects have their own at /intel/prospects/new); a legacy
   // ?kind=prospect link still resolves to a prospect.

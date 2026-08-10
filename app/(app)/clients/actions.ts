@@ -133,7 +133,10 @@ function friendlyClientError(
 type ClientActionResult = { error: string } | undefined;
 
 export async function createClientAction(formData: FormData): Promise<ClientActionResult> {
-  await requireAdmin();
+  // Any staff (0077), matching the clients_insert policy and the /clients/new page gate.
+  // DELETION is NOT widened with it -- see deleteClientAction, which keeps requireAdmin
+  // for the reason stated there, and the split clients_delete policy that backs it.
+  await requireUser();
   const supabase = createClient();
 
   // Record type must be an EXPLICIT choice on CREATE. The UI gates the form on it;
@@ -209,7 +212,8 @@ export async function updateClientAction(
   // Any staff (admin OR contractor/AM) may edit a client or prospect PROFILE. The
   // write runs under the caller's RLS -- the 0066 clients_update policy permits
   // staff -- and the billing tables (invoices/contracts) stay admin-only, so this
-  // never exposes what we bill. (createClientAction stays admin-only.)
+  // never exposes what we bill. (createClientAction is also staff as of 0077; DELETION
+  // is the one that stayed admin-only.)
   await requireUser();
   const supabase = createClient();
 

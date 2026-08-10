@@ -227,7 +227,7 @@ export async function sendClientBatch(
     if (!decision.ok) {
       const forbidden = decision.reason === "approval_forbidden";
       return {
-        result: { sent: false, error: forbidden ? "Only admins can approve a match for client delivery" : "Failed to record decision" },
+        result: { sent: false, error: forbidden ? "Not allowed to approve this match for delivery" : "Failed to record decision" },
         status: forbidden ? 403 : 500,
       };
     }
