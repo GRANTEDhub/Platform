@@ -6,9 +6,15 @@ import { requireClient } from "@/lib/auth";
 import { canSendOutreach } from "@/lib/email/guard";
 import { sendClientInviteEmail } from "@/lib/email/send";
 import { resolveOrCreateAuthUser, generateClientSetupLink } from "@/lib/clients/portal-login";
-import { ORG_TYPES } from "@/lib/clients/org-types";
 
-// The client's OWN first-login profile review + teammate invite (#16).
+// The client's OWN teammate invite, offered on the first-login screen (#16).
+//
+// The profile confirmation that used to live here as confirmProfileAction is gone: it was
+// a second implementation of app/portal/profile's confirmClientProfileAction, writing a
+// narrower set of columns (no programs, no priority areas, and never primary_funding_needs
+// -- the column the matcher reads) while stamping the same profile_confirmed_at flag. Since
+// the first-login gate redirects to /welcome, the weaker of the two was the one every new
+// client actually got. /welcome now renders the shared form and calls the shared action.
 //
 // Client members are read-only under RLS (0055), so these writes run as the
 // SERVICE role -- but they are HARD-SCOPED to the caller's OWN org: the clientId
@@ -17,65 +23,6 @@ import { ORG_TYPES } from "@/lib/clients/org-types";
 // portal-actions, just gated by requireClient instead of requireAdmin.
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-
-function str(v: FormDataEntryValue | null): string | null {
-  const s = String(v ?? "").trim();
-  return s || null;
-}
-
-export interface ConfirmState {
-  ok: boolean;
-  error?: string;
-}
-
-// Confirm + fill the org profile, then stamp profile_confirmed_at so the portal
-// stops redirecting to /welcome. Returns a result (the client navigates to the
-// dashboard on ok) rather than redirecting server-side -- mirrors set-password.
-export async function confirmProfileAction(formData: FormData): Promise<ConfirmState> {
-  const { memberships } = await requireClient();
-  const clientId = memberships[0]?.clientId;
-  if (!clientId) return { ok: false, error: "No organization is linked to your account." };
-
-  const admin = createServiceClient();
-
-  // Load the existing intake_data so the narrative merge never clobbers other keys
-  // (programs, partnerships, ...) a staffer may already have captured.
-  const { data: existing } = await admin
-    .from("clients")
-    .select("intake_data")
-    .eq("id", clientId)
-    .maybeSingle<{ intake_data: Record<string, unknown> | null }>();
-
-  const orgTypeRaw = str(formData.get("org_type"));
-  const orgType = orgTypeRaw && (ORG_TYPES as readonly string[]).includes(orgTypeRaw) ? orgTypeRaw : null;
-
-  const mission = str(formData.get("mission"));
-  const fundingNeed = str(formData.get("funding_need"));
-  const intake_data: Record<string, unknown> = { ...(existing?.intake_data ?? {}) };
-  if (mission !== null) intake_data.mission = mission;
-  if (fundingNeed !== null) intake_data.funding_need = fundingNeed;
-
-  const { error } = await admin
-    .from("clients")
-    .update({
-      org_type: orgType,
-      website: str(formData.get("website")),
-      primary_contact_name: str(formData.get("contact_name")),
-      location_city: str(formData.get("location_city")),
-      location_county: str(formData.get("location_county")),
-      location_state: str(formData.get("location_state")),
-      location_street: str(formData.get("location_street")),
-      location_zip: str(formData.get("location_zip")),
-      intake_data,
-      profile_confirmed_at: new Date().toISOString(),
-    })
-    .eq("id", clientId);
-
-  if (error) return { ok: false, error: "Couldn't save your profile. Please try again." };
-
-  revalidatePath("/portal");
-  return { ok: true };
-}
 
 export interface TeammateState {
   ok: boolean;

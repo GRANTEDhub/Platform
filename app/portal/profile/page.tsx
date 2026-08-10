@@ -44,6 +44,7 @@ export default async function PortalProfilePage() {
         <ConfirmProfile
           orgName={client.name}
           defaults={{
+            org_type: client.org_type,
             primary_contact_name: client.primary_contact_name,
             primary_contact_email: client.primary_contact_email,
             primary_contact_phone: client.primary_contact_phone,

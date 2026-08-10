@@ -1,5 +1,10 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import {
+  PORTAL_NEXT_COOKIE,
+  PORTAL_NEXT_MAX_AGE,
+  sanitizePortalNext,
+} from "@/lib/portal/next-destination";
 
 type CookieToSet = { name: string; value: string; options: CookieOptions };
 
@@ -41,6 +46,25 @@ export async function updateSession(request: NextRequest) {
     pathname === "/favicon.ico";
   if (isPublicAsset) return response;
 
+  // Remember a portal DEEP LINK before any redirect can swallow it. Middleware is the only
+  // place in the request that sees the full URL ahead of the first-login gate in
+  // app/portal/layout.tsx, which lives in a layout and so cannot name where the client was
+  // going (see lib/portal/next-destination.ts). Applied to the /login redirect below as
+  // well, because a client clicking an alert while signed out passes through it first.
+  const portalNext = sanitizePortalNext(pathname + request.nextUrl.search);
+  const withPortalNext = <T extends NextResponse>(res: T): T => {
+    if (portalNext) {
+      res.cookies.set(PORTAL_NEXT_COOKIE, portalNext, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+        path: "/",
+        maxAge: PORTAL_NEXT_MAX_AGE,
+      });
+    }
+    return res;
+  };
+
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -49,7 +73,7 @@ export async function updateSession(request: NextRequest) {
   // protect data, so this fails closed on protected pages, not open.
   if (!supabaseUrl || !supabaseAnonKey) {
     console.error("Auth middleware: Supabase env vars are not set");
-    return response;
+    return withPortalNext(response);
   }
 
   try {
@@ -81,7 +105,7 @@ export async function updateSession(request: NextRequest) {
       const url = request.nextUrl.clone();
       url.pathname = "/login";
       url.searchParams.set("redirectedFrom", pathname);
-      return NextResponse.redirect(url);
+      return withPortalNext(NextResponse.redirect(url));
     }
 
     if (user && isAuthRoute) {
@@ -91,10 +115,10 @@ export async function updateSession(request: NextRequest) {
       return NextResponse.redirect(url);
     }
 
-    return response;
+    return withPortalNext(response);
   } catch (err) {
     // A transient Supabase/network failure should not take down every route.
     console.error("Auth middleware error:", err);
-    return response;
+    return withPortalNext(response);
   }
 }
