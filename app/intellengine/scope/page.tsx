@@ -3,6 +3,7 @@ import { requirePursuitVisible } from "@/lib/pursuit/access";
 import { resolveIntellEngineContext } from "@/lib/intellengine/context";
 import { scopeSeedFrom } from "@/lib/intellengine/prepopulate";
 import { readDraftContent } from "@/lib/intellengine/content";
+import { listDraftDocuments } from "@/lib/documents/list";
 import IntellEngineScopeClient from "./scope-client";
 
 export const dynamic = "force-dynamic";
@@ -20,10 +21,25 @@ export default async function IntellEngineScope({
   const ctx = await resolveIntellEngineContext(searchParams.draft);
   const saved = ctx ? readDraftContent(ctx.draft.content).scope : null;
   const seed = scopeSeedFrom(ctx?.concept ?? null, ctx?.grant ?? null, saved);
+  // The draft's supporting files (3c), read under the CALLER's RLS so 0075's member policy is
+  // what decides visibility. Gated on `ctx` rather than on the raw searchParam: ctx resolving
+  // is the ownership proof, so an id the caller does not own never reaches the query.
+  //
+  // Initial state only. After this render the list is maintained from the confirm and delete
+  // responses, which is why there is no GET route -- a document appears because the server
+  // returned the row it created, not because the browser assumed one.
+  const documents = ctx ? await listDraftDocuments(ctx.draft.id) : [];
   // Staff-aware back target (passed by the console hub). Accept ONLY a clean
   // internal path so the value can't smuggle an off-origin target into an <a href>.
   const backHref = safeInternalPath(searchParams.from);
-  return <IntellEngineScopeClient draftId={searchParams.draft} seed={seed} backHref={backHref} />;
+  return (
+    <IntellEngineScopeClient
+      draftId={searchParams.draft}
+      seed={seed}
+      documents={documents}
+      backHref={backHref}
+    />
+  );
 }
 
 // A safe same-origin path only. Must start with a single "/" and contain only

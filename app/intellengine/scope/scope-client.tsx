@@ -9,7 +9,9 @@ import { IntellEngineProgress } from "@/components/intellengine/progress-bar";
 import { ContinueButton } from "@/components/intellengine/step-nav";
 import { SaveIndicator } from "@/components/intellengine/save-indicator";
 import { useDraftSave } from "@/components/intellengine/use-draft-save";
+import DocumentUploadList from "@/components/documents/upload-list";
 import type { ScopeSeed } from "@/lib/intellengine/prepopulate";
+import type { DocumentListItem } from "@/lib/documents/list";
 
 const SCOPE_WORD_LIMIT = 500;
 
@@ -30,18 +32,25 @@ type Partner = { name: string; role: string; description: string };
 // refuses to navigate if the flush fails -- see use-draft-save.ts for why each of those is
 // load-bearing rather than polish.
 //
-// THE UPLOAD CONTROL IS GONE, deliberately, and comes back in step 3 with a bucket behind
-// it. It kept the filename and discarded the file. That was uniformly broken on a page where
-// nothing saved; on a page where everything else now persists it would be the one control
-// that silently drops what it is handed, which is worse -- the surrounding page has earned
-// the trust that makes the lie land.
+// UPLOADS ARE REAL NOW (step 3c) and they are a SEPARATE SAVE PATH. They persist to
+// client_documents through their own routes, not to content.scope, so:
+//   - the file list is not part of `payload` and uploading never calls touch()
+//   - saver.flush() knows nothing about an in-flight upload, which is exactly why Continue
+//     checks `uploadBusy` independently below
+//   - draft completeness does NOT count files. Supporting files are optional, and letting an
+//     optional artifact satisfy a required step is the same conflation step 1 removed --
+//     lib/intellengine/content.ts is deliberately unaware that documents exist.
 export default function IntellEngineScopeClient({
   draftId,
   seed,
+  documents,
   backHref,
 }: {
   draftId?: string;
   seed: ScopeSeed;
+  // Server-rendered initial list, read under the caller's RLS in page.tsx. The control keeps
+  // it current from its own mutation responses after that.
+  documents: DocumentListItem[];
   // Where the top-left back link points. Staff (driven from the console hub) pass
   // their hub URL, since the default per-draft landing is client-only and would
   // bounce them to /clients. Clients omit it and get the normal landing.
@@ -57,6 +66,9 @@ export default function IntellEngineScopeClient({
   const [notes, setNotes] = useState(seed.notes);
   const [partnerNote, setPartnerNote] = useState<string | null>(null);
   const [editNote, setEditNote] = useState<string | null>(null);
+  // Bytes in flight. Not part of `payload` -- see the note above the component.
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [navNote, setNavNote] = useState<string | null>(null);
 
   // The exact object the save sends. Memoised so the debounce effect in useDraftSave sees a
   // new value only when a field actually changed, rather than on every render.
@@ -317,22 +329,10 @@ export default function IntellEngineScopeClient({
           />
         </div>
 
-        {/* NO UPLOAD CONTROL, on purpose. The old one kept the filename and threw the file
-            away. On a page where nothing saved that was uniformly broken; on this page, where
-            every other field now persists, it would be the single control that silently drops
-            what it is given -- and the trust the rest of the page has earned is exactly what
-            would make a client believe their audit had been received. It returns in step 3
-            with a bucket behind it (docs/pursuit-state-audit-2026-08.md §5). */}
-        <div className="rounded-2xl bg-white p-6 shadow-grounded">
-          <h2 className="font-serif text-[19px] font-semibold text-brand-navy">Supporting files</h2>
-          <p className="mt-1 text-[13px] text-muted-foreground">
-            Budgets, prior proposals, letters of support. File upload isn&apos;t switched on yet —
-            send anything you want IntellEngine to draw from to your GRANTED contact, and mention
-            it in the notes above.
-          </p>
-        </div>
+        <DocumentUploadList draftId={draftId} initial={documents} onBusyChange={setUploadBusy} />
 
         <div className="flex flex-wrap items-center justify-end gap-4">
+          {navNote && <p className="text-[12px] font-medium text-destructive">{navNote}</p>}
           <SaveIndicator saver={saver} />
           {/* beforeNavigate is the anti-silent-drop contract: Continue persists first and
               stays put if that fails, rather than carrying the client to the next step with
@@ -341,12 +341,25 @@ export default function IntellEngineScopeClient({
               concept proposal, so a client who reads it, agrees, and continues has settled
               their scope even without typing -- and that should be recorded as theirs rather
               than leaving the draft reading "Not started". Mount still saves nothing; it is
-              the deliberate click that carries the meaning. */}
+              the deliberate click that carries the meaning.
+
+              UPLOAD FIRST, THEN THE SAVE. An upload is a second, independent persistence path
+              that flush() cannot see, so leaving mid-PUT would drop the file with nothing
+              reporting it -- the same silent drop as the old control, arriving by a different
+              route. Returning false uses ContinueButton's existing cancel contract, so the
+              client stays put and is told why rather than finding a disabled button. */}
           <ContinueButton
             draftId={draftId}
             nextHref="/intellengine/compliance"
             nextStatus="compliance"
-            beforeNavigate={() => saver.flush({ force: true })}
+            beforeNavigate={async () => {
+              if (uploadBusy) {
+                setNavNote("Wait for the upload to finish.");
+                return false;
+              }
+              setNavNote(null);
+              return saver.flush({ force: true });
+            }}
             className="rounded-full bg-brand-navy px-8 py-3 text-sm font-semibold text-white shadow-soft transition hover:bg-brand-navyDeep disabled:opacity-60"
           >
             Continue to compliance check

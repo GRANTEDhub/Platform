@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { removeObjectsGrouped } from "@/lib/storage";
+import { removeObjectsGrouped, type StorageObjectRef } from "@/lib/storage";
 import { pursuitApiDenied } from "@/lib/pursuit/access";
 import { STEP_ORDER, furthestStatus } from "@/lib/intellengine/drafts";
 import {
@@ -160,7 +160,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
     .from("client_documents")
     .select("storage_bucket, storage_path")
     .eq("intellengine_draft_id", params.id);
-  const objects = (docRows ?? []) as { storage_bucket: string | null; storage_path: string | null }[];
+  const objects = (docRows ?? []) as StorageObjectRef[];
 
   const { error: delErr } = await supabase.from("intellengine_drafts").delete().eq("id", params.id);
   if (delErr) return NextResponse.json({ error: "Couldn't delete this proposal" }, { status: 500 });

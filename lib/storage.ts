@@ -133,6 +133,13 @@ export async function removeObjects(bucket: string, paths: string[]): Promise<vo
   if (error) throw new Error(`Storage remove failed: ${error.message}`);
 }
 
+// A pointer to one stored object. Nullable on both fields on purpose: callers pass rows
+// selected straight out of `client_documents` / `grant_alerts`, and this is the shape a
+// caller has to satisfy rather than four hand-written copies of it (review nit on #331 --
+// two call sites were `as`-casting an identical literal, which re-asserts the shape without
+// ever comparing it to this declaration again).
+export type StorageObjectRef = { storage_bucket: string | null; storage_path: string | null };
+
 // THE BEST-EFFORT CLEANUP PATH. Removes a flat list of pointers that may span BUCKETS,
 // grouping per bucket because removeObjects takes one bucket at a time. Extracted after
 // review on #330 noted the draft cascade and the client cascade had each hand-rolled the
@@ -153,7 +160,7 @@ export async function removeObjects(bucket: string, paths: string[]): Promise<vo
 // `context` prefixes the log so a failure is still attributable to the operation that caused
 // it, which is what the hand-rolled version at each site was providing.
 export async function removeObjectsGrouped(
-  objects: { storage_bucket: string | null; storage_path: string | null }[],
+  objects: StorageObjectRef[],
   context = "storage-cleanup",
 ): Promise<void> {
   const byBucket = new Map<string, string[]>();

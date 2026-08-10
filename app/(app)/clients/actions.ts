@@ -9,7 +9,7 @@ import { validateConstraint } from "@/lib/grants/constraints";
 import { enrichClient } from "@/lib/clients/enrich";
 import { parseNarrative, narrativeToIntakeData, parseChipList } from "@/lib/intake/narrative";
 import { isUnconvertedLead } from "@/lib/leads/stage";
-import { removeObjectsGrouped } from "@/lib/storage";
+import { removeObjectsGrouped, type StorageObjectRef } from "@/lib/storage";
 import { canSendOutreach } from "@/lib/email/guard";
 import { sendClientInviteEmail } from "@/lib/email/send";
 import { resolveOrCreateAuthUser, generateClientSetupLink } from "@/lib/clients/portal-login";
@@ -357,10 +357,7 @@ export async function deleteClientAction(
     service.from("client_documents").select("storage_bucket, storage_path").eq("client_id", id),
     service.from("grant_alerts").select("storage_bucket, storage_path").eq("client_id", id),
   ]);
-  const objects = [...(docRows ?? []), ...(alertRows ?? [])] as {
-    storage_bucket: string | null;
-    storage_path: string | null;
-  }[];
+  const objects = [...(docRows ?? []), ...(alertRows ?? [])] as StorageObjectRef[];
 
   // The two set-null tables that should not outlive their client.
   await service.from("grant_alerts").delete().eq("client_id", id);

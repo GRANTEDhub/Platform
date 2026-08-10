@@ -111,3 +111,27 @@ export function canDeleteDocument(
   if (row.intellengine_draft_id === null) return false; // org-level: staff only
   return actor.clientIds.includes(row.client_id);
 }
+
+// May this actor READ this document -- i.e. be handed a signed URL to the bytes (step 3c)?
+//
+// NOT the same shape as write or delete, and deliberately looser: reading is where the
+// org-level asymmetry REVERSES. A staffer files a client's 990 as an org document for the
+// client's benefit, so the client should be able to open it; they just cannot add to or
+// remove from that shelf. So there is no intellengine_draft_id branch here.
+//
+// `client_visible` IS THE PREDICATE, and this is the one call where it carries real weight.
+// 0075 defaults it false and the member SELECT policy requires it, which is what keeps
+// signed contracts behind the financial firewall -- so mirroring the policy exactly is the
+// whole job of this function. A read check that only tested membership would hand a client a
+// signed URL to their own engagement contract while the RLS-backed list correctly refused to
+// show it, and the service-role route would be the hole. Same rule as findings 1 and 2 above:
+// the check replaces the policy, so it has to BE the policy.
+export function canReadDocument(
+  actor: DocumentActor,
+  row: { client_id: string; client_visible: boolean },
+): boolean {
+  // Staff read is is_admin(), matching 0030 and the two predicates above. A contractor is no
+  // more entitled to the bytes than to the row.
+  if (actor.isStaff) return actor.isAdmin;
+  return actor.clientIds.includes(row.client_id) && row.client_visible;
+}

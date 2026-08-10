@@ -10,7 +10,8 @@ import {
   UPLOAD_MAX_LABEL,
 } from "@/lib/documents/kinds";
 import { CLIENT_UPLOADS_BUCKET, getObjectInfo, removeObjectsGrouped } from "@/lib/storage";
-import type { ClientDocument, IntellEngineDraft } from "@/types/database";
+import { DOCUMENT_LIST_COLUMNS, type DocumentListItem } from "@/lib/documents/list";
+import type { IntellEngineDraft } from "@/types/database";
 
 // Confirm an upload and record it (Pursuit step 3b).
 //
@@ -145,8 +146,12 @@ export async function POST(req: NextRequest) {
       // construction -- either the client uploaded it, or staff filed it for them to see.
       client_visible: true,
     })
-    .select()
-    .single<ClientDocument>();
+    // The LIST columns, not `*` (3c). storage_bucket / storage_path are internal pointers and
+    // the browser has no use for them -- opening a file goes through the signed-URL route,
+    // which re-derives them from the row id. Returning the same shape listDraftDocuments reads
+    // also means the caller can append this straight into its list.
+    .select(DOCUMENT_LIST_COLUMNS)
+    .single<DocumentListItem>();
 
   if (error) {
     // A RETRIED CONFIRM IS A NO-OP, NOT AN ERROR. 0076 makes (storage_bucket, storage_path)
@@ -161,10 +166,10 @@ export async function POST(req: NextRequest) {
     if (error.code === "23505") {
       const { data: existing } = await admin
         .from("client_documents")
-        .select("*")
+        .select(DOCUMENT_LIST_COLUMNS)
         .eq("storage_bucket", CLIENT_UPLOADS_BUCKET)
         .eq("storage_path", path)
-        .maybeSingle<ClientDocument>();
+        .maybeSingle<DocumentListItem>();
       if (existing) return NextResponse.json({ document: existing });
     }
     console.error("[client-documents] insert failed:", error.message);
