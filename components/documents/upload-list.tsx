@@ -2,15 +2,13 @@
 
 import { useRef, useState } from "react";
 import { Download, Loader2, Paperclip, Trash2 } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
 import {
   CLIENT_UPLOAD_KINDS,
   KIND_LABEL,
-  UPLOAD_MAX_BYTES,
   UPLOAD_MAX_LABEL,
-  isAllowedUploadMime,
   type ClientUploadKind,
 } from "@/lib/documents/kinds";
+import { useDocumentUpload } from "./use-document-upload";
 import type { DocumentListItem } from "@/lib/documents/list";
 
 // The real supporting-files control (Pursuit step 3c). Replaces the placeholder card that
@@ -46,79 +44,28 @@ export default function DocumentUploadList({
 }) {
   const [docs, setDocs] = useState<DocumentListItem[]>(initial);
   const [kind, setKind] = useState<ClientUploadKind>("other");
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-
-  function setBusy(v: boolean) {
-    setUploading(v);
-    onBusyChange?.(v);
-  }
+  // The three-call sequence lives in useDocumentUpload, shared with the staff assimilation
+  // screen. One implementation on purpose -- two copies of an authorisation dance drift.
+  const { run, busy: uploading, error, setError } = useDocumentUpload();
 
   async function handleFile(file: File) {
-    setError(null);
-
-    // Checked here as well as in the route and on the bucket, purely for speed of feedback:
-    // this refusal is instant, where the same answer from storage arrives after the client has
-    // watched a 20MB upload run. The bucket remains the real enforcement (0075).
-    if (!isAllowedUploadMime(file.type)) {
-      setError("That file type isn't supported. Upload a PDF, Word or Excel document.");
-      return;
-    }
-    if (file.size > UPLOAD_MAX_BYTES) {
-      setError(`That file is over ${UPLOAD_MAX_LABEL}.`);
-      return;
-    }
-
-    setBusy(true);
-    try {
-      // ── 1. mint ──
-      const mintRes = await fetch("/api/client-documents/mint", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          kind,
-          fileName: file.name,
-          contentType: file.type,
-          sizeBytes: file.size,
-          draftId,
-        }),
-      });
-      const mint = await mintRes.json().catch(() => ({}));
-      if (!mintRes.ok) throw new Error(mint?.error || "Couldn't start the upload. Try again.");
-
-      // ── 2. the bytes ──
-      // uploadToSignedUrl rather than a hand-rolled PUT: the token, the endpoint shape and the
-      // multipart/raw body handling are the storage client's business, and getting any of them
-      // subtly wrong would fail at exactly the moment a client is trusting us with a file.
-      // contentType is passed explicitly so what storage records matches the real file --
-      // confirm reads it back and rejects a mismatch, so a wrong value would surface as a
-      // refused upload rather than a mislabelled row.
-      const supabase = createClient();
-      const { error: putError } = await supabase.storage
-        .from(mint.bucket)
-        .uploadToSignedUrl(mint.path, mint.token, file, { contentType: file.type });
-      if (putError) throw new Error("That file didn't finish uploading. Try again.");
-
-      // ── 3. confirm ──
-      // The ONLY step that produces a row, and the only thing that may add a line to the list.
-      const confirmRes = await fetch("/api/client-documents", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: mint.path, kind, title: file.name, draftId }),
-      });
-      const confirmed = await confirmRes.json().catch(() => ({}));
-      if (!confirmRes.ok || !confirmed?.document) {
-        throw new Error(confirmed?.error || "Couldn't record that file. Try again.");
-      }
-
-      setDocs((prev) => [...prev, confirmed.document as DocumentListItem]);
+    // onBusyChange is what lets the page block Continue mid-upload: uploads are a second
+    // persistence path the draft autosave cannot see, so without it a client could navigate
+    // away during the PUT and lose the file with nothing reporting it.
+    // Guarded rather than cast. The control only renders its file input when draftId exists,
+    // but `as string` would be a promise the type system stops checking -- and mint would
+    // refuse a draft-less upload anyway, so a silent no-op here beats a confusing 400.
+    if (!draftId) return;
+    onBusyChange?.(true);
+    const result = await run(file, kind, { draftId });
+    onBusyChange?.(false);
+    // A row only when the server returned one -- see useDocumentUpload. On failure the hook
+    // has set the error and nothing is appended, so a failed upload never renders a file line.
+    if (result) {
+      setDocs((prev) => [...prev, result.document]);
       if (fileInput.current) fileInput.current.value = "";
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't upload that file. Try again.");
-    } finally {
-      setBusy(false);
     }
   }
 
