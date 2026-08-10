@@ -336,12 +336,17 @@ export default function IntellEngineScopeClient({
           <SaveIndicator saver={saver} />
           {/* beforeNavigate is the anti-silent-drop contract: Continue persists first and
               stays put if that fails, rather than carrying the client to the next step with
-              their scope unsaved behind them. */}
+              their scope unsaved behind them.
+              force: Continue ENDORSES the prefill. This editor opens filled from the released
+              concept proposal, so a client who reads it, agrees, and continues has settled
+              their scope even without typing -- and that should be recorded as theirs rather
+              than leaving the draft reading "Not started". Mount still saves nothing; it is
+              the deliberate click that carries the meaning. */}
           <ContinueButton
             draftId={draftId}
             nextHref="/intellengine/compliance"
             nextStatus="compliance"
-            beforeNavigate={saver.flush}
+            beforeNavigate={() => saver.flush({ force: true })}
             className="rounded-full bg-brand-navy px-8 py-3 text-sm font-semibold text-white shadow-soft transition hover:bg-brand-navyDeep disabled:opacity-60"
           >
             Continue to compliance check
