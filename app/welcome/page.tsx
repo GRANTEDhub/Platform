@@ -2,7 +2,6 @@ import { redirect } from "next/navigation";
 import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { ConfirmProfile } from "@/components/portal/confirm-profile";
-import { TeammateInvite } from "@/components/portal/teammate-invite";
 import { confirmClientProfileAction } from "@/app/portal/profile/actions";
 import { narrativeFromClient } from "@/lib/intake/narrative";
 import type { Client } from "@/types/database";
@@ -21,7 +20,8 @@ export const dynamic = "force-dynamic";
 // rather than a form of its own. It used to have its own simpler pair, which meant the
 // screen the gate actually sent every new client to was the one that captured no programs
 // and no priority areas, and never wrote primary_funding_needs — the column the matcher
-// reads. The only thing unique to first login is the copy and the teammate invite.
+// reads. The only thing unique to first login is now the copy -- the teammate invite that
+// used to sit below the form is unmounted, pending its own first-login action item.
 export default async function WelcomePage() {
   const { memberships } = await requireClient();
   const org = memberships[0];
@@ -71,9 +71,12 @@ export default async function WelcomePage() {
             action={confirmClientProfileAction}
           />
 
-          <div className="mt-8 border-t border-brand-navy/[0.08] pt-8">
-            <TeammateInvite orgName={org.clientName} />
-          </div>
+          {/* TEAMMATE INVITE IS UNMOUNTED, NOT DELETED. It is coming back as its own
+              first-login action item rather than a second task bolted onto the bottom of the
+              verification form, so components/portal/teammate-invite.tsx and
+              inviteTeammateAction (app/welcome/actions.ts) are both left intact and working.
+              Only this mount is gone -- reintroducing it is re-adding a block here, not
+              rebuilding a feature. */}
         </div>
       </div>
     </div>
