@@ -70,6 +70,41 @@ function buttonCell(href: string, label: string, tone: "primary" | "quiet"): str
   ].join("");
 }
 
+// A single call-to-action standing in for a bare URL line -- the setup-link email's
+// "Set up your account".
+//
+// THE RAW URL STAYS, RIGHT UNDER THE BUTTON. Not decoration: a table-cell button is the
+// most robust form email has, but it is still markup, and some clients (and every
+// plain-text-preferring reader, and anything that mangles the style attributes) will not
+// give the recipient something to click. A setup link is single-use and time-limited, so a
+// recipient who cannot click it and cannot see it either has no way in at all -- and the
+// most likely reply is "the link didn't work" for a link that was never visible. It is
+// rendered as a real anchor too, so it is clickable whether or not the button survives.
+export interface CtaButton {
+  // The exact bare-URL line in the plain-text body that this replaces. Matched verbatim,
+  // same contract as HtmlLink: if the line is not there, no button is inserted and the
+  // text part is unchanged.
+  url: string;
+  label: string;
+}
+
+function renderCta(cta: CtaButton): string | null {
+  const href = safeHref(cta.url);
+  if (!href) return null;
+  return [
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:2px 0 12px"><tr>`,
+    buttonCell(href, escapeHtml(cta.label), "primary"),
+    `</tr></table>`,
+    // Small, muted, and word-breaking: a setup URL is long, and an unbroken one blows out
+    // the layout on a phone. Shown as its own line rather than inline so it reads as the
+    // fallback it is.
+    `<p style="margin:0 0 14px;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:12.5px;line-height:1.5;color:#6E7683">`,
+    `Button not working? Use this link:<br>`,
+    `<a href="${href}" style="color:#8F4413;text-decoration:underline;word-break:break-all">${href}</a>`,
+    `</p>`,
+  ].join("");
+}
+
 function renderBox(box: DecisionBox): string | null {
   const yes = safeHref(box.interestedUrl);
   const no = safeHref(box.passUrl);
@@ -118,6 +153,10 @@ export function plainTextToHtml(
     // a box offering buttons the text part never mentions is the exact disagreement
     // between the two parts this module exists to prevent.
     box?: DecisionBox | null;
+    // One CTA, substituted IN PLACE of its bare-URL line -- same discipline as `box`
+    // rather than a header pinned to the top, so the button sits exactly where the text
+    // part puts the link and the two agree on order as well as content.
+    cta?: CtaButton | null;
   },
 ): string {
   const links = (opts?.links ?? [])
@@ -149,9 +188,38 @@ export function plainTextToHtml(
   // sitting after the sign-off. Substituting in place means the two parts agree on
   // ORDER as well as content, and wherever a sender moves the block in the composer the
   // box follows it.
+  const cta = opts?.cta ? renderCta(opts.cta) : null;
+  const ctaUrl = opts?.cta?.url.trim();
+  let ctaPlaced = false;
+
+  // The CTA SPLITS its block rather than replacing it. Its bare-URL line usually shares a
+  // block with the sentence introducing it ("Set up your account ... here:" then the URL on
+  // the next line), and that sentence has to survive. It also cannot simply be swapped
+  // inline: the button is a <table>, which is not valid inside the <p> a paragraph emits --
+  // several clients close the paragraph early and the rest of the block escapes its styling.
+  function withCta(block: string): string[] | null {
+    if (!cta || ctaPlaced || !ctaUrl) return null;
+    const lines = block.split("\n");
+    const at = lines.findIndex((line) => line.trim() === ctaUrl);
+    if (at === -1) return null;
+    ctaPlaced = true;
+    const before = lines.slice(0, at).join("\n");
+    const after = lines.slice(at + 1).join("\n");
+    return [
+      ...(before.trim() ? [paragraph(before)] : []),
+      cta,
+      ...(after.trim() ? [paragraph(after)] : []),
+    ];
+  }
+
   const out: string[] = [];
   let placed = false;
   for (const block of text.replace(/\r\n/g, "\n").split(/\n{2,}/)) {
+    const split = withCta(block);
+    if (split) {
+      out.push(...split);
+      continue;
+    }
     if (box && carriesDecision(block)) {
       // First such block becomes the box; any later one is dropped rather than rendered
       // as bare URLs under it (only reachable if a sender split the block apart).

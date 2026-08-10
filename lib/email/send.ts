@@ -12,7 +12,7 @@ import { Resend } from "resend";
 import { isRecipientAllowed } from "@/lib/email/guard";
 import { sanitizeOutreachEmail } from "@/lib/email/sanitize";
 import type { ReviewCard, Client } from "@/types/database";
-import { plainTextToHtml, type HtmlLink, type DecisionBox } from "./html";
+import { plainTextToHtml, type HtmlLink, type DecisionBox, type CtaButton } from "./html";
 
 // Sends from the verified Resend domain (send.grantedco.com). Replies are
 // directed to a monitored human inbox so the conversation happens over email
@@ -320,8 +320,24 @@ export async function sendClientInviteEmail(opts: {
     "GRANTED",
   ].join("\n");
 
+  // A REAL BUTTON for the one action this email exists to prompt. The setup link used to
+  // arrive as a bare pasted URL, which is both unbranded and easy to mistake for something
+  // to ignore -- and it is the single thing standing between a new client and their portal.
+  //
+  // DERIVED from the text above, not authored separately: the CTA names the URL line already
+  // in `text`, so the two parts cannot drift, and if that line ever changes the button simply
+  // does not appear rather than pointing somewhere the text does not mention. Same contract
+  // the alert email's decision box uses.
+  //
+  // The raw URL is rendered under the button as well -- see renderCta. A setup link is
+  // single-use and expiring, so a recipient whose client mangles the button markup must still
+  // be able to see it rather than reply "the link didn't work" about something invisible.
+  const html = plainTextToHtml(text, {
+    cta: { url: opts.url.trim(), label: "Set up your account" } satisfies CtaButton,
+  });
+
   const resend = new Resend(process.env.RESEND_PLATFORM_API);
-  const { data, error } = await resend.emails.send({ from: FROM, to, replyTo: REPLY_TO, subject, text });
+  const { data, error } = await resend.emails.send({ from: FROM, to, replyTo: REPLY_TO, subject, text, html });
   if (error) throw new Error(`Resend send failed: ${error.message}`);
   return { to, subject, id: data?.id ?? null };
 }
