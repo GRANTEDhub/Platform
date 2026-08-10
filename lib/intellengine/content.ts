@@ -139,11 +139,15 @@ export function readDraftContent(value: unknown): DraftContent {
 //   todo     it is not
 //   unknown  it CANNOT BE ASSESSED yet, and we will not guess
 //
-// `unknown` exists for compliance. Its document list is hardcoded until step 4
-// (app/intellengine/compliance/compliance-client.tsx:21), so there is no honest predicate
-// to run -- and returning `done` for it would put a green check exactly where the gate
-// removed one. It renders as an em dash, is excluded from the percentage, and does not
-// block "ready to submit".
+// `unknown` exists for compliance, and the REASON changed even though the value did not.
+// It used to be "the document list is hardcoded"; that list is now gone, and the real reason
+// is more durable: assessing compliance needs to know what THIS GRANT REQUIRES, which is read
+// out of the NOFO in step 4. Knowing which documents a client holds -- which document
+// assimilation will tell us -- still is not knowing whether they satisfy this program, so
+// even a fully populated profile does not make this `done`.
+//
+// Returning `done` would put a green check exactly where the fabricated one was removed. It
+// renders as an em dash, is excluded from the percentage, and does not block "ready to submit".
 export type StepState = "done" | "todo" | "unknown";
 
 export interface DraftCompleteness {

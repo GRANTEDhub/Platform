@@ -1,31 +1,33 @@
 "use client";
 
-import { useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, AlertTriangle, CheckCircle2, FileText, Info, ShieldAlert, type LucideIcon } from "lucide-react";
+import { ArrowLeft, AlertTriangle, CheckCircle2, Info, ShieldAlert, type LucideIcon } from "lucide-react";
 import { HubShell } from "@/components/layout/hub-background";
 import { IntellEngineLogo } from "@/components/intellengine/logo";
 import { IntellEngineProgress } from "@/components/intellengine/progress-bar";
 import { ContinueButton } from "@/components/intellengine/step-nav";
 import type { EligibilityLevel, EligibilityVerdict } from "@/lib/intellengine/eligibility";
 
-type DocStatus = "verified" | "needs_update";
-type Doc = { name: string; lastUpdated: string; status: DocStatus };
-
-// Step 2.5 -- the compliance gate. Reads the NOFO to determine which
-// documents this grant requires, then checks them against what's already on
-// file for the client (verified vs. needs-update). Doc list + statuses are
-// hardcoded for this shell pass -- the real version reads the NOFO and the
-// client's document repository (lib/storage.ts / client_documents), neither
-// of which is wired up yet.
-const INITIAL_DOCS: Doc[] = [
-  { name: "Annual Audit", lastUpdated: "2026-03-15", status: "verified" },
-  { name: "Form 990", lastUpdated: "2026-03-15", status: "verified" },
-  { name: "Board List", lastUpdated: "2025-06-20", status: "needs_update" },
-  { name: "Operating Budget", lastUpdated: "2026-01-10", status: "verified" },
-  { name: "Organization Description", lastUpdated: "2026-02-01", status: "verified" },
-  { name: "Mission Statement", lastUpdated: "2026-02-01", status: "verified" },
-];
+// Step 2.5 -- the eligibility read, and an honest gap where the document check will go.
+//
+// WHAT WAS HERE, AND WHY IT IS GONE. Six hardcoded documents ("Annual Audit", "Form 990",
+// "Board List" ...) with invented dates, identical for every client and every grant, a
+// Verified/Needs-Update tally counting them, and a file input whose onChange threw the file
+// away and flipped the row to "Verified - Just now". A client could upload their real audit
+// and be shown a green check for a file that was never received, about a requirement no NOFO
+// had asked for. Every number on the panel was fiction.
+//
+// NOTHING REPLACES THE TALLY, deliberately. A count needs a denominator, and the denominator
+// is "what THIS grant requires", which is step 4's job -- reading requirements out of the
+// NOFO. Inventing a plausible-looking one is exactly what was wrong before.
+//
+// The real content arrives with document assimilation: upload -> extract -> a human reviews
+// the proposed profile changes -> commit. This step will then show what we actually know
+// about the organization and where it came from. Until then it says so, and says it does not
+// block anything -- which is true, and checkable.
+//
+// The eligibility card below is untouched: it is a real per-client read computed server-side
+// from the grant's own NOFO fields, and it was never part of the fabrication.
 
 export default function IntellEngineComplianceClient({
   draftId,
@@ -34,19 +36,6 @@ export default function IntellEngineComplianceClient({
   draftId?: string;
   verdict: EligibilityVerdict | null;
 }) {
-  const [docs, setDocs] = useState(INITIAL_DOCS);
-  const needsUpdate = docs.filter((d) => d.status === "needs_update").length;
-
-  // bumpDate distinguishes the two ways a doc gets cleared: uploading a new
-  // version really did just change (lastUpdated -> "Just now"), but confirming
-  // an existing doc as still current asserts the OPPOSITE -- nothing changed,
-  // so the original date must be preserved, not overwritten.
-  function markVerified(name: string, bumpDate: boolean) {
-    setDocs((prev) =>
-      prev.map((d) => (d.name === name ? { ...d, status: "verified", lastUpdated: bumpDate ? "Just now" : d.lastUpdated } : d)),
-    );
-  }
-
   return (
     <HubShell variant="texture">
       <Link
@@ -66,41 +55,21 @@ export default function IntellEngineComplianceClient({
       <div className="mx-auto mt-8 max-w-3xl space-y-6">
         {verdict && <EligibilityCard verdict={verdict} />}
 
+        {/* NO COUNTS, NO STATUSES, NO UPLOAD -- see the note at the top of this file. This card
+            states what is and is not built rather than showing a plausible-looking check, and
+            it says the step is not a blocker, which matches reality: draftCompleteness reports
+            compliance as `unknown`, it is excluded from the percentage, and it never gates
+            "ready to submit". */}
         <div className="rounded-2xl bg-white p-6 shadow-grounded">
-          <h2 className="font-serif text-[19px] font-semibold text-brand-navy">Organization Profile</h2>
+          <h2 className="font-serif text-[19px] font-semibold text-brand-navy">Supporting documents</h2>
           <p className="mt-1.5 text-sm text-muted-foreground">
-            IntellEngine is in preview, so this is an example of the documents a grant like this
-            typically requires — not yet a real check against your organization&apos;s actual profile.
+            We don&apos;t check your documents against this grant&apos;s requirements yet — so this step
+            doesn&apos;t hold you up. Your GRANTED team confirms what&apos;s needed before you apply.
           </p>
-          <div className="mt-4 flex items-center gap-5 text-sm">
-            <span className="flex items-center gap-1.5 font-medium text-emerald-700">
-              <span className="h-2 w-2 rounded-full bg-emerald-500" />
-              Verified: {docs.length - needsUpdate}
-            </span>
-            <span className="flex items-center gap-1.5 font-medium text-amber-700">
-              <span className="h-2 w-2 rounded-full bg-amber-500" />
-              Needs Update: {needsUpdate}
-            </span>
-          </div>
-        </div>
-
-        {needsUpdate > 0 && (
-          <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
-            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
-            <div>
-              <p className="text-sm font-semibold text-amber-900">Updates Recommended</p>
-              <p className="mt-0.5 text-[13px] text-amber-800">
-                {needsUpdate} item{needsUpdate === 1 ? "" : "s"} need{needsUpdate === 1 ? "s" : ""} to be
-                reviewed. Click on each item to confirm or upload updated documents.
-              </p>
-            </div>
-          </div>
-        )}
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          {docs.map((d) => (
-            <DocCard key={d.name} doc={d} onVerify={(bumpDate) => markVerified(d.name, bumpDate)} />
-          ))}
+          <p className="mt-3 text-[13px] text-muted-foreground">
+            Anything you want this proposal to draw from can be attached on the previous step, under
+            Supporting files.
+          </p>
         </div>
 
         <div className="flex justify-end">
@@ -115,54 +84,6 @@ export default function IntellEngineComplianceClient({
         </div>
       </div>
     </HubShell>
-  );
-}
-
-function DocCard({ doc, onVerify }: { doc: Doc; onVerify: (bumpDate: boolean) => void }) {
-  const fileRef = useRef<HTMLInputElement>(null);
-  const needsUpdate = doc.status === "needs_update";
-
-  return (
-    <div
-      className={`rounded-2xl border p-4 ${
-        needsUpdate ? "border-amber-300 bg-amber-50/40" : "border-brand-navy/[0.06] bg-white"
-      }`}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-2.5">
-          <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-          <div>
-            <p className="text-sm font-semibold text-brand-navy">{doc.name}</p>
-            <p className="text-xs text-muted-foreground">Last updated: {doc.lastUpdated}</p>
-          </div>
-        </div>
-        {needsUpdate ? (
-          <div className="flex shrink-0 items-center gap-2">
-            <button
-              onClick={() => onVerify(false)}
-              className="rounded-full border border-amber-300 px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100"
-            >
-              Confirm current
-            </button>
-            <button
-              onClick={() => fileRef.current?.click()}
-              className="flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-200"
-            >
-              <AlertTriangle className="h-3 w-3" />
-              Update Required
-            </button>
-          </div>
-        ) : (
-          <span className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-800">
-            <CheckCircle2 className="h-3 w-3" />
-            Verified
-          </span>
-        )}
-      </div>
-      {/* Not wired to real storage yet -- selecting a file just simulates the
-          document being re-verified, matching the shell scope of this pass. */}
-      <input ref={fileRef} type="file" className="hidden" onChange={() => onVerify(true)} />
-    </div>
   );
 }
 
