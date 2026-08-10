@@ -27,29 +27,33 @@ export default async function ClientDocumentsPage({ params }: { params: { id: st
   // only draft-level ones under 0077's pursuit policy. Deliberately not service-role -- the
   // page should not be able to show more than the database would.
   const rls = createClient();
-  const { data: docRows } = await rls
-    .from("client_documents")
-    .select("id, kind, title, content_type, created_at, intellengine_draft_id, extraction_status, extracted, extracted_at, extraction_error, review_note")
-    .eq("client_id", params.id)
-    .order("created_at", { ascending: false });
-
   // The client row is read service-role because computing "current vs proposed" needs the
   // profile columns, and this page has already established the caller is staff. Only the
   // proposable fields are handed to the browser -- see below.
   const svc = createServiceClient();
-  const { data: client } = await svc
-    .from("clients")
-    .select("*")
-    .eq("id", params.id)
-    .maybeSingle<Client>();
-  if (!client) notFound();
 
-  const { data: history } = await rls
-    .from("client_profile_changes")
-    .select("*")
-    .eq("client_id", params.id)
-    .order("committed_at", { ascending: false })
-    .limit(50);
+  // CONCURRENT, because none of the three depends on another's result -- all key only off
+  // params.id. Sequential awaits made the page cost the SUM of three Supabase round trips
+  // instead of the slowest one, on every navigation (force-dynamic). Review finding on #340.
+  //
+  // The notFound() check moves below as a consequence: a request for a nonexistent client now
+  // runs the history query too. One wasted query on an error path, in exchange for a third of
+  // the latency on every real load.
+  const [{ data: docRows }, { data: client }, { data: history }] = await Promise.all([
+    rls
+      .from("client_documents")
+      .select("id, kind, title, content_type, created_at, intellengine_draft_id, extraction_status, extracted, extracted_at, extraction_error, review_note")
+      .eq("client_id", params.id)
+      .order("created_at", { ascending: false }),
+    svc.from("clients").select("*").eq("id", params.id).maybeSingle<Client>(),
+    rls
+      .from("client_profile_changes")
+      .select("*")
+      .eq("client_id", params.id)
+      .order("committed_at", { ascending: false })
+      .limit(50),
+  ]);
+  if (!client) notFound();
 
   type DocRow = Pick<
     ClientDocument,

@@ -1,7 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/server";
-import { isProposableField, readCurrentValue, valuesEqual } from "./proposal";
+import { isProposableField, readCurrentValue, rejectValue, valuesEqual } from "./proposal";
 import type { DocumentActor } from "./authorize";
 
 // Committing reviewed profile changes, and the audit trail that makes it reversible.
@@ -26,6 +26,11 @@ export interface CommitResult {
   // an error -- reported so the caller can say "already up to date" rather than implying a
   // write that did not happen.
   unchanged?: string[];
+  // Fields REFUSED by a per-field rule (rejectValue): an empty value for an additive-only
+  // field, or an org_type outside ORG_TYPES. Reported rather than silently dropped, and
+  // rather than failing the whole commit -- one bad field must not discard the reviewer's
+  // other decisions, but they have to be told which one did not land.
+  rejected?: { field: string; reason: string }[];
 }
 
 // One accepted field from the review screen. `value` is what the reviewer accepted, which
@@ -88,8 +93,22 @@ export async function commitProfileChanges(opts: {
 
   const changed: { field: string; oldValue: unknown; newValue: unknown }[] = [];
   const unchanged: string[] = [];
+  const rejected: { field: string; reason: string }[] = [];
 
   for (const { field, value } of fields) {
+    // PER-FIELD RULES, RE-APPLIED AT THE WRITER. Review finding on #340: the allowlist was
+    // being checked twice but the two fields carrying EXTRA rules -- org_type and
+    // primary_funding_needs, additive-only and (for org_type) ORG_TYPES-validated by
+    // confirmClientProfileAction -- were validated only in buildProposals, the display path.
+    // A crafted POST skipped that entirely and could clear org_type or set it to free text,
+    // which is exactly the invariant this feature claimed to extend. Enforced here because
+    // this is the only writer, and a rule that lives only in the renderer is a rule a request
+    // can walk around.
+    const refusal = rejectValue(field, value);
+    if (refusal) {
+      rejected.push({ field, reason: refusal });
+      continue;
+    }
     const currentValue = readCurrentValue(field, client);
     if (valuesEqual(currentValue, value)) {
       unchanged.push(field);
@@ -108,7 +127,7 @@ export async function commitProfileChanges(opts: {
   }
 
   if (changed.length === 0) {
-    return { ok: true, commitId: undefined, changed: [], unchanged };
+    return { ok: true, commitId: undefined, changed: [], unchanged, rejected };
   }
   if (touchesIntake) update.intake_data = intake;
 
@@ -147,7 +166,7 @@ export async function commitProfileChanges(opts: {
     };
   }
 
-  return { ok: true, commitId, changed: changed.map((c) => c.field), unchanged };
+  return { ok: true, commitId, changed: changed.map((c) => c.field), unchanged, rejected };
 }
 
 // ── ROLLBACK IS A FORWARD COMMIT ──

@@ -72,9 +72,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   // The reviewer's note is stamped on the DOCUMENT as well as copied into each audit row by
   // the writer -- on the document so re-opening it shows what the reviewer said, in the log
   // so the record survives the document being deleted.
-  if (note) {
-    await admin.from("client_documents").update({ review_note: note }).eq("id", params.id);
-  }
+  //
+  // ALWAYS WRITTEN, never gated on truthiness. Review finding on #340: `if (note)` treated
+  // null and "" as "skip", so a reviewer who cleared the textarea got the OLD note back on
+  // the next load while the audit row for that commit correctly recorded null -- the document
+  // and the log disagreeing, and the UI silently reverting an explicit clear. Clearing a note
+  // is a decision like any other.
+  await admin.from("client_documents").update({ review_note: note }).eq("id", params.id);
 
   const result = await commitProfileChanges({
     clientId: row.client_id,
@@ -96,5 +100,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     commitId: result.commitId ?? null,
     changed: result.changed ?? [],
     unchanged: result.unchanged ?? [],
+    // Fields a per-field rule refused (an emptied additive-only field, an unrecognised
+    // org_type). Surfaced so the screen can name them rather than showing a success that
+    // quietly did less than the reviewer asked for.
+    rejected: result.rejected ?? [],
   });
 }

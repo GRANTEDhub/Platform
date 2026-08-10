@@ -1,9 +1,9 @@
 // Turning an extraction into field-level PROPOSED profile changes.
 //
-// PURE and dependency-free, so the rule that matters can be tested directly rather than
-// inferred from a route's behaviour. No server-only import: the review UI renders from the
-// same functions the commit path validates with, so the screen and the write can never
-// disagree about what was proposed.
+// PURE -- no I/O, no server-only import, and its one import (ORG_TYPES) is a frozen constant
+// list. That matters because the review UI renders from the same functions the commit path
+// validates with, so the screen and the write can never disagree about what was proposed, and
+// the whole module can be exercised directly in a test.
 //
 // ── THE PROPERTY THAT MAKES THIS SAFE ──
 //
@@ -14,6 +14,8 @@
 // extractable from a 990 and are deliberately NOT here: automating typing must not quietly
 // become "documents can set financial fields". Widening this list is a decision, not a
 // side effect, which is why it is one array in one place.
+
+import { ORG_TYPES } from "@/lib/clients/org-types";
 
 // Direct columns on `clients`.
 const DIRECT_FIELDS = [
@@ -49,6 +51,38 @@ export const PROPOSABLE_FIELDS: readonly string[] = [
 
 export function isProposableField(field: unknown): field is string {
   return typeof field === "string" && PROPOSABLE_FIELDS.includes(field);
+}
+
+// ── THE TWO FIELDS THAT CARRY EXTRA RULES, AND WHY THEY ARE ENFORCED HERE ──
+//
+// confirmClientProfileAction treats org_type and primary_funding_needs as ADDITIVE-ONLY --
+// an empty submit never clears them, because both are staff-set and load-bearing -- and it
+// validates org_type against ORG_TYPES rather than storing free text. The PR that introduced
+// assimilation claimed to EXTEND that rule; review on #340 found the claim was not true of
+// the commit path, only of buildProposals, so a crafted request could clear org_type or set
+// it to arbitrary text. That is worse than an ordinary gap: it is an invariant we said we
+// were upholding.
+//
+// org_type is load-bearing in a specific way worth naming: migration 0065 keyed the
+// first-login verification exemption on it, so clearing it silently re-arms the /welcome gate
+// for that client.
+//
+// Kept in this module, beside the allowlist, so the screen and the writer read the same rule
+// from the same place -- and exported so the writer can enforce it rather than trusting that
+// the proposal builder already did.
+const ADDITIVE_ONLY_FIELDS: readonly string[] = ["org_type", "primary_funding_needs"];
+
+export type FieldRejection = "would_clear_protected_field" | "org_type_not_recognised";
+
+// Why this value may not be written, or null if it may. Pure, so both paths can ask.
+export function rejectValue(field: string, value: unknown): FieldRejection | null {
+  if (ADDITIVE_ONLY_FIELDS.includes(field) && isEmptyValue(value)) {
+    return "would_clear_protected_field";
+  }
+  if (field === "org_type" && !(ORG_TYPES as readonly string[]).includes(String(value))) {
+    return "org_type_not_recognised";
+  }
+  return null;
 }
 
 export const FIELD_LABEL: Record<string, string> = {
@@ -142,6 +176,10 @@ export function buildProposals(
     if (isEmptyValue(proposedValue)) continue;
     const currentValue = readCurrentValue(field, client);
     if (valuesEqual(currentValue, proposedValue)) continue;
+    // NEVER OFFER WHAT THE WRITER WILL REFUSE. An extractor can plausibly return "501c3
+    // nonprofit" for org_type, which is not in ORG_TYPES -- rendering it would invite a
+    // reviewer to tick something that then silently does not save.
+    if (rejectValue(field, proposedValue)) continue;
     const isFill = isEmptyValue(currentValue);
     out.push({
       field,

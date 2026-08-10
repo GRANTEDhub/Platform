@@ -77,7 +77,18 @@ function DocumentCard({ doc, proposals }: { doc: DocSummary; proposals: FieldPro
   // Re-seeding DISCARDS in-progress ticks when the set changes, and that is correct rather
   // than unfortunate: if the proposals changed, the previous ticks referred to a set that no
   // longer exists, and carrying them forward would apply a decision to a different question.
-  const proposalsKey = proposals.map((p) => `${p.field}:${p.defaultAccepted}`).join("|");
+  // THE KEY INCLUDES THE VALUES, not just the field names and directions. Second review
+  // finding on #340, and it was the same bug one level down: keyed on field + direction alone,
+  // a re-extraction returning a DIFFERENT value for the same field with the same fill/overwrite
+  // classification produced an identical key, so the re-seed never fired and a previously
+  // ticked overwrite stayed ticked -- committing a value the reviewer never saw when they
+  // clicked. That is precisely the deliberate-click property this screen exists to provide,
+  // defeated in the case it matters most: a non-deterministic extractor, which is what (iv)
+  // installs. My own comment below already said the rule was "the previous ticks referred to a
+  // set that no longer exists"; a changed value IS that, and the key did not implement it.
+  const proposalsKey = proposals
+    .map((p) => `${p.field}:${p.defaultAccepted}:${JSON.stringify(p.proposedValue)}:${JSON.stringify(p.currentValue)}`)
+    .join("|");
   const [seededKey, setSeededKey] = useState(proposalsKey);
   if (proposalsKey !== seededKey) {
     setSeededKey(proposalsKey);
@@ -129,10 +140,17 @@ function DocumentCard({ doc, proposals }: { doc: DocSummary; proposals: FieldPro
       // value already matched -- saying "3 saved" for 1 write would be the small lie this
       // whole track exists to remove.
       const n = (body.changed ?? []).length;
-      setMsg({
-        ok: true,
-        text: n === 0 ? "Nothing to change — the profile already matched." : `${n} field${n === 1 ? "" : "s"} saved to the profile.`,
-      });
+      const refused = (body.rejected ?? []) as { field: string; reason: string }[];
+      const base =
+        n === 0 ? "Nothing to change — the profile already matched." : `${n} field${n === 1 ? "" : "s"} saved to the profile.`;
+      // Refusals are NAMED. A per-field rule declining a value while the banner says "saved"
+      // would be a success message doing less than it claims.
+      const refusedNote = refused.length
+        ? ` ${refused.length} not saved: ${refused
+            .map((r) => `${r.field} (${r.reason === "org_type_not_recognised" ? "unrecognised organization type" : "can't be cleared"})`)
+            .join(", ")}.`
+        : "";
+      setMsg({ ok: refused.length === 0, text: base + refusedNote });
     } catch (e) {
       setMsg({ ok: false, text: e instanceof Error ? e.message : "Couldn't save those changes." });
     } finally {
