@@ -122,6 +122,27 @@ export async function removeObjects(bucket: string, paths: string[]): Promise<vo
   await db.storage.from(bucket).remove(paths);
 }
 
+// Remove a flat list of pointers that may span BUCKETS, grouping per bucket because
+// removeObjects takes one bucket at a time. Extracted after review on #330 noted the draft
+// cascade and the client cascade had each hand-rolled the same Map-and-loop.
+//
+// Best-effort like removeObjects itself: callers use this after the rows are already gone, so
+// a stranded object is invisible rather than a failure worth reporting.
+export async function removeObjectsGrouped(
+  objects: { storage_bucket: string | null; storage_path: string | null }[],
+): Promise<void> {
+  const byBucket = new Map<string, string[]>();
+  for (const o of objects) {
+    if (!o.storage_bucket || !o.storage_path) continue;
+    const list = byBucket.get(o.storage_bucket);
+    if (list) list.push(o.storage_path);
+    else byBucket.set(o.storage_bucket, [o.storage_path]);
+  }
+  for (const [bucket, paths] of byBucket) {
+    await removeObjects(bucket, paths);
+  }
+}
+
 // Create a short-lived signed URL for an admin to download a private object.
 // Returns null on failure so a missing file degrades to "no link" rather than
 // throwing in a page render.

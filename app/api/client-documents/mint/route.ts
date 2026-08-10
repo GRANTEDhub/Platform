@@ -86,9 +86,16 @@ export async function POST(req: NextRequest) {
     if (!draft) return NextResponse.json({ error: "Draft not found" }, { status: 404 });
     clientId = draft.client_id;
   } else {
-    if (!actor.isStaff) {
+    // ADMIN, not merely staff: client_documents is admin-only under RLS (0030 / is_admin),
+    // and this route uses the service role, so the check here IS the policy. A contractor is
+    // told why rather than being handed a client-facing message.
+    if (!actor.isAdmin) {
       return NextResponse.json(
-        { error: "Organization documents are managed by your GRANTED team." },
+        {
+          error: actor.isStaff
+            ? "Only an admin can file organization documents."
+            : "Organization documents are managed by your GRANTED team.",
+        },
         { status: 403 },
       );
     }

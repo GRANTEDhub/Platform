@@ -56,9 +56,16 @@ export async function POST(req: NextRequest) {
     if (!draft) return NextResponse.json({ error: "Draft not found" }, { status: 404 });
     clientId = draft.client_id;
   } else {
-    if (!actor.isStaff) {
+    // ADMIN, not merely staff: client_documents is admin-only under RLS (0030 / is_admin),
+    // and this route uses the service role, so the check here IS the policy. A contractor is
+    // told why rather than being handed a client-facing message.
+    if (!actor.isAdmin) {
       return NextResponse.json(
-        { error: "Organization documents are managed by your GRANTED team." },
+        {
+          error: actor.isStaff
+            ? "Only an admin can file organization documents."
+            : "Organization documents are managed by your GRANTED team.",
+        },
         { status: 403 },
       );
     }
@@ -103,8 +110,12 @@ export async function POST(req: NextRequest) {
 
   const rawTitle = typeof body.title === "string" ? body.title.trim() : "";
   // Falls back to the uploaded file's own name rather than to something invented, so a row
-  // always names the thing it points at.
-  const title = (rawTitle || path.split("/").pop() || "Document").slice(0, MAX_DOCUMENT_TITLE_CHARS);
+  // always names the thing it points at -- but clientUploadPath prefixes a uuid to keep two
+  // uploads of "audit.pdf" distinct, so that has to come off first or the fallback title reads
+  // "3fa85f64-...-audit.pdf". Review finding on #330; the comment used to claim the clean name
+  // while producing the storage segment.
+  const segment = (path.split("/").pop() ?? "").replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i, "");
+  const title = (rawTitle || segment || "Document").slice(0, MAX_DOCUMENT_TITLE_CHARS);
 
   // Service role for the INSERT: 0075 grants members SELECT only, deliberately, so the write
   // happens here after the checks above rather than by widening what a client may do directly.
@@ -135,6 +146,24 @@ export async function POST(req: NextRequest) {
     .single<ClientDocument>();
 
   if (error) {
+    // A RETRIED CONFIRM IS A NO-OP, NOT AN ERROR. 0076 makes (storage_bucket, storage_path)
+    // unique, so a second confirm of the same minted path lands here with 23505 instead of
+    // creating a duplicate. Returning the existing row makes the endpoint idempotent, which is
+    // what a client library retrying after a timeout needs.
+    //
+    // The constraint, not this branch, is what makes it safe: two concurrent confirms would
+    // both pass any check we could write in application code, and only one of them can win a
+    // unique index. Duplicates mattered because deleting either one removes the shared object
+    // and leaves the other naming a file that no longer exists.
+    if (error.code === "23505") {
+      const { data: existing } = await admin
+        .from("client_documents")
+        .select("*")
+        .eq("storage_bucket", CLIENT_UPLOADS_BUCKET)
+        .eq("storage_path", path)
+        .maybeSingle<ClientDocument>();
+      if (existing) return NextResponse.json({ document: existing });
+    }
     console.error("[client-documents] insert failed:", error.message);
     // The object is left in place rather than deleted: a retry of confirm can still record it,
     // and deleting a client's successfully-uploaded file because our own insert failed would

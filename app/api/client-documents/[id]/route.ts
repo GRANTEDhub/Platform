@@ -33,7 +33,11 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
 
   if (!canDeleteDocument(actor, row)) {
     return NextResponse.json(
-      { error: "Organization documents are managed by your GRANTED team." },
+      {
+        error: actor.isStaff
+          ? "Only an admin can remove organization documents."
+          : "Organization documents are managed by your GRANTED team.",
+      },
       { status: 403 },
     );
   }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { removeObjects } from "@/lib/storage";
+import { removeObjectsGrouped } from "@/lib/storage";
 import { pursuitApiDenied } from "@/lib/pursuit/access";
 import { STEP_ORDER, furthestStatus } from "@/lib/intellengine/drafts";
 import {
@@ -160,25 +160,14 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
     .from("client_documents")
     .select("storage_bucket, storage_path")
     .eq("intellengine_draft_id", params.id);
-  const objects = ((docRows ?? []) as { storage_bucket: string | null; storage_path: string | null }[])
-    .filter((d): d is { storage_bucket: string; storage_path: string } => !!d.storage_bucket && !!d.storage_path);
+  const objects = (docRows ?? []) as { storage_bucket: string | null; storage_path: string | null }[];
 
   const { error: delErr } = await supabase.from("intellengine_drafts").delete().eq("id", params.id);
   if (delErr) return NextResponse.json({ error: "Couldn't delete this proposal" }, { status: 500 });
 
   // After the row delete succeeded, so a failed delete never removes files that are still
   // referenced. Best-effort: the rows are gone regardless, and a stranded object is invisible.
-  if (objects.length > 0) {
-    const byBucket = new Map<string, string[]>();
-    for (const o of objects) {
-      const list = byBucket.get(o.storage_bucket);
-      if (list) list.push(o.storage_path);
-      else byBucket.set(o.storage_bucket, [o.storage_path]);
-    }
-    for (const [bucket, paths] of byBucket) {
-      await removeObjects(bucket, paths);
-    }
-  }
+  await removeObjectsGrouped(objects);
 
   if (draft.card_id) {
     const { error: resetErr } = await supabase
