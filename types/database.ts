@@ -491,7 +491,7 @@ export interface ClientDocument {
   // 'pending' | 'ready' | 'failed' | 'stale'. A distinct status rather than an inference from
   // `extracted`, because {} cannot distinguish never-run from found-nothing from failed.
   extraction_status: string;
-  // The structured summary. Shape is lib/documents/extract.ts ExtractedDocument, read
+  // The structured summary. Shape is lib/documents/extract-shape.ts ExtractedDocument, read
   // tolerantly -- the DOCUMENT DATE lives in here rather than as a column, because an
   // extracted date is a claim until a human accepts it.
   extracted: Record<string, unknown>;

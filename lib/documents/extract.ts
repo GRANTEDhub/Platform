@@ -1,90 +1,198 @@
 import "server-only";
 
-// Turning an uploaded document into a structured summary (assimilation step (iii)).
+// PERFORMING an extraction (assimilation step (iv)): storage read -> text -> one LLM call ->
+// validateExtraction. Composition only.
 //
-// THIS SHIPS WITH A STUB, ON PURPOSE. The real extractor is an LLM call and cannot run in
-// the sandbox this was built in, so extraction QUALITY is a production check on real
-// documents. Building the plumbing against a deterministic stub first is what makes a
-// wrong extraction land as a rejected field rather than a corrupted profile: by the time
-// the shredder exists, review -> commit -> audit -> rollback is already proven.
+// ── WHERE THE DECISIONS ARE, AND WHY NOT HERE ──
 //
-// (iv) replaces `runExtraction`'s body. Nothing else in this file, and nothing that
-// consumes it, should need to change -- which is the test of whether the seam is in the
-// right place.
+// Nothing in this file can run in the sandbox it was written in: no LLM egress, no storage
+// credentials. So every rule worth testing was moved to lib/documents/extract-shape.ts, which
+// is pure -- the field allowlist, the enum and format checks, the file-type routing, the text
+// floor, the failure messages, the prompt, the tool schema. Those are exercised offline
+// against the module as compiled. What is left below is the sequence, and the sequence is
+// what a real document on a real deploy proves.
 //
-// The text side is already solved and battle-tested: lib/grants/nofo.ts:124-130 pulls text
-// out of PDF and DOCX with pdf-parse and mammoth (both already dependencies), which is
-// what (iv) will reuse rather than inventing.
+// EXTRACTION QUALITY IS NOT VERIFIABLE FROM HERE, and no green check in this repository
+// should be read as evidence of it. That was the argument for shipping (iii) against a stub
+// first: by the time this file does anything, review -> commit -> audit -> rollback is already
+// proven, so a wrong extraction lands as a declined proposal rather than a corrupted profile.
+//
+// WHAT THIS WRITES: nothing but the extraction. The profile moves only through the commit
+// route, only for fields a human ticked, and (iv) ships with nothing pre-ticked.
 
-// What an extraction is allowed to say. Deliberately small, and every field is OPTIONAL:
-// an extractor that cannot find something must omit it, never guess. A missing field
-// proposes nothing, which is the honest outcome.
-export interface ExtractedDocument {
-  // What kind of document this appears to be, in the extractor's own words ("IRS Form
-  // 990", "audited financial statements"). Display only -- it never becomes a `kind`,
-  // because kind is a client's declared choice from a fixed allowlist.
-  docType?: string;
-  // NO `title` FIELD, and its absence is the decision. It was declared here with the comment
-  // "a better title than the filename, when the document names itself" -- and nothing ever read
-  // it: the review screen wires docType, docDate and synopsis out of `extracted` but takes the
-  // title from the stored client_documents.title column. So (iv) would have computed a better
-  // title, stored it, and had it silently ignored. Review finding on #340.
-  //
-  // Removed rather than wired, because wiring it means answering a question nobody has: does
-  // an extraction get to RENAME a document? The stored title is what the client sees in their
-  // own list (3c), so displaying a different one on the staff screen would give one document
-  // two names, and actually renaming the row is a write nobody asked for. Better an absent
-  // field than a declared one with an invented consumer -- which is the failure this brick kept
-  // producing. Add it back with a decision behind it if extraction-driven renaming is wanted.
-  synopsis?: string;
-  // AS WRITTEN IN THE DOCUMENT, and a CLAIM until a human accepts it. Kept as free text
-  // rather than a date: "FY2024" and "year ended June 30, 2025" are what documents
-  // actually say, and coercing them to a timestamp invents precision.
-  docDate?: string;
-  // The profile-shaped facts. Keys must be in PROPOSABLE_FIELDS (lib/documents/proposal.ts)
-  // or they are dropped -- the allowlist is what keeps assimilation unable to write
-  // anything a client could not type by hand.
-  fields?: Record<string, unknown>;
-}
+import {
+  EXTRACTION_SYSTEM_PROMPT,
+  EXTRACTION_TOOL,
+  EXTRACTOR_FAILED,
+  EXTRACTOR_TRUNCATED,
+  DOWNLOAD_FAILED,
+  MAX_TEXT_CHARS,
+  NO_TEXT_FOUND,
+  PARSE_FAILED,
+  extractorErrorMessage,
+  hasEnoughText,
+  parseableKind,
+  unsupportedMessage,
+  validateExtraction,
+  type ExtractedDocument,
+  type ParseableKind,
+} from "@/lib/documents/extract-shape";
+import { getAnthropicClient, MODEL } from "@/lib/anthropic";
+import { downloadObject } from "@/lib/storage";
+
+// Re-exported because ExtractionOutcome below is written in terms of it. Nothing else is
+// re-exported from here: the shape module is importable directly, and a convenience alias with
+// no consumer is the declared-but-unread field this brick has already produced twice.
+export type { ExtractedDocument };
 
 export type ExtractionOutcome =
   | { status: "ready"; extracted: ExtractedDocument }
   | { status: "failed"; error: string };
 
-// Content types we can get text out of at all. Excel is the known gap: the upload
-// allowlist accepts spreadsheets and there is no parser in the dependency tree, so those
-// FAIL HONESTLY with a message rather than yielding an empty extraction that reads like a
-// document with nothing in it.
-const TEXT_EXTRACTABLE = [
-  "application/pdf",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-];
+// One model pass per document. No chunking, no map-reduce: a document that does not fit is
+// refused with EXTRACTOR_TRUNCATED rather than summarised in pieces, because a partial
+// extraction is indistinguishable from a complete one once it is stored.
+const MAX_OUTPUT_TOKENS = 3000;
+// Bounded so a hung call fails HONESTLY inside the route's maxDuration=300 -- recorded on the
+// row with a message -- rather than being killed by the platform, which would leave the
+// document in whatever state it was already in with nothing written to explain why.
+const CALL_TIMEOUT_MS = 100_000;
 
-export function isTextExtractable(contentType: string | null): boolean {
-  return !!contentType && TEXT_EXTRACTABLE.includes(contentType);
+// Text out of the bytes. Both parsers are already dependencies and already carry this exact
+// job in lib/grants/nofo.ts; the import shape (default vs namespace) is copied from there
+// because it is the shape that survived bundling.
+async function parseText(buf: Buffer, kind: ParseableKind): Promise<string | null> {
+  try {
+    if (kind === "pdf") {
+      const pdfParse = (await import("pdf-parse")).default;
+      return (await pdfParse(buf)).text ?? null;
+    }
+    const mammothMod = await import("mammoth");
+    const mammoth = mammothMod.default ?? mammothMod;
+    return (await mammoth.extractRawText({ buffer: buf })).value ?? null;
+  } catch (err) {
+    // Password-protected, truncated, or not the format its extension claims. Logged because
+    // a systematic parse failure across many uploads is our problem, not the client's.
+    console.error(
+      "[assimilation] parse failed:",
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
 }
 
-export const SPREADSHEET_UNSUPPORTED =
-  "We can't read spreadsheets yet. Upload a PDF or Word version and we'll pull the details from that.";
-
-// Run extraction for one document.
+// Identity anchors for the prompt: enough to decide WHOSE details are on the page.
 //
-// STUB BEHAVIOUR: no LLM, no network, no file read. It reports `failed` for anything we
-// could not get text out of -- which is the branch worth having live now, because it is the
-// one a real client hits by uploading a spreadsheet -- and otherwise returns an EMPTY
-// ready extraction. Empty is deliberate: a stub that invented plausible-looking fields
-// would be the compliance-step fabrication all over again, one layer down.
-export async function runExtraction(input: {
-  contentType: string | null;
+// Contact name, email and phone are deliberately NOT passed. Those are the three fields most
+// likely to be extracted from the wrong organization (a 990's paid-preparer block), so they
+// are the three where a reviewer most needs the model's answer to be independent of what the
+// profile already says. Showing them invites confirmation of an existing value; withholding
+// them costs nothing, because a value equal to the current one proposes nothing anyway.
+export interface ExtractionSubject {
+  name: string;
+  city?: string | null;
+  state?: string | null;
+  county?: string | null;
+}
+
+function renderRequest(input: {
+  subject: ExtractionSubject;
   title: string;
+  kind: string | null;
+  text: string;
+}): string {
+  const where = [input.subject.city, input.subject.county, input.subject.state]
+    .filter(Boolean)
+    .join(", ");
+  return [
+    `SUBJECT ORGANIZATION: ${input.subject.name}`,
+    where ? `Known location (for deciding whose details are whose — not a value to report): ${where}` : "",
+    `Uploaded as: ${input.title}${input.kind ? ` (filed as ${input.kind})` : ""}`,
+    "",
+    "DOCUMENT TEXT:",
+    input.text.slice(0, MAX_TEXT_CHARS),
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+// Run (or re-run) extraction for one document. Never throws: every failure is an outcome the
+// route records on the row, because "we could not read this document, and here is why" is
+// what a person needs and a thrown error is not.
+export async function runExtraction(input: {
+  subject: ExtractionSubject;
+  title: string;
+  kind: string | null;
+  contentType: string | null;
+  storageBucket: string | null;
+  storagePath: string | null;
 }): Promise<ExtractionOutcome> {
-  if (!isTextExtractable(input.contentType)) {
-    return { status: "failed", error: SPREADSHEET_UNSUPPORTED };
+  const kind = parseableKind(input.contentType, input.storagePath);
+  if (!kind) {
+    return { status: "failed", error: unsupportedMessage(input.contentType, input.storagePath) };
   }
-  // (iv): fetch the object, pull text (pdf-parse / mammoth as in lib/grants/nofo.ts),
-  // then a shape-validated LLM call filling ExtractedDocument. Until then the document is
-  // recorded as extracted with nothing found, so the review screen truthfully shows no
-  // proposed changes instead of a made-up summary.
-  return { status: "ready", extracted: {} };
+  // A row with no pointer cannot be read. 3b writes the pointer before the row exists, so this
+  // is a broken row rather than a normal state -- but it must not throw in a route.
+  if (!input.storageBucket || !input.storagePath) {
+    return { status: "failed", error: DOWNLOAD_FAILED };
+  }
+
+  let buf: Buffer;
+  try {
+    buf = await downloadObject(input.storageBucket, input.storagePath);
+  } catch (err) {
+    console.error(
+      "[assimilation] download failed:",
+      err instanceof Error ? err.message : err,
+    );
+    return { status: "failed", error: DOWNLOAD_FAILED };
+  }
+
+  const text = await parseText(buf, kind);
+  if (text === null) return { status: "failed", error: PARSE_FAILED };
+
+  // THE SCAN CASE, and it fails rather than proceeding. A picture of text parses to nothing,
+  // and nothing is what the model would then honestly find -- landing as `ready` with no
+  // proposals, which the review screen states as "the extraction found no profile details
+  // this document could add". That sentence would be false: the document may hold exactly
+  // what we wanted and we cannot see any of it. Checked BEFORE the call, so it also cannot
+  // spend a model call on an empty page.
+  if (!hasEnoughText(text)) return { status: "failed", error: NO_TEXT_FOUND };
+
+  try {
+    const anthropic = getAnthropicClient();
+    const response = await anthropic.messages.create(
+      {
+        model: MODEL,
+        max_tokens: MAX_OUTPUT_TOKENS,
+        temperature: 0,
+        system: EXTRACTION_SYSTEM_PROMPT,
+        tools: [EXTRACTION_TOOL],
+        // Forced, as in every other structured call here: the only acceptable output is the
+        // tool shape, so prose about the document is not a thing that can happen.
+        tool_choice: { type: "tool", name: EXTRACTION_TOOL.name },
+        messages: [{ role: "user", content: renderRequest({ ...input, text }) }],
+      },
+      // One retry rather than the SDK default of two: two 100s attempts plus the parse still
+      // fit inside maxDuration=300, three do not, and being killed mid-call records nothing.
+      { timeout: CALL_TIMEOUT_MS, maxRetries: 1 },
+    );
+
+    if (response.stop_reason === "max_tokens") {
+      return { status: "failed", error: EXTRACTOR_TRUNCATED };
+    }
+    const toolUse = response.content.find((b) => b.type === "tool_use");
+    if (!toolUse || toolUse.type !== "tool_use") {
+      return { status: "failed", error: EXTRACTOR_FAILED };
+    }
+    // The ONLY path from model output to storage, and it drops everything it did not choose
+    // to keep. A hostile or malformed tool input is a smaller extraction, never a wider one.
+    return { status: "ready", extracted: validateExtraction(toolUse.input) };
+  } catch (err) {
+    console.error(
+      "[assimilation] extractor call failed:",
+      err instanceof Error ? err.message : err,
+    );
+    return { status: "failed", error: extractorErrorMessage(err) };
+  }
 }

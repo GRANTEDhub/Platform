@@ -22,13 +22,24 @@ interface DocSummary {
   synopsis: string | null;
 }
 
+// Why a per-field rule refused a value, in words a reviewer can act on. A map rather than a
+// ternary because there are three reasons now (0079's priority-area check added the third),
+// and a two-branch expression silently reported every new reason as "can't be cleared".
+const REJECTION_REASONS: Record<string, string> = {
+  would_clear_protected_field: "can't be cleared",
+  org_type_not_recognised: "unrecognised organization type",
+  priority_area_not_recognised: "unrecognised priority area",
+};
+
 // The review screen. Renders proposals computed server-side by buildProposals, so it cannot
 // offer a field the commit route would refuse.
 //
-// THE ASYMMETRIC DEFAULT IS THE WHOLE INTERACTION. A proposal that FILLS an empty field
-// arrives checked; one that would OVERWRITE arrives unchecked with both values shown. That
-// makes the cheap direction one click and the expensive direction a decision -- and it is why
-// this screen can be trusted with an extractor nobody has validated yet.
+// EVERY FIELD IS A DELIBERATE CLICK. Nothing arrives ticked, in either direction: the
+// asymmetric default (iii) shipped -- fills pre-checked, overwrites not -- was argued against a
+// stub extractor that proposed nothing, and the wrong extraction we actually expect (a 990's
+// paid-preparer contact block read as the client's own) arrives as a FILL into a blank field.
+// Pre-checking was backwards for the likeliest failure. Fill vs. overwrite is still LABELLED,
+// and an overwrite still shows both values, because that is what a reviewer needs to judge it.
 export default function AssimilationReview({
   reviews,
   history,
@@ -69,7 +80,9 @@ function defaultAcceptedMap(proposals: FieldProposal[]): Record<string, boolean>
 
 function DocumentCard({ doc, proposals }: { doc: DocSummary; proposals: FieldProposal[] }) {
   const router = useRouter();
-  // Accepted state starts from defaultAccepted -- pre-checked fills, unchecked overwrites.
+  // Accepted state starts from defaultAccepted, which is now false for every proposal. Still
+  // seeded from the server's value rather than from `{}` so the policy has exactly one home
+  // (lib/documents/proposal.ts) and turning it back on stays a one-line change there.
   const [accepted, setAccepted] = useState<Record<string, boolean>>(() => defaultAcceptedMap(proposals));
 
   // RE-SEED WHEN THE PROPOSAL SET CHANGES, or the asymmetric default silently does not apply.
@@ -95,6 +108,12 @@ function DocumentCard({ doc, proposals }: { doc: DocSummary; proposals: FieldPro
   // defeated in the case it matters most: a non-deterministic extractor, which is what (iv)
   // installs. My own comment below already said the rule was "the previous ticks referred to a
   // set that no longer exists"; a changed value IS that, and the key did not implement it.
+  //
+  // (iv) NOTE: `defaultAccepted` is now constant false, so the VALUE components below are the
+  // only thing left that can catch a re-extraction returning something different for the same
+  // field. Keeping them is what makes the re-seed still fire -- and the case it guards is now
+  // the ordinary one, since a real extractor is non-deterministic where the stub returned
+  // nothing at all. Do not "simplify" this key back down to field names.
   const proposalsKey = proposals
     .map((p) => `${p.field}:${p.defaultAccepted}:${JSON.stringify(p.proposedValue)}:${JSON.stringify(p.currentValue)}`)
     .join("|");
@@ -119,9 +138,17 @@ function DocumentCard({ doc, proposals }: { doc: DocSummary; proposals: FieldPro
       // The server is the source of truth for what was extracted, so re-render from it
       // rather than patching local state into agreement with a guess.
       router.refresh();
+      // THREE OUTCOMES, THREE SENTENCES. "Extracted." for both ready cases would tell a
+      // reviewer that fields are waiting when the document produced none, and the failure case
+      // carries the server's own message (a scan reads differently from a spreadsheet).
       setMsg({
         ok: body.status === "ready",
-        text: body.status === "ready" ? "Extracted." : body.error || "Couldn't read this document.",
+        text:
+          body.status === "ready"
+            ? body.foundNothing
+              ? "Read it — nothing in it proposes a profile change."
+              : "Extracted. Nothing is ticked; accept field by field."
+            : body.error || "Couldn't read this document.",
       });
     } catch (e) {
       setMsg({ ok: false, text: e instanceof Error ? e.message : "Extraction failed." });
@@ -156,7 +183,7 @@ function DocumentCard({ doc, proposals }: { doc: DocSummary; proposals: FieldPro
       // would be a success message doing less than it claims.
       const refusedNote = refused.length
         ? ` ${refused.length} not saved: ${refused
-            .map((r) => `${r.field} (${r.reason === "org_type_not_recognised" ? "unrecognised organization type" : "can't be cleared"})`)
+            .map((r) => `${r.field} (${REJECTION_REASONS[r.reason] ?? "refused by a field rule"})`)
             .join(", ")}.`
         : "";
       setMsg({ ok: refused.length === 0, text: base + refusedNote });
@@ -210,9 +237,13 @@ function DocumentCard({ doc, proposals }: { doc: DocSummary; proposals: FieldPro
         </p>
       )}
 
+      {/* READ IT, FOUND NOTHING TO PROPOSE. Distinct from the amber failure block above, and the
+          distinction is load-bearing: a scan that yielded no text is a FAILURE with its own
+          message, never this sentence. Saying "we read this" about a document we could not read
+          is the exact lie the text floor in extract-shape.ts exists to prevent. */}
       {doc.status === "ready" && proposals.length === 0 && (
         <p className="mt-4 text-[13px] text-muted-foreground">
-          Nothing to propose — the extraction found no profile details this document could add.
+          We read this document — nothing in it proposes a change to the profile.
         </p>
       )}
 
@@ -246,6 +277,16 @@ function DocumentCard({ doc, proposals }: { doc: DocSummary; proposals: FieldPro
                   </p>
                 )}
                 <p className="mt-1 text-[13px] text-brand-navy/85">{renderValue(p.proposedValue)}</p>
+                {/* WHERE IT CAME FROM, VERBATIM. The failure this catches: a contact block read
+                    correctly off a 990's "Paid Preparer Use Only" section, or an audit firm's
+                    letterhead — a valid name and a valid email belonging to the wrong
+                    organization, which no validation can detect. Quoted here, whose details
+                    they are is visible without opening the document. */}
+                {p.evidence && (
+                  <p className="mt-2 border-l-2 border-brand-navy/15 pl-2.5 text-xs italic text-brand-navy/55">
+                    “{p.evidence}”
+                  </p>
+                )}
               </div>
             </label>
           ))}
@@ -262,9 +303,11 @@ function DocumentCard({ doc, proposals }: { doc: DocSummary; proposals: FieldPro
             <Button onClick={commit} disabled={busy !== null || chosen.length === 0}>
               {busy === "commit" ? "Saving…" : `Save ${chosen.length} to profile`}
             </Button>
+            {/* NOTHING ARRIVES TICKED, in either direction, so the hint is unconditional now.
+                It used to fire only when an overwrite was present, which was correct while
+                fills arrived pre-checked and would now describe the screen wrongly. */}
             <span className="text-xs text-muted-foreground">
-              {proposals.filter((p) => !p.isFill).length > 0 &&
-                "Replacements are unticked by default — tick only what you want overwritten."}
+              Nothing is ticked — accept each field deliberately.
             </span>
           </div>
         </div>

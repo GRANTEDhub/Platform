@@ -16,6 +16,7 @@
 // side effect, which is why it is one array in one place.
 
 import { ORG_TYPES } from "@/lib/clients/org-types";
+import { PRIORITY_AREAS } from "@/lib/intake/fields";
 
 // Direct columns on `clients`.
 const DIRECT_FIELDS = [
@@ -72,7 +73,25 @@ export function isProposableField(field: unknown): field is string {
 // the proposal builder already did.
 const ADDITIVE_ONLY_FIELDS: readonly string[] = ["org_type", "primary_funding_needs"];
 
-export type FieldRejection = "would_clear_protected_field" | "org_type_not_recognised";
+// Both halves of the priority-area pair: the matcher-facing column and the intake_data key
+// the portal form writes. Kept as one list so a rule can never apply to one and not the other.
+const PRIORITY_AREA_FIELDS: readonly string[] = [
+  "primary_funding_needs",
+  "intake_data.priority_areas",
+];
+
+export type FieldRejection =
+  | "would_clear_protected_field"
+  | "org_type_not_recognised"
+  // The two priority-area fields are FIXED-OPTION LISTS, and nothing enforced that until an
+  // extractor existed to test it with. Both are filtered to PRIORITY_AREAS on every form path
+  // (parseNarrative for intake_data.priority_areas, narrativeFromClient for the
+  // primary_funding_needs column), so an unrecognised value written here would be stored,
+  // read by the matcher, and then silently dropped the next time a human edited the profile --
+  // a value that exists until someone touches the form. Same class as org_type, same
+  // treatment, and the extractor's validator filters to this list before a proposal is ever
+  // built so the screen cannot offer what this refuses.
+  | "priority_area_not_recognised";
 
 // Proposing NEW content is a different act from RESTORING a value the profile already held,
 // and these rules only make sense for the first.
@@ -105,6 +124,17 @@ export function rejectValue(
   if (field === "org_type" && !(ORG_TYPES as readonly string[]).includes(String(value))) {
     return "org_type_not_recognised";
   }
+  if (PRIORITY_AREA_FIELDS.includes(field)) {
+    // ANY unrecognised member refuses the whole field rather than silently writing the
+    // recognised subset. The extractor already filters (there, dropping one bad option still
+    // proposes the good ones); by the time a value reaches the writer a reviewer has ticked
+    // THIS list, and saving a shortened version of what they accepted is the kind of quiet
+    // partial success this path exists to remove.
+    if (!Array.isArray(value)) return "priority_area_not_recognised";
+    if (value.some((v) => typeof v !== "string" || !PRIORITY_AREAS.includes(v))) {
+      return "priority_area_not_recognised";
+    }
+  }
   return null;
 }
 
@@ -134,21 +164,35 @@ export interface FieldProposal {
   label: string;
   currentValue: unknown;
   proposedValue: unknown;
-  // True when the profile field holds nothing today. Drives the default below and lets the
-  // UI say "filling a gap" rather than "replacing".
+  // True when the profile field holds nothing today. Still computed, and still shown -- the
+  // screen says "filling a blank" or "replacing what's there", which is what a reviewer needs
+  // to know before ticking. It no longer decides anything.
   isFill: boolean;
-  // THE ASYMMETRIC DEFAULT. Pre-checked when this FILLS an empty field; unchecked when it
-  // would OVERWRITE existing content.
+  // ── NOTHING ARRIVES TICKED. ALWAYS FALSE. ──
   //
-  // Filling a blank is cheap and visible, and making a reviewer tick twelve boxes to accept
-  // an obviously-good extraction is how review decays into rubber-stamping. Overwriting a
-  // human's own words is the expensive direction, so it takes a deliberate click and is
-  // shown side by side.
+  // (iii) shipped an asymmetric default: a proposal that FILLED an empty field arrived
+  // pre-checked, on the argument that making a reviewer tick twelve boxes to accept an
+  // obviously-good extraction is how review decays into rubber-stamping. That argument was
+  // made against a STUB extractor, which proposed nothing at all.
   //
-  // This extends a rule already in the codebase rather than inventing one:
-  // confirmClientProfileAction treats primary_funding_needs and org_type as additive-only,
-  // never clearing them on an empty submit, for the same reason.
-  defaultAccepted: boolean;
+  // With a real extractor the trade reverses, for as long as extraction quality is being
+  // evaluated against real documents: a pre-checked fill is a value that reaches a client
+  // profile if the reviewer clicks Commit without reading that row -- and the specific wrong
+  // extraction we expect (a 990's paid-preparer contact block read as the organization's own)
+  // arrives as a FILL, because the field it fills is usually blank. Pre-checking is exactly
+  // backwards for the failure most likely to occur.
+  //
+  // So: every proposal is a deliberate click, in both directions. Kept as a field rather than
+  // hardcoded in the UI so the policy stays in the pure module beside the allowlist, where the
+  // screen and the writer both read it and a test can assert it.
+  defaultAccepted: false;
+  // A verbatim quote from the document for this value, when the extractor supplied one.
+  //
+  // The consumer is the review row: rendering "Paid Preparer Use Only — J. Smith, CPA" under a
+  // proposed contact name is what makes a wrong-entity extraction visible without opening the
+  // PDF. Shape validation cannot catch that failure, because the value is a perfectly valid
+  // name belonging to the wrong organization.
+  evidence?: string | null;
 }
 
 // Empty means empty for every shape this set carries: null/undefined, blank-or-whitespace
@@ -188,6 +232,12 @@ export function valuesEqual(a: unknown, b: unknown): boolean {
 export function buildProposals(
   extractedFields: Record<string, unknown> | null | undefined,
   client: Record<string, unknown>,
+  // Per-field provenance from the extraction, keyed by field name. Optional because a stubbed
+  // or older extraction has none, and a missing quote must not suppress the proposal -- it is
+  // context for a reviewer, not a gate. The extractor's own prompt makes it a precondition for
+  // proposing; enforcing it a second time here would silently drop real findings on a model
+  // that skipped one key.
+  evidence?: Record<string, unknown> | null,
 ): FieldProposal[] {
   const fields = extractedFields ?? {};
   const out: FieldProposal[] = [];
@@ -204,13 +254,15 @@ export function buildProposals(
     // reviewer to tick something that then silently does not save.
     if (rejectValue(field, proposedValue)) continue;
     const isFill = isEmptyValue(currentValue);
+    const quote = evidence?.[field];
     out.push({
       field,
       label: FIELD_LABEL[field] ?? field,
       currentValue,
       proposedValue,
       isFill,
-      defaultAccepted: isFill,
+      defaultAccepted: false,
+      evidence: typeof quote === "string" && quote.trim() !== "" ? quote.trim() : null,
     });
   }
   return out;
