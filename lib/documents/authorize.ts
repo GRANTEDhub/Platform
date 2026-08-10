@@ -35,6 +35,10 @@ import { createClient } from "@/lib/supabase/server";
 
 export interface DocumentActor {
   userId: string;
+  // The auth user's email. Snapshotted into the audit trail at commit time (0078), because
+  // "who changed this" has to stay answerable after a membership or profile is deleted --
+  // which is also why the audit's committed_by is not a profiles FK.
+  email: string | null;
   // Any staff profile. Kept for readability at call sites; NOT sufficient to authorise a
   // write -- see isAdmin.
   isStaff: boolean;
@@ -59,7 +63,7 @@ export async function resolveDocumentActor(): Promise<DocumentActor | null> {
     .eq("id", user.id)
     .maybeSingle<{ id: string; role: string }>();
   if (profile) {
-    return { userId: user.id, isStaff: true, isAdmin: profile.role === "admin", clientIds: [] };
+    return { userId: user.id, email: user.email ?? null, isStaff: true, isAdmin: profile.role === "admin", clientIds: [] };
   }
 
   const { data: rows } = await supabase
@@ -70,7 +74,7 @@ export async function resolveDocumentActor(): Promise<DocumentActor | null> {
     // never-activated membership counts as real here and nowhere else.
     .not("activated_at", "is", null);
   const clientIds = ((rows ?? []) as { client_id: string }[]).map((r) => r.client_id);
-  return { userId: user.id, isStaff: false, isAdmin: false, clientIds };
+  return { userId: user.id, email: user.email ?? null, isStaff: false, isAdmin: false, clientIds };
 }
 
 // May this actor WRITE a document in this scope?

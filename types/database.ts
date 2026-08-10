@@ -487,6 +487,44 @@ export interface ClientDocument {
   // is invisible to clients until something deliberately says otherwise -- which is what
   // keeps signed contracts behind the financial firewall without naming them.
   client_visible: boolean;
+  // ── Assimilation (0078) ──
+  // 'pending' | 'ready' | 'failed' | 'stale'. A distinct status rather than an inference from
+  // `extracted`, because {} cannot distinguish never-run from found-nothing from failed.
+  extraction_status: string;
+  // The structured summary. Shape is lib/documents/extract.ts ExtractedDocument, read
+  // tolerantly -- the DOCUMENT DATE lives in here rather than as a column, because an
+  // extracted date is a claim until a human accepts it.
+  extracted: Record<string, unknown>;
+  extracted_at: string | null;
+  // Why extraction failed, so a spreadsheet reads as "we can't read this" rather than as a
+  // document containing nothing.
+  extraction_error: string | null;
+  // The reviewer's own note, copied into each audit row at commit.
+  review_note: string | null;
+}
+
+// One committed profile field change (0078). Append-only: the table has no UPDATE or DELETE
+// policy, and a rollback writes NEW rows rather than removing these.
+export interface ClientProfileChange {
+  id: string;
+  // Groups the fields committed together in one review.
+  commit_id: string;
+  client_id: string;
+  // SET NULL on document delete -- the audit outlives its cause.
+  document_id: string | null;
+  // 'mission' | 'primary_contact_email' | 'intake_data.programs' ... validated against
+  // lib/documents/proposal.ts PROPOSABLE_FIELDS, which is what keeps assimilation unable to
+  // write anything a client could not type by hand.
+  field: string;
+  old_value: unknown;
+  new_value: unknown;
+  // The AUTH user id, not a profiles id: a client member has no profiles row.
+  committed_by: string | null;
+  // Snapshotted at commit time so "who changed this" survives a deleted membership.
+  committed_by_email: string | null;
+  committed_by_kind: string;
+  note: string | null;
+  committed_at: string;
 }
 
 export type IntellEngineDraftStatus = "scope" | "compliance" | "build" | "complete";

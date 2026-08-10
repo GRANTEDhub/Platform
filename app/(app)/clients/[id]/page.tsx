@@ -698,6 +698,15 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
       >
         Edit profile
       </Link>
+      {/* Assimilation review (0078). Sits beside Edit profile because it is the same job by a
+          different route -- a document proposing profile changes rather than someone typing
+          them -- and it lands on the same fields. */}
+      <Link
+        href={`/clients/${client.id}/documents`}
+        className="inline-flex h-8 items-center rounded-pill border border-white/20 px-[14px] text-[13px] font-medium text-white/[0.85] transition-colors hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome"
+      >
+        Documents
+      </Link>
       <GenerateReportButton
         clientId={client.id}
         inProgress={matchInProgress}
