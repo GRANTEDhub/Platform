@@ -153,12 +153,36 @@ Eligibility (§1) and prepopulation (§1) are done and block nothing.
 
 **Progress.** Steps 1 and 2 are merged and verified in production (0074 applied; the
 network-kill, clear-and-return and persistence checks all pass against `app.grantedco.com`).
-Step 3 is in progress: **3a and 3b merged** (0075 and 0076 applied), **3c built**. The gate is
-still off.
+Step 3 is in progress: **3a, 3b and 3c merged** (0075 and 0076 applied). The gate is still off.
 
-The 3b curl verification was **skipped by decision**, not completed — so 3c's preview check is
-the first real exercise of mint / confirm / delete. Recorded because "3b verified" would
-otherwise be assumed later: what was actually verified is 3b *through* the 3c UI.
+### ⚠ Outstanding: the document layer has never been exercised by a real click
+
+**Blocking precondition on un-gating.** 3b and 3c are merged on automated coverage only. Both
+the 3b curl run and the 3c click-test were **skipped by decision**, so as of 2026-08-10 no
+human has uploaded, opened or deleted a file through this layer — not on prod, not on a
+preview. What that leaves unproven, precisely:
+
+| Covered today | Not covered until someone clicks |
+|---|---|
+| `verify` green; `tsc` + `next build` clean | mint → PUT → confirm actually completing against real storage |
+| Predicate mirrors for `canWrite` / `canDelete` / `canReadDocument`, including the contract and contractor cases | the signed **upload** URL working end to end from a browser |
+| Three privilege escalations found and fixed pre-merge (#330, #331) | the signed **download** URL opening real bytes |
+| Row-after-object ordering, by construction | delete removing both row and object |
+
+The distinction that matters: the checks above prove the *logic* is right. Nothing yet proves
+the *plumbing* works — a signed-URL upload has several moving parts (token, endpoint shape,
+body encoding, bucket mime/size limits) that no unit-level test in this repo touches.
+
+**So: a real upload / open / delete click-test must happen before `PURSUIT_CLIENT_ACCESS_ENABLED`
+is ever turned on.** Not a blocker while the gate is off — no client can reach any of it — but
+it is not optional before un-gating, and it is written here rather than left in a chat log
+because "3b/3c merged" reads like "3b/3c verified" and it is not the same claim.
+
+A separate gap, and it needs a **client** login rather than a staff one: an admin reads
+`client_documents` through 0030's `is_admin()` policy, so a staff click-test would still not
+exercise 0075's `is_client_member_of(client_id) and client_visible` — the predicate that keeps
+signed contracts away from clients. Covered by the predicate mirror only. The click-test should
+therefore be run as a real client member once the gate allows it.
 
 ### 5.1 Step 3 sub-sequence (approved 2026-08-10)
 
@@ -215,7 +239,10 @@ Three decisions settled before the split, because they set the boundaries:
    unlock the gate by itself.
 
 Un-gating after 3d is a judgment call, not an automatic consequence: the compliance step will
-be honest but thin until step 4 supplies real per-grant requirements.
+be honest but thin until step 4 supplies real per-grant requirements. And it has one hard
+precondition regardless of that judgment — the document layer's **click-test has not been run**
+(see the warning under §5's progress note). Merged on automated coverage is not the same as
+exercised.
 
 Settled alongside the sequence:
 
