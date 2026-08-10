@@ -23,10 +23,12 @@ type Partner = { name: string; role: string; description: string };
 // for this client + grant when available, else a light grant-derived hint, else
 // blank for a from-scratch proposal. Everything stays fully editable.
 //
-// Editor state is still local -- persisting these edits back to the draft is the
-// remaining follow-up (the intellengine_drafts row holds only structural progress
-// today, per migration 0062). Uploaded files keep only the filename; nothing is
-// stored yet, never implying the file was received.
+// Editor state is still local -- wiring these fields to intellengine_drafts.content is
+// step 2 of the build order (docs/pursuit-state-audit-2026-08.md §5). The column exists as
+// of 0074 and nothing writes it yet, so everything typed here is still lost on navigate;
+// that is why the whole surface stays gated off clients. Uploaded files keep only the
+// filename and are deliberately NOT going into content -- a stored filename with no object
+// behind it is the "looks received" lie, and files arrive with a bucket in step 3.
 export default function IntellEngineScopeClient({
   draftId,
   seed,

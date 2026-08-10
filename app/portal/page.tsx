@@ -63,15 +63,16 @@ export default async function PortalHome() {
   // dashboard card leads with the draft the hub leads with.
   const { data: draftRows } = await supabase
     .from("intellengine_drafts")
-    .select("id, title, status, updated_at")
+    .select("id, title, status, content, updated_at")
     .eq("client_id", org.clientId)
     .order("updated_at", { ascending: false });
 
   const draftRecords = (draftRows ?? []) as Pick<
     IntellEngineDraft,
-    "id" | "title" | "status" | "updated_at"
+    "id" | "title" | "status" | "content" | "updated_at"
   >[];
-  const drafts: DashDraft[] = draftRecords.map((d) => ({ id: d.id, title: d.title, status: d.status }));
+  // content, not status: the card's progress is derived from what the draft holds (0074).
+  const drafts: DashDraft[] = draftRecords.map((d) => ({ id: d.id, title: d.title, content: d.content }));
 
   const allCards = ((cardRows ?? []) as CardRow[]).map((r) => ({ ...r, grant: grantOf(r.grants) }));
   // For an account-managed client (0059), a card not yet released by staff must

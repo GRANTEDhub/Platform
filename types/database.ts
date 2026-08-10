@@ -468,7 +468,12 @@ export interface IntellEngineDraft {
   client_id: string;
   card_id: string | null;
   title: string;
+  // The furthest screen OPENED — a resume pointer, not progress. Progress is derived
+  // from `content` (lib/intellengine/content.ts); see migration 0074.
   status: IntellEngineDraftStatus;
+  // Scope + section drafts (0074). Read through readDraftContent, never directly: it is
+  // jsonb, so a tolerant reader is what keeps a shape change out of the page render.
+  content: unknown;
   created_at: string;
   updated_at: string;
 }

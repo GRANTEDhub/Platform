@@ -186,15 +186,16 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   // orders them, so the dashboard card leads with the same draft the hub does.
   const { data: draftRows } = await supabase
     .from("intellengine_drafts")
-    .select("id, card_id, title, status, updated_at")
+    .select("id, card_id, title, status, content, updated_at")
     .eq("client_id", params.id)
     .order("updated_at", { ascending: false });
 
   const draftRecords = (draftRows ?? []) as Pick<
     IntellEngineDraft,
-    "id" | "card_id" | "title" | "status" | "updated_at"
+    "id" | "card_id" | "title" | "status" | "content" | "updated_at"
   >[];
-  const drafts: DashDraft[] = draftRecords.map((d) => ({ id: d.id, title: d.title, status: d.status }));
+  // content, not status: the panel's progress is derived from what the draft holds (0074).
+  const drafts: DashDraft[] = draftRecords.map((d) => ({ id: d.id, title: d.title, content: d.content }));
 
   // grant_id -> ms of the first carded attempt for that pair.
   const firstCarded = new Map<string, string>();

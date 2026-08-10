@@ -1,19 +1,23 @@
 import Link from "next/link";
-import { ArrowRight, Check, CircleDashed, Sparkles } from "lucide-react";
+import { ArrowRight, Check, CircleDashed, Minus, Sparkles } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { draftProgress } from "@/lib/intellengine/drafts";
+import { readDraftContent } from "@/lib/intellengine/content";
 import { BRAND } from "@/lib/brand";
-import type { IntellEngineDraftStatus } from "@/types/database";
 
 // The IntellEngine card — the client's proposals in flight, with the furthest one's
 // progress on the dashboard instead of behind a shortcut tile.
 //
-// The percentage and the checklist are DERIVED from the draft's status ladder
-// (lib/intellengine/drafts.ts draftProgress) — there is no stored progress field, so
-// there is nothing that can drift out of step with the status the hub shows. It is
-// deliberately labelled as step progress, not content progress: reaching the builder
-// is 75% of the FLOW, which is not a claim about how much narrative is written, and
-// the caption says so rather than letting a client read it as three-quarters drafted.
+// PROGRESS COMES FROM THE DRAFT'S CONTENT, NOT ITS STATUS (0074). It used to read the
+// status ladder, which records the furthest screen OPENED — so a draft whose three
+// screens had been clicked through while empty rendered here at 100% with every box
+// checked, and the caption's "step progress, not content progress" hedge was carrying
+// far more weight than a caption can. Now a box is checked when the content for that
+// step is actually present, which is what a reader takes a checked box to mean.
+//
+// A rung can also be UNASSESSABLE (compliance, until the document layer lands): it shows
+// a dash rather than a check or an empty circle, and it is excluded from the percentage
+// so a draft is not marked down for a check the product cannot run yet.
 //
 // TWO VARIANTS, as with the Grant Report card: this renders in the staff console and in
 // the client portal. "console" is the approved design; "portal" is what the portal has
@@ -22,7 +26,9 @@ import type { IntellEngineDraftStatus } from "@/types/database";
 export interface DashDraft {
   id: string;
   title: string;
-  status: IntellEngineDraftStatus;
+  // Raw jsonb from intellengine_drafts.content; parsed here through readDraftContent so
+  // callers never have to know the shape (and an unapplied 0074 reads as empty).
+  content: unknown;
 }
 
 // One grant the panel is pointing at.
@@ -66,7 +72,7 @@ export function ClientDraftProgress({
   variant?: "console" | "portal";
 }) {
   const lead = drafts[0];
-  const progress = lead ? draftProgress(lead.status) : null;
+  const progress = lead ? draftProgress(readDraftContent(lead.content)) : null;
 
   if (variant === "console") {
     return (
@@ -103,8 +109,10 @@ export function ClientDraftProgress({
             />
           </div>
 
+          {/* Counts CAPTURED steps against ASSESSABLE ones, not position in the flow.
+              The old "Step 3 of 4" was true of navigation and false of the work. */}
           <p className="mt-1.5 text-[11.5px] text-ink-subtle">
-            Step {progress.step} of {progress.total} in the drafting flow
+            {progress.done} of {progress.assessable} steps captured
           </p>
 
           <ul className="mt-4 space-y-1.5">
@@ -113,13 +121,18 @@ export function ClientDraftProgress({
                 <span
                   aria-hidden="true"
                   className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${
-                    s.done ? "bg-brand-orangeFill text-white" : "border border-hairline-strong bg-white"
+                    s.state === "done" ? "bg-brand-orangeFill text-white" : "border border-hairline-strong bg-white"
                   }`}
                 >
-                  {s.done && <Check className="h-2.5 w-2.5" strokeWidth={3} />}
+                  {s.state === "done" && <Check className="h-2.5 w-2.5" strokeWidth={3} />}
+                  {s.state === "unknown" && <Minus className="h-2.5 w-2.5 text-ink-subtle" strokeWidth={3} />}
                 </span>
-                <span className={s.done ? "font-medium text-brand-navy" : "text-ink-subtle"}>{s.label}</span>
-                <span className="sr-only">{s.done ? " — done" : " — not started"}</span>
+                <span className={s.state === "done" ? "font-medium text-brand-navy" : "text-ink-subtle"}>
+                  {s.label}
+                </span>
+                <span className="sr-only">
+                  {s.state === "done" ? " — done" : s.state === "unknown" ? " — not yet checkable" : " — not started"}
+                </span>
               </li>
             ))}
           </ul>
@@ -174,7 +187,7 @@ function ConsoleDraftPanel({
   next: DraftNext | null;
 }) {
   const lead = drafts[0];
-  const progress = lead ? draftProgress(lead.status) : null;
+  const progress = lead ? draftProgress(readDraftContent(lead.content)) : null;
 
   return (
     <section className="relative flex flex-col overflow-hidden rounded-sharp bg-brand-chrome px-5 pb-[18px] pt-[17px] text-white">
@@ -291,27 +304,31 @@ function ConsoleDraftPanel({
                   <li
                     key={s.key}
                     className={`flex items-center gap-[7px] text-[11.5px] ${
-                      s.done ? "text-white/[0.62]" : "text-white/40"
+                      s.state === "done" ? "text-white/[0.62]" : "text-white/40"
                     }`}
                   >
-                    {s.done ? (
+                    {s.state === "done" ? (
                       <Check
                         className="h-[13px] w-[13px] shrink-0"
                         strokeWidth={3}
                         style={{ color: BRAND.successOnDark }}
                         aria-hidden="true"
                       />
+                    ) : s.state === "unknown" ? (
+                      <Minus className="h-[13px] w-[13px] shrink-0" aria-hidden="true" />
                     ) : (
                       <CircleDashed className="h-[13px] w-[13px] shrink-0" aria-hidden="true" />
                     )}
                     {s.label}
-                    <span className="sr-only">{s.done ? " — done" : " — not started"}</span>
+                    <span className="sr-only">
+                      {s.state === "done" ? " — done" : s.state === "unknown" ? " — not yet checkable" : " — not started"}
+                    </span>
                   </li>
                 ))}
               </ul>
 
               <p className="mt-2.5 text-[11px] text-white/40">
-                Step {progress.step} of {progress.total} in the drafting flow
+                {progress.done} of {progress.assessable} steps captured
               </p>
 
               <div className="mt-3.5 flex items-center gap-2">

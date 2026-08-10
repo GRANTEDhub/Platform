@@ -4,9 +4,10 @@ import { isUnconvertedLead } from "@/lib/leads/stage";
 import { deadlineDaysLeft } from "@/lib/report/shape";
 import { derivePipeline, type Pipeline, type PipelineCard, type PipelineStageKey } from "@/lib/clients/pipeline";
 import { draftProgress } from "@/lib/intellengine/drafts";
+import { readDraftContent } from "@/lib/intellengine/content";
 import { actionReason, hasEmptyPipeline, rollUpBook } from "@/lib/clients/portfolio";
 import { PortfolioBrowser, type PortfolioRow } from "@/components/clients/portfolio-browser";
-import type { ClientOverview, IntellEngineDraftStatus } from "@/types/database";
+import type { ClientOverview } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -80,10 +81,10 @@ export default async function ClientsPage() {
         .in("client_id", ids)
         .order("created_at", { ascending: true })
         .limit(ATTEMPT_SCAN_LIMIT),
-      // Structural step progress on proposals in flight — the design's "Draft 40%".
-      // Furthest-along draft per client; see the note on draftPct below for why this is
-      // labelled as flow progress and not as narrative written.
-      supabase.from("intellengine_drafts").select("client_id, status").in("client_id", ids),
+      // Content progress on proposals in flight — the design's "Draft 40%". Furthest-along
+      // draft per client. It reads `content` rather than `status` (0074): the figure used to
+      // count screens visited, so a draft clicked through while empty showed 100%.
+      supabase.from("intellengine_drafts").select("client_id, content").in("client_id", ids),
     ]);
 
     cards = (cardData ?? []) as CardRow[];
@@ -104,8 +105,10 @@ export default async function ClientsPage() {
       if (!Number.isNaN(t)) firstCarded.set(k, t);
     }
 
-    for (const d of (draftData ?? []) as { client_id: string; status: IntellEngineDraftStatus }[]) {
-      const pct = draftProgress(d.status).percent;
+    // From content, not status (0074): this column showed 100% for a client whose draft
+    // had merely been clicked through, which is the one number a staffer scans the list for.
+    for (const d of (draftData ?? []) as { client_id: string; content: unknown }[]) {
+      const pct = draftProgress(readDraftContent(d.content)).percent;
       const prev = draftPctById.get(d.client_id);
       if (prev === undefined || pct > prev) draftPctById.set(d.client_id, pct);
     }

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FileSearch, FileText, Loader2, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { STATUS_LABEL } from "@/lib/intellengine/drafts";
+import { RESUME_LABEL } from "@/lib/intellengine/drafts";
 import type { IntellEngineDraftStatus } from "@/types/database";
 
 // The client band's search — the portal counterpart of NavSearch, and deliberately the
@@ -126,7 +126,10 @@ export function PortalSearch() {
         key: `d:${d.id}`,
         href: `/intellengine/${d.id}`,
         label: d.title,
-        sub: STATUS_LABEL[d.status] ?? null,
+        // A resume pointer is exactly the right thing for a search hit to say ("left off
+        // in the builder"); it deliberately does NOT claim completeness, which now comes
+        // from draft content and is not carried in the search payload.
+        sub: RESUME_LABEL[d.status] ?? null,
         group: "draft" as const,
       })),
     ],
