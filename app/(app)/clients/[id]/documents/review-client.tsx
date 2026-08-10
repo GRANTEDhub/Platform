@@ -32,16 +32,25 @@ interface DocSummary {
 export default function AssimilationReview({
   reviews,
   history,
+  // Whether the VIEWER can upload here (org-level filing is admin-only, 0077). Only the empty
+  // state needs it: the copy used to read "Upload one and it'll appear here" on a screen with
+  // no upload control at all -- the exact copy-vs-reality defect this feature exists to
+  // remove. Now that the control is real, the sentence is true for an admin and must not be
+  // shown to a contractor, who has no way to act on it.
+  canUpload,
 }: {
   reviews: { doc: DocSummary; proposals: FieldProposal[] }[];
   history: ClientProfileChange[];
+  canUpload: boolean;
 }) {
   return (
     <div className="space-y-8">
       <section className="space-y-4">
         {reviews.length === 0 && (
           <p className="rounded-2xl border border-dashed border-brand-navy/15 p-8 text-center text-sm text-muted-foreground">
-            No documents yet. Upload one and it&apos;ll appear here for extraction.
+            {canUpload
+              ? "No documents yet. Upload one above and it'll appear here for extraction."
+              : "No documents on file yet."}
           </p>
         )}
         {reviews.map((r) => (

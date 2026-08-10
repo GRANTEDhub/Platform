@@ -4,6 +4,7 @@ import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
 import { buildProposals } from "@/lib/documents/proposal";
 import AssimilationReview from "./review-client";
+import UploadPanel from "./upload-panel";
 import type { Client, ClientDocument, ClientProfileChange } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +21,11 @@ export const dynamic = "force-dynamic";
 // client profile by typing can review a document that proposes the same edits. Nothing
 // reachable here is financial -- PROPOSABLE_FIELDS excludes ein and annual_budget.
 export default async function ClientDocumentsPage({ params }: { params: { id: string } }) {
-  await requireUser();
+  // The profile is kept (it used to be discarded) purely for the upload control's audience:
+  // org-level filing stayed admin-only in 0077, so a contractor is shown an explanation
+  // instead of a button that would 403 on click.
+  const profile = await requireUser();
+  const isAdmin = profile.role === "admin";
 
   // The documents themselves come from the CALLER's RLS, so what a staffer sees here is what
   // the policies allow: an admin sees the client's rows under 0030, and a contractor sees
@@ -95,10 +100,14 @@ export default async function ClientDocumentsPage({ params }: { params: { id: st
         title="Documents"
         description={`Assimilation review for ${client.name}. Extract, review what it proposes, commit what's right.`}
       />
-      <div className="p-8">
+      <div className="space-y-8 p-8">
+        {/* ABOVE the list on purpose: the empty state points up at it, and a control that only
+            appears once you already have documents is no front door at all. */}
+        <UploadPanel clientId={params.id} isAdmin={isAdmin} />
         <AssimilationReview
           reviews={reviews}
           history={(history ?? []) as ClientProfileChange[]}
+          canUpload={isAdmin}
         />
       </div>
     </div>
