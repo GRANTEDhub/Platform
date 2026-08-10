@@ -105,13 +105,21 @@ export function clientUploadPath(opts: {
   return `${opts.clientId}/${scope}/${crypto.randomUUID()}-${safe || "file"}`;
 }
 
-// Download a private object as a Buffer (service-role). Used to re-attach a saved
-// PDF to an email / stream it, without re-rendering.
-export async function downloadPdf(bucket: string, objectPath: string): Promise<Buffer> {
+// Download a private object as a Buffer (service-role).
+//
+// Content-type agnostic, and named so: assimilation reads client-uploaded PDFs AND .docx
+// files off this path. downloadPdf below is the original name, kept because the alert and
+// contract paths call it and neither has any business changing for this.
+export async function downloadObject(bucket: string, objectPath: string): Promise<Buffer> {
   const db = createServiceClient();
   const { data, error } = await db.storage.from(bucket).download(objectPath);
   if (error || !data) throw new Error(`Storage download failed: ${error?.message ?? "object not found"}`);
   return Buffer.from(await data.arrayBuffer());
+}
+
+// Used to re-attach a saved PDF to an email / stream it, without re-rendering.
+export async function downloadPdf(bucket: string, objectPath: string): Promise<Buffer> {
+  return downloadObject(bucket, objectPath);
 }
 
 // Remove objects from a bucket (service-role). RAISES on failure, like every other

@@ -3,14 +3,21 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { resolveDocumentActor, canReadDocument } from "@/lib/documents/authorize";
 import { canAssimilateFor } from "@/lib/documents/assimilate-authorize";
 import { runExtraction } from "@/lib/documents/extract";
-import type { ClientDocument } from "@/types/database";
+import { proposesNothing } from "@/lib/documents/extract-shape";
+import type { Client, ClientDocument } from "@/types/database";
 
-// Run (or re-run) extraction for one document (assimilation step (iii)).
+// A PDF parse plus one model pass. Without this the platform default (15s) kills every real
+// extraction and the browser sees a 504 with nothing recorded on the row -- the failure mode
+// this route's whole error-recording design exists to avoid. Same value as every other
+// LLM-backed route here.
+export const maxDuration = 300;
+
+// Run (or re-run) extraction for one document (assimilation step (iv)).
 //
-// SEPARATE FROM CONFIRM, on purpose. Confirm's job is "the object exists, record the row",
-// and it must stay fast and certain; extraction is the slow, fallible part and will be an
-// LLM call in (iv). Splitting them means a failed extraction leaves a perfectly good
-// document row that can be re-extracted, rather than losing the upload.
+// SEPARATE FROM CONFIRM, on purpose, and (iv) is where that pays: confirm's job is "the object
+// exists, record the row" and stays fast and certain, while extraction is now a storage read, a
+// PDF parse and a model call -- slow and fallible. Splitting them means a failed extraction
+// leaves a perfectly good document row that can be re-extracted, rather than losing the upload.
 //
 // RE-RUNNABLE IS THE POINT of retaining the raw file at all. Nothing here is destructive:
 // it overwrites the extraction, never the profile. The profile only ever moves through the
@@ -23,14 +30,20 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
   // invisible, so an RLS read would answer 404 where it should answer 403 and the two
   // would be indistinguishable. Same reason the delete and signed-URL routes do it.
   const admin = createServiceClient();
+  // storage_bucket / storage_path are new to this select in (iv): the stub read no bytes, and
+  // the real extractor reads the object. `kind` rides along as context for the prompt (what the
+  // uploader FILED it as, never as a fact about the contents).
   const { data: row } = await admin
     .from("client_documents")
-    .select("id, client_id, title, content_type, client_visible, intellengine_draft_id")
+    .select(
+      "id, client_id, title, kind, content_type, client_visible, intellengine_draft_id, storage_bucket, storage_path",
+    )
     .eq("id", params.id)
     .maybeSingle<
       Pick<
         ClientDocument,
-        "id" | "client_id" | "title" | "content_type" | "client_visible" | "intellengine_draft_id"
+        | "id" | "client_id" | "title" | "kind" | "content_type" | "client_visible"
+        | "intellengine_draft_id" | "storage_bucket" | "storage_path"
       >
     >();
   if (!row) return NextResponse.json({ error: "Document not found" }, { status: 404 });
@@ -58,7 +71,32 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: "Not allowed" }, { status: 403 });
   }
 
-  const outcome = await runExtraction({ contentType: row.content_type, title: row.title });
+  // WHO THE DOCUMENT IS SUPPOSED TO BE ABOUT. The extractor needs the subject org's identity
+  // to answer "whose contact details are these" -- the paid-preparer block on a 990 is the
+  // likeliest wrong extraction there is, and it is unanswerable without knowing who the client
+  // is. Name plus a coarse location only; runExtraction deliberately takes no contact fields.
+  const { data: client } = await admin
+    .from("clients")
+    .select("name, location_city, location_state, location_county")
+    .eq("id", row.client_id)
+    .maybeSingle<Pick<Client, "name" | "location_city" | "location_state" | "location_county">>();
+  if (!client) {
+    return NextResponse.json({ error: "Client not found" }, { status: 404 });
+  }
+
+  const outcome = await runExtraction({
+    subject: {
+      name: client.name,
+      city: client.location_city,
+      state: client.location_state,
+      county: client.location_county,
+    },
+    title: row.title,
+    kind: row.kind,
+    contentType: row.content_type,
+    storageBucket: row.storage_bucket,
+    storagePath: row.storage_path,
+  });
 
   // A FAILURE IS RECORDED, NOT SWALLOWED. Writing the error onto the row is what turns
   // "this document produced nothing" into "we could not read this document, and here is
@@ -88,5 +126,10 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     status: patch.extraction_status,
     extracted: patch.extracted,
     error: outcome.status === "failed" ? outcome.error : null,
+    // THE TWO `ready` OUTCOMES ARE NOT THE SAME THING, and the banner must not say "Extracted."
+    // to both. "We read it and it proposes nothing" is a fine result; "we could not read it"
+    // is a failure with its own message. This flag is what keeps the third case -- read it,
+    // found nothing to propose -- from being reported as if fields were waiting.
+    foundNothing: outcome.status === "ready" ? proposesNothing(outcome.extracted) : false,
   });
 }

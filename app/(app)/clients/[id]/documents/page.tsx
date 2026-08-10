@@ -91,6 +91,11 @@ export default async function ClientDocumentsPage({ params }: { params: { id: st
     proposals: buildProposals(
       (d.extracted?.fields ?? null) as Record<string, unknown> | null,
       client as unknown as Record<string, unknown>,
+      // Per-field quotes from the extraction, rendered under each proposed value. The point is
+      // the wrong-entity failure: a contact block read off a 990's paid-preparer section is a
+      // valid name and a valid email belonging to the wrong organization, and the quote is the
+      // only thing on this screen that shows it without opening the PDF.
+      (d.extracted?.evidence ?? null) as Record<string, unknown> | null,
     ),
   }));
 
@@ -107,7 +112,7 @@ export default async function ClientDocumentsPage({ params }: { params: { id: st
         <AssimilationReview
           reviews={reviews}
           history={(history ?? []) as ClientProfileChange[]}
-          canUpload={isAdmin}
+          isAdmin={isAdmin}
         />
       </div>
     </div>
