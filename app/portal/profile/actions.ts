@@ -60,6 +60,27 @@ export async function confirmClientProfileAction(formData: FormData): Promise<Co
   const admin = createServiceClient();
   const narrative = parseNarrative(get("intake_narrative"));
 
+  // ── WAS THIS CLIENT BEHIND THE FIRST-LOGIN GATE BEFORE THIS SAVE? ──
+  //
+  // Read BEFORE anything writes, because the update below stamps profile_confirmed_at
+  // unconditionally -- after it lands, "were they gated?" is unanswerable.
+  //
+  // This is the same test app/portal/layout.tsx makes (`profile_confirmed_at === null`),
+  // deliberately: the return-to cookie exists to survive THAT redirect, so the question of
+  // whether to honour it is the question of whether that redirect could have fired. A
+  // different test here would be a second, drifting definition of the gate.
+  //
+  // NOT the component's `firstLogin` prop, which would need no query: that travels through the
+  // browser, so it is a claim about which form was mounted rather than a fact about the client's
+  // state -- and the whole bug below is a destination being taken from something other than
+  // where the client was actually going.
+  const { data: gate } = await admin
+    .from("clients")
+    .select("profile_confirmed_at")
+    .eq("id", org.clientId)
+    .maybeSingle<{ profile_confirmed_at: string | null }>();
+  const wasGated = gate?.profile_confirmed_at === null;
+
   // ── THE NARRATIVE MERGE HAPPENS FIRST, AND IN THE DATABASE ──
   //
   // Merged rather than replaced, as before: intake_data also carries keys written by the
@@ -116,12 +137,33 @@ export async function confirmClientProfileAction(formData: FormData): Promise<Co
   const { error } = await admin.from("clients").update(update).eq("id", org.clientId);
   if (error) return { ok: false, error: `Couldn't save your profile: ${error.message}` };
 
-  // Where they were actually headed before the first-login gate intercepted them (an
-  // alert email's /portal/triage?card=... deep link). Read and cleared here, the one
-  // point where the gate is known to be satisfied.
+  // ── WHERE THEY WERE HEADED BEFORE THE GATE INTERCEPTED THEM, AND ONLY THEN ──
+  //
+  // The cookie answers "the gate swallowed a deep link, where was it going" (an alert email's
+  // /portal/triage?card=...). It is honoured only for the save that SATISFIES the gate.
+  //
+  // THE BUG THIS CLOSES, reported from prod: an already-confirmed client edited their profile
+  // from /portal/profile and was routed to the grant report instead of the dashboard. Their
+  // save was fine; the destination was not theirs. #336 fixed the two edges it found -- a
+  // PREFETCH writing the cookie, and /portal/profile being honoured as a destination -- but it
+  // left the read unconditional, and the cookie is still written by any ordinary top-level
+  // portal document load (loading /portal/grants records /portal/grants, correctly, for 15
+  // minutes). So a client who opened their grant report and then saved their profile inside
+  // that window was sent back to the report by a cookie that described a page they had already
+  // finished with. Same cookie as #336, third edge: the reader.
+  //
+  // A confirmed client editing their profile has NO swallowed destination to restore -- nothing
+  // intercepted them, they navigated here on purpose. The dashboard (ConfirmProfile's `??
+  // "/portal"` default) is where that save belongs.
+  //
+  // CLEARED WHENEVER PRESENT, honoured only when gated. Clearing an unhonoured cookie is the
+  // point rather than tidiness: leaving it would let a stale destination survive to a LATER
+  // save, and staff nulling profile_confirmed_at re-arms the gate at any moment -- which would
+  // reintroduce exactly this bug with a 15-minute fuse.
   const jar = cookies();
-  const next = sanitizePortalNext(jar.get(PORTAL_NEXT_COOKIE)?.value);
-  if (next) jar.set(PORTAL_NEXT_COOKIE, "", { path: "/", maxAge: 0 });
+  const stored = jar.get(PORTAL_NEXT_COOKIE)?.value;
+  if (stored) jar.set(PORTAL_NEXT_COOKIE, "", { path: "/", maxAge: 0 });
+  const next = wasGated ? sanitizePortalNext(stored) : null;
 
   revalidatePath("/portal");
   revalidatePath("/portal/profile");
