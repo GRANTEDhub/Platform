@@ -20,7 +20,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 // editor opens prefilled from the released concept proposal; a save on mount would persist
 // that seed as the client's own work, stamp savedAt, and make the hub read "Scope captured"
 // for a draft nobody touched -- the same green-check-a-lie the gate was raised for, arriving
-// by a new route. Only a real edit (touch()) can start a save.
+// by a new route. Only a real edit, or an explicit Continue, can start a save.
+//
+// PRESSING CONTINUE IS AN EXPLICIT ACT, and flush({force:true}) is how the scope step treats
+// it as endorsement of a prefill. That is not the mount case: opening a page says nothing,
+// whereas reading a scope the GRANTED team wrote and choosing to proceed is a decision. The
+// distinction is deliberate -- mount is silent, Continue is not.
 //
 // ── A KEYSTROKE THAT LANDS MID-FLIGHT IS NOT SAVED BY THE SAVE ALREADY IN FLIGHT ─────────
 //
@@ -69,7 +74,14 @@ export interface DraftSaver {
   touch: () => void;
   // Persist everything outstanding and report whether it worked. Callers that navigate MUST
   // await this and must not proceed on false.
-  flush: () => Promise<boolean>;
+  //
+  // force writes even when nothing was edited. The scope step passes it so pressing Continue
+  // ENDORSES a prefill: the editor opens filled from the released concept proposal, and a
+  // client who reads it, agrees, and moves on has made a decision worth recording. Without
+  // it that draft stores nothing and the hub reads "Not started" for a scope the client has
+  // actually settled. The builder does not pass it -- its placeholders are never values, so
+  // there is nothing there to endorse and forcing would write nine empty sections.
+  flush: (opts?: { force?: boolean }) => Promise<boolean>;
   // Same write, for the indicator's Retry affordance.
   retry: () => Promise<boolean>;
   dirty: boolean;
@@ -158,11 +170,12 @@ export function useDraftSave(
     setDirty(true);
   }, []);
 
-  const flush = useCallback(async (): Promise<boolean> => {
+  const flush = useCallback(async ({ force = false }: { force?: boolean } = {}): Promise<boolean> => {
     for (let pass = 0; pass < FLUSH_MAX_PASSES; pass++) {
       // Nothing outstanding: report success rather than firing a redundant write, so Continue
-      // on an untouched page is instant.
-      if (!dirtyRef.current) return true;
+      // on an untouched page is instant. `force` overrides that for endorsement -- and only
+      // on the FIRST pass, so a forced save does not loop once it has written.
+      if (!dirtyRef.current && !(force && pass === 0)) return true;
       const outcome = await runSave();
       if (outcome === "error") return false;
       if (outcome === "ok") return true;
