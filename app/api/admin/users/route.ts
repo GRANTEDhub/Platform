@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { canManageUsers } from "@/lib/admin/user-management";
+import { canSendEmail } from "@/lib/email/guard";
+import { sendStaffInviteEmail } from "@/lib/email/send";
+import { appBaseUrl } from "@/lib/site-url";
 
 export const runtime = "nodejs";
 
@@ -18,6 +21,9 @@ export const runtime = "nodejs";
 //      to 'contractor').
 //   2. If admin was requested, set the role via the ACTING ADMIN's session client
 //      so profiles_update RLS and guard_role_change both validate (is_admin()).
+//   3. Email them their login. Best-effort by construction -- steps 1 and 2 have
+//      already changed the world, so a failed send reports a warning on a successful
+//      response and never turns a created account into an error the admin would retry.
 
 const ROLES = ["contractor", "admin"] as const;
 type Role = (typeof ROLES)[number];
@@ -117,9 +123,50 @@ export async function POST(req: NextRequest) {
         email,
         role: "contractor",
         warning: `User created, but the role could not be set to admin${roleErr ? `: ${roleErr.message}` : ""}. They exist as contractor.`,
+        // No invite is attempted on this path: the role is wrong, so the email would
+        // describe access the account does not have. Fix the role, then hand the
+        // password over by hand.
+        emailed: false,
       });
     }
   }
 
-  return NextResponse.json({ ok: true, id: newId, email, role });
+  // Step 3: email them the login.
+  //
+  // AFTER the account is real and its role is settled, and NEVER able to fail the
+  // creation. The user exists by this point -- returning an error here would report a
+  // failure for work that succeeded, and an admin retrying would hit "email already
+  // registered" on an account that was fine. So a send failure is a WARNING on an
+  // ok:true response, and the temp password stays on screen either way, which is the
+  // fallback the whole flow rests on.
+  //
+  // `emailed` is returned so the UI states what actually happened rather than assuming.
+  const sendGate = canSendEmail();
+  let emailed = false;
+  let warning: string | undefined;
+  if (!sendGate.ok) {
+    // Expected on every preview deploy (VERCEL_ENV !== production). Not an error --
+    // the reason is surfaced verbatim so a blocked send is never mistaken for a sent one.
+    warning = `User created. No email sent: ${sendGate.reason}. Share the temp password directly.`;
+  } else {
+    try {
+      await sendStaffInviteEmail({
+        to: email,
+        fullName: full_name ?? null,
+        tempPassword: password,
+        // appBaseUrl(), never new URL(req.url).origin -- that would bake the ephemeral
+        // Vercel deploy host into the one link the recipient is told to use.
+        loginUrl: `${appBaseUrl()}/login`,
+        role,
+      });
+      emailed = true;
+    } catch (e) {
+      console.error("[admin/users] invite email failed:", e instanceof Error ? e.message : e);
+      warning = `User created, but the invite email didn't send${
+        e instanceof Error ? `: ${e.message}` : ""
+      }. Share the temp password directly.`;
+    }
+  }
+
+  return NextResponse.json({ ok: true, id: newId, email, role, emailed, warning });
 }
