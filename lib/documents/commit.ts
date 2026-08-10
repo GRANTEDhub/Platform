@@ -127,6 +127,27 @@ export async function commitProfileChanges(opts: {
       // MERGED, never replaced. intake_data also carries keys written by the public intake
       // and the staff form that no review screen renders; replacing the object would drop
       // them silently.
+      //
+      // ⚠ KNOWN GAP, NOT FIXED HERE: this merge happens in APPLICATION code, so the whole
+      // jsonb column is read once and written back whole. Two concurrent commits on the same
+      // client, each accepting a DIFFERENT intake_data key, both read the same original and
+      // the second write clobbers the first -- and each still inserts its own audit row, so
+      // the log ends up asserting a change the profile no longer reflects. Since 0078 gives
+      // client_profile_changes no UPDATE or DELETE policy, that row cannot be corrected.
+      // Review finding on #340 (claude[bot]).
+      //
+      // Direct columns are unaffected: Postgres applies column-level updates natively, so
+      // only the seven intake_data.* keys share this hazard.
+      //
+      // Closing it properly needs the merge to happen in the DATABASE (`intake_data =
+      // intake_data || $1`, or an RPC doing jsonb_set per key), which means a migration --
+      // so it is its own brick rather than something bolted onto this PR. It is recorded here
+      // rather than left implicit because a half-fix that narrows the window (re-read just
+      // before writing) would look like a fix and still lose data.
+      //
+      // Not reachable through the shipped UI today: the stub extractor proposes nothing, so
+      // no commit happens through the review screen at all. It becomes reachable the moment
+      // (iv) lands a real extractor -- which is why the fix belongs BEFORE (iv), not after.
       intake[field.slice("intake_data.".length)] = value;
       touchesIntake = true;
     } else {
