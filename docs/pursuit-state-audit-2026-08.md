@@ -150,3 +150,53 @@ The client gate (`PURSUIT_CLIENT_ACCESS_ENABLED`) flips only after the silent dr
 are gone, which is the end of step 2 for scope/build and the end of step 3 for documents.
 
 Eligibility (§1) and prepopulation (§1) are done and block nothing.
+
+**Progress.** Steps 1 and 2 are merged and verified in production (0074 applied; the
+network-kill, clear-and-return and persistence checks all pass against `app.grantedco.com`).
+The gate is still off.
+
+### 5.1 Step 3 sub-sequence (approved 2026-08-10)
+
+Step 3 is the largest brick, so it is split into four. Same rhythm as 1 and 2: each is
+scoped, approved, built, verified.
+
+Three decisions settled before the split, because they set the boundaries:
+
+- **Transport is a SIGNED UPLOAD URL**, minted server-side. Posting the file through a route
+  is ruled out by Vercel's ~4.5MB serverless body limit, which 990s and audits exceed;
+  direct-to-storage with `storage.objects` RLS would need a policy parsing `client_id` out of
+  an object path, and would break the house pattern where the `contracts` bucket carries no
+  authenticated policy at all. A minted URL keeps the membership check server-side, needs no
+  storage RLS, and has no body limit.
+- **The member RLS grant is SELECT-only and must not expose `signed_contract`.**
+  `client_documents` holds signed contracts under the financial-firewall pattern (0030
+  admin-only; 0066 explicitly kept it). A blanket member policy would hand every client their
+  own contract row. Members never write the table -- the route does, service-role -- so
+  SELECT is the whole grant needed.
+- **Org documents and pursuit files share one repository**, separated by a nullable
+  `intellengine_draft_id`: null = org-level (staff-owned), set = a draft's own file
+  (the client's to remove).
+
+1. **3a — Foundation.** Private bucket with its size and mime limits set ON THE BUCKET, the
+   two new `client_documents` columns, the member SELECT policy, generalised storage helpers.
+   No routes, no UI, nothing a client can see.
+2. **3b — Server upload path.** Mint → client PUTs → confirm-and-insert, plus delete. Two
+   calls on purpose: a row must not exist unless its object does, or the looks-received lie
+   moves from the UI into the database. Verifiable by curl before any UI exists.
+3. **3c — Scope step: real supporting files.** Keeps the promise made when the discarding
+   upload control was pulled out in step 2. At this point the scope step is fully honest.
+4. **3d — Compliance step: real org documents.** Replaces the invented six-document list with
+   what is actually on file. It can show "what you have", NOT "what this grant requires" --
+   requirements are step 4 -- so compliance completeness stays `unknown` and 3d does not
+   unlock the gate by itself.
+
+Un-gating after 3d is a judgment call, not an automatic consequence: the compliance step will
+be honest but thin until step 4 supplies real per-grant requirements.
+
+Settled alongside the sequence:
+
+- Clients may delete their own **draft-level** uploads. Org-level documents are **staff-owned
+  firm records** and are not client-deletable.
+- Staff-console visibility of client uploads is a **follow-on touch**, deliberately not in 3b.
+- An object uploaded but never confirmed is left as an invisible orphan. A sweeper cron is
+  out of scope for this brick; recorded here rather than fixed.
