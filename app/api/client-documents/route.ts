@@ -29,7 +29,16 @@ export async function POST(req: NextRequest) {
   if (!actor) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   if (await pursuitApiDenied()) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  let body: { path?: unknown; kind?: unknown; title?: unknown; draftId?: unknown; clientId?: unknown };
+  let body: {
+    path?: unknown;
+    kind?: unknown;
+    title?: unknown;
+    draftId?: unknown;
+    clientId?: unknown;
+    // Org-level only, admin only, and only ever read as a strict === true. Absent means
+    // invisible -- see the note beside clientVisible below.
+    clientVisible?: unknown;
+  };
   try {
     body = await req.json();
   } catch {
@@ -112,6 +121,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `That file is over ${UPLOAD_MAX_LABEL}.` }, { status: 400 });
   }
 
+  // ── VISIBILITY COMES FROM WHAT THIS UPLOAD IS, NOT FROM A HARDCODED true ──
+  //
+  // This used to be `client_visible: true` on every row, with a comment reasoning that such
+  // rows are "client-facing by construction". That held while every upload was a client's own
+  // pursuit file. It stops holding the moment staff file a document the client is not meant to
+  // browse -- a raw source retained only so extraction can be re-run against it -- and the
+  // hardcoded true would have quietly built the client-facing filing cabinet nobody asked for.
+  //
+  // DRAFT-LEVEL IS ALWAYS VISIBLE, and that is not a shortcut. It is the uploader's own working
+  // file for their own pursuit, and 0075's member policy requires client_visible to read it --
+  // so an invisible draft-level row is a file the client just uploaded and cannot see. That is
+  // a silent drop wearing different clothes, and it is exactly what a "fails closed" default
+  // would have produced on the 3c path.
+  //
+  // ORG-LEVEL FAILS CLOSED. Retained-not-surfaced is the common case now, so absence of the
+  // flag means invisible; only an explicit `clientVisible: true` shares it. Org-level writes
+  // are already admin-only (checked above), so nothing but an admin can ever set it -- and a
+  // client's request body cannot reach this branch at all.
+  //
+  // Note this only ever governs rows written HERE. Contract PDFs are filed by
+  // lib/contracts/deliver.ts, which sets nothing and so inherits 0075's false default.
+  const clientVisible = draftId !== null ? true : body.clientVisible === true;
+
   const rawTitle = typeof body.title === "string" ? body.title.trim() : "";
   // Falls back to the uploaded file's own name rather than to something invented, so a row
   // always names the thing it points at -- but clientUploadPath prefixes a uuid to keep two
@@ -141,10 +173,7 @@ export async function POST(req: NextRequest) {
       // attributing a client upload there would violate the FK. Null means "not staff-filed",
       // which is exactly what it is.
       created_by: actor.isStaff ? actor.userId : null,
-      // Explicit, and the first write in the codebase to set it: 0075 defaults it false so
-      // that nothing is client-readable by accident. These rows are client-facing by
-      // construction -- either the client uploaded it, or staff filed it for them to see.
-      client_visible: true,
+      client_visible: clientVisible,
     })
     // The LIST columns, not `*` (3c). storage_bucket / storage_path are internal pointers and
     // the browser has no use for them -- opening a file goes through the signed-URL route,
