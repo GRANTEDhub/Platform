@@ -153,7 +153,12 @@ Eligibility (§1) and prepopulation (§1) are done and block nothing.
 
 **Progress.** Steps 1 and 2 are merged and verified in production (0074 applied; the
 network-kill, clear-and-return and persistence checks all pass against `app.grantedco.com`).
-The gate is still off.
+Step 3 is in progress: **3a and 3b merged** (0075 and 0076 applied), **3c built**. The gate is
+still off.
+
+The 3b curl verification was **skipped by decision**, not completed — so 3c's preview check is
+the first real exercise of mint / confirm / delete. Recorded because "3b verified" would
+otherwise be assumed later: what was actually verified is 3b *through* the 3c UI.
 
 ### 5.1 Step 3 sub-sequence (approved 2026-08-10)
 
@@ -185,6 +190,25 @@ Three decisions settled before the split, because they set the boundaries:
    moves from the UI into the database. Verifiable by curl before any UI exists.
 3. **3c — Scope step: real supporting files.** Keeps the promise made when the discarding
    upload control was pulled out in step 2. At this point the scope step is fully honest.
+   Settled while building it:
+   - **A signed-download route ships with it** (`GET /api/client-documents/[id]/url`). A file
+     you cannot open is a claim you cannot check, which is the same defect one step removed.
+     `canReadDocument` is the third predicate, and it mirrors 0075's member policy exactly:
+     membership **and** `client_visible`. Membership alone would hand a client a signed URL to
+     their own signed contract while the RLS-backed list correctly refused to show it.
+   - **Read is the one place the org-level asymmetry reverses.** Writes and deletes are
+     staff-only at org level; reads are not, because a staffer files a client's 990 *for the
+     client*. So `canReadDocument` has no `intellengine_draft_id` branch — deliberately, not by
+     omission.
+   - **No GET list route.** The initial list is server-rendered under the caller's RLS, then
+     maintained from the confirm and delete responses. A row appears because the server
+     returned one, never because the browser assumed one.
+   - **Uploads do NOT count toward completeness, and `content.ts` stays unaware documents
+     exist.** Supporting files are optional; letting an optional artifact satisfy a required
+     step is the conflation step 1 removed.
+   - **Uploads are a second persistence path the autosave cannot see**, so Continue checks an
+     in-flight upload independently of `flush()` and refuses to navigate. Same anti-silent-drop
+     rule as step 2, reached by a different route.
 4. **3d — Compliance step: real org documents.** Replaces the invented six-document list with
    what is actually on file. It can show "what you have", NOT "what this grant requires" --
    requirements are step 4 -- so compliance completeness stays `unknown` and 3d does not
