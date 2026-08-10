@@ -18,6 +18,21 @@
 // middleware -- would mean rebuilding the NextResponse that lib/supabase/middleware.ts
 // hands the Supabase cookie writer, and that plumbing is what refreshes the auth session.
 // A response cookie set after the auth work is finished touches none of it.
+//
+// ── THREE EDGES, AND ALL THREE HAVE NOW BITTEN ──
+//
+// This cookie has produced the same class of bug three times: a page the client had merely
+// LOADED became a destination they were sent to. The fixes live in three different files, so
+// they are listed here, beside the cookie they all constrain:
+//   1. WRITE. Only top-level document requests record a destination -- a prefetch is not a
+//      destination (lib/supabase/middleware.ts, #336).
+//   2. SANITISE. /portal/profile is never a destination; it is the form you just submitted
+//      (sanitizePortalNext below, #336).
+//   3. READ. Honoured only by the save that SATISFIES the gate -- a confirmed client editing
+//      their profile had nothing swallowed, so there is nothing to restore
+//      (app/portal/profile/actions.ts). Its absence sent an editing client to their grant
+//      report, because loading the report is what wrote the cookie.
+// Anything added here should say which of the three it touches.
 
 import { safeNextPath } from "@/lib/safe-redirect";
 
