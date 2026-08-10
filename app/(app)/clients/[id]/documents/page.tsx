@@ -112,7 +112,7 @@ export default async function ClientDocumentsPage({ params }: { params: { id: st
         <AssimilationReview
           reviews={reviews}
           history={(history ?? []) as ClientProfileChange[]}
-          canUpload={isAdmin}
+          isAdmin={isAdmin}
         />
       </div>
     </div>

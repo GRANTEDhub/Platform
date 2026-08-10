@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Check, FileText, Loader2, Undo2 } from "lucide-react";
+import { AlertTriangle, Check, FileText, Loader2, Trash2, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { FieldProposal } from "@/lib/documents/proposal";
 import type { ClientProfileChange } from "@/types/database";
@@ -43,29 +43,32 @@ const REJECTION_REASONS: Record<string, string> = {
 export default function AssimilationReview({
   reviews,
   history,
-  // Whether the VIEWER can upload here (org-level filing is admin-only, 0077). Only the empty
-  // state needs it: the copy used to read "Upload one and it'll appear here" on a screen with
-  // no upload control at all -- the exact copy-vs-reality defect this feature exists to
-  // remove. Now that the control is real, the sentence is true for an admin and must not be
-  // shown to a contractor, who has no way to act on it.
-  canUpload,
+  // ORG-LEVEL FILING AND ORG-LEVEL DELETION ARE BOTH ADMIN-ONLY (0077, and canWriteDocument /
+  // canDeleteDocument in lib/documents/authorize.ts), so one flag drives both.
+  //
+  // Was `canUpload`, renamed when delete arrived: two controls now read it, and a name that
+  // describes one of them would have made the second look like a coincidence. The empty state
+  // still needs it for its own reason -- the copy used to read "Upload one and it'll appear
+  // here" on a screen with no upload control at all, and it must not be shown to a contractor
+  // who has no way to act on it.
+  isAdmin,
 }: {
   reviews: { doc: DocSummary; proposals: FieldProposal[] }[];
   history: ClientProfileChange[];
-  canUpload: boolean;
+  isAdmin: boolean;
 }) {
   return (
     <div className="space-y-8">
       <section className="space-y-4">
         {reviews.length === 0 && (
           <p className="rounded-2xl border border-dashed border-brand-navy/15 p-8 text-center text-sm text-muted-foreground">
-            {canUpload
+            {isAdmin
               ? "No documents yet. Upload one above and it'll appear here for extraction."
               : "No documents on file yet."}
           </p>
         )}
         {reviews.map((r) => (
-          <DocumentCard key={r.doc.id} doc={r.doc} proposals={r.proposals} />
+          <DocumentCard key={r.doc.id} doc={r.doc} proposals={r.proposals} isAdmin={isAdmin} />
         ))}
       </section>
 
@@ -78,7 +81,15 @@ function defaultAcceptedMap(proposals: FieldProposal[]): Record<string, boolean>
   return Object.fromEntries(proposals.map((p) => [p.field, p.defaultAccepted]));
 }
 
-function DocumentCard({ doc, proposals }: { doc: DocSummary; proposals: FieldProposal[] }) {
+function DocumentCard({
+  doc,
+  proposals,
+  isAdmin,
+}: {
+  doc: DocSummary;
+  proposals: FieldProposal[];
+  isAdmin: boolean;
+}) {
   const router = useRouter();
   // Accepted state starts from defaultAccepted, which is now false for every proposal. Still
   // seeded from the server's value rather than from `{}` so the policy has exactly one home
@@ -123,7 +134,12 @@ function DocumentCard({ doc, proposals }: { doc: DocSummary; proposals: FieldPro
     setAccepted(defaultAcceptedMap(proposals));
   }
   const [note, setNote] = useState(doc.reviewNote ?? "");
-  const [busy, setBusy] = useState<null | "extract" | "commit">(null);
+  const [busy, setBusy] = useState<null | "extract" | "commit" | "delete">(null);
+  // Deleting takes two clicks. Not a modal and not a window.confirm: the second click is in the
+  // same place as the first, and the sentence that appears between them says what is actually
+  // lost -- which a browser dialog cannot. Removing a file is the one irreversible action on
+  // this screen (extraction overwrites itself, commits are undoable, rollbacks append).
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const chosen = proposals.filter((p) => accepted[p.field]);
@@ -152,6 +168,32 @@ function DocumentCard({ doc, proposals }: { doc: DocSummary; proposals: FieldPro
       });
     } catch (e) {
       setMsg({ ok: false, text: e instanceof Error ? e.message : "Extraction failed." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Remove the document and its stored file. The route (3b) deletes the row first and the
+  // object best-effort after, and it re-checks authority server-side -- the gate below only
+  // decides whether to OFFER the control.
+  //
+  // THE AUDIT TRAIL SURVIVES THIS, by construction rather than by care: 0078 declares
+  // client_profile_changes.document_id as ON DELETE SET NULL, so committed changes stay in
+  // Change history with their before/after intact and only lose the pointer to their cause.
+  // Deleting a document cannot rewrite what it already changed.
+  async function remove() {
+    setBusy("delete");
+    setMsg(null);
+    try {
+      const res = await fetch(`/api/client-documents/${doc.id}`, { method: "DELETE" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || "Couldn't remove that file.");
+      // No success banner: the card this message would render in is about to disappear, and a
+      // refresh is the only confirmation that means anything here.
+      router.refresh();
+    } catch (e) {
+      setConfirmingDelete(false);
+      setMsg({ ok: false, text: e instanceof Error ? e.message : "Couldn't remove that file." });
     } finally {
       setBusy(null);
     }
@@ -215,18 +257,75 @@ function DocumentCard({ doc, proposals }: { doc: DocSummary; proposals: FieldPro
             )}
           </div>
         </div>
-        <Button variant="outline" onClick={extract} disabled={busy !== null}>
-          {busy === "extract" ? (
-            <span className="flex items-center gap-1.5">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Extracting…
-            </span>
-          ) : doc.status === "pending" ? (
-            "Extract"
-          ) : (
-            "Re-extract"
-          )}
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button variant="outline" onClick={extract} disabled={busy !== null}>
+            {busy === "extract" ? (
+              <span className="flex items-center gap-1.5">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Extracting…
+              </span>
+            ) : doc.status === "pending" ? (
+              "Extract"
+            ) : (
+              "Re-extract"
+            )}
+          </Button>
+          {/* ORG-LEVEL DELETE IS ADMIN-ONLY, so a contractor is shown no control rather than one
+              that 403s on click -- the same rule the upload panel follows. A pursuit attachment
+              (draft-level) is any staffer's to remove, which is canDeleteDocument's split
+              mirrored here so the screen and the route agree. */}
+          {(isAdmin || !doc.isOrgLevel) &&
+            (confirmingDelete ? (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={remove}
+                  disabled={busy !== null}
+                  className="border-destructive/40 text-destructive hover:bg-destructive/5"
+                >
+                  {busy === "delete" ? (
+                    <span className="flex items-center gap-1.5">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Removing…
+                    </span>
+                  ) : (
+                    "Confirm remove"
+                  )}
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmingDelete(false)}
+                  disabled={busy !== null}
+                  className="text-xs text-muted-foreground underline underline-offset-2"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <Button
+                variant="outline"
+                onClick={() => setConfirmingDelete(true)}
+                disabled={busy !== null}
+                aria-label={`Remove ${doc.title}`}
+                title="Remove this document"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            ))}
+        </div>
       </div>
+
+      {/* WHAT THE SECOND CLICK ACTUALLY DOES, said before it is available rather than after.
+          Both halves matter: the file and its extraction are gone for good (there is no undo on
+          this one), and anything already committed to the profile is NOT touched -- it stays in
+          Change history, and rolling it back keeps working. */}
+      {confirmingDelete && (
+        <p className="mt-3 flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-[13px] text-amber-900 ring-1 ring-amber-200">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+          <span>
+            Removes the file and its extraction permanently — there&rsquo;s no undo. Profile
+            changes already committed from it stay in Change history and can still be rolled back.
+          </span>
+        </p>
+      )}
 
       {doc.synopsis && <p className="mt-4 text-[13px] text-brand-navy/80">{doc.synopsis}</p>}
 
