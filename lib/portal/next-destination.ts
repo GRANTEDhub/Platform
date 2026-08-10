@@ -41,5 +41,15 @@ export function sanitizePortalNext(raw: string | null | undefined): string | nul
   if (!path.startsWith("/portal")) return null;
   // Bare /portal is where confirming already lands, so it carries no information.
   if (path === "/portal" || path === "/portal/") return null;
+  // NOR THE PROFILE PAGE, and this one is a loop rather than a no-op. /portal/profile mounts
+  // the SAME ConfirmProfile form that /welcome does, so honouring it sends a client who just
+  // confirmed their profile straight back into the profile form -- which reads as "the save
+  // didn't take". The prefetch fix in lib/supabase/middleware.ts is what stopped this cookie
+  // being written in the first place; this is the structural half, so the loop cannot return
+  // through some other writer. A destination that is the form you just submitted is never
+  // where you were going.
+  if (path === "/portal/profile" || path.startsWith("/portal/profile/") || path.startsWith("/portal/profile?")) {
+    return null;
+  }
   return path;
 }

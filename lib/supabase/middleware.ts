@@ -51,7 +51,32 @@ export async function updateSession(request: NextRequest) {
   // app/portal/layout.tsx, which lives in a layout and so cannot name where the client was
   // going (see lib/portal/next-destination.ts). Applied to the /login redirect below as
   // well, because a client clicking an alert while signed out passes through it first.
-  const portalNext = sanitizePortalNext(pathname + request.nextUrl.search);
+  //
+  // ── TOP-LEVEL DOCUMENT REQUESTS ONLY. PREFETCHES ARE NOT DESTINATIONS. ──
+  //
+  // The bug this closes: React/Next PREFETCH a <Link> when it enters the viewport, and that
+  // prefetch is an ordinary matched request here -- so merely rendering the portal dashboard,
+  // which links to /portal/profile, recorded "/portal/profile" as where the client was headed.
+  // On their next confirm they were pushed to the profile editor: they filled in the /welcome
+  // form, saw the transition, and landed on a SECOND profile form. Nothing they clicked.
+  // Worst hit would have been the clients staff just un-exempted, since they have all browsed
+  // the portal and so all carry a poisoned cookie into the gate.
+  //
+  // Keyed on the ABSENCE OF THE `RSC` HEADER rather than on `Next-Router-Prefetch`. The
+  // prefetch header would have looked sufficient -- and would have worked today, since every
+  // Link in this codebase uses the App Router default -- but Next only sends it for
+  // PrefetchKind.AUTO (see next/dist/client/components/router-reducer/fetch-server-response),
+  // so a single `prefetch={true}` added later would silently reopen this. `RSC` is present on
+  // every client-side router fetch, prefetch or navigation, and absent on a real document load.
+  //
+  // Excluding client-side NAVIGATIONS along with prefetches is deliberate, not collateral.
+  // This cookie exists for one case -- a client following an alert email's deep link, which is
+  // always a fresh document request. A client already navigating inside the portal is past the
+  // gate, so there is nothing for them to remember; the one scenario that loses anything is a
+  // client un-exempted mid-session, who now lands on their dashboard instead of the page they
+  // were on. That is the same staleness the short TTL already argues against.
+  const isRouterFetch = request.headers.has("RSC");
+  const portalNext = isRouterFetch ? null : sanitizePortalNext(pathname + request.nextUrl.search);
   const withPortalNext = <T extends NextResponse>(res: T): T => {
     if (portalNext) {
       res.cookies.set(PORTAL_NEXT_COOKIE, portalNext, {
