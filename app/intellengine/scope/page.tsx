@@ -2,6 +2,7 @@ import { requireClientOrAdmin } from "@/lib/auth";
 import { requirePursuitVisible } from "@/lib/pursuit/access";
 import { resolveIntellEngineContext } from "@/lib/intellengine/context";
 import { scopeSeedFrom } from "@/lib/intellengine/prepopulate";
+import { readDraftContent } from "@/lib/intellengine/content";
 import IntellEngineScopeClient from "./scope-client";
 
 export const dynamic = "force-dynamic";
@@ -13,10 +14,12 @@ export default async function IntellEngineScope({
 }) {
   await requireClientOrAdmin();
   await requirePursuitVisible();
-  // Seed from the released concept proposal (premium) -> grant hints -> blank.
-  // Resolves null for a staff preview (no client draft under RLS) -> blank canvas.
+  // Seed from the client's OWN saved scope (0074) -> the released concept proposal (premium)
+  // -> grant hints -> blank. Resolves null for a staff preview (no client draft under RLS),
+  // which lands on a blank canvas.
   const ctx = await resolveIntellEngineContext(searchParams.draft);
-  const seed = scopeSeedFrom(ctx?.concept ?? null, ctx?.grant ?? null);
+  const saved = ctx ? readDraftContent(ctx.draft.content).scope : null;
+  const seed = scopeSeedFrom(ctx?.concept ?? null, ctx?.grant ?? null, saved);
   // Staff-aware back target (passed by the console hub). Accept ONLY a clean
   // internal path so the value can't smuggle an off-origin target into an <a href>.
   const backHref = safeInternalPath(searchParams.from);

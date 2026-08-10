@@ -21,20 +21,27 @@ export function ContinueButton({
   draftId,
   nextHref,
   nextStatus,
+  beforeNavigate,
   children,
   className,
 }: {
   draftId?: string;
   nextHref: string;
   nextStatus?: Exclude<IntellEngineDraftStatus, "complete">;
+  // Persist-before-leaving. Return false to CANCEL the navigation -- the editors pass their
+  // autosave flush, so a client whose save just failed stays on the page with their work and
+  // the "Not saved" message in front of them instead of being carried onward without it.
+  // This is the one thing the old fire-and-forget version got wrong that actually cost work.
+  beforeNavigate?: () => Promise<boolean>;
   children: React.ReactNode;
   className: string;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
 
-  if (!draftId || !nextStatus) {
-    // No draft, or no next screen to point at: navigate and write nothing.
+  // A plain link only when there is nothing at all to do first. With a beforeNavigate to
+  // await, it has to be a button even on the last screen of the flow.
+  if ((!draftId || !nextStatus) && !beforeNavigate) {
     return (
       <Link href={draftId ? `${nextHref}?draft=${draftId}` : nextHref} className={className}>
         {children}
@@ -44,16 +51,32 @@ export function ContinueButton({
 
   async function go() {
     setBusy(true);
-    try {
-      await fetch(`/api/intellengine/drafts/${draftId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: nextStatus }),
-      });
-    } catch {
-      // Non-fatal: keep moving even if the status write hiccups.
+
+    // CONTENT FIRST, POINTER SECOND, and the order matters: if the client's work cannot be
+    // saved there is no honest reason to record that they moved past this step.
+    if (beforeNavigate) {
+      const saved = await beforeNavigate();
+      if (!saved) {
+        // The editor's indicator is already showing why. Stay put.
+        setBusy(false);
+        return;
+      }
     }
-    router.push(`${nextHref}?draft=${draftId}`);
+
+    if (draftId && nextStatus) {
+      try {
+        await fetch(`/api/intellengine/drafts/${draftId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: nextStatus }),
+        });
+      } catch {
+        // Still non-fatal, and now it is only the RESUME POINTER at stake -- a lost status
+        // write means the client resumes one screen earlier, not that they lose anything.
+      }
+    }
+
+    router.push(draftId ? `${nextHref}?draft=${draftId}` : nextHref);
   }
 
   return (

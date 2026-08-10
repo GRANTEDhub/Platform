@@ -39,6 +39,17 @@ export interface DraftScope {
   budget: string;
   partners: { name: string; role: string; description: string }[];
   notes: string;
+  // Stamped SERVER-SIDE on every scope write, and its PRESENCE is load-bearing.
+  //
+  // It is what lets a stored empty string beat the concept-proposal seed. Without it,
+  // "the client cleared this box" and "this draft has never been saved" both look like
+  // scope: "", so re-seeding would put back words the client deliberately deleted. Absent
+  // means seed from the concept; present means the stored values win, empty or not.
+  //
+  // The mirror of the don't-clear-on-empty guard in app/portal/profile/actions.ts: there
+  // absent had to mean leave-alone, here present-and-empty has to mean cleared. Both are
+  // only wrong when the two cases cannot be told apart.
+  savedAt?: string;
 }
 
 export interface DraftContent {
@@ -58,6 +69,21 @@ export const EMPTY_SCOPE: DraftScope = {
   notes: "",
 };
 
+// ── Write bounds ──────────────────────────────────────────────────────────────────
+//
+// Enforced server-side, because the editors are the only thing between a client and this
+// column and RLS lets them write their own row directly (see the route's note).
+//
+// Not tidiness: five surfaces now SELECT content -- the hub, the portal dashboard, the
+// staff console panel, portal search, and the all-clients roster, which pulls it for every
+// client's drafts to compute one percentage. While content is '{}' that is free; once it
+// holds narrative, the bound on one draft is the bound on that query.
+export const SCOPE_MAX_CHARS = 6_000; // ~500 words, the limit the editor already marks
+export const NOTES_MAX_CHARS = 4_000;
+export const SECTION_MAX_CHARS = 12_000;
+export const MAX_PARTNERS = 20;
+export const CONTENT_MAX_BYTES = 262_144; // 256KB for the whole merged column
+
 export const EMPTY_CONTENT: DraftContent = { scope: EMPTY_SCOPE, sections: [] };
 
 function str(v: unknown): string {
@@ -75,6 +101,7 @@ export function readDraftContent(value: unknown): DraftContent {
 
   const rawScope = (v.scope && typeof v.scope === "object" ? v.scope : {}) as Record<string, unknown>;
   const scope: DraftScope = {
+    savedAt: typeof rawScope.savedAt === "string" ? rawScope.savedAt : undefined,
     scope: str(rawScope.scope),
     // Anything other than the literal "partner" reads as prime -- the default the editor
     // opens on, so a corrupt value degrades to the common case rather than to nothing.
@@ -154,4 +181,65 @@ export function completenessLabel(c: DraftCompleteness): string {
   if (c.build === "done") return "Narrative drafted";
   if (c.scope === "done") return "Scope captured";
   return "Not started";
+}
+
+// Whether the scope step has ever been written. See DraftScope.savedAt for why this is a
+// separate question from "is the scope non-empty".
+export function hasSavedScope(content: DraftContent): boolean {
+  return !!content.scope.savedAt;
+}
+
+// ── Write-side normalization ──────────────────────────────────────────────────────
+//
+// WHAT THIS IS AND IS NOT. It is data hygiene, not a privilege boundary. 0062's RLS grants
+// a client member `for all` on their own draft row, so a determined client can PATCH
+// arbitrary jsonb straight through PostgREST with their anon key and skip this entirely.
+// What actually contains that is readDraftContent above being tolerant: junk reads as
+// empty rather than breaking a render. This stops accidents and bounds size; it is not
+// what stops an attacker, and pretending otherwise would misplace the trust.
+//
+// Returns a discriminated result rather than throwing, so the route can map a breach to a
+// specific status code and message instead of a 500.
+export type NormalizeResult<T> = { ok: true; value: T } | { ok: false; error: string };
+
+export function normalizeScopeForSave(value: unknown, savedAt: string): NormalizeResult<DraftScope> {
+  // Read it through the SAME tolerant reader the display path uses, so a save can never
+  // store a shape the reader would then discard.
+  const parsed = readDraftContent({ scope: value }).scope;
+
+  if (parsed.scope.length > SCOPE_MAX_CHARS) {
+    return { ok: false, error: `The scope of work is too long (limit ${SCOPE_MAX_CHARS} characters).` };
+  }
+  if (parsed.notes.length > NOTES_MAX_CHARS) {
+    return { ok: false, error: `Additional notes are too long (limit ${NOTES_MAX_CHARS} characters).` };
+  }
+  if (parsed.partners.length > MAX_PARTNERS) {
+    return { ok: false, error: `Too many partners (limit ${MAX_PARTNERS}).` };
+  }
+
+  // savedAt comes from the server, never from the request body: it decides whether stored
+  // values beat the concept seed, so a client must not be able to set or clear it.
+  return { ok: true, value: { ...parsed, savedAt } };
+}
+
+export function normalizeSectionsForSave(value: unknown, updatedAt: string): NormalizeResult<DraftSection[]> {
+  const parsed = readDraftContent({ sections: value }).sections;
+
+  for (const s of parsed) {
+    if (s.draft.length > SECTION_MAX_CHARS) {
+      return { ok: false, error: `Section "${s.id}" is too long (limit ${SECTION_MAX_CHARS} characters).` };
+    }
+  }
+
+  // Two ids for one section would make "every section is non-empty" ambiguous -- one copy
+  // filled and one blank is neither done nor not.
+  const seen = new Set<string>();
+  for (const s of parsed) {
+    if (seen.has(s.id)) return { ok: false, error: `Duplicate section "${s.id}".` };
+    seen.add(s.id);
+  }
+
+  // Stamped per section so a later regenerate (step 5) can say when a line was last
+  // touched. Server-set for the same reason as savedAt.
+  return { ok: true, value: parsed.map((s) => ({ ...s, updatedAt })) };
 }
