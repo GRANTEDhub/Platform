@@ -114,23 +114,41 @@ export async function downloadPdf(bucket: string, objectPath: string): Promise<B
   return Buffer.from(await data.arrayBuffer());
 }
 
-// Remove objects from a bucket (service-role). Best-effort: a failure to delete a
-// stale object shouldn't block replacing an alert draft.
+// Remove objects from a bucket (service-role). RAISES on failure, like every other
+// helper in this file -- the best-effort wrapper is removeObjectsGrouped below, and
+// callers who want a failure swallowed should use that rather than a helper that
+// cannot report one.
+//
+// The error check is not optional here. storage-js resolves with `{ data: null, error }`
+// instead of rejecting (BaseApiClient.handleOperation swallows anything matching
+// isStorageError, and network failures are wrapped as StorageUnknownError, which
+// matches) -- so `await remove(...)` without reading `error` succeeds silently for
+// EVERY failure mode: permission denied, missing bucket, unreachable host. Review
+// finding on #331: the try/catch in removeObjectsGrouped was unreachable because of it,
+// and the log line it exists for could never fire.
 export async function removeObjects(bucket: string, paths: string[]): Promise<void> {
   if (paths.length === 0) return;
   const db = createServiceClient();
-  await db.storage.from(bucket).remove(paths);
+  const { error } = await db.storage.from(bucket).remove(paths);
+  if (error) throw new Error(`Storage remove failed: ${error.message}`);
 }
 
-// Remove a flat list of pointers that may span BUCKETS, grouping per bucket because
-// removeObjects takes one bucket at a time. Extracted after review on #330 noted the draft
-// cascade and the client cascade had each hand-rolled the same Map-and-loop.
+// THE BEST-EFFORT CLEANUP PATH. Removes a flat list of pointers that may span BUCKETS,
+// grouping per bucket because removeObjects takes one bucket at a time. Extracted after
+// review on #330 noted the draft cascade and the client cascade had each hand-rolled the
+// same Map-and-loop.
 //
-// THE PER-BUCKET try/catch LIVES HERE, not at the call sites, which is what makes this worth
-// extracting rather than just deduplicating. Both callers run it AFTER their rows are already
-// deleted, so a storage failure must never surface as "delete failed" -- it is logged and
-// leaves orphaned bytes. Owning that here means one bucket failing still attempts the rest,
-// every caller gets the same guarantee, and no caller needs its own wrapper.
+// THE try/catch LIVES HERE, not at the call sites, which is what makes this worth extracting
+// rather than just deduplicating. Every caller runs cleanup AFTER the row it belongs to is
+// already gone (or, in confirm's reject path, after the request's outcome is already decided),
+// so a storage failure must never surface as "delete failed" -- it is logged and leaves
+// orphaned bytes, which are invisible rather than wrong. Owning that here means one bucket
+// failing still attempts the rest, every caller gets the same guarantee, and no caller needs
+// its own wrapper.
+//
+// This is the ONLY thing that should call removeObjects. That helper throws on an API-level
+// error precisely so this catch has something to catch -- swallowing it there instead put the
+// silence one level too deep to log (#331).
 //
 // `context` prefixes the log so a failure is still attributable to the operation that caused
 // it, which is what the hand-rolled version at each site was providing.

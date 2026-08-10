@@ -9,7 +9,7 @@ import {
   UPLOAD_MAX_BYTES,
   UPLOAD_MAX_LABEL,
 } from "@/lib/documents/kinds";
-import { CLIENT_UPLOADS_BUCKET, getObjectInfo, removeObjects } from "@/lib/storage";
+import { CLIENT_UPLOADS_BUCKET, getObjectInfo, removeObjectsGrouped } from "@/lib/storage";
 import type { ClientDocument, IntellEngineDraft } from "@/types/database";
 
 // Confirm an upload and record it (Pursuit step 3b).
@@ -95,16 +95,19 @@ export async function POST(req: NextRequest) {
 
   // Belt to the bucket's braces, and it catches the case where the two drift: if the bucket's
   // limits were ever widened past the app's, storage would accept something we do not want
-  // recorded. The object is removed rather than left as an orphan we chose to create.
+  // recorded. The object is removed rather than left as an orphan we chose to create -- via the
+  // best-effort wrapper, so a failed cleanup is logged and still returns the 400 the caller
+  // needs, rather than masking a clear refusal with a storage 500.
+  const rejected = [{ storage_bucket: CLIENT_UPLOADS_BUCKET, storage_path: path }];
   if (info.contentType && !isAllowedUploadMime(info.contentType)) {
-    await removeObjects(CLIENT_UPLOADS_BUCKET, [path]);
+    await removeObjectsGrouped(rejected, "client-document-reject-mime");
     return NextResponse.json(
       { error: "That file type isn't supported. Upload a PDF, Word or Excel document." },
       { status: 400 },
     );
   }
   if (info.size !== null && info.size > UPLOAD_MAX_BYTES) {
-    await removeObjects(CLIENT_UPLOADS_BUCKET, [path]);
+    await removeObjectsGrouped(rejected, "client-document-reject-size");
     return NextResponse.json({ error: `That file is over ${UPLOAD_MAX_LABEL}.` }, { status: 400 });
   }
 

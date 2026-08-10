@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
 import { pursuitApiDenied } from "@/lib/pursuit/access";
 import { resolveDocumentActor, canDeleteDocument } from "@/lib/documents/authorize";
-import { removeObjects } from "@/lib/storage";
+import { removeObjectsGrouped } from "@/lib/storage";
 import type { ClientDocument } from "@/types/database";
 
 // Delete a client document (Pursuit step 3b).
@@ -53,11 +53,10 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
     return NextResponse.json({ error: "Couldn't remove that file. Try again." }, { status: 500 });
   }
 
-  if (row.storage_bucket && row.storage_path) {
-    // Best-effort by design (removeObjects does not throw): the row is already gone, so the
-    // client's list is correct either way, and a stranded object is invisible.
-    await removeObjects(row.storage_bucket, [row.storage_path]);
-  }
+  // Best-effort by design, via the wrapper that owns that: the row is already gone, so the
+  // client's list is correct either way, and a stranded object is invisible. A storage failure
+  // is logged under this context rather than turning a completed delete into a 500.
+  await removeObjectsGrouped([row], "client-document-delete");
 
   return NextResponse.json({ ok: true });
 }
