@@ -707,6 +707,14 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
       >
         Documents
       </Link>
+      {/* GrantBot brick 0. Its own route rather than a panel here: the pack runs seven queries
+          and renders a few thousand words, and this page is opened constantly. */}
+      <Link
+        href={`/clients/${client.id}/context-pack`}
+        className="inline-flex h-8 items-center rounded-pill border border-white/20 px-[14px] text-[13px] font-medium text-white/[0.85] transition-colors hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome"
+      >
+        Context pack
+      </Link>
       <GenerateReportButton
         clientId={client.id}
         inProgress={matchInProgress}
