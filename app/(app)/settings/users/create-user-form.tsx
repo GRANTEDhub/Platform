@@ -28,9 +28,20 @@ export function CreateUserForm() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to create user");
-      setMsg({ ok: true, text: data.warning || `Created ${data.email} as ${data.role}.` });
+      // A warning means the account exists but something after it didn't -- a role that
+      // wouldn't set, or an email that wouldn't send. It outranks the success line
+      // because it is the half the admin has to act on.
+      setMsg({
+        ok: true,
+        text:
+          data.warning ||
+          `Created ${data.email} as ${data.role}${data.emailed ? " and emailed them their login." : "."}`,
+      });
       setEmail("");
-      setPassword("");
+      // The password field is NOT cleared on a warning: it is the fallback for a send
+      // that failed, and clearing it would destroy the only copy on screen. Cleared only
+      // when the invite actually went out.
+      if (!data.warning) setPassword("");
       setRole("contractor");
       router.refresh();
     } catch (err) {
@@ -66,8 +77,14 @@ export function CreateUserForm() {
           minLength={8}
           required
         />
+        {/* The old copy said "they can sign in immediately and change it later". The
+            first half was true; the second was not. There is no staff password-reset
+            in the app -- /set-password is the CLIENT flow (it ends in /portal behind
+            requireClient) and there is no forgot-password page -- so this password
+            stands until an admin rotates it in Supabase. Saying so is the point. */}
         <p className="text-xs text-muted-foreground">
-          Share it with them — they can sign in immediately and change it later.
+          Emailed to them with a link to sign in. They can&apos;t change it themselves — rotate it
+          in Supabase if it needs changing.
         </p>
       </div>
       <div className="space-y-1.5">

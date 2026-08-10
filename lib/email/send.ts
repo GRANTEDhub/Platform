@@ -325,3 +325,74 @@ export async function sendClientInviteEmail(opts: {
   if (error) throw new Error(`Resend send failed: ${error.message}`);
   return { to, subject, id: data?.id ?? null };
 }
+
+// ── Staff / contractor login invite ──────────────────────────────────────────
+//
+// Sent when an admin creates a login in /settings/users. Before this, nothing was
+// emailed at all: the panel created the account and the temp password was only ever
+// visible on the admin's own screen, so a login handed over by memory or a chat
+// message was the actual onboarding path.
+//
+// IT CARRIES THE TEMP PASSWORD IN PLAIN TEXT, and that is a deliberate trade rather
+// than an oversight. The alternative -- a set-password link and no password at all --
+// is worse HERE specifically, because this app has no forgot-password page and no
+// staff-facing password reset: a link that failed to arrive would leave an account
+// nobody could enter. A temp password keeps the admin's screen as the fallback.
+//
+// The honest cost, written down because the copy in the UI used to hide it: "temp" is
+// a misnomer until a staff reset flow exists. Until then this credential is permanent
+// unless an admin rotates it in the Supabase dashboard, and the email is a lasting
+// copy of it. A staff password-reset path is the fix, and it is the next brick, not a
+// someday item.
+//
+// NOT AN OUTREACH SEND, but it still respects the allowlist. isRecipientAllowed is
+// hard-backstopped here exactly as in every other function in this file: if
+// OUTREACH_SEND_ALLOWLIST is set for testing, a staff invite is blocked too rather
+// than quietly exempting itself from the one switch that makes previews safe.
+export async function sendStaffInviteEmail(opts: {
+  to: string;
+  fullName?: string | null;
+  tempPassword: string;
+  loginUrl: string;
+  role: "admin" | "contractor";
+}): Promise<SentResult> {
+  const to = (opts.to ?? "").trim();
+  if (!isDeliverableEmail(to)) throw new Error(`No deliverable recipient: "${opts.to ?? "(null)"}"`);
+  if (!isRecipientAllowed(to)) {
+    throw new Error(`Recipient not on send allowlist (testing mode): ${to}`);
+  }
+  if (!opts.tempPassword) throw new Error("No temporary password to send");
+  if (!opts.loginUrl?.trim()) throw new Error("No login URL configured");
+
+  const subject = "Your GRANTED platform login";
+  const greeting = opts.fullName ? `Hi ${opts.fullName},` : "Hello,";
+  const scope =
+    opts.role === "admin"
+      ? "You have full access."
+      : "You have access to grant work — the review queue, the grant ledger, client profiles and proposal drafting. Invoicing, contracts and time tracking stay with the admins.";
+
+  const text = [
+    greeting,
+    "",
+    "Your login for the GRANTED platform is ready.",
+    "",
+    `Sign in:   ${opts.loginUrl.trim()}`,
+    `Email:     ${to}`,
+    `Password:  ${opts.tempPassword}`,
+    "",
+    scope,
+    "",
+    // States the real constraint instead of the reassuring version. There is no
+    // self-serve change today, so promising one here would be the same false claim
+    // the create form used to make.
+    "This password can't be changed from inside the platform yet — if you want it changed, reply to this email and we'll rotate it for you.",
+    "",
+    "Best,",
+    "GRANTED",
+  ].join("\n");
+
+  const resend = new Resend(process.env.RESEND_PLATFORM_API);
+  const { data, error } = await resend.emails.send({ from: FROM, to, replyTo: REPLY_TO, subject, text });
+  if (error) throw new Error(`Resend send failed: ${error.message}`);
+  return { to, subject, id: data?.id ?? null };
+}
