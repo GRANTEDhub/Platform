@@ -49,5 +49,10 @@ export async function POST(_req: NextRequest, { params }: { params: { commitId: 
     // Empty `changed` with ok:true means the profile already matched the old values -- an
     // honest "nothing to undo" rather than a claimed reversal.
     unchanged: result.unchanged ?? [],
+    // Should be empty for a rollback now that intent relaxes the per-field rules, but it is
+    // returned rather than assumed: a PARTIAL undo reporting a clean success is the exact
+    // failure this route was found to have, and an empty array is a claim worth being able
+    // to check.
+    rejected: result.rejected ?? [],
   });
 }

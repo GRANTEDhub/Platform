@@ -1,7 +1,13 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/server";
-import { isProposableField, readCurrentValue, rejectValue, valuesEqual } from "./proposal";
+import {
+  isProposableField,
+  readCurrentValue,
+  rejectValue,
+  valuesEqual,
+  type CommitIntent,
+} from "./proposal";
 import type { DocumentActor } from "./authorize";
 
 // Committing reviewed profile changes, and the audit trail that makes it reversible.
@@ -48,6 +54,9 @@ export async function commitProfileChanges(opts: {
   actorEmail: string | null;
   accepted: AcceptedField[];
   note: string | null;
+  // "rollback" relaxes the per-field rules -- see rejectValue. Defaults to the strict case so
+  // a new caller cannot get the permissive one by forgetting to think about it.
+  intent?: CommitIntent;
 }): Promise<CommitResult> {
   // LAST WRITE WINS, PER FIELD, BEFORE ANYTHING IS COMPUTED.
   //
@@ -104,7 +113,7 @@ export async function commitProfileChanges(opts: {
     // which is exactly the invariant this feature claimed to extend. Enforced here because
     // this is the only writer, and a rule that lives only in the renderer is a rule a request
     // can walk around.
-    const refusal = rejectValue(field, value);
+    const refusal = rejectValue(field, value, opts.intent ?? "proposal");
     if (refusal) {
       rejected.push({ field, reason: refusal });
       continue;
@@ -206,5 +215,9 @@ export async function rollbackCommit(opts: {
     // is explicitly asking to restore, rather than an extraction proposing to erase.
     accepted: typed.map((r) => ({ field: r.field, value: r.old_value ?? null })),
     note: `Rolled back commit ${opts.commitId}`,
+    // Restoring history, not proposing content. Without this an undo of a commit that FILLED
+    // org_type or primary_funding_needs would refuse to write the blank back and report
+    // success having done nothing.
+    intent: "rollback",
   });
 }

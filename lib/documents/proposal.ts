@@ -74,8 +74,31 @@ const ADDITIVE_ONLY_FIELDS: readonly string[] = ["org_type", "primary_funding_ne
 
 export type FieldRejection = "would_clear_protected_field" | "org_type_not_recognised";
 
+// Proposing NEW content is a different act from RESTORING a value the profile already held,
+// and these rules only make sense for the first.
+//
+// Review finding on #340, and a regression I introduced with the rules themselves: rolling
+// back a commit that FILLED org_type from empty means writing the empty value back, which
+// "would_clear_protected_field" then refused -- so the rollback silently restored nothing and
+// still reported success. The commit.ts comment beside the rollback call had already stated the
+// exception ("the one place a commit is allowed to write an empty value -- restoring a blank a
+// human is explicitly asking to restore"); the guard I added one commit later did not
+// implement it. Third instance of the same blind spot on this brick, so it is stated in the
+// signature now rather than in prose: the caller must SAY which act this is.
+//
+// A rollback also bypasses the ORG_TYPES check, deliberately. old_value is a value the profile
+// genuinely held, so refusing to restore it would strand the client in the state they are
+// trying to leave -- and an unrecognised value that got in by some other path is not made
+// safer by making it unreversible.
+export type CommitIntent = "proposal" | "rollback";
+
 // Why this value may not be written, or null if it may. Pure, so both paths can ask.
-export function rejectValue(field: string, value: unknown): FieldRejection | null {
+export function rejectValue(
+  field: string,
+  value: unknown,
+  intent: CommitIntent = "proposal",
+): FieldRejection | null {
+  if (intent === "rollback") return null;
   if (ADDITIVE_ONLY_FIELDS.includes(field) && isEmptyValue(value)) {
     return "would_clear_protected_field";
   }

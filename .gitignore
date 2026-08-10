@@ -31,3 +31,13 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo
+
+# Compiled shadows of TypeScript sources. Two of these (lib/documents/proposal.js,
+# lib/clients/org-types.js) were committed by accident in 5986990 when a scratch tsc run
+# emitted beside its source instead of into the scratch dir. A .js next to its .ts is worse
+# than clutter: it is a stale copy that some resolvers prefer over the real file, so it can
+# silently serve last week's logic. Nothing in this repo ships hand-written .js under lib/
+# or app/, so ignoring them entirely is safe.
+/lib/**/*.js
+/app/**/*.js
+/types/**/*.js
