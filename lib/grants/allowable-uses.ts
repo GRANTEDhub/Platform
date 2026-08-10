@@ -430,7 +430,30 @@ export async function generateAllowableUses(
 
   if (payload.has_section === false) return { value: { items: [], reason: "no_section" }, audit: null };
 
-  const raws = (payload.items ?? []).map((i) => ({ line: String(i?.line ?? ""), quote: String(i?.quote ?? "") }));
+  // A NON-ARRAY `items` IS A MODEL FAILURE, NOT AN EMPTY LIST. `?? []` guarded null and
+  // undefined but not a wrong type, so a payload whose items came back as an object or a
+  // string threw ".map is not a function" -- caught upstream as "generation threw", which
+  // costs an attempt and writes nothing. Observed live on two grants across three runs; one
+  // of them burned two of its three attempts before a re-ask happened to return a
+  // well-formed array, so it cleared the cap by luck rather than by design.
+  //
+  // RETRYABLE RATHER THAN STORED, and deliberately NOT folded into all_dropped. That reason
+  // means "the model produced lines and not one survived verification" -- the faithfulness
+  // signal being watched this week. Recording a schema failure there would corrupt the one
+  // number this sweep exists to measure. Returning null keeps the retry that demonstrably
+  // recovers these, and the three-attempt cap still parks a persistent offender.
+  //
+  // The type and a truncated value are logged because the tool schema declares items an
+  // array: if this recurs, the actual shape is the only useful evidence.
+  if (!Array.isArray(payload.items)) {
+    console.error(
+      `[allowable-uses] malformed items grant=${grant.id} type=${typeof payload.items} ` +
+        `value=${JSON.stringify(payload.items)?.slice(0, 200) ?? "undefined"}`,
+    );
+    return null;
+  }
+
+  const raws = payload.items.map((i) => ({ line: String(i?.line ?? ""), quote: String(i?.quote ?? "") }));
   const audit = verifyAllowableUses(raw, raws);
 
   // The model claimed a section and produced lines, and not one of them survived. Recorded
@@ -464,7 +487,30 @@ async function saveAllowableUses(db: SupabaseClient, grantId: string, value: All
 // already know. Those are stamped and retired WITHOUT a call, which is the same
 // retire-as-well-as-regenerate discipline requeueThinBriefs needed: a row that cannot improve
 // must still leave the window, or the phase never stops costing something.
+//
+// TWO PHASES ON TWO BUDGETS, because sharing one starved the phase that mattered. The recut
+// ran both kinds of row through the same RECUT_FLOOR slots in allowable_uses_at order, and
+// retiring a stub costs nothing at the API -- so five free retirements per hour consumed the
+// whole allowance while the 43 improvable grants sat behind 403 stubs. Measured in the
+// 18:52-23:52 sweep window: `recut improved 0, retired-short 5` on six consecutive runs, i.e.
+// ~80 hours before the first recoverable row would even be reached. Retirement is now a bulk
+// pass with its own (much larger) scan, and the API slots are spent only on rows long enough
+// to have a section.
 const RECUT_FLOOR = 5;
+
+// How many unmarked no_section rows the FREE pass may look at per run. Bounded only by the
+// cost of reading raw_text -- the largest column on the table -- not by anything at the API,
+// so it is two orders of magnitude above RECUT_FLOOR. At 100/run the 403 stubs drain in about
+// four runs instead of eighty, and the improvable rows surface behind them.
+//
+// A cheaper filter is possible but not worth a migration: PostgREST cannot filter on
+// length(raw_text), so the length test happens in memory here. A generated raw_text_len
+// column would make this pass free to scan if the window ever grows past a few hundred rows.
+const RECUT_SCAN_BATCH = 100;
+
+// Rows per retire statement. See the chunking note in recutNoSection: `.in()` travels in the
+// URL, so this bounds the request line rather than anything about the work itself.
+const RETIRE_CHUNK = 50;
 
 // Cheap head-only probe. No rows, and critically no raw_text -- the largest column on the
 // table. Runs before the main claim because the answer changes its size.
@@ -489,36 +535,62 @@ interface RecutResult {
   failed: number;
 }
 
-async function recutNoSection(db: SupabaseClient, budget: number): Promise<RecutResult> {
+async function recutNoSection(db: SupabaseClient, apiBudget: number): Promise<RecutResult> {
   const out: RecutResult = { improved: 0, stillEmpty: 0, retiredShort: 0, failed: 0 };
-  if (budget <= 0) return out;
 
+  // ── Phase A: retire the stubs. No API calls, so this is not charged to apiBudget. ────────
   const { data, error } = await db
     .from("grants")
-    .select("id, title, funder, raw_text, allowable_uses")
+    .select("id, title, funder, raw_text")
     .filter("allowable_uses->>reason", "eq", "no_section")
     .filter("allowable_uses->>recut", "is", null)
     .order("allowable_uses_at", { ascending: true })
-    .limit(budget);
-  if (error) throw new Error(`Recut claim failed: ${error.message}`);
+    .limit(RECUT_SCAN_BATCH);
+  if (error) throw new Error(`Recut scan failed: ${error.message}`);
 
-  const claimed = (data ?? []) as (SweepRow & { allowable_uses: unknown })[];
+  const scanned = (data ?? []) as AllowableUsesGrant[];
+  const shortIds: string[] = [];
+  const longEnough: AllowableUsesGrant[] = [];
+  for (const g of scanned) {
+    if ((g.raw_text || "").trim().length < RECUT_MIN_RAW_CHARS) shortIds.push(g.id);
+    else longEnough.push(g);
+  }
 
-  for (const g of claimed) {
-    const raw = (g.raw_text || "").trim();
-
-    // Retire without a call. Keeps the existing value, adds only the marker, so the row's
-    // meaning is unchanged and it simply stops being asked.
-    if (raw.length < RECUT_MIN_RAW_CHARS) {
-      try {
-        await saveAllowableUses(db, g.id, { items: [], reason: "no_section", recut: 1 });
-        out.retiredShort++;
-      } catch (e) {
-        console.error(`[allowable-uses] recut retire failed grant=${g.id}:`, e instanceof Error ? e.message : e);
-        out.failed++;
-      }
-      continue;
+  // SET-AT-A-TIME, not row-at-a-time. Every row here is already {items: [], reason:
+  // no_section}, so the written value is identical across them -- the update adds the marker
+  // and changes nothing else about their meaning. Per-row writes would be 403 round trips to
+  // say the same thing.
+  //
+  // Chunked because `.in()` becomes an `id=in.(...)` QUERY STRING, not a body: 100 UUIDs is
+  // ~3.7KB of URL, close enough to the usual 8KB request-line ceiling that a bigger scan batch
+  // would start returning 414 instead of working. Chunks of 50 keep it around 1.9KB, and one
+  // failed chunk leaves its rows unstamped for the next run rather than poisoning the others.
+  for (let i = 0; i < shortIds.length; i += RETIRE_CHUNK) {
+    const chunk = shortIds.slice(i, i + RETIRE_CHUNK);
+    const { error: bulkErr } = await db
+      .from("grants")
+      .update({
+        allowable_uses: { items: [], reason: "no_section", recut: 1 },
+        allowable_uses_at: new Date().toISOString(),
+      })
+      .in("id", chunk);
+    if (bulkErr) {
+      // Counted as failures, not silently swallowed: unstamped rows stay in the window and
+      // are simply rescanned next run, so this is recoverable rather than lost.
+      console.error(`[allowable-uses] recut bulk retire failed (${chunk.length} rows): ${bulkErr.message}`);
+      out.failed += chunk.length;
+    } else {
+      out.retiredShort += chunk.length;
     }
+  }
+
+  // ── Phase B: re-ask the documents that can actually improve, bounded by the API budget ───
+  //
+  // Anything past the budget stays unmarked and is picked up next run. That costs a repeated
+  // raw_text read for those rows, which is the accepted price of not stamping a row we have
+  // not actually re-read.
+  for (const g of longEnough.slice(0, Math.max(apiBudget, 0))) {
+    const raw = (g.raw_text || "").trim();
 
     let result: Awaited<ReturnType<typeof generateAllowableUses>> = null;
     try {
@@ -736,8 +808,13 @@ export async function sweepAllowableUses(
     }
   }
 
-  // Reserved slots, plus whatever the main claim left unused on a light run.
-  const recut = await recutNoSection(db, reserved + Math.max(mainCap - pending.length, 0));
+  // Reserved slots, plus whatever the main claim left unused on a light run. Skipped entirely
+  // when nothing is waiting, so the steady state costs neither the scan nor the raw_text read
+  // once the window is drained.
+  const recut =
+    recutWaiting > 0
+      ? await recutNoSection(db, reserved + Math.max(mainCap - pending.length, 0))
+      : { improved: 0, stillEmpty: 0, retiredShort: 0, failed: 0 };
   result.recutImproved = recut.improved;
   result.recutStillEmpty = recut.stillEmpty;
   result.recutRetiredShort = recut.retiredShort;
