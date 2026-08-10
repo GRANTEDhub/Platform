@@ -461,6 +461,34 @@ export type PursuitPath = "intellengine" | "sme" | "in_house";
 // scratch (card_id null). `status` = the furthest step reached in the
 // scope -> compliance -> build flow (structural progress, NOT AI-drafted
 // content); it drives the hub's status label and the resume target.
+// A file in the per-client document repository (migration 0030, extended by 0075).
+//
+// TWO POPULATIONS IN ONE TABLE, separated by intellengine_draft_id:
+//   null -- an ORG-LEVEL firm record (990, audit, board list). Staff-owned: reusable across
+//           every pursuit, and NOT client-deletable.
+//   set  -- a specific draft's supporting file. The client's own, and theirs to remove.
+//
+// `kind` is free text validated in app code rather than a CHECK constraint, as 0030 set it
+// up, so the taxonomy can change without a migration.
+export interface ClientDocument {
+  id: string;
+  client_id: string;
+  kind: string;
+  title: string;
+  storage_bucket: string;
+  storage_path: string;
+  content_type: string | null;
+  size_bytes: number | null;
+  source_contract_id: string | null;
+  created_by: string | null;
+  created_at: string;
+  intellengine_draft_id: string | null;
+  // FAILS CLOSED (0075). Defaults false, and the member SELECT policy requires it, so a row
+  // is invisible to clients until something deliberately says otherwise -- which is what
+  // keeps signed contracts behind the financial firewall without naming them.
+  client_visible: boolean;
+}
+
 export type IntellEngineDraftStatus = "scope" | "compliance" | "build" | "complete";
 
 export interface IntellEngineDraft {
