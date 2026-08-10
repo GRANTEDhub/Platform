@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createServiceClient } from "@/lib/supabase/server";
+import { removeObjectsGrouped } from "@/lib/storage";
 import { pursuitApiDenied } from "@/lib/pursuit/access";
 import { STEP_ORDER, furthestStatus } from "@/lib/intellengine/drafts";
 import {
@@ -144,8 +145,29 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
     .maybeSingle<Pick<IntellEngineDraft, "id" | "card_id">>();
   if (!draft) return NextResponse.json({ error: "Draft not found" }, { status: 404 });
 
+  // COLLECT THE FILE OBJECTS BEFORE THE DELETE, because the delete destroys the pointers to
+  // them. client_documents.intellengine_draft_id is ON DELETE CASCADE (0075), so removing this
+  // draft removes its document rows -- and nothing else in the system knows those objects
+  // existed. Without this the bucket fills with unreachable files, invisibly. Same shape as
+  // app/(app)/clients/actions.ts, which collects storage pointers before deleting a client.
+  //
+  // Read under the SERVICE role, scoped to the draft id the caller's RLS just proved they can
+  // see: 0075 grants members SELECT only on client_visible rows, so a client-RLS read here
+  // would silently miss a staff-filed draft-level document and orphan exactly the file the
+  // client cannot see.
+  const svc = createServiceClient();
+  const { data: docRows } = await svc
+    .from("client_documents")
+    .select("storage_bucket, storage_path")
+    .eq("intellengine_draft_id", params.id);
+  const objects = (docRows ?? []) as { storage_bucket: string | null; storage_path: string | null }[];
+
   const { error: delErr } = await supabase.from("intellengine_drafts").delete().eq("id", params.id);
   if (delErr) return NextResponse.json({ error: "Couldn't delete this proposal" }, { status: 500 });
+
+  // After the row delete succeeded, so a failed delete never removes files that are still
+  // referenced. Best-effort: the rows are gone regardless, and a stranded object is invisible.
+  await removeObjectsGrouped(objects);
 
   if (draft.card_id) {
     const { error: resetErr } = await supabase
