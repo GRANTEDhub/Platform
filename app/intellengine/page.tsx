@@ -29,14 +29,20 @@ export default async function IntellEngineHubPage() {
 
   const { data: draftRows } = await supabase
     .from("intellengine_drafts")
-    .select("id, card_id, title, status, updated_at")
+    .select("id, card_id, title, status, content, updated_at")
     .eq("client_id", org.clientId)
     .order("updated_at", { ascending: false });
 
   const drafts: HubDraft[] = ((draftRows ?? []) as Pick<
     IntellEngineDraft,
-    "id" | "card_id" | "title" | "status" | "updated_at"
-  >[]).map((d) => ({ id: d.id, title: d.title, status: d.status, updatedAt: d.updated_at }));
+    "id" | "card_id" | "title" | "status" | "content" | "updated_at"
+  >[]).map((d) => ({
+    id: d.id,
+    title: d.title,
+    status: d.status,
+    content: d.content,
+    updatedAt: d.updated_at,
+  }));
 
   // Matched grants in the client's Report, past the Grant Alerts gate. Chip A's
   // count (per Shannon) = grants still awaiting a pursuit decision PLUS grants

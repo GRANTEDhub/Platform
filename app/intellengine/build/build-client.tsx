@@ -157,13 +157,17 @@ export default function IntellEngineBuildClient({ draftId }: { draftId?: string 
         ))}
 
         <div className="flex justify-end">
+          {/* NOT "Save & return" any more, and not yet. Its only write was
+              status='complete', which is exactly the claim 0074 removed -- so with that
+              gone this is a plain navigation, and a button labelled Save that saves
+              nothing is the lie the client gate went up to stop. It becomes a real save
+              in step 2, when there is somewhere for these nine fields to go. */}
           <ContinueButton
             draftId={draftId}
             nextHref="/intellengine"
-            nextStatus="complete"
             className="rounded-full bg-brand-navy px-8 py-3 text-sm font-semibold text-white shadow-soft transition hover:bg-brand-navyDeep disabled:opacity-60"
           >
-            Save &amp; return to IntellEngine
+            Return to IntellEngine
           </ContinueButton>
         </div>
       </div>

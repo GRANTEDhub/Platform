@@ -48,8 +48,10 @@ export type PortfolioRow = {
   deadlineDays: number | null;
   deadlineDate: string | null;
   questions: number;
-  // Step progress on the furthest-along proposal in flight, or null if none. Progress
-  // through the scope -> compliance -> build flow, NOT how much narrative is written.
+  // Content progress on the furthest-along proposal in flight, or null if none: how much
+  // of the draft is actually captured, derived from intellengine_drafts.content (0074).
+  // It formerly measured position in the scope -> compliance -> build flow, which read
+  // 100% for a draft that had merely been clicked through.
   draftPct: number | null;
   reason: ActionReason | null;
   counts: Record<PipelineStageKey, number>;
@@ -445,11 +447,11 @@ function reasonText(r: PortfolioRow): string {
     const when = r.deadlineDate ? format(parseISO(r.deadlineDate), "MMM d") : "Deadline";
     if (r.deadlineDays !== null && r.deadlineDays < 0) return `${when} · overdue`;
     // The drawn line pairs the date with the state of the work: "no draft started" or
-    // "draft 40%". The percentage is progress through the scope -> compliance -> build
-    // flow, the same figure the client dashboard shows as "step N of 4" — it is NOT a
-    // claim about how much narrative exists, so it is qualified here too.
+    // "draft 40% captured". The percentage is now content — the share of assessable steps
+    // whose material is actually there (0074) — so the old "of the flow" qualifier, which
+    // existed to stop a reader taking screens-visited for work-done, is no longer needed.
     if (r.draftPct === null) return `${when} · no draft started`;
-    return `${when} · draft ${r.draftPct}% of the flow`;
+    return `${when} · draft ${r.draftPct}% captured`;
   }
   // The drawn line is "Oldest sat 41 days", recovered from the first carded match
   // attempt for each waiting card. Falls back to the plain count when no waiting card

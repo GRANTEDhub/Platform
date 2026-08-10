@@ -31,6 +31,20 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: "Invalid status" }, { status: 400 });
   }
 
+  // 'complete' IS NO LONGER SETTABLE (0074). status is a resume pointer -- the furthest
+  // screen opened -- and "complete" is not a screen; it used to be written by the
+  // builder's Continue button, which is how three clicks through empty screens produced a
+  // draft the hub advertised as "Ready to submit". Whether a draft is finished is now
+  // derived from its content (lib/intellengine/content.ts) and stored nowhere, so
+  // accepting it here could only ever reintroduce the claim. Rejected rather than
+  // silently ignored: a caller still sending it is a caller that has not been updated.
+  if (body.status === "complete") {
+    return NextResponse.json(
+      { error: "Completion is derived from draft content, not set directly" },
+      { status: 400 },
+    );
+  }
+
   // Current row (RLS pins it to the caller's org; absent -> not theirs / gone).
   const { data: current } = await supabase
     .from("intellengine_drafts")

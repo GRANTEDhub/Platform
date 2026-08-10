@@ -5,13 +5,18 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, FileText, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
 import { IntellEngineLogo } from "@/components/intellengine/logo";
-import { STATUS_LABEL, resumeStep } from "@/lib/intellengine/drafts";
+import { resumeStep } from "@/lib/intellengine/drafts";
+import { completenessLabel, draftCompleteness, readDraftContent } from "@/lib/intellengine/content";
 import type { IntellEngineDraftStatus } from "@/types/database";
 
 export interface HubDraft {
   id: string;
   title: string;
+  // Resume pointer only -- where the client last was, which is what draftHref needs.
+  // The row's LABEL comes from content (0074), because "Ready to submit" was previously
+  // printed here off a status three clicks could reach on an empty draft.
   status: IntellEngineDraftStatus;
+  content: unknown;
   updatedAt: string;
 }
 
@@ -259,7 +264,9 @@ export function IntellEngineHub({
                   </span>
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-semibold text-brand-navy">{d.title}</span>
-                    <span className="block text-xs text-muted-foreground">{STATUS_LABEL[d.status]}</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {completenessLabel(draftCompleteness(readDraftContent(d.content)))}
+                    </span>
                   </span>
                 </Link>
                 {confirmId === d.id ? (

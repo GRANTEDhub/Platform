@@ -45,13 +45,16 @@ export default async function StaffIntellEngineHub({
 
   const { data: draftRows } = await supabase
     .from("intellengine_drafts")
-    .select("id, card_id, title, status, updated_at")
+    .select("id, card_id, title, status, content, updated_at")
     .eq("client_id", params.id)
     .order("updated_at", { ascending: false });
 
   const drafts: HubDraft[] = (
-    (draftRows ?? []) as Pick<IntellEngineDraft, "id" | "card_id" | "title" | "status" | "updated_at">[]
-  ).map((d) => ({ id: d.id, title: d.title, status: d.status, updatedAt: d.updated_at }));
+    (draftRows ?? []) as Pick<
+      IntellEngineDraft,
+      "id" | "card_id" | "title" | "status" | "content" | "updated_at"
+    >[]
+  ).map((d) => ({ id: d.id, title: d.title, status: d.status, content: d.content, updatedAt: d.updated_at }));
 
   // Staff picker -- BROADER than the client's own hub (which lists only grants the
   // client marked "Interested"): a grant the team has RELEASED to the client
