@@ -1,7 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/server";
-import { uploadPdf, downloadPdf, removeObjects } from "@/lib/storage";
+import { uploadPdf, downloadPdf, removeObjectsGrouped } from "@/lib/storage";
 import { mintAccessToken } from "@/lib/tokens";
 import { enrichAlert } from "./enrich";
 import { ensureGrantBrief } from "@/lib/grants/brief";
@@ -75,9 +75,17 @@ export async function generateDraftAlert(
   const prior = await getDraftAlert(ctx.card.id);
   if (prior) {
     // Remove the prior draft's PDF AND its horizon page (if any) so a regenerate is a
-    // clean swap and never orphans a stale horizon object.
+    // clean swap and never orphans a stale horizon object. Best-effort via the wrapper that
+    // owns that: a stale object that will not delete must not fail the regenerate the user
+    // asked for, but it is now logged instead of vanishing (#331).
     const priorHorizon = (prior.alert_data as AlertData)?.horizonStoragePath;
-    await removeObjects(prior.storage_bucket, [prior.storage_path, ...(priorHorizon ? [priorHorizon] : [])]);
+    await removeObjectsGrouped(
+      [prior.storage_path, ...(priorHorizon ? [priorHorizon] : [])].map((p) => ({
+        storage_bucket: prior.storage_bucket,
+        storage_path: p,
+      })),
+      "alert-draft-regenerate",
+    );
     await db.from("grant_alerts").delete().eq("id", prior.id);
   }
 

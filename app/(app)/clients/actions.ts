@@ -9,7 +9,7 @@ import { validateConstraint } from "@/lib/grants/constraints";
 import { enrichClient } from "@/lib/clients/enrich";
 import { parseNarrative, narrativeToIntakeData, parseChipList } from "@/lib/intake/narrative";
 import { isUnconvertedLead } from "@/lib/leads/stage";
-import { removeObjects } from "@/lib/storage";
+import { removeObjectsGrouped } from "@/lib/storage";
 import { canSendOutreach } from "@/lib/email/guard";
 import { sendClientInviteEmail } from "@/lib/email/send";
 import { resolveOrCreateAuthUser, generateClientSetupLink } from "@/lib/clients/portal-login";
@@ -373,22 +373,10 @@ export async function deleteClientAction(
   }
 
   // Best-effort file cleanup. The record is already gone, so a storage failure must
-  // not surface as "delete failed" -- it is logged and leaves only orphaned bytes.
-  const byBucket = new Map<string, string[]>();
-  for (const o of objects) {
-    if (!o.storage_bucket || !o.storage_path) continue;
-    byBucket.set(o.storage_bucket, [...(byBucket.get(o.storage_bucket) ?? []), o.storage_path]);
-  }
-  for (const [bucket, paths] of byBucket) {
-    try {
-      await removeObjects(bucket, paths);
-    } catch (err) {
-      console.error(
-        `[client-delete] storage cleanup failed bucket=${bucket} count=${paths.length}:`,
-        err instanceof Error ? err.message : err,
-      );
-    }
-  }
+  // not surface as "delete failed" -- it is logged and leaves only orphaned bytes. The
+  // grouping, the per-bucket try/catch and that log all live in removeObjectsGrouped now, so
+  // this path and the IntellEngine draft cascade share one implementation.
+  await removeObjectsGrouped(objects, "client-delete");
 
   revalidatePath("/clients");
   revalidatePath("/intel/prospects");

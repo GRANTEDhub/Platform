@@ -167,7 +167,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
 
   // After the row delete succeeded, so a failed delete never removes files that are still
   // referenced. Best-effort: the rows are gone regardless, and a stranded object is invisible.
-  await removeObjectsGrouped(objects);
+  await removeObjectsGrouped(objects, "intellengine-draft-delete");
 
   if (draft.card_id) {
     const { error: resetErr } = await supabase
