@@ -51,12 +51,23 @@ dependency.
 
 ## 2. Stubbed or broken — the silent drops
 
+**Status, 2026-08-10.** The scope and build drops are fixed (step 2, PRs #326/#327 — both
+editors autosave to `intellengine_drafts.content` and can report a failure). The scope step's
+discarding upload control is fixed (3c, #332 — real bucket, real row, click-tested). The two
+**compliance** rows below are fixed by the fabrication removal: the six invented documents,
+the Verified/Needs-Update tally and the file-discarding `onChange` are all gone, replaced by a
+card that states the check is not built and does not block. **The build step's nine hardcoded
+mobile-health-clinic sections are still there** — the example text is a placeholder the
+builder deliberately does not force-save, but it is the last invented content in the flow.
+
+The table is kept as the record of what was found, not as a live defect list.
+
 | Location | Behaviour |
 |---|---|
 | `app/intellengine/scope/scope-client.tsx` (whole file) | Nine `useState` hooks, **zero fetch calls**. Scope, role, budget, partners, notes all lost on navigate |
 | `scope-client.tsx:93-96` | Uploads keep `f.name` only; the file object is never read. UI still renders a filled file row |
-| `app/intellengine/compliance/compliance-client.tsx:21-28` | Six **hardcoded** documents with hardcoded dates, identical for every client and every grant |
-| `compliance-client.tsx:164` | `onChange={() => onVerify(true)}` — discards the file and flips the row to "Verified · Just now" |
+| ~~`app/intellengine/compliance/compliance-client.tsx:21-28`~~ **fixed** | Six **hardcoded** documents with hardcoded dates, identical for every client and every grant |
+| ~~`compliance-client.tsx:164`~~ **fixed** | `onChange={() => onVerify(true)}` — discards the file and flips the row to "Verified · Just now" |
 | `app/intellengine/build/build-client.tsx:26-98` | Nine hardcoded sections describing **a mobile health clinic**, 2,500 residents, Medicaid reimbursement. Not NOFO-derived; identical for every grant |
 | `build-client.tsx:160-167` | **"Save & return to IntellEngine" does not save.** PATCHes `status: complete` only; all nine section texts are discarded |
 | `components/intellengine/step-nav.tsx:37-49` | The status PATCH is fire-and-forget — error swallowed, navigation proceeds |
@@ -233,16 +244,58 @@ Three decisions settled before the split, because they set the boundaries:
    - **Uploads are a second persistence path the autosave cannot see**, so Continue checks an
      in-flight upload independently of `flush()` and refuses to navigate. Same anti-silent-drop
      rule as step 2, reached by a different route.
-4. **3d — Compliance step: real org documents.** Replaces the invented six-document list with
-   what is actually on file. It can show "what you have", NOT "what this grant requires" --
-   requirements are step 4 -- so compliance completeness stays `unknown` and 3d does not
-   unlock the gate by itself.
+4. ~~**3d — Compliance step: real org documents.**~~ **SUPERSEDED 2026-08-10, do not build.**
+   The plan was a client-facing list of org-level documents with upload/replace. Two things
+   killed it. First, a survey of every writer of `client_documents` found the org-level set a
+   client can see is **empty for every client**: the only writer is contract signing
+   (`lib/contracts/deliver.ts`), and it leaves `client_visible` at its 0075 default of false.
+   Second, and decisive, the product model changed: documents are for **assimilation**, not
+   filing. A browsable client-facing repository is the wrong artifact.
 
-Un-gating after 3d is a judgment call, not an automatic consequence: the compliance step will
-be honest but thin until step 4 supplies real per-grant requirements. And it has one hard
-precondition regardless of that judgment — the document layer's **click-test has not been run**
-(see the warning under §5's progress note). Merged on automated coverage is not the same as
-exercised.
+   **The replacement — document assimilation.** Upload → extract a structured summary (type,
+   title, synopsis, document date, matching/drafting facts, plus a human-fillable note) →
+   a human reviews proposed profile changes → commit. The extracted text is what feeds the
+   client profile; the raw file is **retained internally so extraction can be re-run against
+   the source**, never surfaced as a repository. `client_visible` stays false, which is also
+   what keeps the decision reversible: surfacing later is flipping a boolean and adding a read
+   route, not a migration.
+
+   Settled with it:
+   - **Both clients and staff may commit** — no approval bottleneck — but every commit logs
+     who, when, which document, and **before/after per field**, so a change can be audited and
+     rolled back by re-applying the "before" values.
+   - **Asymmetric review default.** A proposed value for an EMPTY profile field is pre-checked;
+     one that would OVERWRITE existing content is unchecked and shown side by side. Filling a
+     gap is cheap; overwriting a human's words takes a deliberate click. Extends the
+     additive-only guard `confirmClientProfileAction` already applies to `primary_funding_needs`
+     and `org_type`.
+   - **An extracted document date is a claim, not a fact** — labelled extracted-not-confirmed
+     until a human accepts it, the same rule award amounts follow.
+   - **3a/3b are reused** (bucket, columns, mint → PUT → confirm; the row-after-object ordering
+     matters more here, since a row with no object can never be re-extracted). **3c stays as
+     it is** — pursuit attachments for one application are working materials, not an org
+     document shelf. One fix falls out: 3b's confirm route hardcodes `client_visible: true`,
+     which is the wrong default for a retained-not-surfaced raw file.
+   - **Build order: plumbing before prompt.** Fabrication removal, then the `client_visible`
+     fix, then schema + audit + review/commit against a stub extractor, then the real
+     extraction prompt. LLM calls cannot run from the sandbox, so extraction QUALITY is a
+     production check on real documents — which is the argument for making a wrong extraction
+     land as a rejected field rather than a corrupted profile before the shredder exists.
+
+   Compliance completeness stays `unknown` throughout, and the reason is now more durable than
+   "the list is hardcoded": knowing which documents a client holds is still not knowing whether
+   they satisfy **this** program. That is step 4.
+
+Un-gating is a judgment call, not an automatic consequence of finishing the document layer: the
+compliance step is honest but thin until step 4 supplies real per-grant requirements, and it now
+says so on the page rather than showing an invented tally.
+
+The click-test precondition recorded under §5's progress note is **partly discharged**: 3c was
+exercised end to end on 2026-08-10 (upload and open confirmed against real storage in the
+NWACC / Test Client walkthrough), which also exercised 3b's mint → PUT → confirm. What has still
+never been exercised by a real client login is 0075's member policy —
+`is_client_member_of(client_id) and client_visible` — because the walkthrough ran as staff, who
+read through 0030's `is_admin()` instead. That predicate is covered by tests only.
 
 Settled alongside the sequence:
 
