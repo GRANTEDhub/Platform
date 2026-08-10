@@ -24,8 +24,18 @@ export interface ExtractedDocument {
   // 990", "audited financial statements"). Display only -- it never becomes a `kind`,
   // because kind is a client's declared choice from a fixed allowlist.
   docType?: string;
-  // A better title than the filename, when the document names itself.
-  title?: string;
+  // NO `title` FIELD, and its absence is the decision. It was declared here with the comment
+  // "a better title than the filename, when the document names itself" -- and nothing ever read
+  // it: the review screen wires docType, docDate and synopsis out of `extracted` but takes the
+  // title from the stored client_documents.title column. So (iv) would have computed a better
+  // title, stored it, and had it silently ignored. Review finding on #340.
+  //
+  // Removed rather than wired, because wiring it means answering a question nobody has: does
+  // an extraction get to RENAME a document? The stored title is what the client sees in their
+  // own list (3c), so displaying a different one on the staff screen would give one document
+  // two names, and actually renaming the row is a write nobody asked for. Better an absent
+  // field than a declared one with an invented consumer -- which is the failure this brick kept
+  // producing. Add it back with a decision behind it if extraction-driven renaming is wanted.
   synopsis?: string;
   // AS WRITTEN IN THE DOCUMENT, and a CLAIM until a human accepts it. Kept as free text
   // rather than a date: "FY2024" and "year ended June 30, 2025" are what documents
