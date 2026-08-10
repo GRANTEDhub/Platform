@@ -340,7 +340,7 @@ async function clientSend(a: {
   if (!decision.ok) {
     const isApprovalBlock = decision.reason === "approval_forbidden";
     return NextResponse.json(
-      { error: isApprovalBlock ? "Only admins can approve a match for client delivery" : "Failed to record decision" },
+      { error: isApprovalBlock ? "Not allowed to approve this match for delivery" : "Failed to record decision" },
       { status: isApprovalBlock ? 403 : 500 },
     );
   }

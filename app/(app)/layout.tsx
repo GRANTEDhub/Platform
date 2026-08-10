@@ -41,10 +41,20 @@ const ADMIN_MORE: NavItem[] = [
 ];
 
 // Contractors get grant work AND the client console: Portfolio -> a client's
-// dashboard / Grant Report / IntellEngine. Invoicing & contract surfaces stay
-// admin-only (Edit profile, Invoices, Contracts, the Portfolio money footer, and
-// concept proposals). Prospecting / Pipeline (BizDev) remain admin-only. Nothing is
-// folded into More for them — three items need no overflow.
+// dashboard / Grant Report / IntellEngine. Nothing is folded into More for them --
+// three items need no overflow, and `more` is [] so no financial surface is even
+// listed for them.
+//
+// 0077 widened what those three doors LEAD to rather than adding doors. A contractor
+// now reaches the scored Grant Report, client create/invite, pursuit documents and
+// approve-and-deliver from inside Portfolio, so the band itself is unchanged.
+//
+// STILL ADMIN-ONLY, and this list is the money line: Invoices, Contracts, Time, the
+// Portfolio money footer and the billing-rate fields on Edit profile. Prospecting /
+// Pipeline / Sales stay admin-only too -- not because they are financial, but because
+// COLD outreach to non-clients is a brand risk held deliberately by an admin.
+// (Concept proposals were never actually contractor-blocked at the route; 0077 made
+// their RLS agree with that, so they are not in this list.)
 const CONTRACTOR_BAND: NavItem[] = [
   { href: "/clients", label: "Portfolio", icon: "portfolio" },
   { href: "/grants", label: "Ledger", icon: "grants" },

@@ -48,6 +48,13 @@ export async function recordClientDecision(
     })
     .eq("id", cardId);
   if (error) {
+    // Detects the trigger's approve guard by its message. 0077 removed the admin-only
+    // branch (approving for delivery is now any staff), so for a staff caller this no
+    // longer fires -- a non-staff caller is refused earlier with "Not authorized to
+    // modify this card", which is reason 'error'. Kept rather than ripped out: the
+    // token branch still raises an approve-specific exception, and a dead-but-correct
+    // 403 in a live send path is cheaper than surgery on it. The message the callers
+    // show no longer claims "only admins", because that is no longer why.
     const isApprovalBlock = error.message?.toLowerCase().includes("approve");
     return { ok: false, reason: isApprovalBlock ? "approval_forbidden" : "error" };
   }

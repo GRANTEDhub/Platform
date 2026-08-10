@@ -89,7 +89,11 @@ export function canWriteDocument(
   clientId: string,
   draftId: string | null,
 ): boolean {
-  if (actor.isStaff) return actor.isAdmin;
+  // 0077: a pursuit file is any staffer's to attach, because attaching it IS the
+  // drafting work. ORG level is still admin-only -- that is where signed contracts
+  // live, and the draft-id split is the same structural predicate the new RLS policy
+  // uses, so route and policy agree by construction rather than by coincidence.
+  if (actor.isStaff) return draftId !== null || actor.isAdmin;
   if (!draftId) return false; // org-level: staff only
   return actor.clientIds.includes(clientId);
 }
@@ -107,7 +111,11 @@ export function canDeleteDocument(
   actor: DocumentActor,
   row: { client_id: string; intellengine_draft_id: string | null },
 ): boolean {
-  if (actor.isStaff) return actor.isAdmin;
+  // 0077, same split as canWriteDocument. Deleting a pursuit file is part of managing
+  // the pursuit; deleting an ORG-level row still needs an admin, and because every
+  // pre-0075 row is org-level that is what keeps a contractor away from every
+  // signed_contract record in the table.
+  if (actor.isStaff) return row.intellengine_draft_id !== null || actor.isAdmin;
   if (row.intellengine_draft_id === null) return false; // org-level: staff only
   return actor.clientIds.includes(row.client_id);
 }
@@ -128,10 +136,18 @@ export function canDeleteDocument(
 // the check replaces the policy, so it has to BE the policy.
 export function canReadDocument(
   actor: DocumentActor,
-  row: { client_id: string; client_visible: boolean },
+  row: { client_id: string; client_visible: boolean; intellengine_draft_id: string | null },
 ): boolean {
-  // Staff read is is_admin(), matching 0030 and the two predicates above. A contractor is no
-  // more entitled to the bytes than to the row.
-  if (actor.isStaff) return actor.isAdmin;
+  // 0077: staff read splits on draft scope like write and delete. A contractor drafting
+  // a proposal needs to OPEN the budget and prior narratives they are drafting from --
+  // that was the concrete thing the old admin-only read blocked.
+  //
+  // ORG LEVEL REMAINS ADMIN, and this is the branch that keeps the financial firewall
+  // intact: every signed_contract row is org-level, so widening read without this split
+  // would have handed a contractor the contract PDFs directly. Note this is a NARROWER
+  // staff rule than the client rule below -- a client may open an org-level document
+  // filed for them, a contractor may not. That asymmetry is intentional: the client
+  // owns the 990, the contractor is not entitled to the firm's records about them.
+  if (actor.isStaff) return row.intellengine_draft_id !== null || actor.isAdmin;
   return actor.clientIds.includes(row.client_id) && row.client_visible;
 }

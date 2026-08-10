@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { requireAdmin } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -43,7 +43,10 @@ export default async function ClientGrantsPage({
 }: {
   params: { id: string };
 }) {
-  const profile = await requireAdmin();
+  // Any staff (0077). The scored per-client grant report IS the delivery artifact, and
+  // a contractor who drafts and delivers has to be able to read it. No financial field
+  // appears on this page -- rates and invoices live on their own admin-only surfaces.
+  const profile = await requireUser();
   const supabase = createClient();
 
   const { data: client } = await supabase

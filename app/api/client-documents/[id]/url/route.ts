@@ -26,11 +26,13 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   const admin = createServiceClient();
   const { data: row } = await admin
     .from("client_documents")
-    .select("id, client_id, client_visible, storage_bucket, storage_path")
+    // intellengine_draft_id is selected because 0077 made it part of the authorisation
+    // decision for STAFF (draft-level yes, org-level admin-only), not just a scope marker.
+    .select("id, client_id, client_visible, intellengine_draft_id, storage_bucket, storage_path")
     .eq("id", params.id)
     .maybeSingle<Pick<
       ClientDocument,
-      "id" | "client_id" | "client_visible" | "storage_bucket" | "storage_path"
+      "id" | "client_id" | "client_visible" | "intellengine_draft_id" | "storage_bucket" | "storage_path"
     >>();
   if (!row) return NextResponse.json({ error: "Document not found" }, { status: 404 });
 
