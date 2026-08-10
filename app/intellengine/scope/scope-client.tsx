@@ -1,12 +1,14 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Check, Paperclip, Pencil, Plus, Upload, X } from "lucide-react";
+import { ArrowLeft, Check, Pencil, Plus, X } from "lucide-react";
 import { HubShell } from "@/components/layout/hub-background";
 import { IntellEngineLogo } from "@/components/intellengine/logo";
 import { IntellEngineProgress } from "@/components/intellengine/progress-bar";
 import { ContinueButton } from "@/components/intellengine/step-nav";
+import { SaveIndicator } from "@/components/intellengine/save-indicator";
+import { useDraftSave } from "@/components/intellengine/use-draft-save";
 import type { ScopeSeed } from "@/lib/intellengine/prepopulate";
 
 const SCOPE_WORD_LIMIT = 500;
@@ -23,12 +25,16 @@ type Partner = { name: string; role: string; description: string };
 // for this client + grant when available, else a light grant-derived hint, else
 // blank for a from-scratch proposal. Everything stays fully editable.
 //
-// Editor state is still local -- wiring these fields to intellengine_drafts.content is
-// step 2 of the build order (docs/pursuit-state-audit-2026-08.md §5). The column exists as
-// of 0074 and nothing writes it yet, so everything typed here is still lost on navigate;
-// that is why the whole surface stays gated off clients. Uploaded files keep only the
-// filename and are deliberately NOT going into content -- a stored filename with no object
-// behind it is the "looks received" lie, and files arrive with a bucket in step 3.
+// IT SAVES NOW (step 2). Every field autosaves to intellengine_drafts.content.scope on a
+// debounce, the indicator says which of saving / saved / not-saved is true, and Continue
+// refuses to navigate if the flush fails -- see use-draft-save.ts for why each of those is
+// load-bearing rather than polish.
+//
+// THE UPLOAD CONTROL IS GONE, deliberately, and comes back in step 3 with a bucket behind
+// it. It kept the filename and discarded the file. That was uniformly broken on a page where
+// nothing saved; on a page where everything else now persists it would be the one control
+// that silently drops what it is handed, which is worse -- the surrounding page has earned
+// the trust that makes the lie land.
 export default function IntellEngineScopeClient({
   draftId,
   seed,
@@ -48,11 +54,18 @@ export default function IntellEngineScopeClient({
   const [draftPartner, setDraftPartner] = useState({ name: "", role: "", description: "" });
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState<Partner>({ name: "", role: "", description: "" });
-  const [notes, setNotes] = useState("");
-  const [files, setFiles] = useState<string[]>([]);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [notes, setNotes] = useState(seed.notes);
   const [partnerNote, setPartnerNote] = useState<string | null>(null);
   const [editNote, setEditNote] = useState<string | null>(null);
+
+  // The exact object the save sends. Memoised so the debounce effect in useDraftSave sees a
+  // new value only when a field actually changed, rather than on every render.
+  const payload = useMemo(
+    () => ({ scope, role, budget, partners, notes }),
+    [scope, role, budget, partners, notes],
+  );
+  const saver = useDraftSave(draftId, "scope", payload);
+  const { touch } = saver;
 
   const scopeWordCount = scope.trim().length ? scope.trim().split(/\s+/).length : 0;
   const overLimit = scopeWordCount > SCOPE_WORD_LIMIT;
@@ -65,6 +78,7 @@ export default function IntellEngineScopeClient({
     setPartners([...partners, { ...draftPartner, name: draftPartner.name.trim() }]);
     setDraftPartner({ name: "", role: "", description: "" });
     setPartnerNote(null);
+    touch();
   }
 
   function startEdit(i: number) {
@@ -81,6 +95,7 @@ export default function IntellEngineScopeClient({
     }
     setPartners(partners.map((p, idx) => (idx === editingIndex ? { ...editDraft, name: editDraft.name.trim() } : p)));
     setEditingIndex(null);
+    touch();
   }
 
   // Cancels any open edit before mutating the list -- editingIndex is a plain
@@ -90,11 +105,7 @@ export default function IntellEngineScopeClient({
   function removePartner(i: number) {
     setPartners(partners.filter((_, idx) => idx !== i));
     setEditingIndex(null);
-  }
-
-  function addFiles(selected: FileList | null) {
-    if (!selected) return;
-    setFiles([...files, ...Array.from(selected).map((f) => f.name)]);
+    touch();
   }
 
   return (
@@ -114,7 +125,9 @@ export default function IntellEngineScopeClient({
       </div>
 
       <div className="mx-auto mt-8 max-w-4xl space-y-6">
-        {seed.origin !== "scratch" && (
+        {/* "saved" renders NOTHING: once the client has written this themselves, a banner
+            about where the prefill came from is both wrong and noise. */}
+        {seed.origin !== "scratch" && seed.origin !== "saved" && (
           <div className="rounded-xl border border-brand-navy/10 bg-brand-cream/60 px-4 py-3 text-[13px] text-brand-navy/80">
             {seed.origin === "concept"
               ? "Prepopulated from the concept proposal your GRANTED team scoped for this grant — edit anything below."
@@ -129,7 +142,10 @@ export default function IntellEngineScopeClient({
           </p>
           <textarea
             value={scope}
-            onChange={(e) => setScope(e.target.value)}
+            onChange={(e) => {
+              setScope(e.target.value);
+              touch();
+            }}
             rows={5}
             className="mt-4 w-full rounded-xl border border-brand-navy/15 bg-white px-3.5 py-3 text-sm outline-none focus:border-brand-navy/35 focus:ring-2 focus:ring-brand-navy/10"
           />
@@ -144,7 +160,10 @@ export default function IntellEngineScopeClient({
             {(["prime", "partner"] as const).map((r) => (
               <button
                 key={r}
-                onClick={() => setRole(r)}
+                onClick={() => {
+                  setRole(r);
+                  touch();
+                }}
                 className={`rounded-full px-4 py-2 text-sm font-medium capitalize transition ${
                   role === r
                     ? "bg-brand-navy text-white"
@@ -161,7 +180,10 @@ export default function IntellEngineScopeClient({
           <h2 className="font-serif text-[19px] font-semibold text-brand-navy">Estimated budget</h2>
           <input
             value={budget}
-            onChange={(e) => setBudget(e.target.value)}
+            onChange={(e) => {
+              setBudget(e.target.value);
+              touch();
+            }}
             className="mt-3 w-full rounded-xl border border-brand-navy/15 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-brand-navy/35 focus:ring-2 focus:ring-brand-navy/10"
           />
         </div>
@@ -285,68 +307,41 @@ export default function IntellEngineScopeClient({
           </p>
           <textarea
             value={notes}
-            onChange={(e) => setNotes(e.target.value)}
+            onChange={(e) => {
+              setNotes(e.target.value);
+              touch();
+            }}
             rows={4}
             placeholder="Optional"
             className="mt-4 w-full rounded-xl border border-brand-navy/15 bg-white px-3.5 py-3 text-sm outline-none focus:border-brand-navy/35 focus:ring-2 focus:ring-brand-navy/10"
           />
         </div>
 
+        {/* NO UPLOAD CONTROL, on purpose. The old one kept the filename and threw the file
+            away. On a page where nothing saved that was uniformly broken; on this page, where
+            every other field now persists, it would be the single control that silently drops
+            what it is given -- and the trust the rest of the page has earned is exactly what
+            would make a client believe their audit had been received. It returns in step 3
+            with a bucket behind it (docs/pursuit-state-audit-2026-08.md §5). */}
         <div className="rounded-2xl bg-white p-6 shadow-grounded">
           <h2 className="font-serif text-[19px] font-semibold text-brand-navy">Supporting files</h2>
           <p className="mt-1 text-[13px] text-muted-foreground">
-            Budgets, prior proposals, letters of support — anything IntellEngine should draw from.
+            Budgets, prior proposals, letters of support. File upload isn&apos;t switched on yet —
+            send anything you want IntellEngine to draw from to your GRANTED contact, and mention
+            it in the notes above.
           </p>
-
-          {files.length > 0 && (
-            <div className="mt-4 space-y-2">
-              {files.map((name, i) => (
-                <div
-                  key={`${name}-${i}`}
-                  className="flex items-center justify-between gap-3 rounded-xl border border-brand-navy/10 bg-brand-cream/50 px-4 py-2.5"
-                >
-                  <span className="flex min-w-0 items-center gap-2 text-sm text-brand-navy">
-                    <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    <span className="truncate">{name}</span>
-                  </span>
-                  <button
-                    onClick={() => setFiles(files.filter((_, idx) => idx !== i))}
-                    aria-label={`Remove ${name}`}
-                    className="shrink-0 text-muted-foreground hover:text-destructive"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <button
-            onClick={() => fileRef.current?.click()}
-            className="mt-4 flex items-center gap-1.5 rounded-lg border border-dashed border-brand-navy/25 px-4 py-2.5 text-sm font-medium text-brand-navy hover:border-brand-navy/40"
-          >
-            <Upload className="h-4 w-4" />
-            Upload files
-          </button>
-          {/* Not wired to real storage yet -- only the filename is kept, matching
-              the shell scope of this pass (same pattern as the compliance page). */}
-          <input
-            ref={fileRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              addFiles(e.target.files);
-              e.target.value = ""; // allow re-selecting the same filename after removing it
-            }}
-          />
         </div>
 
-        <div className="flex justify-end">
+        <div className="flex flex-wrap items-center justify-end gap-4">
+          <SaveIndicator saver={saver} />
+          {/* beforeNavigate is the anti-silent-drop contract: Continue persists first and
+              stays put if that fails, rather than carrying the client to the next step with
+              their scope unsaved behind them. */}
           <ContinueButton
             draftId={draftId}
             nextHref="/intellengine/compliance"
             nextStatus="compliance"
+            beforeNavigate={saver.flush}
             className="rounded-full bg-brand-navy px-8 py-3 text-sm font-semibold text-white shadow-soft transition hover:bg-brand-navyDeep disabled:opacity-60"
           >
             Continue to compliance check

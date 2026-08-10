@@ -22,7 +22,10 @@ import type { Client, ConceptProposal, Grant, IntellEngineDraft } from "@/types/
 // released the card (sme_released_at) AND the proposal is ready.
 
 export interface IntellEngineDraftContext {
-  draft: Pick<IntellEngineDraft, "id" | "card_id" | "client_id" | "title" | "status">;
+  // `content` (0074) carries the client's saved scope + section drafts. Included here so the
+  // scope and build pages read it through the SAME RLS-verified draft they already resolve,
+  // rather than issuing a second read of their own.
+  draft: Pick<IntellEngineDraft, "id" | "card_id" | "client_id" | "title" | "status" | "content">;
   grant: Grant | null; // the matched grant; null for a from-scratch draft
   client: Client | null;
   concept: ConceptProposal | null; // only when entitled + released + ready
@@ -38,9 +41,9 @@ export async function resolveIntellEngineContext(
   const rls = createClient();
   const { data: draft } = await rls
     .from("intellengine_drafts")
-    .select("id, card_id, client_id, title, status")
+    .select("id, card_id, client_id, title, status, content")
     .eq("id", draftId)
-    .maybeSingle<Pick<IntellEngineDraft, "id" | "card_id" | "client_id" | "title" | "status">>();
+    .maybeSingle<Pick<IntellEngineDraft, "id" | "card_id" | "client_id" | "title" | "status" | "content">>();
   if (!draft) return null; // not the caller's draft (or a staff preview with no client draft)
 
   // Stage 2 -- related rows via the service role, scoped to the verified draft.

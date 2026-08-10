@@ -1,109 +1,81 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, RotateCcw, LifeBuoy, CheckCircle2 } from "lucide-react";
 import { HubShell } from "@/components/layout/hub-background";
 import { IntellEngineLogo } from "@/components/intellengine/logo";
 import { IntellEngineProgress } from "@/components/intellengine/progress-bar";
 import { ContinueButton } from "@/components/intellengine/step-nav";
+import { SaveIndicator } from "@/components/intellengine/save-indicator";
+import { useDraftSave } from "@/components/intellengine/use-draft-save";
+import { PROPOSAL_SECTIONS, type SectionSpec } from "@/lib/intellengine/sections";
+import type { DraftSection } from "@/lib/intellengine/content";
 
 const SUPPORT = "support@grantedco.com";
 
-type Section = { id: string; title: string; instructions: string; draft: string };
-
-// Step 3 -- the proposal builder. Each section = NOFO-derived instructions +
-// an AI-drafted, editable field + three actions (per the Canva wireframe,
-// which is the source of truth for this interaction, not the Figma's plainer
-// version):
-//   - Edit with GrantBot: a per-proposal chat thread for comments/questions,
-//     not built yet (needs the real LLM plumbing -- shows a "coming soon" note).
-//   - Regenerate: redraft the section from scratch via the LLM, with tone/
-//     direction options ("be more assertive," etc.) -- same, not wired yet.
-//   - Ask the experts: a real, working escalation to the client's GRANTED
-//     team -- reuses the same support-email pattern as the rest of the portal,
-//     no AI dependency, so no reason to fake this one.
-const SECTIONS: Section[] = [
-  {
-    id: "problem",
-    title: "Problem Statement",
-    instructions:
-      "Required: state the specific need this project addresses, grounded in local data. Recommended: cite a named source for every statistic.",
-    draft:
-      "Our community faces a critical gap in accessible healthcare services, particularly affecting low-income families and elderly residents who lack reliable transportation.",
-  },
-  {
-    id: "population",
-    title: "Target Population",
-    instructions:
-      "Required: define who is served, with a defensible size estimate. Recommended: break the estimate down by the sub-groups the NOFO prioritizes.",
-    draft: "Low-income families and elderly residents (65+) within a 5-mile radius of downtown, approximately 2,500 individuals.",
-  },
-  {
-    id: "strategy",
-    title: "Proposed Strategy",
-    instructions:
-      "Required: describe the intervention and how it resolves the stated problem. Recommended: name the evidence base or model it's adapted from.",
-    draft:
-      "Establish a mobile health clinic that visits underserved neighborhoods three times weekly, providing preventive care, health screenings, and chronic disease management.",
-  },
-  {
-    id: "activities",
-    title: "Key Activities",
-    instructions:
-      "Required: list the concrete activities that deliver the strategy above. Recommended: sequence them against the project timeline.",
-    draft:
-      "Weekly mobile clinic visits, partnership coordination with local healthcare providers, community health education workshops, and patient follow-up services.",
-  },
-  {
-    id: "goals",
-    title: "Goals & Objectives",
-    instructions:
-      "Required: state measurable objectives (SMART format) tied directly to the problem statement. Recommended: cap it at 3-5 objectives.",
-    draft:
-      "Increase preventive care access for 2,500 residents by Year 1; reduce avoidable ER visits among enrolled patients by 20% by Year 2.",
-  },
-  {
-    id: "timeline",
-    title: "Timeline & Milestones",
-    instructions:
-      "Required: a phase-by-phase schedule covering the full period of performance. Recommended: flag any milestone dependent on a partner organization.",
-    draft:
-      "Months 1-3: hire clinical staff, finalize partner MOUs. Months 4-6: launch mobile unit. Months 7-12: scale to full three-day weekly schedule.",
-  },
-  {
-    id: "evaluation",
-    title: "Evaluation Plan",
-    instructions:
-      "Required: describe how outcomes will be measured against the objectives above. Recommended: name the data system used to track them.",
-    draft:
-      "Patient encounter data tracked via the clinic's EHR system, reported quarterly against the Year 1/Year 2 access and utilization targets.",
-  },
-  {
-    id: "sustainability",
-    title: "Sustainability Plan",
-    instructions:
-      "Required: explain how the program continues after the award period ends. Recommended: name a specific future funding source, not just \"we'll seek grants.\"",
-    draft:
-      "Continued operation funded through a blended model of Medicaid reimbursement, sliding-scale patient fees, and a committed local hospital system contribution.",
-  },
-  {
-    id: "budget",
-    title: "Budget Narrative",
-    instructions:
-      "Required: justify every major cost category in plain language. Recommended: tie each cost directly back to an activity above.",
-    draft:
-      "Costs cover a mobile clinic vehicle lease, 2.5 FTE clinical staff, medical supplies, and partner coordination overhead — detailed by category in the attached budget.",
-  },
-];
-
-export default function IntellEngineBuildClient({ draftId }: { draftId?: string }) {
-  const [sections, setSections] = useState(SECTIONS);
+// Step 3 of the flow -- the proposal builder. Each section = NOFO-shaped instructions + an
+// editable field + three actions:
+//   - Edit with GrantBot: a per-proposal chat thread, not built yet (needs the LLM
+//     plumbing -- step 5 of the build order).
+//   - Regenerate: redraft the section via the LLM with tone options -- same.
+//   - Ask the experts: a real, working escalation to the client's GRANTED team. No AI
+//     dependency, so no reason to fake this one.
+//
+// IT SAVES NOW (step 2), and the button gets its label back because it finally earns it.
+// Before this, "Save & return to IntellEngine" wrote only status='complete' -- saving none
+// of the nine fields while telling the hub the proposal was ready to submit. The fields now
+// autosave to intellengine_drafts.content.sections and the button flushes before navigating.
+//
+// WHAT THE BUTTON MAY AND MAY NOT CLAIM. It reports the WRITE ("Save"). It does not report
+// the STATE: whether this proposal is ready is derived from content by draftCompleteness and
+// the hub says so on its own. Nothing here claims submitted -- submission is step 6 and does
+// not exist yet.
+//
+// THE EXAMPLE TEXT IS A PLACEHOLDER, NOT A VALUE (lib/intellengine/sections.ts). As an
+// initial value it meant a client could save nine paragraphs about a mobile health clinic as
+// their own work, and "every section is non-empty" -- which drives "Ready to submit" -- would
+// be true for a proposal nobody had written. A placeholder guides and cannot be stored, so a
+// saved section is authored by construction.
+export default function IntellEngineBuildClient({
+  draftId,
+  saved,
+}: {
+  draftId?: string;
+  // The client's stored sections (0074). Empty for a new draft or a staff preview.
+  saved: DraftSection[];
+}) {
+  // Keyed by section id, so a section never written opens EMPTY (showing its placeholder)
+  // rather than opening with someone else's example.
+  const [drafts, setDrafts] = useState<Record<string, string>>(() => {
+    const byId: Record<string, string> = {};
+    for (const spec of PROPOSAL_SECTIONS) byId[spec.id] = "";
+    for (const s of saved) if (s.id in byId) byId[s.id] = s.draft;
+    return byId;
+  });
   const [templateNote, setTemplateNote] = useState<string | null>(null);
-  const completed = sections.filter((s) => s.draft.trim().length > 0).length;
+
+  // EVERY section is sent, including empty ones, and that is what keeps completeness honest.
+  // draftCompleteness requires all stored sections to be non-empty; if a save pruned the
+  // blanks, one written section would satisfy "all of them" and the hub would read "Ready to
+  // submit" with eight sections missing.
+  const payload = useMemo<DraftSection[]>(
+    () =>
+      PROPOSAL_SECTIONS.map((spec) => ({
+        id: spec.id,
+        draft: drafts[spec.id] ?? "",
+        source: "client" as const,
+      })),
+    [drafts],
+  );
+  const saver = useDraftSave(draftId, "sections", payload);
+  const { touch } = saver;
+
+  const completed = PROPOSAL_SECTIONS.filter((s) => (drafts[s.id] ?? "").trim().length > 0).length;
 
   function updateDraft(id: string, value: string) {
-    setSections((prev) => prev.map((s) => (s.id === id ? { ...s, draft: value } : s)));
+    setDrafts((prev) => ({ ...prev, [id]: value }));
+    touch();
   }
 
   return (
@@ -134,40 +106,45 @@ export default function IntellEngineBuildClient({ draftId }: { draftId?: string 
             </button>
           </div>
           <p className="mt-1 text-[13px] text-muted-foreground">
-            Complete each section of your proposal. AI assistance is coming soon — for now,
-            each field below is a template you can edit directly.
+            Write each section of your proposal — your work saves as you type. AI drafting is
+            coming soon; the grey text in each box is an example of what the section is asking
+            for, not a draft of yours.
           </p>
           {templateNote && <p className="mt-1 text-[12px] text-muted-foreground">{templateNote}</p>}
           <div className="mt-4 flex items-center justify-between text-xs font-medium text-muted-foreground">
-            <span>Fields Completed</span>
+            <span>Sections written</span>
             <span>
-              {completed} of {sections.length}
+              {completed} of {PROPOSAL_SECTIONS.length}
             </span>
           </div>
           <div className="mt-1.5 h-2 rounded-full bg-brand-navy/[0.08]">
             <div
               className="h-2 rounded-full bg-brand-navy transition-all"
-              style={{ width: `${(completed / sections.length) * 100}%` }}
+              style={{ width: `${(completed / PROPOSAL_SECTIONS.length) * 100}%` }}
             />
           </div>
         </div>
 
-        {sections.map((s) => (
-          <SectionCard key={s.id} section={s} onChange={(v) => updateDraft(s.id, v)} />
+        {PROPOSAL_SECTIONS.map((spec) => (
+          <SectionCard
+            key={spec.id}
+            spec={spec}
+            value={drafts[spec.id] ?? ""}
+            onChange={(v) => updateDraft(spec.id, v)}
+          />
         ))}
 
-        <div className="flex justify-end">
-          {/* NOT "Save & return" any more, and not yet. Its only write was
-              status='complete', which is exactly the claim 0074 removed -- so with that
-              gone this is a plain navigation, and a button labelled Save that saves
-              nothing is the lie the client gate went up to stop. It becomes a real save
-              in step 2, when there is somewhere for these nine fields to go. */}
+        <div className="flex flex-wrap items-center justify-end gap-4">
+          <SaveIndicator saver={saver} />
+          {/* No nextStatus: 'complete' is not a screen and is no longer settable (0074).
+              beforeNavigate is what makes the word "Save" true. */}
           <ContinueButton
             draftId={draftId}
             nextHref="/intellengine"
+            beforeNavigate={saver.flush}
             className="rounded-full bg-brand-navy px-8 py-3 text-sm font-semibold text-white shadow-soft transition hover:bg-brand-navyDeep disabled:opacity-60"
           >
-            Return to IntellEngine
+            Save &amp; return to IntellEngine
           </ContinueButton>
         </div>
       </div>
@@ -175,23 +152,33 @@ export default function IntellEngineBuildClient({ draftId }: { draftId?: string 
   );
 }
 
-function SectionCard({ section, onChange }: { section: Section; onChange: (value: string) => void }) {
+function SectionCard({
+  spec,
+  value,
+  onChange,
+}: {
+  spec: SectionSpec;
+  value: string;
+  onChange: (value: string) => void;
+}) {
   const [note, setNote] = useState<string | null>(null);
+  const written = value.trim().length > 0;
 
   return (
     <div className="rounded-2xl bg-white p-6 shadow-grounded">
       <div className="flex items-center justify-between gap-3">
-        <h3 className="font-serif text-[17px] font-semibold text-brand-navy">{section.title}</h3>
-        {section.draft.trim().length > 0 && (
-          <CheckCircle2 className="h-[18px] w-[18px] shrink-0 text-emerald-500" />
-        )}
+        <h3 className="font-serif text-[17px] font-semibold text-brand-navy">{spec.title}</h3>
+        {/* Ticks what the CLIENT wrote. It used to tick on the example text being present,
+            so all nine sections arrived pre-ticked. */}
+        {written && <CheckCircle2 className="h-[18px] w-[18px] shrink-0 text-emerald-500" />}
       </div>
-      <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted-foreground">{section.instructions}</p>
+      <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted-foreground">{spec.instructions}</p>
 
       <div className="mt-3 flex flex-col gap-3 sm:flex-row">
         <textarea
-          value={section.draft}
+          value={value}
           onChange={(e) => onChange(e.target.value)}
+          placeholder={spec.placeholder}
           rows={3}
           className="flex-1 rounded-xl border border-brand-navy/15 bg-white px-3.5 py-3 text-sm outline-none focus:border-brand-navy/35 focus:ring-2 focus:ring-brand-navy/10"
         />
@@ -210,7 +197,7 @@ function SectionCard({ section, onChange }: { section: Section; onChange: (value
             Regenerate
           </button>
           <a
-            href={`mailto:${SUPPORT}?subject=${encodeURIComponent(`Question on "${section.title}" — proposal draft`)}`}
+            href={`mailto:${SUPPORT}?subject=${encodeURIComponent(`Question on "${spec.title}" — proposal draft`)}`}
             className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-brand-navy px-3 py-2 text-xs font-semibold text-white transition hover:bg-brand-navyDeep sm:flex-none"
           >
             <LifeBuoy className="h-3.5 w-3.5" />
@@ -220,9 +207,6 @@ function SectionCard({ section, onChange }: { section: Section; onChange: (value
       </div>
 
       {note && <p className="mt-2 text-[12px] text-muted-foreground">{note}</p>}
-
-      <p className="mt-2.5 text-[11px] text-muted-foreground">Template draft — edit freely
-      </p>
     </div>
   );
 }

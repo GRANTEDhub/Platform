@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { pursuitApiDenied } from "@/lib/pursuit/access";
 import { STEP_ORDER, furthestStatus } from "@/lib/intellengine/drafts";
+import {
+  CONTENT_MAX_BYTES,
+  normalizeScopeForSave,
+  normalizeSectionsForSave,
+  readDraftContent,
+  type DraftContent,
+} from "@/lib/intellengine/content";
 import type { IntellEngineDraft, IntellEngineDraftStatus } from "@/types/database";
 
 // Advance an IntellEngine draft's status (as the client moves scope -> compliance
@@ -20,7 +27,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   // progress through steps they cannot load. Staff are unaffected.
   if (await pursuitApiDenied()) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  let body: { status?: IntellEngineDraftStatus; title?: string };
+  let body: {
+    status?: IntellEngineDraftStatus;
+    title?: string;
+    content?: { scope?: unknown; sections?: unknown };
+  };
   try {
     body = await req.json();
   } catch {
@@ -53,9 +64,48 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     .maybeSingle<IntellEngineDraft>();
   if (!current) return NextResponse.json({ error: "Draft not found" }, { status: 404 });
 
-  const update: { status?: IntellEngineDraftStatus; title?: string } = {};
+  const update: { status?: IntellEngineDraftStatus; title?: string; content?: DraftContent } = {};
   if (body.status) update.status = furthestStatus(current.status, body.status);
   if (typeof body.title === "string" && body.title.trim()) update.title = body.title.trim().slice(0, 200);
+
+  // ── Content, MERGED BY TOP-LEVEL KEY ────────────────────────────────────────────
+  //
+  // The scope editor sends { scope }, the builder sends { sections }, and neither may
+  // clobber the other's key -- a builder save must not wipe a scope the client wrote an
+  // hour earlier. Read-current-then-spread, the same merge confirmClientProfileAction uses
+  // for clients.intake_data, and the reason the two editors can autosave independently.
+  //
+  // A key the request omits is LEFT ALONE. A key it sends is REPLACED whole: within the
+  // scope object, a field the client cleared has to end up cleared, so a deep merge here
+  // would resurrect exactly the text savedAt exists to keep deleted.
+  if (body.content && typeof body.content === "object") {
+    const now = new Date().toISOString();
+    const merged = readDraftContent(current.content);
+
+    if ("scope" in body.content) {
+      const r = normalizeScopeForSave(body.content.scope, now);
+      if (!r.ok) return NextResponse.json({ error: r.error }, { status: 400 });
+      merged.scope = r.value;
+    }
+    if ("sections" in body.content) {
+      const r = normalizeSectionsForSave(body.content.sections, now);
+      if (!r.ok) return NextResponse.json({ error: r.error }, { status: 400 });
+      merged.sections = r.value;
+    }
+
+    // Bound the WHOLE column, not just the field that arrived: five list surfaces select
+    // this column (the roster pulls it for every client's drafts), so one draft's ceiling
+    // is that query's ceiling. Checked post-merge because that is the value being stored.
+    if (JSON.stringify(merged).length > CONTENT_MAX_BYTES) {
+      return NextResponse.json(
+        { error: "This draft is too large to save. Shorten a section and try again." },
+        { status: 413 },
+      );
+    }
+
+    update.content = merged;
+  }
+
   if (Object.keys(update).length === 0) return NextResponse.json({ draft: current });
 
   const { data, error } = await supabase
