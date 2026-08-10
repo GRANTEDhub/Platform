@@ -228,18 +228,19 @@ export async function updateClientAction(
   const { payload, narrative, kind } = parsed;
   if (!payload.name) return { error: "Client name is required." };
 
-  // Merge the narrative into existing intake_data -- never clobber non-narrative
-  // keys (phone, org_type_code, referral_source, submitted_at from a public intake).
-  // pipeline_stage rides along for the kind-flip audit (client<->prospect).
+  // pipeline_stage and lead_source are read for the kind-flip audit (client<->prospect)
+  // and the lifecycle preservation below. intake_data is NOT read here any more: the
+  // narrative merge moved into the database (merge_client_intake, 0079) so that a staff edit
+  // can no longer erase a concurrent client profile save or assimilation commit. It used to
+  // read the whole column, spread the narrative over it in JS and write it back -- which
+  // meant whoever wrote second won with a stale snapshot. Non-narrative keys (phone,
+  // org_type_code, referral_source, submitted_at from a public intake) are still preserved;
+  // that is what the `||` in the function does.
   const { data: existing } = await supabase
     .from("clients")
-    .select("intake_data, pipeline_stage, lead_source")
+    .select("pipeline_stage, lead_source")
     .eq("id", id)
     .single();
-  const mergedIntake = {
-    ...((existing?.intake_data as Record<string, unknown> | null) ?? {}),
-    ...narrativeToIntakeData(narrative),
-  };
   const oldKind = isUnconvertedLead(existing?.pipeline_stage as string | null) ? "prospect" : "client";
   const flipped = oldKind !== kind;
 
@@ -259,13 +260,26 @@ export async function updateClientAction(
 
   const { error } = await supabase
     .from("clients")
-    .update({ ...payload, ...lifecycle, intake_data: mergedIntake })
+    .update({ ...payload, ...lifecycle })
     .eq("id", id);
   const friendly = friendlyClientError(error, payload.name);
   if (friendly) return { error: friendly };
 
+  // The narrative merge goes SECOND. Name uniqueness is the likely failure on this form and
+  // friendlyClientError already speaks to it, so aborting above leaves intake_data untouched.
+  // Runs under the caller's RLS like the update above -- merge_client_intake is security
+  // invoker, so clients_update (is_staff) is still the gate, not a check in this file.
+  const { error: mergeError } = await supabase.rpc("merge_client_intake", {
+    p_client_id: id,
+    p_patch: narrativeToIntakeData(narrative),
+  });
   // Audit a client<->prospect flip (a promote/demote outside the normal convert
   // flow). Service role: mirrors the public-intake pipeline_events write.
+  //
+  // RUNS EVEN IF THE MERGE ABOVE FAILED, and the mergeError return waits until after it. The
+  // flip is carried by the update that already succeeded, so returning early here would leave
+  // a real client<->prospect change unrecorded and its stale pending cards in place -- a
+  // second, unrelated bookkeeping failure caused by reporting the first one too eagerly.
   if (flipped) {
     const service = createServiceClient();
     await service
@@ -289,6 +303,14 @@ export async function updateClientAction(
         .eq("client_id", id)
         .eq("decision", "pending");
     }
+  }
+
+  // Reported here rather than above, so the flip bookkeeping is done first. Returning inline
+  // also means no redirect and no re-enrich: the form stays put with the fields the staffer
+  // typed, and re-submitting merges the narrative again (`||` is idempotent for the same
+  // patch) rather than needing them to retype it.
+  if (mergeError) {
+    return { error: `Saved the profile, but the narrative fields didn't save: ${mergeError.message}` };
   }
 
   // Re-enrich in the background: re-cache USASpending (name / search-name may have
