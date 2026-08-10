@@ -95,10 +95,9 @@ export async function commitProfileChanges(opts: {
   if (readErr || !client) return { ok: false, error: "Couldn't load the organization profile." };
 
   const update: Record<string, unknown> = {};
-  const intake: Record<string, unknown> = {
-    ...((client.intake_data as Record<string, unknown> | null) ?? {}),
-  };
-  let touchesIntake = false;
+  // A PATCH, not a merged object. 0079 does the merge in the database under a row lock, so
+  // this carries only the keys being changed and never the whole column -- see below.
+  const intakePatch: Record<string, unknown> = {};
 
   const changed: { field: string; oldValue: unknown; newValue: unknown }[] = [];
   const unchanged: string[] = [];
@@ -124,32 +123,21 @@ export async function commitProfileChanges(opts: {
       continue;
     }
     if (field.startsWith("intake_data.")) {
-      // MERGED, never replaced. intake_data also carries keys written by the public intake
-      // and the staff form that no review screen renders; replacing the object would drop
-      // them silently.
+      // MERGED IN THE DATABASE (0079), not here. Only the changed key goes into the patch;
+      // merge_client_intake takes a row lock, reads the COMMITTED intake_data, and applies
+      // `||` to that -- so keys written by the public intake, the staff form and the client's
+      // own profile page survive, and a concurrent writer cannot be clobbered.
       //
-      // ⚠ KNOWN GAP, NOT FIXED HERE: this merge happens in APPLICATION code, so the whole
-      // jsonb column is read once and written back whole. Two concurrent commits on the same
-      // client, each accepting a DIFFERENT intake_data key, both read the same original and
-      // the second write clobbers the first -- and each still inserts its own audit row, so
-      // the log ends up asserting a change the profile no longer reflects. Since 0078 gives
-      // client_profile_changes no UPDATE or DELETE policy, that row cannot be corrected.
-      // Review finding on #340 (claude[bot]).
+      // This used to be an application-side read-modify-write, which was a real integrity bug
+      // in the one table whose whole value is being truthful: two writers each accepting a
+      // DIFFERENT key both read the same original and the second erased the first, while both
+      // still inserted audit rows -- so the log asserted a change the profile no longer
+      // reflected, permanently, because 0078 gives client_profile_changes no UPDATE or DELETE
+      // policy. Review finding on #340 (claude[bot]).
       //
-      // Direct columns are unaffected: Postgres applies column-level updates natively, so
-      // only the seven intake_data.* keys share this hazard.
-      //
-      // Closing it properly needs the merge to happen in the DATABASE (`intake_data =
-      // intake_data || $1`, or an RPC doing jsonb_set per key), which means a migration --
-      // so it is its own brick rather than something bolted onto this PR. It is recorded here
-      // rather than left implicit because a half-fix that narrows the window (re-read just
-      // before writing) would look like a fix and still lose data.
-      //
-      // Not reachable through the shipped UI today: the stub extractor proposes nothing, so
-      // no commit happens through the review screen at all. It becomes reachable the moment
-      // (iv) lands a real extractor -- which is why the fix belongs BEFORE (iv), not after.
-      intake[field.slice("intake_data.".length)] = value;
-      touchesIntake = true;
+      // Direct columns never had this problem: Postgres applies column-level updates
+      // natively, so only these seven shared-column keys ever did.
+      intakePatch[field.slice("intake_data.".length)] = value;
     } else {
       update[field] = value;
     }
@@ -159,10 +147,77 @@ export async function commitProfileChanges(opts: {
   if (changed.length === 0) {
     return { ok: true, commitId: undefined, changed: [], unchanged, rejected };
   }
-  if (touchesIntake) update.intake_data = intake;
 
-  const { error: writeErr } = await admin.from("clients").update(update).eq("id", opts.clientId);
-  if (writeErr) return { ok: false, error: `Couldn't save the profile: ${writeErr.message}` };
+  // ── TWO WRITES, AND THE ORDER PUTS THE LIKELY FAILURE ON THE SAFE SIDE ──
+  //
+  // Direct columns go first because they carry the constraint-checkable values (org_type
+  // against its allowlist, contact fields, anything a future check constraint touches), so
+  // they are the likelier of the two to be refused. Failing here means intake_data was never
+  // touched and no audit row exists -- a clean abort with nothing written.
+  //
+  // The residual is the mirror case: direct columns land and the intake merge then fails, so
+  // part of the commit persists with no audit row. That is reported below rather than
+  // swallowed, and it is the same shape as the profile-then-audit split further down, which
+  // this file has always had.
+  if (Object.keys(update).length > 0) {
+    const { error: writeErr } = await admin.from("clients").update(update).eq("id", opts.clientId);
+    if (writeErr) return { ok: false, error: `Couldn't save the profile: ${writeErr.message}` };
+  }
+
+  if (Object.keys(intakePatch).length > 0) {
+    // 0079. Returns intake_data AS IT WAS, read under the same row lock that computes the
+    // merge -- which is the second reason that function is plpgsql rather than a one-line
+    // `set intake_data = intake_data || $1`. A bare merge statement writes the right value but
+    // cannot hand back the before-image, so old_value would still be `client.intake_data` from
+    // the read at the top of this request. The change would take and the log would still name
+    // the wrong starting point.
+    const { data: prevIntake, error: mergeErr } = await admin.rpc("merge_client_intake", {
+      p_client_id: opts.clientId,
+      p_patch: intakePatch,
+    });
+    if (mergeErr) {
+      const directLanded = Object.keys(update).length > 0;
+      return {
+        ok: false,
+        error: directLanded
+          ? `Some fields saved, but the narrative fields didn't: ${mergeErr.message}. Nothing was recorded in the change history — tell your GRANTED contact before making more edits.`
+          : `Couldn't save the profile: ${mergeErr.message}`,
+      };
+    }
+
+    // CORRECT THE BEFORE-IMAGE, then drop what turns out to be a no-op. If another writer
+    // moved one of these keys between our read and our lock, the snapshot old_value would
+    // describe a transition that did not happen -- the exact class of false row this brick
+    // exists to prevent, so it would be absurd to leave it in the row we write ourselves.
+    const prev = (prevIntake ?? {}) as Record<string, unknown>;
+    for (const c of changed) {
+      if (!c.field.startsWith("intake_data.")) continue;
+      c.oldValue = prev[c.field.slice("intake_data.".length)] ?? null;
+    }
+  }
+
+  // A corrected old_value can now equal what we wrote -- the value we proposed had already
+  // been set by someone else while this request was in flight. The merge was a no-op, so
+  // recording "X -> X" would assert a change that did not occur. Reported as unchanged
+  // instead, which is what actually happened, and the same rule valuesEqual already applies
+  // before the write.
+  //
+  // WHAT 0079 DOES NOT MAKE SERIALIZABLE, stated so it is not mistaken for closed: the
+  // DECISION to write is still made against the snapshot read at the top of this request. A
+  // field the snapshot showed as already equal is skipped above without ever taking the lock,
+  // so a concurrent writer can still cause this commit to skip a field it would otherwise
+  // have written. That loses a PROPOSAL, not stored data, and writes no audit row -- the
+  // reviewer can re-extract and commit again. Strictly smaller than the lost key and the false
+  // row this brick removed, and closing it would need the whole read-decide-write cycle inside
+  // one transaction, which PostgREST cannot span.
+  const recorded = changed.filter((c) => {
+    if (!valuesEqual(c.oldValue, c.newValue)) return true;
+    unchanged.push(c.field);
+    return false;
+  });
+  if (recorded.length === 0) {
+    return { ok: true, commitId: undefined, changed: [], unchanged, rejected };
+  }
 
   // THE LOG IS WRITTEN AFTER THE PROFILE, and a failure here is reported rather than
   // swallowed. The alternative orderings are both worse: logging first would record changes
@@ -171,7 +226,7 @@ export async function commitProfileChanges(opts: {
   // has already happened, so the caller is told the change saved but the record did not.
   const commitId = randomUUID();
   const { error: logErr } = await admin.from("client_profile_changes").insert(
-    changed.map((c) => ({
+    recorded.map((c) => ({
       commit_id: commitId,
       client_id: opts.clientId,
       document_id: opts.documentId,
@@ -192,11 +247,11 @@ export async function commitProfileChanges(opts: {
       error:
         "Your changes were saved, but we couldn't record them in the change history. Tell your GRANTED contact before making more edits.",
       commitId,
-      changed: changed.map((c) => c.field),
+      changed: recorded.map((c) => c.field),
     };
   }
 
-  return { ok: true, commitId, changed: changed.map((c) => c.field), unchanged, rejected };
+  return { ok: true, commitId, changed: recorded.map((c) => c.field), unchanged, rejected };
 }
 
 // ── ROLLBACK IS A FORWARD COMMIT ──

@@ -40,7 +40,8 @@ type ClientProfileUpdate = {
   location_county: string | null;
   location_state: string | null;
   location_zip: string | null;
-  intake_data: Record<string, unknown>;
+  // intake_data is NOT here: the narrative keys are merged in the database by
+  // merge_client_intake (0079), which this action calls before the update below.
   profile_confirmed_at: string;
   primary_funding_needs?: string[];
   org_type?: string;
@@ -57,21 +58,28 @@ export async function confirmClientProfileAction(formData: FormData): Promise<Co
   };
 
   const admin = createServiceClient();
-  const { data: existing } = await admin
-    .from("clients")
-    .select("intake_data")
-    .eq("id", org.clientId)
-    .single<{ intake_data: Record<string, unknown> | null }>();
-
   const narrative = parseNarrative(get("intake_narrative"));
 
-  // Merge rather than replace: intake_data also carries keys written by the public
-  // intake and the staff form that this page does not render, and a client confirming
-  // their mission must not drop them.
-  const intake_data = {
-    ...(existing?.intake_data ?? {}),
-    ...narrativeToIntakeData(narrative),
-  };
+  // ── THE NARRATIVE MERGE HAPPENS FIRST, AND IN THE DATABASE ──
+  //
+  // Merged rather than replaced, as before: intake_data also carries keys written by the
+  // public intake and the staff form that this page does not render, and a client confirming
+  // their mission must not drop them. What changed is WHERE. This used to read the whole
+  // column, spread the narrative over it in JS and write it back -- so a staff edit or an
+  // assimilation commit landing in the same instant was silently erased. 0079 does the merge
+  // under a row lock instead, so the patch applies to the committed value. Behaviour is
+  // otherwise identical: narrativeToIntakeData always emits all seven keys, null for empties
+  // and never undefined, so the same keys are written either way.
+  //
+  // BEFORE the update below, on purpose. That update sets profile_confirmed_at -- the
+  // first-login gate. It must land LAST, so nothing can mark a client "confirmed" over a save
+  // whose narrative did not persist: a client waved through the gate with an unsaved mission
+  // is a worse outcome than a client asked to submit the form again.
+  const { error: mergeError } = await admin.rpc("merge_client_intake", {
+    p_client_id: org.clientId,
+    p_patch: narrativeToIntakeData(narrative),
+  });
+  if (mergeError) return { ok: false, error: `Couldn't save your profile: ${mergeError.message}` };
 
   const update: ClientProfileUpdate = {
     primary_contact_name: get("primary_contact_name"),
@@ -83,7 +91,6 @@ export async function confirmClientProfileAction(formData: FormData): Promise<Co
     location_county: get("location_county"),
     location_state: get("location_state"),
     location_zip: get("location_zip"),
-    intake_data,
     profile_confirmed_at: new Date().toISOString(),
   };
 
