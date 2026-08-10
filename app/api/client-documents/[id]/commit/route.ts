@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
-import { resolveDocumentActor } from "@/lib/documents/authorize";
+import { resolveDocumentActor, canReadDocument } from "@/lib/documents/authorize";
 import { canAssimilateFor } from "@/lib/documents/assimilate-authorize";
 import { commitProfileChanges, type AcceptedField } from "@/lib/documents/commit";
 import { isProposableField } from "@/lib/documents/proposal";
@@ -34,12 +34,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const admin = createServiceClient();
   const { data: row } = await admin
     .from("client_documents")
-    .select("id, client_id")
+    .select("id, client_id, client_visible, intellengine_draft_id")
     .eq("id", params.id)
-    .maybeSingle<Pick<ClientDocument, "id" | "client_id">>();
+    .maybeSingle<
+      Pick<ClientDocument, "id" | "client_id" | "client_visible" | "intellengine_draft_id">
+    >();
   if (!row) return NextResponse.json({ error: "Document not found" }, { status: 404 });
 
-  if (!canAssimilateFor(actor, row.client_id)) {
+  // Same pair as /extract, for the same reason. Committing does not read the file, but it
+  // acts ON a document and stamps review_note onto it, and "you may annotate a document you
+  // are not allowed to read" is not a rule worth having. One rule across both routes: you
+  // must be able to read the document you are acting on, AND be entitled to move this org's
+  // profile.
+  if (!canReadDocument(actor, row) || !canAssimilateFor(actor, row.client_id)) {
     return NextResponse.json({ error: "Not allowed" }, { status: 403 });
   }
 

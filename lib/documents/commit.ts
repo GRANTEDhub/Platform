@@ -44,7 +44,25 @@ export async function commitProfileChanges(opts: {
   accepted: AcceptedField[];
   note: string | null;
 }): Promise<CommitResult> {
-  const fields = opts.accepted.filter((a) => isProposableField(a.field));
+  // LAST WRITE WINS, PER FIELD, BEFORE ANYTHING IS COMPUTED.
+  //
+  // Review finding on #340 (claude[bot]), and it is a real integrity bug in the one table
+  // whose entire value is being truthful. The client row is read ONCE, so with the same field
+  // twice -- [{website:'a'}, {website:'b'}] -- both iterations would compare against the same
+  // untouched current value, both would land in `changed`, and the audit would get a row for
+  // `orig -> 'a'`. Only 'b' ever reaches the profile (a plain key assignment clobbers), so
+  // that first row describes a transition THAT NEVER HAPPENED -- and because 0078 gives this
+  // table no UPDATE or DELETE policy, the fabricated row is permanent.
+  //
+  // The legitimate UI cannot produce it (buildProposals emits at most one proposal per field),
+  // so it takes a crafted body. Fixed anyway: an append-only log that can be made to record a
+  // value that never persisted is not an audit trail, and "only reachable by hand" is not a
+  // property worth relying on in the thing I am asking Shannon to trust for rollback.
+  const byField = new Map<string, unknown>();
+  for (const a of opts.accepted) {
+    if (isProposableField(a.field)) byField.set(a.field, a.value);
+  }
+  const fields = [...byField].map(([field, value]) => ({ field, value }));
   if (fields.length === 0) {
     return { ok: false, error: "No recognised fields to save." };
   }

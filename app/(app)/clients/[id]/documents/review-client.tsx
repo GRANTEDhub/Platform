@@ -54,12 +54,35 @@ export default function AssimilationReview({
   );
 }
 
+function defaultAcceptedMap(proposals: FieldProposal[]): Record<string, boolean> {
+  return Object.fromEntries(proposals.map((p) => [p.field, p.defaultAccepted]));
+}
+
 function DocumentCard({ doc, proposals }: { doc: DocSummary; proposals: FieldProposal[] }) {
   const router = useRouter();
   // Accepted state starts from defaultAccepted -- pre-checked fills, unchecked overwrites.
-  const [accepted, setAccepted] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(proposals.map((p) => [p.field, p.defaultAccepted])),
-  );
+  const [accepted, setAccepted] = useState<Record<string, boolean>>(() => defaultAcceptedMap(proposals));
+
+  // RE-SEED WHEN THE PROPOSAL SET CHANGES, or the asymmetric default silently does not apply.
+  //
+  // Review finding on #340 (vercel[bot]), and it defeated the centrepiece of this design on
+  // the most ordinary path. Extract and commit both call router.refresh(), which re-renders
+  // the server component and hands down a NEW proposals array while REUSING this component
+  // instance -- its key (doc.id) is stable. A useState initializer runs only on first mount,
+  // so a document that mounted `pending` with zero proposals kept `accepted` = {} after
+  // extraction, and every proposal rendered UNCHECKED -- including the fills that are meant
+  // to arrive ticked. It would only have looked right after a full page reload, which is
+  // exactly the path a preview check is least likely to take.
+  //
+  // Re-seeding DISCARDS in-progress ticks when the set changes, and that is correct rather
+  // than unfortunate: if the proposals changed, the previous ticks referred to a set that no
+  // longer exists, and carrying them forward would apply a decision to a different question.
+  const proposalsKey = proposals.map((p) => `${p.field}:${p.defaultAccepted}`).join("|");
+  const [seededKey, setSeededKey] = useState(proposalsKey);
+  if (proposalsKey !== seededKey) {
+    setSeededKey(proposalsKey);
+    setAccepted(defaultAcceptedMap(proposals));
+  }
   const [note, setNote] = useState(doc.reviewNote ?? "");
   const [busy, setBusy] = useState<null | "extract" | "commit">(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
