@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { createServiceClient } from "@/lib/supabase/server";
 import { resolveDocumentActor, canReadDocument } from "@/lib/documents/authorize";
 import { canAssimilateFor } from "@/lib/documents/assimilate-authorize";
 import { commitProfileChanges, type AcceptedField } from "@/lib/documents/commit";
 import { isProposableField } from "@/lib/documents/proposal";
+import { enrichClient } from "@/lib/clients/enrich";
 import type { ClientDocument } from "@/types/database";
+
+// The commit itself is fast (two writes). This exists for the enrichment chained after it via
+// waitUntil: four external lookups plus one LLM distillation, which run AFTER the response and
+// would otherwise be killed at the platform default mid-refine -- leaving the distilled profile
+// exactly as stale as it was, with nothing recorded to say so.
+export const maxDuration = 300;
 
 const MAX_NOTE_CHARS = 2000;
 
@@ -93,6 +101,33 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     // 500 rather than 400: by the time this can fail, the caller's input was already
     // accepted -- what went wrong is on our side (profile write or audit write).
     return NextResponse.json({ error: result.error }, { status: 500 });
+  }
+
+  // ── RE-DISTIL THE PROFILE THE DOCUMENT JUST CHANGED ──
+  //
+  // THE GAP THIS CLOSES. enrichClient refreshes clients.client_profile (plus USASpending, the
+  // IRS-990 pull and SAM binding) and fires on public intake, client create and client EDIT --
+  // every path that writes profile facts EXCEPT this one. So a document commit moved the facts
+  // and left the distilled profile built from the pre-document version of them. Silent, and
+  // permanent until someone happened to open the edit form and save it.
+  //
+  // WHAT IT DOES AND DOES NOT AFFECT, so nobody reads more into it than is there: occupancy is
+  // PROFILE-FREE (lib/grants/engine.ts -- enrichMatchWithProfile is the only consumer and it
+  // returns early below fit_score 2). A stale client_profile therefore never decided whether a
+  // grant surfaced; it made the why-this-org narrative and the concept framing read from thinner
+  // facts than we held. Worth fixing, not a matching bug.
+  //
+  // GATED ON A REAL CHANGE. `changed` is empty when every accepted field already matched, and
+  // re-distilling a profile whose inputs did not move spends four lookups and an LLM call to
+  // produce the same answer. Nothing about a no-op commit needs enriching.
+  //
+  // FIRE-AND-FORGET, matching what the edit action does (clients/actions.ts:195, 318): the
+  // reviewer's response does not wait on it, enrichClient is independently guarded per step and
+  // never throws into its caller, and a failed refine leaves client_profile as it was for the
+  // next edit or the backfill sweep to re-attempt. A service-role client is passed because the
+  // caller's RLS session is gone by the time this runs.
+  if ((result.changed ?? []).length > 0) {
+    waitUntil(enrichClient(createServiceClient(), row.client_id));
   }
 
   return NextResponse.json({

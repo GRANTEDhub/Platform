@@ -123,10 +123,66 @@ only for GrantBot, so **sequence them on their own merits, not as GrantBot prere
 
 ---
 
+## The premise to get right before designing anything client-shaped
+
+**OCCUPANCY IS PROFILE-FREE. `clients.client_profile` DOES NOT DECIDE WHETHER A GRANT
+SURFACES.** This is locked architecture in `CLAUDE.md`, and it is repeated here because it is
+the premise a planner reaches for first and gets backwards — "the matching profile drives
+matching" is the intuitive reading and the wrong one.
+
+Verified in `lib/grants/engine.ts`: the only consumer of `client_profile` is
+`enrichMatchWithProfile`, which returns early unless `fit_score >= 2`. It writes NARRATIVE —
+why-this-org, concept framing — onto matches that have *already scored*. Seats are decided from
+the grant, the rubric, and the RAW client fields: `org_type`, location, `primary_funding_needs`,
+`hard_constraints`, the intake narrative. The split is deliberate and load-bearing: a distilled
+profile fed to the scorer pushed it into itemised seat-matching and buried integrative-fit
+clients (incident, PR #138 closed → #140; the `profileInvariant` flag guards it).
+
+Three consequences worth stating outright:
+
+- **"Keep the profile current so we never miss a grant" is aimed at the wrong artifact.** What
+  decides surfacing is the FACTS. Loading a client's facts *is* the keep-matching-current work.
+- **A stale `client_profile` costs narrative quality, not coverage.** Worth fixing; not a
+  matching bug.
+- **Any future "learn from likes and dislikes" work is net-new against the SCORER**, not a
+  matter of enriching a profile.
+
+### What the feedback loop actually is today
+
+| Signal | State |
+|---|---|
+| Client rejects a horizon/forecast grant | **Closed.** `forecast_rejections` (0053) is read by `lib/grants/forecast-relevance.ts` and hides the row *before* ranking. |
+| Staff match feedback (agree / corrected score / reason) | **Captured, not consumed.** `match_feedback` has writers and readers across the console and portal, and zero references in `engine.ts`. It informs humans, not the scorer. |
+| Client approves / passes / expresses interest in a card | **Not read back at all.** Drives workflow, not future scoring. |
+
+Sequencing decision: **the feedback loop goes last.** It is the only item on this roadmap that
+can quietly make matching *worse*, and `match_feedback` needs real accumulated rows before
+anything learns from them.
+
 ## Constraints to carry into GrantBot v1
 
 These came out of the analysis behind the sequencing decision. They are recorded because
 each one is cheaper to build in from the start than to retrofit.
+
+- **No second profile blob.** Facts with rules live in typed columns or tables (they need
+  validation, dates, uniqueness — a blob cannot answer "is this SAM registration expired").
+  `client_profile` stays a DERIVED view, regenerated from facts and never hand-edited. The
+  richer "drafting profile" is a RENDERER over facts plus documents — `buildContextPack` already
+  is one — not a stored artifact that goes stale. Two jsonb profiles on `clients` would both
+  drift and neither would be authoritative.
+
+- **Three fact families have no home yet, and wait for a real consumer:** authorized official
+  (absent from the schema entirely), structured grant history (`federal_grant_history` is one
+  free-text column), and relationship/narrative context (belongs in documents plus GrantBot's
+  conversation store, not a column). Their consumer is drafting / IntellEngine step 6, not
+  GrantBot v1.
+
+- **Uploaded documents are the corpus, and the bytes are permanent.** Extraction parses a file
+  in memory and stores only a synopsis plus proposed fields — but `storage_bucket` /
+  `storage_path` keep the file, extraction is re-runnable by design, and both parsers are
+  deterministic. So document CONTENT is unindexed, never discarded, and re-parsing stored
+  objects later is the same operation as persisting text now. **The one way to actually lose it
+  is the delete control**; loaded profile documents should be treated as permanent records.
 
 - **A provenance store, not a blob.** Record `source`, `captured_at`, and provenance per
   context item. Then v2's messaging and Gemini capture are new *writers* into the same
