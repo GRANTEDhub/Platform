@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
-import { buildProposals } from "@/lib/documents/proposal";
+import { buildProposalSet } from "@/lib/documents/proposal";
 import AssimilationReview from "./review-client";
 import UploadPanel from "./upload-panel";
 import type { Client, ClientDocument, ClientProfileChange } from "@/types/database";
@@ -87,8 +87,22 @@ export default async function ClientDocumentsPage({ params }: { params: { id: st
       docType: typeof d.extracted?.docType === "string" ? d.extracted.docType : null,
       docDate: typeof d.extracted?.docDate === "string" ? d.extracted.docDate : null,
       synopsis: typeof d.extracted?.synopsis === "string" ? d.extracted.synopsis : null,
+      // WHOSE DOCUMENT THE EXTRACTOR THOUGHT THIS WAS. A `mismatch` never gets stored (the
+      // route refuses it), so what reaches here is `match` or `unclear` -- and `unclear` earns
+      // a banner, because silence about the subject would read as confirmation.
+      subject: (d.extracted?.subject ?? null) as {
+        documentSubjectName?: string;
+        verdict?: string;
+        reason?: string;
+      } | null,
+      // WHAT THE VALIDATOR THREW AWAY. Rendered because its absence is what let six fields
+      // vanish unnoticed: a key the allowlist does not look up leaves no trace anywhere else.
+      diagnostics: (d.extracted?.diagnostics ?? null) as {
+        unrecognizedKeys?: string[];
+        droppedValues?: { field: string; reason: string }[];
+      } | null,
     },
-    proposals: buildProposals(
+    ...buildProposalSet(
       (d.extracted?.fields ?? null) as Record<string, unknown> | null,
       client as unknown as Record<string, unknown>,
       // Per-field quotes from the extraction, rendered under each proposed value. The point is

@@ -32,6 +32,7 @@ import {
   extractorErrorMessage,
   hasEnoughText,
   parseableKind,
+  subjectMismatchMessage,
   unsupportedMessage,
   validateExtraction,
   type ExtractedDocument,
@@ -52,7 +53,15 @@ export type ExtractionOutcome =
 // One model pass per document. No chunking, no map-reduce: a document that does not fit is
 // refused with EXTRACTOR_TRUNCATED rather than summarised in pieces, because a partial
 // extraction is indistinguishable from a complete one once it is stored.
-const MAX_OUTPUT_TOKENS = 3000;
+// 8000, RAISED FROM 3000, and the reason is arithmetic rather than caution.
+//
+// While the six narrative fields were silently vanishing, 3000 was ample. With them arriving,
+// a real profile document costs roughly: six programs (~1,200) + six partners (~800) + mission,
+// funding need and notes (~700) + contacts and locations (~100) + a verbatim quote for sixteen
+// fields (~950) + synopsis and subject verdict. That is ~4,000 tokens, over the old cap -- and
+// `max_tokens` is a TOTAL failure here, not a truncation. Fixing the wire format without this
+// would have traded a silent thin profile for a loud complete failure on the same document.
+const MAX_OUTPUT_TOKENS = 8000;
 // Bounded so a hung call fails HONESTLY inside the route's maxDuration=300 -- recorded on the
 // row with a message -- rather than being killed by the platform, which would leave the
 // document in whatever state it was already in with nothing written to explain why.
@@ -187,7 +196,29 @@ export async function runExtraction(input: {
     }
     // The ONLY path from model output to storage, and it drops everything it did not choose
     // to keep. A hostile or malformed tool input is a smaller extraction, never a wider one.
-    return { status: "ready", extracted: validateExtraction(toolUse.input) };
+    const extracted = validateExtraction(toolUse.input);
+
+    // ── A MISFILED UPLOAD IS REFUSED, NOT REVIEWED ──
+    //
+    // The wrong-entity rules catch a foreign detail inside the client's own document. They do
+    // not catch a document about a DIFFERENT organisation, and cannot: told the subject is X
+    // while reading about Y, the model helpfully assumes the document must be X's. Uploading one
+    // client's profile document to another client's record produced a complete, plausible,
+    // entirely wrong set of proposals.
+    //
+    // REFUSED rather than warned, because there is no version of "here are another
+    // organisation's details, review carefully" that is useful. It is the wrong file. And the
+    // refusal is the cheap end of the trade: re-extraction is free and non-destructive, while a
+    // reviewer bulk-loading a roster is exactly the reviewer most likely to tick through a
+    // screenful of well-formed proposals.
+    if (extracted.subject?.verdict === "mismatch") {
+      return {
+        status: "failed",
+        error: subjectMismatchMessage(extracted.subject.documentSubjectName, input.subject.name),
+      };
+    }
+
+    return { status: "ready", extracted };
   } catch (err) {
     console.error(
       "[assimilation] extractor call failed:",

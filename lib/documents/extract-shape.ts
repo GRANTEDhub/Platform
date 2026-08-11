@@ -63,6 +63,32 @@ export interface ExtractedDocument {
   // It is also a brake on the extractor: a field it cannot quote is a field it invented, and
   // the prompt makes the quote a precondition for proposing at all.
   evidence?: Record<string, string>;
+  // WHOSE DOCUMENT THIS IS, as the model judged it. Stored because the review screen renders a
+  // banner for `unclear` -- a document that never names its subject is a real case (a bare
+  // capability statement), and it is worth saying so rather than letting silence imply a match.
+  // A `mismatch` never reaches storage: the route refuses the extraction instead.
+  subject?: SubjectVerdict;
+  // WHAT THE VALIDATOR THREW AWAY. Stored and rendered, and the reason it exists is the bug it
+  // would have caught on its first run: six fields vanished for weeks because the validator
+  // iterated an allowlist and never reported the keys it was not looking for. A dropped key that
+  // nobody can see is a silent loss with no upper bound on how long it lasts.
+  diagnostics?: ExtractionDiagnostics;
+}
+
+export interface SubjectVerdict {
+  documentSubjectName: string;
+  verdict: "match" | "mismatch" | "unclear";
+  reason?: string;
+}
+
+export interface ExtractionDiagnostics {
+  // Keys the model returned that map to nothing we accept, with a type hint -- "ein (string)",
+  // "intake_data (object)". The second is what this whole brick exists to have surfaced.
+  unrecognizedKeys: string[];
+  // Keys we DO accept whose value failed validation, with why. Distinct from the above: the
+  // model asked for the right field and sent something unusable ("org_type: not one of the five
+  // recognised types"), which is a prompt problem rather than a schema problem.
+  droppedValues: { field: string; reason: string }[];
 }
 
 // ── FAILURE MESSAGES ──
@@ -222,25 +248,26 @@ const FIELD_PROPERTIES: Record<string, unknown> = {
     type: "array",
     items: { type: "string", enum: [...PRIORITY_AREAS] },
     description:
-      "The matcher-facing copy of the funding priority areas. Propose the same value you propose for intake_data.priority_areas, or omit both.",
+      "The matcher-facing copy of the funding priority areas. Propose the same value you propose for narrative_priority_areas, or omit both.",
   },
-  "intake_data.funding_need": {
+  narrative_funding_need: {
     type: "string",
     description: "What the organization says it needs funded, in its own terms.",
   },
-  "intake_data.priority_areas": {
+  narrative_priority_areas: {
     type: "array",
     items: { type: "string", enum: [...PRIORITY_AREAS] },
     description: "Only areas the document actually supports. An empty list means omit the field.",
   },
-  "intake_data.mission": {
+  narrative_mission: {
     type: "string",
     description:
       "The organization's stated mission, quoted or closely paraphrased from the document. Do not compose a better one.",
   },
-  "intake_data.programs": {
+  narrative_programs: {
     type: "array",
-    description: "Programs the document describes, one entry each.",
+    description:
+      "Programs the document describes, one OBJECT per program with the properties below. Do not return an array of plain strings.",
     items: {
       type: "object",
       properties: {
@@ -252,10 +279,10 @@ const FIELD_PROPERTIES: Record<string, unknown> = {
       required: ["name"],
     },
   },
-  "intake_data.partners": {
+  narrative_partners: {
     type: "array",
     description:
-      "Named partner organizations and what the relationship provides. A funder is not a partner; a vendor is not a partner.",
+      "Named partner organizations and what the relationship provides, one OBJECT per partner. Do not return an array of plain strings. A funder is not a partner; a vendor is not a partner.",
     items: {
       type: "object",
       properties: {
@@ -265,11 +292,55 @@ const FIELD_PROPERTIES: Record<string, unknown> = {
       required: ["name"],
     },
   },
-  "intake_data.additional_info": {
+  narrative_notes: {
     type: "string",
     description:
       "Facts about the organization worth keeping that no other field holds. Not analysis, not recommendations.",
   },
+};
+
+// ── THE WIRE FORMAT IS FLAT BECAUSE A DOT READS AS A PATH ──
+//
+// The six narrative properties above were originally declared with their INTERNAL names --
+// "intake_data.mission", "intake_data.programs", and so on -- and every one of them silently
+// vanished on real documents while every flat column extracted fine.
+//
+// The cause was the dot. Asked for a property called `intake_data.mission`, the model returned
+// a NESTED object (`fields: { intake_data: { mission: "..." } }`) because that is what the name
+// describes. The validator then asked `hasOwnProperty(fields, "intake_data.mission")`, got
+// false, found `intake_data` was not in the allowlist, and dropped the whole object. Six fields
+// gone, no error, no log line -- INVISIBLE BY CONSTRUCTION, because a validator that iterates
+// an allowlist never sees the keys it was not looking for.
+//
+// The tell was that `intake_data.mission` is a plain STRING and vanished, while
+// `primary_funding_needs` is an ARRAY and survived: it correlated with the dot, not the type.
+//
+// So the wire names are flat and unambiguous (`narrative_*`), and this table maps them to the
+// internal names. The `narrative_` prefix also removes a confusion the old names carried:
+// `funding_need` vs `primary_funding_needs`, `priority_areas` vs `primary_funding_needs`.
+//
+// THE INTERNAL NAMES DO NOT CHANGE. buildProposals, rejectValue, the commit writer and the
+// audit log all key off `intake_data.*`, and the stored `extracted.fields` keeps that shape.
+// Only what the MODEL is asked for changed.
+const WIRE_TO_INTERNAL: Record<string, string> = {
+  narrative_funding_need: "intake_data.funding_need",
+  narrative_priority_areas: "intake_data.priority_areas",
+  narrative_mission: "intake_data.mission",
+  narrative_programs: "intake_data.programs",
+  narrative_partners: "intake_data.partners",
+  narrative_notes: "intake_data.additional_info",
+};
+
+// The intake keys, by their bare name, for the nested-object tolerance below.
+const BARE_INTAKE_KEYS: Record<string, string> = {
+  funding_need: "intake_data.funding_need",
+  priority_areas: "intake_data.priority_areas",
+  mission: "intake_data.mission",
+  programs: "intake_data.programs",
+  partners: "intake_data.partners",
+  additional_info: "intake_data.additional_info",
+  // The wire name too, in case a nested object uses it.
+  notes: "intake_data.additional_info",
 };
 
 export const EXTRACTION_TOOL = {
@@ -305,8 +376,46 @@ export const EXTRACTION_TOOL = {
           "REQUIRED for every key present in `fields`, same key. A short verbatim quote from the document containing that value, including the surrounding words that show whose it is. A field you cannot quote must not be proposed.",
         additionalProperties: { type: "string" },
       },
+      // ── IS THIS DOCUMENT EVEN ABOUT THE CLIENT WE ARE EXTRACTING FOR ──
+      //
+      // The wrong-entity rules above catch a foreign detail INSIDE a document about the client.
+      // They do not catch a document about a DIFFERENT ORGANISATION ENTIRELY -- and they cannot,
+      // because being told "the subject is X" while reading a document about Y is a
+      // contradiction the model resolves helpfully: it assumes the document must be X's.
+      // Uploading one client's profile document to another client's record produced a full,
+      // plausible, entirely wrong set of proposals.
+      //
+      // ASKED OF THE MODEL RATHER THAN COMPUTED, deliberately. A string comparison would refuse
+      // the legitimate case: "NWACC" in a document versus "Northwest Arkansas Community Health
+      // Coalition" on the row is a match a regex calls a mismatch. Acronyms, DBAs and legal
+      // suffixes make deterministic name matching a false-positive machine, and a false mismatch
+      // BLOCKS A REAL LOAD -- worse than the bug. The model can tell those are one organisation;
+      // the code only shape-checks the verdict.
+      subject: {
+        type: "object",
+        description:
+          "Your judgement about WHOSE document this is, decided before you extract anything.",
+        properties: {
+          documentSubjectName: {
+            type: "string",
+            description:
+              "The organization this document is about, named verbatim as the document names it. Empty string if the document never names its subject.",
+          },
+          verdict: {
+            type: "string",
+            enum: ["match", "mismatch", "unclear"],
+            description:
+              "'match' = this document is about the subject organization named in the request (an acronym, DBA or legal-suffix difference is still a match). 'mismatch' = this document is about a DIFFERENT organization. 'unclear' = the document never names its subject clearly enough to tell.",
+          },
+          reason: {
+            type: "string",
+            description: "One short sentence for a mismatch or unclear verdict. Omit for a match.",
+          },
+        },
+        required: ["documentSubjectName", "verdict"],
+      },
     },
-    required: ["synopsis", "fields", "evidence"],
+    required: ["synopsis", "fields", "evidence", "subject"],
   },
 };
 
@@ -337,6 +446,13 @@ Blocks that are NOT the subject organization, and must never be its contact deta
 - A funder or grantmaker whose award letter or logo appears.
 - Board members' own employers, and any organization listed only as a partner or subrecipient.
 If a document names the subject organization and a preparer, and only the preparer's phone number is on the page, there is no phone number to report. Omit it.
+
+WHOSE DOCUMENT IS THIS — decide before you extract anything.
+The request names a subject organization. Find the organization THIS DOCUMENT is about and report it in \`subject\`, verbatim as the document names it, with your verdict:
+- "match" — the document is about the subject organization. An acronym, a DBA, a shortened name or a legal suffix difference IS a match ("NWACC" and "Northwest Arkansas Community Health Coalition" are the same organization).
+- "mismatch" — the document is about a different organization. Say so plainly. This is a misfiled upload, not a puzzle to solve, and reporting it is more useful than extracting anything.
+- "unclear" — the document never names its subject clearly enough to tell.
+Do not resolve a conflict between the request and the document by assuming the document must be the subject's. Report what you actually see.
 
 WHAT YOU MAY RECORD.
 Only what the document states. No world knowledge, no inference from a domain name to a person, no guessing a county from a city, no completing a partial address. If the document says the organization is in Springfield and never says which state, omit the state.
@@ -410,51 +526,88 @@ function allowedAreas(v: unknown): string[] | null {
 // returns it anyway must not get a different answer than one that read the schema.
 const EXCLUDED_FROM_EXTRACTION: readonly string[] = ["intake_data.partnerships"];
 
-// One extracted field -> the value that may be proposed, or null to drop it.
+// A validated value, or the reason it was thrown away.
+//
+// The reason is not decoration: it is rendered on the review screen. "org_type: not one of the
+// five recognised types" tells a reader the prompt needs fixing; silence told them nothing, for
+// weeks.
+export type FieldOutcome = { ok: true; value: unknown } | { ok: false; reason: string };
+const keep = (value: unknown): FieldOutcome => ({ ok: true, value });
+const drop = (reason: string): FieldOutcome => ({ ok: false, reason });
+
+// An array of plain strings where objects are required -- `["Mobile clinic", "Food box"]` --
+// is what a model returns when the document's programs are prose blocks. parseNarrative maps
+// each string to an all-empty object and filters it out, so the whole field would vanish.
+//
+// Wrapped as `{ name }` HERE rather than by loosening parseNarrative, which is shared with both
+// form paths: a tolerance added there would change what the portal and the staff form accept,
+// for the benefit of a caller neither of them knows about.
+//
+// Live for the first time now. It could not bite while the field never arrived at all.
+function coerceEntries(raw: unknown): unknown {
+  if (!Array.isArray(raw)) return raw;
+  return raw.map((entry) => (typeof entry === "string" ? { name: entry } : entry));
+}
+
+// One extracted field -> the value that may be proposed, or the reason it may not.
 //
 // Enumerations and formats are enforced HERE as well as in the tool schema because the schema
 // is a request the model can ignore, and dropping a bad value is cheaper than a reviewer
 // discovering that a ticked field silently did not save. proposal.ts refuses these at the
 // writer too -- three layers, in the one place where a wrong write is unreversible.
-function validateFieldValue(field: string, raw: unknown): unknown {
+function validateFieldValue(field: string, raw: unknown): FieldOutcome {
   switch (field) {
     case "org_type": {
       const s = str(raw, 60);
-      return s && (ORG_TYPES as readonly string[]).includes(s) ? s : null;
+      if (!s) return drop("empty or not a string");
+      return (ORG_TYPES as readonly string[]).includes(s)
+        ? keep(s)
+        : drop(`"${s}" is not one of the five recognised organization types`);
     }
     case "primary_funding_needs":
-    case "intake_data.priority_areas":
-      return allowedAreas(raw);
+    case "intake_data.priority_areas": {
+      if (!Array.isArray(raw)) return drop("not a list");
+      const areas = allowedAreas(raw);
+      return areas
+        ? keep(areas)
+        : drop("no entry matched the fixed priority-area list (they must be verbatim)");
+    }
     case "location_state": {
       const s = str(raw, 20);
-      if (!s) return null;
+      if (!s) return drop("empty or not a string");
       const up = s.toUpperCase();
-      return US_STATES.includes(up) ? up : null;
+      return US_STATES.includes(up) ? keep(up) : drop(`"${s}" is not a two-letter USPS state code`);
     }
     case "location_zip": {
       const s = str(raw, 20);
       const m = s?.match(/^(\d{5})(?:-\d{4})?$/);
-      return m ? m[1] : null;
+      return m ? keep(m[1]) : drop(`"${s ?? ""}" is not a five-digit ZIP`);
     }
     case "primary_contact_email": {
       const s = str(raw, TEXT_CAPS.primary_contact_email);
-      if (!s) return null;
+      if (!s) return drop("empty or not a string");
       const lower = s.toLowerCase();
-      return EMAIL_RE.test(lower) ? lower : null;
+      return EMAIL_RE.test(lower) ? keep(lower) : drop(`"${s}" does not look like an email address`);
     }
     case "primary_contact_phone": {
       const s = str(raw, TEXT_CAPS.primary_contact_phone);
+      if (!s) return drop("empty or not a string");
       // Ten digits is the US floor. Kept AS WRITTEN rather than reformatted: the client's own
       // form stores whatever they typed, and normalising here would make the same phone number
       // look like a change when it is not.
-      return s && (s.match(/\d/g) ?? []).length >= 10 ? s : null;
+      return (s.match(/\d/g) ?? []).length >= 10
+        ? keep(s)
+        : drop(`"${s}" has fewer than ten digits`);
     }
     case "website": {
       const s = str(raw, TEXT_CAPS.website);
+      if (!s) return drop("empty or not a string");
       // A host with a dot and no whitespace. No scheme is added -- the client's form stores
       // what they type, and rewriting "example.org" to "https://example.org" would be this
       // module editing a value rather than validating it.
-      return s && /^[^\s]+\.[^\s.]{2,}$/.test(s.replace(/^https?:\/\//i, "")) ? s : null;
+      return /^[^\s]+\.[^\s.]{2,}$/.test(s.replace(/^https?:\/\//i, ""))
+        ? keep(s)
+        : drop(`"${s}" does not look like a website`);
     }
     // ── SHAPE PARITY BY CONSTRUCTION ──
     //
@@ -468,16 +621,99 @@ function validateFieldValue(field: string, raw: unknown): unknown {
     // Passed as a lone key so parseNarrative's partners-from-partnerships self-heal cannot
     // fire: it needs a `partnerships` string, and there is never one here.
     case "intake_data.programs": {
-      const programs = parseNarrative({ programs: raw }).programs;
-      return programs.length ? programs : null;
+      if (!Array.isArray(raw)) return drop("not a list");
+      const programs = parseNarrative({ programs: coerceEntries(raw) }).programs;
+      return programs.length ? keep(programs) : drop("no entry carried a name, description or audience");
     }
     case "intake_data.partners": {
-      const partners = parseNarrative({ partners: raw }).partners;
-      return partners.length ? partners : null;
+      if (!Array.isArray(raw)) return drop("not a list");
+      const partners = parseNarrative({ partners: coerceEntries(raw) }).partners;
+      return partners.length ? keep(partners) : drop("no entry carried a name or role");
     }
-    default:
-      return str(raw, TEXT_CAPS[field] ?? 500);
+    default: {
+      const s = str(raw, TEXT_CAPS[field] ?? 500);
+      return s ? keep(s) : drop("empty or not a string");
+    }
   }
+}
+
+// ── THREE WIRE SHAPES, ONE INTERNAL SHAPE ──
+//
+// The model may plausibly return the narrative fields three ways, and all three now land:
+//   1. FLAT WIRE NAMES -- `narrative_mission`. What the schema now asks for.
+//   2. INTERNAL DOTTED NAMES -- `intake_data.mission`. What the schema used to ask for, and
+//      still valid input.
+//   3. NESTED -- `intake_data: { mission: ... }`. What it actually did when asked for (2), and
+//      the shape that silently lost six fields.
+//
+// Tolerance and the rename are BOTH here on purpose. Tolerance alone leaves a schema that
+// invites the bug back; the rename alone is one model-behaviour change away from silent loss.
+//
+// Everything that maps to nothing is REPORTED rather than ignored. That is the general fix: the
+// specific bug was six fields, but the class is "a validator that iterates an allowlist cannot
+// see what it was not looking for", and the only cure is saying what it skipped.
+export function normalizeWireFields(raw: unknown): {
+  fields: Record<string, unknown>;
+  unrecognizedKeys: string[];
+} {
+  const fields: Record<string, unknown> = {};
+  const unrecognizedKeys: string[] = [];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { fields, unrecognizedKeys };
+
+  const typeOf = (v: unknown): string =>
+    v === null ? "null" : Array.isArray(v) ? "array" : typeof v;
+  const note = (key: string, v: unknown) => unrecognizedKeys.push(`${key} (${typeOf(v)})`);
+
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    // 1. A flat wire name.
+    const mapped = WIRE_TO_INTERNAL[key];
+    if (mapped) {
+      fields[mapped] = value;
+      continue;
+    }
+    // 2. An internal name, dotted or plain, that we accept as-is.
+    if (PROPOSABLE_FIELDS.includes(key)) {
+      fields[key] = value;
+      continue;
+    }
+    // 3. A nested intake_data object: expand it one level.
+    if (key === "intake_data" && value && typeof value === "object" && !Array.isArray(value)) {
+      for (const [inner, innerValue] of Object.entries(value as Record<string, unknown>)) {
+        const internal = BARE_INTAKE_KEYS[inner] ?? WIRE_TO_INTERNAL[inner];
+        if (internal) fields[internal] = innerValue;
+        else note(`intake_data.${inner}`, innerValue);
+      }
+      continue;
+    }
+    note(key, value);
+  }
+  return { fields, unrecognizedKeys };
+}
+
+// Shape-check the model's own verdict about whose document this is. NOT a judgement of its
+// correctness -- that is the model's job, for the reason stated on the schema.
+//
+// A missing or unrecognised verdict degrades to "unclear", which extracts with a banner rather
+// than refusing. Refusing would be the stricter choice and the wrong one: a malformed response
+// is not evidence of a misfiled document, and treating it as one would block real loads every
+// time the model skipped a field.
+export function validateSubject(raw: unknown): SubjectVerdict {
+  const obj = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const name = str(obj.documentSubjectName, 200) ?? "";
+  const verdictRaw = str(obj.verdict, 20);
+  const verdict =
+    verdictRaw === "match" || verdictRaw === "mismatch" || verdictRaw === "unclear"
+      ? verdictRaw
+      : "unclear";
+  const reason = str(obj.reason, 300);
+  return reason ? { documentSubjectName: name, verdict, reason } : { documentSubjectName: name, verdict };
+}
+
+// The refusal a misfiled upload gets. Names BOTH organizations, because "this is the wrong
+// document" is useless without which one it is and which one you were expecting.
+export function subjectMismatchMessage(documentSubject: string, clientName: string): string {
+  const named = documentSubject.trim() ? `“${documentSubject.trim()}”` : "a different organization";
+  return `This document appears to be about ${named}, not ${clientName}. Nothing was extracted. Check which client you uploaded it to — if the document really is about ${clientName}, re-extract after correcting the client's name on their record.`;
 }
 
 const EVIDENCE_MAX_CHARS = 300;
@@ -501,14 +737,14 @@ export function validateExtraction(raw: unknown): ExtractedDocument {
   if (docDate) out.docDate = docDate;
   const synopsis = str(obj.synopsis, 1200);
   if (synopsis) out.synopsis = synopsis;
+  out.subject = validateSubject(obj.subject);
 
-  const rawFields =
-    obj.fields && typeof obj.fields === "object" && !Array.isArray(obj.fields)
-      ? (obj.fields as Record<string, unknown>)
-      : {};
+  // Normalised FIRST, so the allowlist loop below sees internal names whichever of the three
+  // wire shapes arrived -- and so anything that maps to nothing is captured rather than lost.
+  const { fields: rawFields, unrecognizedKeys } = normalizeWireFields(obj.fields);
   const rawEvidence =
     obj.evidence && typeof obj.evidence === "object" && !Array.isArray(obj.evidence)
-      ? (obj.evidence as Record<string, unknown>)
+      ? normalizeWireFields(obj.evidence).fields
       : {};
 
   // Iterating the ALLOWLIST rather than the model's keys is what makes `__proto__`,
@@ -517,12 +753,17 @@ export function validateExtraction(raw: unknown): ExtractedDocument {
   // model's (buildProposals re-sorts anyway, but a stable stored object diffs cleanly).
   const fields: Record<string, unknown> = {};
   const evidence: Record<string, string> = {};
+  const droppedValues: { field: string; reason: string }[] = [];
   for (const field of PROPOSABLE_FIELDS) {
     if (EXCLUDED_FROM_EXTRACTION.includes(field)) continue;
     if (!Object.prototype.hasOwnProperty.call(rawFields, field)) continue;
-    const value = validateFieldValue(field, rawFields[field]);
-    if (value === null || value === undefined) continue;
-    fields[field] = value;
+    const outcome = validateFieldValue(field, rawFields[field]);
+    if (!outcome.ok) {
+      droppedValues.push({ field, reason: outcome.reason });
+      continue;
+    }
+    if (outcome.value === null || outcome.value === undefined) continue;
+    fields[field] = outcome.value;
     // Evidence is kept only for a field that survived. A quote for a dropped field would be
     // provenance for a value nobody sees.
     const quote = str(rawEvidence[field], EVIDENCE_MAX_CHARS);
@@ -531,6 +772,11 @@ export function validateExtraction(raw: unknown): ExtractedDocument {
 
   if (Object.keys(fields).length) out.fields = fields;
   if (Object.keys(evidence).length) out.evidence = evidence;
+  // Recorded even when empty-handed in both lists? No -- only when there is something to say,
+  // so a clean extraction stores a clean object and the review screen renders no noise.
+  if (unrecognizedKeys.length || droppedValues.length) {
+    out.diagnostics = { unrecognizedKeys, droppedValues };
+  }
   return out;
 }
 
