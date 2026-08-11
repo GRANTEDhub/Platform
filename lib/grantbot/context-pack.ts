@@ -27,6 +27,10 @@ import type {
   ReviewCard,
 } from "@/types/database";
 import { readDraftContent, draftCompleteness, completenessLabel } from "@/lib/intellengine/content";
+// The SAME validator the matcher's read path uses (getClientConstraints), so the pack answers
+// "will this gate actually fire" rather than "is there a row". Pure: constraints.ts imports
+// nothing but types.
+import { validateConstraint } from "@/lib/grants/constraints";
 import { formatProgramsForDump, formatPartnersForDump } from "@/lib/intake/narrative";
 import { buildCommunityView } from "@/lib/clients/community";
 
@@ -603,15 +607,37 @@ function internal(input: PackInput, items: ContextItem[]): void {
   push(items, "internal", "Next step", c.next_step, "clients.next_step", "staff", null);
   push(items, "internal", "Known constraints", c.known_constraints, "clients.known_constraints", "staff", null);
   push(items, "internal", "Matching rules", c.matching_rules, "clients.matching_rules", "staff", null);
+  // ── EACH CONSTRAINT IS SHOWN AS ENFORCED OR NOT ENFORCED, AND WHY ──
+  //
+  // This block used to render the stored array verbatim, which made a dead gate indistinguishable
+  // from a live one. The matcher does not read what is stored: getClientConstraints runs every
+  // entry through validateConstraint and SILENTLY DROPS the failures (deliberately -- a
+  // malformed constraint must never crash scoring or be half-trusted). So a hand-written row
+  // missing its `note`, or a role_ceiling of "subrecipient" instead of "sub", sits in the column
+  // looking authoritative and gates nothing.
+  //
+  // That matters more now that constraints are being added by SQL while the picker is unmounted:
+  // the reject-on-save path that would have caught it is exactly the path being bypassed. So the
+  // pack asks the same question the engine asks, and prints the answer.
+  //
+  // It also read `rec.kind` for a field named `type` -- so the type never appeared at all. Fixed.
+  const stored = Array.isArray(c.hard_constraints) ? c.hard_constraints : [];
   push(
     items,
     "internal",
-    "Hard constraints (enforced by the matcher)",
-    Array.isArray(c.hard_constraints) && c.hard_constraints.length
+    "Hard constraints (code-enforced gates)",
+    stored.length
       ? bullets(
-          c.hard_constraints.map((h) => {
+          stored.map((h) => {
             const rec = h as unknown as Record<string, unknown>;
-            return [clean(rec.kind), clean(rec.value), clean(rec.note)].filter(Boolean).join(" · ") || null;
+            const described =
+              [clean(rec.type), clean(rec.value), clean(rec.scope), clean(rec.note)]
+                .filter(Boolean)
+                .join(" · ") || "(empty entry)";
+            const v = validateConstraint(h);
+            return v.ok
+              ? `${described} — ENFORCED (${v.constraint.action})`
+              : `${described} — **NOT ENFORCED**: ${v.error}`;
           }),
         )
       : null,
@@ -999,6 +1025,17 @@ export function buildGaps(input: PackInput): string[] {
   }
   if (!c.ein) gaps.push("No EIN on file.");
   if (!c.uei) gaps.push("No UEI on file.");
+  // A STORED CONSTRAINT THAT DOES NOT VALIDATE IS AN ABSENCE, not a detail -- the org has no
+  // gate where someone believes there is one. It belongs in this list for the same reason every
+  // other line is here: it is a specific thing the platform does not have.
+  const deadGates = (Array.isArray(c.hard_constraints) ? c.hard_constraints : []).filter(
+    (h) => !validateConstraint(h).ok,
+  ).length;
+  if (deadGates > 0) {
+    gaps.push(
+      `${deadGates} stored hard constraint(s) FAIL VALIDATION and are therefore NOT enforced by the matcher — see the reasons in the INTERNAL section. Fix or remove them; the matcher is ignoring them today.`,
+    );
+  }
   return gaps;
 }
 
