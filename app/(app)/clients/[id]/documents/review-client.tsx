@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Check, FileText, Loader2, Trash2, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { FieldProposal } from "@/lib/documents/proposal";
+import type { FieldProposal, ProposalSet } from "@/lib/documents/proposal";
 import type { ClientProfileChange } from "@/types/database";
 
 interface DocSummary {
@@ -20,6 +20,11 @@ interface DocSummary {
   docType: string | null;
   docDate: string | null;
   synopsis: string | null;
+  subject: { documentSubjectName?: string; verdict?: string; reason?: string } | null;
+  diagnostics: {
+    unrecognizedKeys?: string[];
+    droppedValues?: { field: string; reason: string }[];
+  } | null;
 }
 
 // Why a per-field rule refused a value, in words a reviewer can act on. A map rather than a
@@ -53,7 +58,7 @@ export default function AssimilationReview({
   // who has no way to act on it.
   isAdmin,
 }: {
-  reviews: { doc: DocSummary; proposals: FieldProposal[] }[];
+  reviews: (ProposalSet & { doc: DocSummary })[];
   history: ClientProfileChange[];
   isAdmin: boolean;
 }) {
@@ -68,7 +73,14 @@ export default function AssimilationReview({
           </p>
         )}
         {reviews.map((r) => (
-          <DocumentCard key={r.doc.id} doc={r.doc} proposals={r.proposals} isAdmin={isAdmin} />
+          <DocumentCard
+            key={r.doc.id}
+            doc={r.doc}
+            proposals={r.proposals}
+            alreadyMatching={r.alreadyMatching}
+            refused={r.refused}
+            isAdmin={isAdmin}
+          />
         ))}
       </section>
 
@@ -84,10 +96,14 @@ function defaultAcceptedMap(proposals: FieldProposal[]): Record<string, boolean>
 function DocumentCard({
   doc,
   proposals,
+  alreadyMatching,
+  refused,
   isAdmin,
 }: {
   doc: DocSummary;
   proposals: FieldProposal[];
+  alreadyMatching: ProposalSet["alreadyMatching"];
+  refused: ProposalSet["refused"];
   isAdmin: boolean;
 }) {
   const router = useRouter();
@@ -334,6 +350,65 @@ function DocumentCard({
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
           {doc.error || "We couldn't read this document."}
         </p>
+      )}
+
+      {/* THE EXTRACTOR COULD NOT CONFIRM WHOSE DOCUMENT THIS IS. A `mismatch` never reaches this
+          screen -- the route refuses it and the amber block above carries the reason -- so this
+          only fires for `unclear`: a document that never names its subject. Said out loud
+          because silence about the subject reads as confirmation of it. */}
+      {doc.subject?.verdict === "unclear" && (
+        <p className="mt-4 flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-[13px] text-amber-900 ring-1 ring-amber-200">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+          <span>
+            The extractor couldn&rsquo;t confirm this document is about this client
+            {doc.subject.documentSubjectName
+              ? ` — it names “${doc.subject.documentSubjectName}”`
+              : " — it never names its subject"}
+            . {doc.subject.reason ?? ""} Check the proposals below carefully.
+          </span>
+        </p>
+      )}
+
+      {/* WHAT WAS EXTRACTED AND IS NOT ON SCREEN BELOW, in three flavours, because "a handful of
+          proposals" was previously indistinguishable from "eleven extracted, six silently lost".
+          `unrecognizedKeys` is the one that matters most: it is the only thing that makes a
+          schema the model answers in an unexpected shape visible at all. */}
+      {(alreadyMatching.length > 0 ||
+        refused.length > 0 ||
+        (doc.diagnostics?.unrecognizedKeys?.length ?? 0) > 0 ||
+        (doc.diagnostics?.droppedValues?.length ?? 0) > 0) && (
+        <div className="mt-4 space-y-1 rounded-xl bg-brand-navy/[0.03] p-3 text-xs text-brand-navy/70">
+          <p className="font-semibold text-brand-navy/80">Extracted but not proposed</p>
+          {alreadyMatching.length > 0 && (
+            <p>
+              {alreadyMatching.length} already match{alreadyMatching.length === 1 ? "es" : ""} the
+              profile: {alreadyMatching.map((f) => f.label).join(", ")}.
+            </p>
+          )}
+          {refused.length > 0 && (
+            <p>
+              {refused.length} refused by a field rule:{" "}
+              {refused
+                .map((f) => `${f.label} (${REJECTION_REASONS[f.reason] ?? "refused"})`)
+                .join(", ")}
+              .
+            </p>
+          )}
+          {(doc.diagnostics?.droppedValues?.length ?? 0) > 0 && (
+            <p>
+              {doc.diagnostics!.droppedValues!.length} value(s) dropped as unusable:{" "}
+              {doc.diagnostics!.droppedValues!.map((d) => `${d.field} — ${d.reason}`).join("; ")}.
+            </p>
+          )}
+          {(doc.diagnostics?.unrecognizedKeys?.length ?? 0) > 0 && (
+            <p className="text-amber-800">
+              The extractor returned {doc.diagnostics!.unrecognizedKeys!.length} key(s) this
+              platform does not recognise:{" "}
+              {doc.diagnostics!.unrecognizedKeys!.join(", ")}. Nothing was taken from them — if
+              that looks like a field we should be reading, it is a bug worth reporting.
+            </p>
+          )}
+        </div>
       )}
 
       {/* READ IT, FOUND NOTHING TO PROPOSE. Distinct from the amber failure block above, and the

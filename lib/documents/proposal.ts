@@ -225,11 +225,30 @@ export function valuesEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 }
 
+// What the review list DOES NOT show, and why.
+//
+// Every one of these was previously a silent `continue`, and that silence cost real time: a
+// document that extracted eleven fields correctly looked identical to a document that extracted
+// eleven fields and lost six, because both produced "a handful of proposals". You cannot tell
+// "correctly precise" from "quietly lossy" from a list of what survived.
+//
+// So the suppressions are returned and rendered. The commit path already speaks this vocabulary
+// -- it reports `unchanged` and `rejected` -- and this is the same distinction moved earlier, to
+// where the reviewer actually looks.
+export interface ProposalSet {
+  proposals: FieldProposal[];
+  // Extracted, valid, and identical to what the profile already holds. The most reassuring of
+  // the three: it means the document agreed with us.
+  alreadyMatching: { field: string; label: string }[];
+  // Extracted and refused by a per-field rule before it could ever be offered.
+  refused: { field: string; label: string; reason: FieldRejection }[];
+}
+
 // Build the review list from an extraction and the client's current row.
 //
 // Order is PROPOSABLE_FIELDS order, not extraction order, so the same document always
 // reviews the same way -- an LLM's key order is not a stable thing to render from.
-export function buildProposals(
+export function buildProposalSet(
   extractedFields: Record<string, unknown> | null | undefined,
   client: Record<string, unknown>,
   // Per-field provenance from the extraction, keyed by field name. Optional because a stubbed
@@ -238,26 +257,38 @@ export function buildProposals(
   // proposing; enforcing it a second time here would silently drop real findings on a model
   // that skipped one key.
   evidence?: Record<string, unknown> | null,
-): FieldProposal[] {
+): ProposalSet {
   const fields = extractedFields ?? {};
-  const out: FieldProposal[] = [];
+  const proposals: FieldProposal[] = [];
+  const alreadyMatching: { field: string; label: string }[] = [];
+  const refused: { field: string; label: string; reason: FieldRejection }[] = [];
   for (const field of PROPOSABLE_FIELDS) {
     if (!(field in fields)) continue;
+    const label = FIELD_LABEL[field] ?? field;
     const proposedValue = fields[field];
     // An extractor that found nothing must omit the key; a present-but-empty value would
-    // otherwise propose CLEARING a field, which no document ever justifies.
+    // otherwise propose CLEARING a field, which no document ever justifies. Not reported: the
+    // validator already drops empties, so a present-but-empty value cannot reach here from a
+    // real extraction, and reporting an impossible case is noise.
     if (isEmptyValue(proposedValue)) continue;
     const currentValue = readCurrentValue(field, client);
-    if (valuesEqual(currentValue, proposedValue)) continue;
+    if (valuesEqual(currentValue, proposedValue)) {
+      alreadyMatching.push({ field, label });
+      continue;
+    }
     // NEVER OFFER WHAT THE WRITER WILL REFUSE. An extractor can plausibly return "501c3
     // nonprofit" for org_type, which is not in ORG_TYPES -- rendering it would invite a
     // reviewer to tick something that then silently does not save.
-    if (rejectValue(field, proposedValue)) continue;
+    const rejection = rejectValue(field, proposedValue);
+    if (rejection) {
+      refused.push({ field, label, reason: rejection });
+      continue;
+    }
     const isFill = isEmptyValue(currentValue);
     const quote = evidence?.[field];
-    out.push({
+    proposals.push({
       field,
-      label: FIELD_LABEL[field] ?? field,
+      label,
       currentValue,
       proposedValue,
       isFill,
@@ -265,5 +296,5 @@ export function buildProposals(
       evidence: typeof quote === "string" && quote.trim() !== "" ? quote.trim() : null,
     });
   }
-  return out;
+  return { proposals, alreadyMatching, refused };
 }
