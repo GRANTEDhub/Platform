@@ -133,6 +133,9 @@ const config: Config = {
         card: ELEVATION.card,
         "card-hover": ELEVATION.cardHover,
         overlay: ELEVATION.overlay,
+        // Panels floating over a full page of content, not anchored popovers. One call
+        // site (the GrantBot launcher) — see the note in lib/brand.ts.
+        floating: ELEVATION.floating,
         // DEPRECATED ALIASES. The old scale had four rest-state elevations
         // (soft / softer / card / grounded) plus `lift`, which is most of why
         // sibling cards looked like they came from different designs. They are

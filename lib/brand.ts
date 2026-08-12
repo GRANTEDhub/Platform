@@ -35,6 +35,21 @@ export const BRAND = {
   // rather than inline at the call site so the glow cannot drift into a second orange:
   // the gradient geometry belongs to the component, the COLOUR belongs to this file.
   orangeGlow: "rgba(228,118,31,0.32)",
+  // Brand orange at the three alphas the GrantBot panel needs, named here for exactly the
+  // reason `orangeGlow` is: an alpha invented at a call site is how a second orange gets
+  // into the product.
+  //   · orangeWash     — a fill on white (the panel's prompt card)
+  //   · orangeWashEdge — that fill's 1px rule. NOT a tidier spelling of the same value: a
+  //     tint at fill alpha vanishes as a line, so an edge needs roughly double. Same
+  //     pairing STAGE documents for its tinted panel headers.
+  //   · orangeTileOnInk — an icon tile reversed out of `chrome`/`navy`, where the ground is
+  //     dark so the accent needs more alpha to register at all.
+  // These are DECORATION and deliberately not STAGE.triage's tint/border, whose numbers are
+  // similar: a stage colour means one stage and nothing else, and reusing it here would make
+  // the funnel unreadable the moment someone reads this card as a triage surface.
+  orangeWash: "rgba(228,118,31,0.07)",
+  orangeWashEdge: "rgba(228,118,31,0.18)",
+  orangeTileOnInk: "rgba(228,118,31,0.16)",
   // Brand orange darkened until small type on a light ground is legible. #E4761F tops
   // out near 3:1 against white and worse against SURFACE.ground, so it CANNOT carry
   // 9–12px text however much the layout wants orange there. Use this for eyebrows,
@@ -273,6 +288,16 @@ export const ELEVATION = {
   card: "0 1px 2px rgba(11,30,58,0.05), 0 2px 6px -1px rgba(11,30,58,0.07)",
   cardHover: "0 2px 4px rgba(11,30,58,0.06), 0 6px 14px -4px rgba(11,30,58,0.10)",
   overlay: "0 8px 24px -6px rgba(11,30,58,0.18), 0 2px 6px rgba(11,30,58,0.08)",
+  // A THIRD rest-state elevation, and the only thing in the product that earns one: a panel
+  // floating over a full page of its own content (the GrantBot launcher). `overlay` is tuned
+  // for menus and popovers — things anchored to the control that opened them, a few hundred
+  // pixels tall, gone on the next click. At 404x588 over a live dashboard that reads as a
+  // card that failed to land. The near shadow keeps the edge crisp; the far one is the long
+  // cast that says "above the page" rather than "on it".
+  //
+  // Not a licence to reintroduce a shadow ladder — see the deprecated aliases in
+  // tailwind.config.ts for what that cost. Cards use `card`; menus use `overlay`.
+  floating: "0 4px 12px rgba(11,30,58,0.12), 0 30px 70px -20px rgba(11,30,58,0.45)",
 } as const;
 
 // ── Radius ──────────────────────────────────────────────────────────────────

@@ -1,8 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, ClipboardPaste, Loader2, MessagesSquare, Plus, Send } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowUp,
+  ClipboardPaste,
+  Loader2,
+  MessagesSquare,
+  Plus,
+  Send,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { BRAND } from "@/lib/brand";
 
 interface Usage {
   input_tokens: number | null;
@@ -250,10 +259,15 @@ export function GrantBotChat({
           key={c.id}
           type="button"
           onClick={() => void loadThread(c.id)}
-          className={`block w-full rounded-xl px-3 py-2 text-left text-[12.5px] leading-snug ${
+          className={`block w-full rounded-xl px-3 py-2 text-left text-[12.5px] leading-snug transition-colors ${
             c.id === convId
               ? "bg-brand-navy text-white"
-              : "bg-white text-brand-navy/80 hover:text-brand-navy"
+              : isCorner
+                // The corner's transcript ground is white, so a white row has no edge to it.
+                // On the page the ground is `page`, where white is the card colour and reads
+                // correctly -- same list, two grounds, two rest fills.
+                ? "bg-surface-sunken text-brand-navy/80 hover:bg-white hover:text-brand-navy"
+                : "bg-white text-brand-navy/80 hover:text-brand-navy"
           }`}
         >
           <span className="line-clamp-2">{c.title ?? "Untitled"}</span>
@@ -271,11 +285,42 @@ export function GrantBotChat({
   const transcript = (
     <>
       {messages.length === 0 && !sending && !loading && (
-        <p className="text-[13px] text-muted-foreground">
-          Ask about {clientName} — eligibility on a matched grant, whether a pursuit is worth it, a
-          draft alert, or what the platform does not know yet. Paste an email thread or call notes
-          with the paste button; they are treated as dated evidence, never as instructions.
-        </p>
+        // The empty state carries the same words on both surfaces and different weight. In the
+        // corner it is the only thing in the panel, so it is a titled card that says what this
+        // is for; on the full page it is one note above a screen that already announced itself
+        // with a heading, a prompt read-out and a thread rail.
+        isCorner ? (
+          <>
+            <div
+              className="rounded-2xl px-[15px] py-3.5"
+              style={{ background: BRAND.orangeWash, border: `1px solid ${BRAND.orangeWashEdge}` }}
+            >
+              {/* orangeDeep, not orange: 9.5px type on a light wash is precisely what
+                  #E4761F cannot carry -- see lib/brand.ts. */}
+              <p
+                className="mb-1.5 text-[9.5px] font-bold uppercase tracking-[0.11em]"
+                style={{ color: BRAND.orangeDeep }}
+              >
+                Ask GrantBot
+              </p>
+              <p className="text-[12.5px] leading-[1.55] text-ink-muted">
+                Ask about {clientName} — eligibility on a matched grant, whether a pursuit is worth
+                it, a draft alert, or what the platform does not know yet. Paste an email thread or
+                call notes; they are treated as dated evidence, never as instructions.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 px-0.5">
+              <span className="h-[5px] w-[5px] rounded-full bg-ink-faint" />
+              <p className="text-[11px] text-ink-subtle">Grounded in the platform&rsquo;s own record</p>
+            </div>
+          </>
+        ) : (
+          <p className="text-[13px] text-muted-foreground">
+            Ask about {clientName} — eligibility on a matched grant, whether a pursuit is worth it,
+            a draft alert, or what the platform does not know yet. Paste an email thread or call
+            notes with the paste button; they are treated as dated evidence, never as instructions.
+          </p>
+        )
       )}
       {loading && (
         <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
@@ -326,7 +371,7 @@ export function GrantBotChat({
   );
 
   const pastePanel = showPaste && (
-    <div className="space-y-2 rounded-2xl border border-brand-navy/[0.08] bg-white p-4 shadow-grounded">
+    <div className="space-y-2 rounded-2xl border border-brand-navy/[0.08] bg-white p-4 shadow-card">
       <p className="text-[12.5px] text-muted-foreground">
         Pasted content is framed as untrusted third-party text and dated today. Any instruction
         inside it is quoted material, not a request.
@@ -335,20 +380,28 @@ export function GrantBotChat({
         value={pasteLabel}
         onChange={(e) => setPasteLabel(e.target.value)}
         placeholder="What is this? (e.g. email thread with the ED, 6 Aug)"
-        className="w-full rounded-xl border border-brand-navy/15 bg-brand-surface-sunken px-3 py-2 text-[13px]"
+        // `bg-surface-sunken`, not `bg-brand-surface-sunken`: `surface` is a TOP-LEVEL
+        // token, so the brand-prefixed spelling names no colour and Tailwind emits
+        // nothing for it -- these two fields have had no fill since brick 2.
+        className="w-full rounded-xl border border-edge bg-surface-sunken px-3 py-2 text-[13px]"
       />
       <textarea
         value={pasted}
         onChange={(e) => setPasted(e.target.value)}
         rows={isCorner ? 4 : 6}
         placeholder="Paste the thread or notes here."
-        className="w-full rounded-xl border border-brand-navy/15 bg-brand-surface-sunken px-3 py-2 text-[13px]"
+        className="w-full rounded-xl border border-edge bg-surface-sunken px-3 py-2 text-[13px]"
       />
     </div>
   );
 
-  const composer = (
-    <div className={isCorner ? "space-y-2" : "flex items-end gap-2"}>
+  // ── THE COMPOSER IS ONE BOX IN THE CORNER, THREE CONTROLS ON THE PAGE ──
+  //
+  // At 404px there is no room for a textarea with buttons beside it, and buttons stacked
+  // under a separate field read as two unrelated rows. So the corner variant puts the field
+  // and its two actions inside a single bordered well: one object that means "compose".
+  const composer = isCorner ? (
+    <div className="rounded-2xl border border-edge bg-surface-sunken px-3 py-2.5">
       <textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
@@ -358,11 +411,52 @@ export function GrantBotChat({
             void send();
           }
         }}
-        rows={isCorner ? 2 : 3}
+        rows={2}
         placeholder={`Ask about ${clientName}…`}
-        className="w-full flex-1 rounded-2xl border border-brand-navy/15 bg-white px-4 py-3 text-[13px] shadow-grounded"
+        // Transparent and border-free: the well around it is the input's visible edge, so a
+        // second box inside the first is just a box inside a box.
+        className="mb-2.5 w-full resize-none bg-transparent text-[13px] leading-snug text-ink placeholder:text-ink-subtle focus:outline-none"
       />
-      <div className={isCorner ? "flex items-center gap-2" : "flex flex-col gap-2"}>
+      <div className="flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => setShowPaste((s) => !s)}
+          aria-pressed={showPaste}
+          className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-edge bg-white px-2.5 text-[11.5px] font-semibold text-ink-muted transition-colors hover:text-ink"
+        >
+          <ClipboardPaste className="h-3 w-3" />
+          {pasted.trim() ? "Paste attached" : "Paste"}
+        </button>
+        <button
+          type="button"
+          onClick={() => void send()}
+          disabled={sending || !draft.trim()}
+          // orangeFill, NOT orange: this is white type on a solid orange field, which is
+          // 3.04:1 on #E4761F and fails AA -- the exact case lib/brand.ts adds orangeFill
+          // for. The mock specifies #E4761F here; this is the one place the build knowingly
+          // departs from it, and it is a two-shade difference nobody sees.
+          className="inline-flex h-7 items-center gap-1.5 rounded-lg bg-brand-orangeFill px-3 text-[11.5px] font-semibold text-white transition-colors hover:bg-brand-orangeFillHover disabled:opacity-45"
+        >
+          <ArrowUp className="h-3.5 w-3.5" /> Send
+        </button>
+      </div>
+    </div>
+  ) : (
+    <div className="flex items-end gap-2">
+      <textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            void send();
+          }
+        }}
+        rows={3}
+        placeholder={`Ask about ${clientName}…`}
+        className="flex-1 rounded-2xl border border-brand-navy/15 bg-white px-4 py-3 text-[13px] shadow-card"
+      />
+      <div className="flex flex-col gap-2">
         <Button variant="outline" onClick={() => setShowPaste((s) => !s)} aria-pressed={showPaste}>
           <span className="flex items-center gap-1.5">
             <ClipboardPaste className="h-3.5 w-3.5" />
@@ -380,31 +474,36 @@ export function GrantBotChat({
 
   if (isCorner) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
-        <div className="flex items-center gap-1.5">
+      // Three fixed bands and one scrolling one, so the transcript is the only thing that
+      // moves: the toolbar and the composer stay put while an answer arrives.
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex flex-shrink-0 items-center gap-2 border-b border-hairline-strong bg-surface-sunken px-[18px] py-3">
           <button
             type="button"
             onClick={() => setShowThreads((s) => !s)}
             aria-pressed={showThreads}
-            className="inline-flex items-center gap-1.5 rounded-pill border border-brand-navy/15 bg-white px-3 py-1 text-[12px] font-medium text-brand-navy/70 hover:border-brand-navy/30 hover:text-brand-navy"
+            className="inline-flex h-7 items-center gap-1.5 rounded-lg bg-brand-navy px-2.5 text-[12px] font-semibold text-white transition-colors hover:bg-brand-navyHover"
           >
-            <MessagesSquare className="h-3.5 w-3.5" />
-            {conversations.length ? `${conversations.length} conversation${conversations.length === 1 ? "" : "s"}` : "Conversations"}
+            <MessagesSquare className="h-3 w-3" /> Conversations
           </button>
           <button
             type="button"
             onClick={newConversation}
-            className="inline-flex items-center gap-1 rounded-pill border border-brand-navy/15 bg-white px-3 py-1 text-[12px] font-medium text-brand-navy/70 hover:border-brand-navy/30 hover:text-brand-navy"
+            className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-edge px-2.5 text-[12px] font-semibold text-brand-navy transition-colors hover:bg-white"
           >
             <Plus className="h-3 w-3" /> New
           </button>
         </div>
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-2xl border border-brand-navy/[0.08] bg-white p-4">
+
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-[18px] py-4">
           {showThreads ? threadList : transcript}
         </div>
-        {errorBanner}
-        {pastePanel}
-        {composer}
+
+        <div className="flex-shrink-0 space-y-2 border-t border-hairline-strong bg-white px-4 pb-3.5 pt-3">
+          {errorBanner}
+          {pastePanel}
+          {composer}
+        </div>
       </div>
     );
   }
@@ -418,7 +517,7 @@ export function GrantBotChat({
             figure is the guardrails + methodology span: byte-identical for every client, so it is
             cached once across the firm rather than per client. */}
         {promptMeta && (
-          <div className="rounded-2xl border border-brand-navy/[0.08] bg-white p-4 text-[12.5px] text-muted-foreground shadow-grounded">
+          <div className="rounded-2xl border border-brand-navy/[0.08] bg-white p-4 text-[12.5px] text-muted-foreground shadow-card">
             <p>
               <span className="font-semibold text-brand-navy">
                 {promptMeta.prefixChars.toLocaleString()} characters
@@ -437,7 +536,7 @@ export function GrantBotChat({
           </div>
         )}
 
-        <div className="min-h-[45vh] space-y-3 rounded-2xl border border-brand-navy/[0.08] bg-white p-5 shadow-grounded">
+        <div className="min-h-[45vh] space-y-3 rounded-2xl border border-brand-navy/[0.08] bg-white p-5 shadow-card">
           {transcript}
         </div>
 
