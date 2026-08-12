@@ -290,9 +290,13 @@ export async function refreshClientProfileById(
     // update as the profile so a later refine can never leave a stale context behind.
     const community = await buildCommunityContext(data as Client);
     if (community) profile.community_context = community;
+    // STAMPED IN THE SAME UPDATE AS THE PROFILE (0080), so the date and the thing it describes
+    // can never disagree. This is the ONLY writer that sets it: the community-context patch
+    // below rewrites the same jsonb without re-running the distillation, and stamping there
+    // would claim a freshness the narrative does not have.
     const { error } = await db
       .from("clients")
-      .update({ client_profile: profile })
+      .update({ client_profile: profile, client_profile_generated_at: new Date().toISOString() })
       .eq("id", clientId);
     if (error) {
       console.error("Client-profile write failed for client", clientId, error.message);

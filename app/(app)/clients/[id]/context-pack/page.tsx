@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/auth";
 import { PageHeader } from "@/components/layout/page-header";
 import { gatherContextPack } from "@/lib/grantbot/gather";
 import { renderMarkdown } from "@/lib/grantbot/context-pack";
+import { buildSystemPrompt } from "@/lib/grantbot/prompt";
 import PackClient from "./pack-client";
 
 export const dynamic = "force-dynamic";
@@ -41,13 +42,21 @@ export default async function ContextPackPage({ params }: { params: { id: string
   if (!result) notFound();
 
   const markdown = renderMarkdown(result.pack);
+  // THE SECOND RENDERER, on the same page and over the same items, because that is the claim
+  // worth being able to check: the document a human reads and the prompt GrantBot reads are two
+  // views of one assembly, not two pipelines that could drift.
+  //
+  // Viewable before interactive, on purpose -- the same reason the pack shipped before any chat
+  // machinery. A prompt you can read is a prompt you can correct; a prompt you can only infer
+  // from answers is one you argue about.
+  const systemPrompt = buildSystemPrompt({ pack: result.pack });
   const { stats, gaps } = result.pack;
 
   return (
     <div>
       <PageHeader
         title="Context pack"
-        description={`Everything the platform knows about ${result.clientName}, with a source and a date on every line.`}
+        description={`Everything the platform knows about ${result.clientName}, with a source and a date on every line — as a document, or as the system prompt GrantBot would read.`}
       />
       <div className="space-y-6 p-8">
         <Link
@@ -58,6 +67,11 @@ export default async function ContextPackPage({ params }: { params: { id: string
         </Link>
         <PackClient
           markdown={markdown}
+          systemPrompt={systemPrompt.text}
+          promptMeta={{
+            instructionsVersion: systemPrompt.instructionsVersion,
+            prefixChars: systemPrompt.prefixChars,
+          }}
           clientName={result.clientName}
           generatedAt={generatedAt}
           counts={{

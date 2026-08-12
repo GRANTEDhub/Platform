@@ -46,15 +46,26 @@ const CLIENT_COLUMNS = [
   "federal_grant_history", "federal_history_verified", "usaspending_checked_at",
   "primary_funding_needs", "project_stage", "match_cost_share_capacity",
   "known_constraints", "hard_constraints", "matching_rules", "notes", "next_step",
-  "intake_data", "client_profile", "profile_confirmed_at", "created_at", "updated_at",
+  "intake_data", "client_profile", "client_profile_generated_at", "profile_confirmed_at",
+  "created_at", "updated_at",
 ].join(", ");
 
+// The three grant-side columns at the end are the eligibility HARD GATES. They are here because
+// the methodology block asks GrantBot to separate hard gates from soft criteria, and without them
+// it had the client side of every gate (org type, service area, RUCC, budget, SAM) and none of the
+// grant side -- so it would either say "needs the official source" on every matched grant, which
+// is correct and useless, or reason a gate off description_brief, which is confident and wrong.
+//
+// STILL NOT `select *`. raw_text (the full NOFO, hundreds of KB to megabytes per row) and
+// ideal_applicant_profile stay out; these three are a short text array, a short string, and a
+// short string.
 const CARD_COLUMNS =
   "id, grant_id, fit_score, proposed_role, recommended_prime, why_this_org, concept_synopsis, " +
   "before_you_approve, decision, decided_at, decision_reason, hold_reason, interested_at, " +
   "sent_at, pursuit_path, created_at, " +
   "grants(title, funder, fon, submission_deadline, award_range_min, award_range_max, " +
-  "award_range_is_estimate, description_brief)";
+  "award_range_is_estimate, description_brief, " +
+  "eligible_entity_types, geographic_eligibility, cost_share)";
 
 export interface GatherResult {
   pack: ContextPack;

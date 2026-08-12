@@ -715,6 +715,14 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
       >
         Context pack
       </Link>
+      {/* GrantBot brick 2. Beside the pack because it is the same context put to use: the pack is
+          where you read it, this is where you ask about it. */}
+      <Link
+        href={`/clients/${client.id}/grantbot`}
+        className="inline-flex h-8 items-center rounded-pill border border-white/20 px-[14px] text-[13px] font-medium text-white/[0.85] transition-colors hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome"
+      >
+        GrantBot
+      </Link>
       <GenerateReportButton
         clientId={client.id}
         inProgress={matchInProgress}

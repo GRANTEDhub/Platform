@@ -549,6 +549,7 @@ function prospectAsClient(c: Candidate): Client {
     account_manager_id: null,
     intake_data: null,
     client_profile: null,
+    client_profile_generated_at: null, // synthetic shape; nothing was ever distilled
     initial_match_status: null,
     match_locked_at: null,
     needs_review: false,

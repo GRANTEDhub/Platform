@@ -150,6 +150,13 @@ export interface Client {
   // -- it does NOT feed occupancy/seat selection (that is grant + rubric + raw
   // fields). Null until refined.
   client_profile: ClientProfile | null;
+  // When client_profile was last DISTILLED (0080). Written only by
+  // refreshClientProfileById, in the same update as the profile itself. Null on rows
+  // distilled before the column existed -- deliberately not backfilled, because no
+  // honest value exists for them and this is the one tier of data every consumer is
+  // told to doubt. NOT touched by the community-context-only patch, which rewrites the
+  // jsonb without re-running the model.
+  client_profile_generated_at: string | null;
   // One-time client-centric match progress (migration 0045). Set only for a
   // prospect added via the client form, which ENQUEUES a one-time match against the
   // current grant pool (drained by lib/clients/match-queue.ts): null = never run,

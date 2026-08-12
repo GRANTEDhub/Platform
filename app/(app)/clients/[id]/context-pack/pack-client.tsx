@@ -23,12 +23,16 @@ interface Counts {
 // pasted is the source, so the source is what should be on screen.
 export default function PackClient({
   markdown,
+  systemPrompt,
+  promptMeta,
   clientName,
   generatedAt,
   counts,
   dropped,
 }: {
   markdown: string;
+  systemPrompt: string;
+  promptMeta: { instructionsVersion: string; prefixChars: number };
   clientName: string;
   generatedAt: string;
   counts: Counts;
@@ -36,11 +40,16 @@ export default function PackClient({
 }) {
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
+  // TWO RENDERERS, ONE ASSEMBLY. The document view is what you paste into a Claude project; the
+  // prompt view is byte-for-byte what GrantBot will be given. Same ContextItem[] behind both,
+  // which is the property this toggle makes checkable rather than asserted.
+  const [view, setView] = useState<"pack" | "prompt">("pack");
+  const shown = view === "pack" ? markdown : systemPrompt;
 
   async function copy() {
     setCopyError(false);
     try {
-      await navigator.clipboard.writeText(markdown);
+      await navigator.clipboard.writeText(shown);
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
     } catch {
@@ -54,11 +63,11 @@ export default function PackClient({
   function download() {
     const slug = clientName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
     const stamp = generatedAt.slice(0, 10);
-    const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+    const blob = new Blob([shown], { type: "text/markdown;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `context-pack-${slug || "client"}-${stamp}.md`;
+    a.download = `${view === "pack" ? "context-pack" : "grantbot-prompt"}-${slug || "client"}-${stamp}.md`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -82,6 +91,26 @@ export default function PackClient({
             </p>
           </div>
           <div className="flex items-center gap-2">
+            {/* The switch is two buttons rather than a tab bar: there are exactly two views and
+                the pressed state has to be unmistakable, because copying the wrong one of these
+                into a Claude project is a silent mistake. */}
+            <div className="flex overflow-hidden rounded-pill border border-brand-navy/15">
+              {(["pack", "prompt"] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setView(v)}
+                  aria-pressed={view === v}
+                  className={`px-3.5 py-1.5 text-[12.5px] font-medium transition-colors ${
+                    view === v
+                      ? "bg-brand-navy text-white"
+                      : "bg-white text-brand-navy/70 hover:text-brand-navy"
+                  }`}
+                >
+                  {v === "pack" ? "Document" : "GrantBot prompt"}
+                </button>
+              ))}
+            </div>
             <Button variant="outline" onClick={download}>
               <span className="flex items-center gap-1.5">
                 <Download className="h-3.5 w-3.5" /> Download .md
@@ -90,11 +119,24 @@ export default function PackClient({
             <Button onClick={copy}>
               <span className="flex items-center gap-1.5">
                 {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                {copied ? "Copied" : "Copy markdown"}
+                {copied ? "Copied" : "Copy"}
               </span>
             </Button>
           </div>
         </div>
+
+        {/* WHAT THE PROMPT VIEW IS, said plainly: not a preview or an approximation, the exact
+            string. And the cacheable-prefix size, because that number is what the per-turn cost
+            of every future conversation is built on. */}
+        {view === "prompt" && (
+          <p className="mt-3 rounded-xl bg-brand-navy/[0.03] p-3 text-xs text-brand-navy/70">
+            This is byte-for-byte the system prompt GrantBot receives for this client — shared
+            instructions <span className="font-semibold">{promptMeta.instructionsVersion}</span>,
+            then the same items the document view renders, then the gaps list.{" "}
+            {promptMeta.prefixChars.toLocaleString()} characters of cacheable prefix. Read-only:
+            nothing here lets GrantBot write to the platform.
+          </p>
+        )}
 
         {copyError && (
           <p className="mt-3 text-[13px] font-medium text-destructive">
@@ -120,7 +162,7 @@ export default function PackClient({
       </div>
 
       <pre className="max-h-[70vh] overflow-auto rounded-2xl border border-brand-navy/[0.08] bg-white p-6 text-[12.5px] leading-relaxed text-brand-navy/90 shadow-grounded whitespace-pre-wrap">
-        {markdown}
+        {shown}
       </pre>
     </div>
   );
