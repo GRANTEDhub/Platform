@@ -19,7 +19,8 @@
 //      of IPv4-mapped addresses, 6to4 decoded to its embedded v4, and the non-global v6 ranges.
 //      Anything unparseable or unrecognised is blocked.
 //   3. BUDGETS. HTTPS-only, a per-request timeout that stays armed THROUGH the body read, a
-//      response-size cap, a content-type gate.
+//      response-size cap, a content-type gate (HTML/text decoded honouring the declared charset;
+//      PDF extracted to text via pdf-parse, with parse failure and no-text-layer as typed results).
 //
 // EVERY OUTCOME IS A TYPED RESULT, never a throw. This is the structural half of the discipline:
 // Brick B hands this result verbatim into the transcript, so "could not retrieve" is a fact the
@@ -35,10 +36,12 @@ export const FETCH_TIMEOUT_MS = 10_000;
 export const MAX_RESPONSE_BYTES = 1_500_000; // ~1.5MB of source text, truncated (and declared) past this
 export const MAX_REDIRECTS = 3;
 
-// Content types we will read as text. PDF is DELIBERATELY not here: federal NOFOs are PDF-heavy, but
-// PDF-to-text extraction (pdf-parse, already a dependency) lands with the wiring in Brick B, tested
-// with a binary fixture there, rather than dragging a binary surface into Brick A's pure guard tests.
+// Content types we read as text, decoded honouring the response's declared charset (legacy .gov
+// pages are not all UTF-8). PDF is handled separately (PDF_CONTENT_TYPE) because federal NOFOs are
+// PDF-heavy: it is read as bytes and run through pdf-parse, with a typed failure for a PDF that will
+// not parse or has no text layer.
 export const ALLOWED_CONTENT_TYPES = ["text/html", "application/xhtml+xml", "text/plain"] as const;
+export const PDF_CONTENT_TYPE = "application/pdf";
 
 // Explicit non-.gov hosts, if any are ever needed. Everything Shannon named is on the .gov TLD, so
 // this is empty today; the suffix rule below covers grants.gov / simpler.grants.gov / sam.gov /
@@ -54,7 +57,9 @@ export type FetchFailReason =
   | "blocked_redirect" // a redirect pointed off the allowlist
   | "too_many_redirects"
   | "timeout" // headers or body exceeded the time budget
-  | "unsupported_type" // content-type not in ALLOWED_CONTENT_TYPES
+  | "unsupported_type" // content-type not in ALLOWED_CONTENT_TYPES and not a PDF
+  | "pdf_parse_failed" // a PDF whose bytes pdf-parse could not read (corrupt, encrypted, or truncated past the cap)
+  | "pdf_no_text" // a PDF that parsed but yielded no text layer (a scanned image) -- refuse to guess its content
   | "http_error" // non-2xx/3xx status
   | "fetch_error"; // network/transport failure
 
@@ -233,10 +238,14 @@ async function hostResolvesPublic(host: string, lookup: LookupFn): Promise<boole
 // ── Injectable seams (defaults are the real ones) ──────────────────────────────────────────────────
 export type LookupFn = (host: string) => Promise<{ address: string }[]>;
 export type FetchImpl = (url: string, init: { method: "GET"; redirect: "manual"; signal: AbortSignal }) => Promise<Response>;
+// PDF bytes -> extracted text. Injectable so the branch logic is tested without a binary fixture;
+// the default runs pdf-parse. A throw here becomes a typed pdf_parse_failed, never a guess.
+export type PdfExtract = (bytes: Uint8Array) => Promise<string>;
 
 export interface FetchGrantSourceOptions {
   fetchImpl?: FetchImpl;
   lookup?: LookupFn;
+  pdfExtract?: PdfExtract;
   now?: () => string;
   timeoutMs?: number;
   maxBytes?: number;
@@ -248,6 +257,39 @@ const defaultLookup: LookupFn = async (host) => {
   return res.map((r) => ({ address: r.address }));
 };
 
+const defaultPdfExtract: PdfExtract = async (bytes) => {
+  // Import the LIB entry, not the package index: pdf-parse's index.js runs a debug-mode fixture read
+  // when `module.parent` is falsy (as it is in a bundled serverless build), which throws ENOENT. The
+  // lib entry is the bare async function with no such side effect. No types ship for the subpath.
+  // @ts-expect-error -- pdf-parse ships no declaration for its /lib subpath entry
+  const mod = (await import("pdf-parse/lib/pdf-parse.js")) as {
+    default: (data: Buffer, options?: unknown) => Promise<{ text: string }>;
+  };
+  const parsed = await mod.default(Buffer.from(bytes));
+  return parsed.text ?? "";
+};
+
+// Pull the charset off a Content-Type header (e.g. `text/html; charset=iso-8859-1`), so a legacy
+// non-UTF-8 .gov page is decoded correctly rather than blind-decoded as UTF-8. Null -> UTF-8.
+function parseCharset(rawContentType: string): string | null {
+  const m = /;\s*charset\s*=\s*"?([^";]+)"?/i.exec(rawContentType);
+  return m ? m[1].trim().toLowerCase() : null;
+}
+
+// A TextDecoder for the declared charset, falling back to UTF-8 for an absent, UTF-8, or unknown
+// label (an unrecognised label makes `new TextDecoder` throw). Non-fatal, so undecodable bytes
+// become U+FFFD rather than a throw -- a legacy page still reads.
+function decoderFor(charset: string | null): TextDecoder {
+  if (charset && charset !== "utf-8" && charset !== "utf8") {
+    try {
+      return new TextDecoder(charset);
+    } catch {
+      // unknown label -> UTF-8
+    }
+  }
+  return new TextDecoder();
+}
+
 function isAbort(err: unknown): boolean {
   return (err as { name?: string })?.name === "AbortError";
 }
@@ -256,6 +298,7 @@ function isAbort(err: unknown): boolean {
 export async function fetchGrantSource(rawUrl: string, opts: FetchGrantSourceOptions = {}): Promise<FetchResult> {
   const fetchImpl = opts.fetchImpl ?? (globalThis.fetch as unknown as FetchImpl);
   const lookup = opts.lookup ?? defaultLookup;
+  const pdfExtract = opts.pdfExtract ?? defaultPdfExtract;
   const now = opts.now ?? (() => new Date().toISOString());
   const timeoutMs = opts.timeoutMs ?? FETCH_TIMEOUT_MS;
   const maxBytes = opts.maxBytes ?? MAX_RESPONSE_BYTES;
@@ -309,16 +352,51 @@ export async function fetchGrantSource(rawUrl: string, opts: FetchGrantSourceOpt
       }
 
       // Guard 3b: content-type gate.
-      const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+      const rawContentType = res.headers.get("content-type") ?? "";
+      const contentType = rawContentType.split(";")[0].trim().toLowerCase();
+
+      // PDF branch: read the bytes (same size cap + abort signal), extract text via pdf-parse. A PDF
+      // that will not parse, or that parsed to no text (a scanned image), is a TYPED failure the
+      // model must relay -- never an ok:true with an invented body.
+      if (contentType === PDF_CONTENT_TYPE) {
+        let read: { bytes: Uint8Array; truncated: boolean };
+        try {
+          read = await readCappedBytes(res, maxBytes, controller.signal);
+        } catch (err) {
+          if (controller.signal.aborted || isAbort(err)) return { ok: false, reason: "timeout", detail: url.toString() };
+          return { ok: false, reason: "fetch_error", detail: err instanceof Error ? err.message : String(err) };
+        }
+        let text: string;
+        try {
+          text = await pdfExtract(read.bytes);
+        } catch (err) {
+          // A truncated PDF (over the byte cap) usually lands here too: its trailer/xref was cut.
+          return { ok: false, reason: "pdf_parse_failed", detail: err instanceof Error ? err.message : String(err) };
+        }
+        if (!text.trim()) {
+          return { ok: false, reason: "pdf_no_text", detail: "no extractable text layer (likely a scanned PDF)" };
+        }
+        return {
+          ok: true,
+          requestedUrl: rawUrl,
+          finalUrl: url.toString(),
+          contentType,
+          text,
+          truncated: read.truncated,
+          fetchedAt: now(),
+        };
+      }
+
       if (!ALLOWED_CONTENT_TYPES.includes(contentType as (typeof ALLOWED_CONTENT_TYPES)[number])) {
         await res.body?.cancel().catch(() => {});
         return { ok: false, reason: "unsupported_type", detail: contentType || "(none)" };
       }
 
-      // Guard 3c: size cap, under the same abort signal as the header fetch.
+      // Guard 3c: size cap, under the same abort signal as the header fetch, decoding with the
+      // charset the response declared.
       let body: { text: string; truncated: boolean };
       try {
-        body = await readCapped(res, maxBytes, controller.signal);
+        body = await readCapped(res, maxBytes, controller.signal, parseCharset(rawContentType));
       } catch (err) {
         if (controller.signal.aborted || isAbort(err)) return { ok: false, reason: "timeout", detail: url.toString() };
         return { ok: false, reason: "fetch_error", detail: err instanceof Error ? err.message : String(err) };
@@ -338,7 +416,7 @@ export async function fetchGrantSource(rawUrl: string, opts: FetchGrantSourceOpt
     }
   }
 
-  return { ok: false, reason: "too_many_redirects" };
+  return { ok: false, reason: "too_many_redirects", detail: `exceeded ${maxRedirects} redirects; stopped at ${current}` };
 }
 
 // Reject a pending read once the signal aborts, so a slow-drip body is bounded by the same timer as
@@ -359,26 +437,27 @@ function makeAbort(): Error {
   return e;
 }
 
-// Read up to maxBytes from the response, decoding as UTF-8 in STREAMING mode so a multi-byte
-// sequence split across a chunk boundary -- or across the truncation cut -- is not corrupted into a
-// replacement character (the final flush drops an incomplete trailing sequence). Falls back to
-// text() when the body is not a readable stream.
+// Read up to maxBytes from the response, decoding with the given charset (UTF-8 when null) in
+// STREAMING mode so a multi-byte sequence split across a chunk boundary -- or across the truncation
+// cut -- is not corrupted into a replacement character (the final flush drops an incomplete trailing
+// sequence). Falls back to arrayBuffer() when the body is not a readable stream.
 async function readCapped(
   res: Response,
   maxBytes: number,
   signal: AbortSignal,
+  charset: string | null,
 ): Promise<{ text: string; truncated: boolean }> {
   const reader = res.body?.getReader?.();
-  const decoder = new TextDecoder();
+  const decoder = decoderFor(charset);
 
   if (!reader) {
-    const full = await res.text();
-    const enc = new TextEncoder().encode(full);
-    if (enc.length > maxBytes) {
+    // Decode from the raw BYTES (not res.text(), which is always UTF-8) so the charset is honoured.
+    const buf = new Uint8Array(await res.arrayBuffer());
+    if (buf.length > maxBytes) {
       // stream:true and NO flush: a sequence split by the cut is dropped, not flushed to U+FFFD.
-      return { text: decoder.decode(enc.slice(0, maxBytes), { stream: true }), truncated: true };
+      return { text: decoder.decode(buf.slice(0, maxBytes), { stream: true }), truncated: true };
     }
-    return { text: full, truncated: false };
+    return { text: decoder.decode(buf), truncated: false };
   }
 
   let text = "";
@@ -405,4 +484,50 @@ async function readCapped(
   // cut; NOT flushing drops them, where a flush would emit a U+FFFD replacement char instead.
   if (!truncated) text += decoder.decode();
   return { text, truncated };
+}
+
+// Read up to maxBytes of raw bytes -- for the PDF path, which extracts from the binary rather than
+// decoding to text. Same streaming size cap and abort behaviour as readCapped.
+async function readCappedBytes(
+  res: Response,
+  maxBytes: number,
+  signal: AbortSignal,
+): Promise<{ bytes: Uint8Array; truncated: boolean }> {
+  const reader = res.body?.getReader?.();
+
+  if (!reader) {
+    const buf = new Uint8Array(await res.arrayBuffer());
+    return buf.length > maxBytes ? { bytes: buf.slice(0, maxBytes), truncated: true } : { bytes: buf, truncated: false };
+  }
+
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let truncated = false;
+  try {
+    for (;;) {
+      const { done, value } = await abortRace(reader.read(), signal);
+      if (done) break;
+      if (!value) continue;
+      if (total + value.length > maxBytes) {
+        const remaining = maxBytes - total;
+        if (remaining > 0) {
+          chunks.push(value.slice(0, remaining));
+          total += remaining;
+        }
+        truncated = true;
+        break;
+      }
+      chunks.push(value);
+      total += value.length;
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.length;
+  }
+  return { bytes: out, truncated };
 }

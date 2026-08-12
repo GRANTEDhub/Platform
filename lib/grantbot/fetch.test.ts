@@ -192,7 +192,10 @@ describe("fetchGrantSource — redirects", () => {
     ]);
     const r = await fetchGrantSource("https://grants.gov/start", { fetchImpl: impl, lookup: lookupWith(), maxRedirects: 2 });
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toBe("too_many_redirects");
+    if (!r.ok) {
+      expect(r.reason).toBe("too_many_redirects");
+      expect(r.detail).toMatch(/exceeded 2 redirects/); // detail is populated, not left undefined
+    }
   });
 });
 
@@ -274,13 +277,105 @@ describe("fetchGrantSource — content-type gate", () => {
       expect(r.ok).toBe(true);
     }
   });
-  it("rejects application/pdf and other unsupported types (deferred to Brick B)", async () => {
-    for (const ct of ["application/pdf", "application/octet-stream", "image/png"]) {
+  it("rejects unsupported binary types (PDF now handled separately)", async () => {
+    for (const ct of ["application/octet-stream", "image/png"]) {
       const { impl } = fetchSequence([new Response("bytes", { status: 200, headers: { "content-type": ct } })]);
       const r = await fetchGrantSource("https://grants.gov/x", { fetchImpl: impl, lookup: lookupWith() });
       expect(r.ok).toBe(false);
       if (!r.ok) expect(r.reason).toBe("unsupported_type");
     }
+  });
+});
+
+describe("fetchGrantSource — charset", () => {
+  it("decodes a declared non-UTF-8 charset instead of blind UTF-8", async () => {
+    // "café" in ISO-8859-1 is [c,a,f,0xE9]. Blind UTF-8 turns the lone 0xE9 into U+FFFD.
+    const body = new Uint8Array([0x63, 0x61, 0x66, 0xe9]);
+    const { impl } = fetchSequence([new Response(body, { status: 200, headers: { "content-type": "text/html; charset=iso-8859-1" } })]);
+    const r = await fetchGrantSource("https://arkansas.gov/legacy", { fetchImpl: impl, lookup: lookupWith() });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.text).toBe("café");
+      expect(r.text).not.toContain("�");
+    }
+  });
+  it("falls back to UTF-8 for an unknown charset label", async () => {
+    const { impl } = fetchSequence([new Response("hello", { status: 200, headers: { "content-type": "text/html; charset=made-up-9000" } })]);
+    const r = await fetchGrantSource("https://grants.gov/x", { fetchImpl: impl, lookup: lookupWith() });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.text).toBe("hello");
+  });
+});
+
+describe("fetchGrantSource — PDF", () => {
+  const pdfHeaders = { "content-type": "application/pdf" };
+
+  it("extracts text from a PDF via the extractor and reports application/pdf", async () => {
+    const { impl } = fetchSequence([new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: pdfHeaders })]);
+    const r = await fetchGrantSource("https://grants.gov/nofo.pdf", {
+      fetchImpl: impl,
+      lookup: lookupWith(),
+      pdfExtract: async () => "NOFO — deadline March 1. Eligibility: 501(c)(3).",
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.contentType).toBe("application/pdf");
+      expect(r.text).toContain("deadline March 1");
+      expect(r.truncated).toBe(false);
+    }
+  });
+
+  it("returns a typed pdf_parse_failed when the extractor throws — never a guess", async () => {
+    const { impl } = fetchSequence([new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: pdfHeaders })]);
+    const r = await fetchGrantSource("https://grants.gov/broken.pdf", {
+      fetchImpl: impl,
+      lookup: lookupWith(),
+      pdfExtract: async () => {
+        throw new Error("corrupt xref");
+      },
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe("pdf_parse_failed");
+      expect(r.detail).toContain("corrupt xref");
+    }
+  });
+
+  it("returns pdf_no_text for a PDF with no extractable text layer (scanned image)", async () => {
+    const { impl } = fetchSequence([new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: pdfHeaders })]);
+    const r = await fetchGrantSource("https://grants.gov/scan.pdf", {
+      fetchImpl: impl,
+      lookup: lookupWith(),
+      pdfExtract: async () => "   \n  \t ",
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("pdf_no_text");
+  });
+
+  it("propagates the truncated flag from a PDF over the byte cap", async () => {
+    const { impl } = fetchSequence([new Response(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]), { status: 200, headers: pdfHeaders })]);
+    let receivedBytes = -1;
+    const r = await fetchGrantSource("https://grants.gov/big.pdf", {
+      fetchImpl: impl,
+      lookup: lookupWith(),
+      maxBytes: 4,
+      pdfExtract: async (bytes) => {
+        receivedBytes = bytes.length;
+        return "partial text";
+      },
+    });
+    expect(receivedBytes).toBe(4); // extractor saw only the capped bytes
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.truncated).toBe(true);
+  });
+
+  it("uses the REAL pdf-parse by default and returns pdf_parse_failed on non-PDF bytes", async () => {
+    // No pdfExtract injected -> exercises defaultPdfExtract (the real dynamic import of pdf-parse's
+    // lib entry). Invalid bytes make pdf-parse throw, which must surface as the typed failure.
+    const { impl } = fetchSequence([new Response(new Uint8Array([...Buffer.from("not a pdf at all")]), { status: 200, headers: pdfHeaders })]);
+    const r = await fetchGrantSource("https://grants.gov/notreally.pdf", { fetchImpl: impl, lookup: lookupWith() });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("pdf_parse_failed");
   });
 });
 
