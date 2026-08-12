@@ -186,12 +186,11 @@ export default async function GrantBotPage({
             conversations: conversations.map(toGrantBotThread),
             messages: messages.map(toGrantBotMsg),
           }}
+          // Version stamps only: the chat tags each answer with them. The prefix size and the
+          // gap count are this page's own header chips, above.
           promptMeta={{
-            prefixChars: prompt.prefixChars,
-            sharedChars: prompt.sharedChars,
             instructionsVersion: prompt.instructionsVersion,
             methodologyVersion: prompt.methodologyVersion,
-            gaps,
           }}
         />
       </div>

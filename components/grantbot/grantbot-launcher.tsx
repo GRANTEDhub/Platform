@@ -154,7 +154,7 @@ export function GrantBotLauncher({
           aria-hidden={!open}
           // No border: the shadow alone lifts it off the page. A 1px navy rule under a cast
           // that deep reads as a seam around the panel rather than an edge to it.
-          className={`fixed bottom-7 right-7 z-40 flex h-[min(588px,calc(100vh-3.5rem))] w-[min(404px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl bg-white shadow-floating transition-all duration-[280ms] ease-entrance ${
+          className={`fixed bottom-7 right-7 z-40 flex h-[min(588px,calc(100vh-3.5rem))] w-[min(404px,calc(100vw-3.5rem))] flex-col overflow-hidden rounded-2xl bg-white shadow-floating transition-all duration-[280ms] ease-entrance ${
             open && shown
               ? "visible translate-y-0 scale-100 opacity-100"
               : "invisible translate-y-4 scale-[0.98] opacity-0"
