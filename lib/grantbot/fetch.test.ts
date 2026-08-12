@@ -93,8 +93,14 @@ describe("isBlockedAddress", () => {
       expect(isBlockedAddress(ip)).toBe(true);
     }
   });
+  it("blocks reserved/unallocated v6 outside 2000::/3 (whitelist tail, fail-closed)", () => {
+    for (const ip of ["9999::1", "8000::1", "4000::1", "c000::1", "1::1", "::5:6:7"]) {
+      expect(isBlockedAddress(ip)).toBe(true);
+    }
+  });
   it("allows routable public addresses", () => {
-    for (const ip of ["8.8.8.8", "1.1.1.1", "172.15.0.1", "172.32.0.1", "198.20.0.1", "199.0.0.1", "2606:2800:220:1::1", "2001:4860:4860::8888"]) {
+    // Public v6 is global unicast (2000::/3); these must survive the whitelist tail.
+    for (const ip of ["8.8.8.8", "1.1.1.1", "172.15.0.1", "172.32.0.1", "198.20.0.1", "199.0.0.1", "2606:2800:220:1::1", "2001:4860:4860::8888", "2a00:1450:4001::1", "3000::1"]) {
       expect(isBlockedAddress(ip)).toBe(false);
     }
   });

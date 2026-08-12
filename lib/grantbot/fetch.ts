@@ -195,7 +195,16 @@ function isBlockedV6(ip: string): boolean {
   if (h[0] === 0x3fff && (h[1] & 0xf000) === 0) return true; // 3fff::/20 documentation
   if (h[0] === 0x5f00) return true; // 5f00::/16 SRv6
   if (h[0] === 0x0064 && h[1] === 0xff9b && h[2] === 0x0001) return true; // 64:ff9b:1::/48 NAT64 local-use
-  return false;
+
+  // WHITELIST TAIL. Unlike v4 (where the non-special space is exhaustively global unicast, so a
+  // denylist is complete), most of the v6 space is reserved/unallocated -- an enumerate-bad list can
+  // never be complete, which is why this guard took three rounds of "you missed range X". So after
+  // the explicit carve-outs and embedded-v4 decodes above, an address is public ONLY if it falls in
+  // 2000::/3, the one range actually assigned as global unicast (RFC 3587). Everything else
+  // (9999::, 8000::, 1::, ...) is reserved and blocked -- fail closed BY CONSTRUCTION, which is what
+  // the module's contract claims. The documentation/protocol carve-outs that live INSIDE 2000::/3
+  // (2001:db8::/32, 2001::/23, 3fff::/20) are already returned above, so they stay blocked.
+  return (h[0] & 0xe000) !== 0x2000;
 }
 
 function hostOf(rawUrl: string): { url: URL } | { error: FetchFailReason } {
