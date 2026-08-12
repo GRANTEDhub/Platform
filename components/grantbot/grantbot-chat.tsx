@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BRAND } from "@/lib/brand";
+import { BLANK_CONVERSATION } from "@/lib/grantbot/wire";
 import type { GrantBotMsg, GrantBotThread } from "@/lib/grantbot/wire";
 
 // ── THE COMPOSER SURVIVES THE EXPAND NAVIGATION ──
@@ -162,6 +163,18 @@ export function GrantBotChat({
   // it belongs to and drops its UI updates if the transcript moved on.
   const epochRef = useRef(0);
 
+  // The composer's attachment as it is RIGHT NOW, readable from an async handler.
+  //
+  // Clearing the paste fields after a send is only correct if they still hold what that send
+  // consumed. A turn takes seconds, and nothing stops the reader preparing the next question's
+  // attachment while it runs -- so an unconditional clear on the response deletes work that was
+  // never sent. send()'s own closure cannot tell: it captured the old values, which is exactly
+  // what the comparison needs to be made against.
+  const pasteRef = useRef({ pasted: "", pasteLabel: "" });
+  useEffect(() => {
+    pasteRef.current = { pasted, pasteLabel };
+  }, [pasted, pasteLabel]);
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, sending]);
@@ -170,16 +183,22 @@ export function GrantBotChat({
     onConversationChange?.(convId);
   }, [convId, onConversationChange]);
 
-  // FULL PAGE ONLY: keep ?c naming the conversation actually on screen. Arriving at ?c=new and
-  // then sending creates a conversation the URL does not know about, which makes a reload, a
-  // shared link, or the Collapse control land somewhere else. replaceState rather than
-  // router.replace for the usual reason -- the param is read on the server only on first
-  // render, and a re-render here would rebuild the page around a live conversation.
+  // FULL PAGE ONLY: keep ?c naming the conversation actually on screen, INCLUDING when that is
+  // a blank one. Arriving at ?c=new and then sending creates a conversation the URL does not
+  // know about; clicking New conversation goes the other way and leaves the URL naming a thread
+  // that is no longer on screen. Either way a reload, a shared link, or the Collapse control
+  // (which reads this param at click time) lands somewhere the reader is not -- so the blank
+  // case writes the sentinel rather than skipping the sync.
+  //
+  // replaceState rather than router.replace for the usual reason -- the param is read on the
+  // server only on first render, and a re-render here would rebuild the page around a live
+  // conversation.
   useEffect(() => {
-    if (isCorner || !convId || typeof window === "undefined") return;
+    if (isCorner || typeof window === "undefined") return;
+    const want = convId ?? BLANK_CONVERSATION;
     const url = new URL(window.location.href);
-    if (url.searchParams.get("c") === convId) return;
-    url.searchParams.set("c", convId);
+    if (url.searchParams.get("c") === want) return;
+    url.searchParams.set("c", want);
     window.history.replaceState(window.history.state, "", url.toString());
   }, [isCorner, convId]);
 
@@ -293,6 +312,20 @@ export function GrantBotChat({
     const epoch = epochRef.current;
     const stillMine = () => epochRef.current === epoch;
 
+    // The attachment THIS turn consumes, and a check for whether the composer still holds it.
+    // A turn takes seconds; if the reader has since prepared the next question's paste, clearing
+    // the fields would delete something that was never sent.
+    const sentPasted = pasted;
+    const sentPasteLabel = pasteLabel;
+    const attachmentUntouched = () =>
+      pasteRef.current.pasted === sentPasted && pasteRef.current.pasteLabel === sentPasteLabel;
+    const clearAttachment = () => {
+      if (!attachmentUntouched()) return;
+      setPasted("");
+      setPasteLabel("");
+      setShowPaste(false);
+    };
+
     // Optimistic: the question appears immediately, marked pending by the spinner below rather
     // than by a fake assistant bubble. A placeholder answer that later turns into an error reads
     // as though GrantBot said something and then took it back.
@@ -325,13 +358,10 @@ export function GrantBotChat({
       // the only thing left to do is refresh the rail (which is thread-scoped, not
       // message-scoped) and let the correct thread render it when reopened.
       if (!stillMine()) {
-        // The turn still went out, so the composer's attachment has been consumed -- leaving it
-        // sitting there would re-frame and re-send the same pasted thread with the next message.
-        if (res.ok && !data.error) {
-          setPasted("");
-          setPasteLabel("");
-          setShowPaste(false);
-        }
+        // The turn still went out, so the attachment it consumed should not sit in the composer
+        // waiting to be re-framed and re-sent with the next message -- unless the reader has
+        // already replaced it, which clearAttachment checks.
+        if (res.ok && !data.error) clearAttachment();
         void refreshThreads();
         return;
       }
@@ -351,9 +381,9 @@ export function GrantBotChat({
             methodologyVersion: promptMeta?.methodologyVersion ?? null,
           },
         ]);
-        setPasted("");
-        setPasteLabel("");
-        setShowPaste(false);
+        // Same guard on the ordinary path: staying in the thread does not stop someone lining up
+        // the next question's attachment while this answer is still coming back.
+        clearAttachment();
       }
       void refreshThreads();
     } catch {
