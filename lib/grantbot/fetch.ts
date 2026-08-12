@@ -15,8 +15,9 @@
 //      the widening honestly small.
 //   2. IP-RANGE block, FAIL CLOSED. Even an allowlisted host is rejected if it resolves to any
 //      address that is not a routable public unicast address -- the full IANA special-use registry
-//      for v4, and the v6 equivalents parsed structurally (not by string prefix), including both
-//      textual forms of IPv4-mapped addresses. Anything unparseable or unrecognised is blocked.
+//      for v4, and the v6 equivalents parsed structurally (not by string prefix): both textual forms
+//      of IPv4-mapped addresses, 6to4 decoded to its embedded v4, and the non-global v6 ranges.
+//      Anything unparseable or unrecognised is blocked.
 //   3. BUDGETS. HTTPS-only, a per-request timeout that stays armed THROUGH the body read, a
 //      response-size cap, a content-type gate.
 //
@@ -172,9 +173,22 @@ function isBlockedV6(ip: string): boolean {
     if ((h[6] === 0 && h[7] === 0) || (h[6] === 0 && h[7] === 1)) return true; // :: and ::1
     return isBlockedV4Hextets(h[6], h[7]);
   }
-  if ((h[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local (fe80–febf)
+  // 6to4 (2002::/16): its middle two hextets ARE an embedded v4 (2002:WWXX:YYZZ::), the direct
+  // analog of ::ffff: -- so 2002:a9fe:a9fe:: is 169.254.169.254. Decode and judge it.
+  if (h[0] === 0x2002) return isBlockedV4Hextets(h[1], h[2]);
+
+  // Structural non-global ranges. Fail closed: a grant source is normal public unicast, never any of
+  // these, so over-blocking only costs an illegitimate fetch. Kept at v4/v6 parity (see isBlockedV4).
+  if ((h[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
+  if ((h[0] & 0xffc0) === 0xfec0) return true; // fec0::/10 site-local (deprecated)
   if ((h[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 unique-local
   if ((h[0] & 0xff00) === 0xff00) return true; // ff00::/8 multicast
+  if (h[0] === 0x0100 && h[1] === 0 && h[2] === 0 && h[3] === 0) return true; // 100::/64 discard-only
+  if (h[0] === 0x2001 && (h[1] & 0xfe00) === 0) return true; // 2001::/23 IETF protocol (incl. Teredo, benchmarking)
+  if (h[0] === 0x2001 && h[1] === 0x0db8) return true; // 2001:db8::/32 documentation
+  if (h[0] === 0x3fff && (h[1] & 0xf000) === 0) return true; // 3fff::/20 documentation
+  if (h[0] === 0x5f00) return true; // 5f00::/16 SRv6
+  if (h[0] === 0x0064 && h[1] === 0xff9b && h[2] === 0x0001) return true; // 64:ff9b:1::/48 NAT64 local-use
   return false;
 }
 

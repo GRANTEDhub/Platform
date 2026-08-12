@@ -76,6 +76,17 @@ describe("isBlockedAddress", () => {
       expect(isBlockedAddress(ip)).toBe(true);
     }
   });
+  it("decodes 6to4 to its embedded v4 and blocks metadata/private targets", () => {
+    // 2002:WWXX:YYZZ:: embeds a v4 in the middle two hextets.
+    for (const ip of ["2002:a9fe:a9fe::", "2002:0a00:0001::", "2002:7f00:0001::1"]) {
+      expect(isBlockedAddress(ip)).toBe(true);
+    }
+  });
+  it("blocks the other non-global IPv6 ranges (v4/v6 parity)", () => {
+    for (const ip of ["100::1", "2001::1", "2001:2::1", "2001:db8::1", "3fff::1", "5f00::1", "64:ff9b:1::1", "fec0::1"]) {
+      expect(isBlockedAddress(ip)).toBe(true);
+    }
+  });
   it("allows routable public addresses", () => {
     for (const ip of ["8.8.8.8", "1.1.1.1", "172.15.0.1", "172.32.0.1", "198.20.0.1", "199.0.0.1", "2606:2800:220:1::1", "2001:4860:4860::8888"]) {
       expect(isBlockedAddress(ip)).toBe(false);
