@@ -109,16 +109,16 @@ describe("runFetchLoop", () => {
   function recorder(script: ModelTurn[]) {
     // Snapshot messagesLen at call time: runFetchLoop mutates one `working` array in place, so
     // holding the reference would show every call the final length.
-    const calls: { useTools: boolean; remainingMs: number; messagesLen: number }[] = [];
+    const calls: { tools: "off" | "auto" | "none"; remainingMs: number; messagesLen: number }[] = [];
     let i = 0;
-    const callModel: CallModel = async ({ messages, useTools, remainingMs }) => {
-      calls.push({ useTools, remainingMs, messagesLen: messages.length });
+    const callModel: CallModel = async ({ messages, tools, remainingMs }) => {
+      calls.push({ tools, remainingMs, messagesLen: messages.length });
       return script[Math.min(i++, script.length - 1)];
     };
     return { callModel, calls };
   }
 
-  it("FLAG OFF: exactly one model call, tools never offered, no fetches (== today)", async () => {
+  it("FLAG OFF: exactly one model call, tools 'off', no fetches (== today)", async () => {
     const { callModel, calls } = recorder([turn({ text: "hi" })]);
     const r = await runFetchLoop({
       messages: [{ role: "user", content: "q" }],
@@ -130,7 +130,7 @@ describe("runFetchLoop", () => {
       now: () => 0,
     });
     expect(calls).toHaveLength(1);
-    expect(calls[0].useTools).toBe(false);
+    expect(calls[0].tools).toBe("off");
     expect(r.text).toBe("hi");
     expect(r.fetches).toEqual([]);
     expect(r.usage).toEqual(USAGE);
@@ -154,7 +154,7 @@ describe("runFetchLoop", () => {
       now: () => 0,
     });
     expect(executed).toEqual(["https://grants.gov/x"]);
-    expect(calls.map((c) => c.useTools)).toEqual([true, true]);
+    expect(calls.map((c) => c.tools)).toEqual(["auto", "auto"]);
     expect(r.text).toBe("answer");
     expect(r.fetches).toHaveLength(1);
     // The second call carries the appended assistant tool_use turn + user tool_result turn.
@@ -163,7 +163,7 @@ describe("runFetchLoop", () => {
     expect(r.usage?.input_tokens).toBe(20);
   });
 
-  it("stops offering tools after MAX_TOOL_ROUNDS, forcing a final text call", async () => {
+  it("at the round cap the forced-final call is 'none' (tools present, not dropped) — regression for the 400", async () => {
     const { callModel, calls } = recorder([
       turn({ toolUses: [{ id: "t", url: "https://grants.gov/a" }], stopReason: "tool_use" }),
     ]); // always asks for a tool
@@ -175,12 +175,14 @@ describe("runFetchLoop", () => {
       now: () => 0,
       maxToolRounds: 2,
     });
-    // round0 tool, round1 tool, round2 forced (no tools) -> finalize
-    expect(calls.map((c) => c.useTools)).toEqual([true, true, false]);
+    // round0 tool, round1 tool, round2 forced FINAL -> "none", NOT "off": tools stay present so the
+    // tool_use history does not 400.
+    expect(calls.map((c) => c.tools)).toEqual(["auto", "auto", "none"]);
+    expect(calls.every((c) => c.tools !== "off")).toBe(true);
     expect(r.fetches).toHaveLength(2);
   });
 
-  it("stops offering tools once the wall-clock deadline is spent", async () => {
+  it("once the wall-clock deadline is spent the next call is the forced-final 'none'", async () => {
     let t = 0;
     const { callModel, calls } = recorder([turn({ toolUses: [{ id: "t", url: "https://grants.gov/a" }], stopReason: "tool_use" })]);
     const r = await runFetchLoop({
@@ -196,7 +198,7 @@ describe("runFetchLoop", () => {
       deadlineMs: 500,
       maxToolRounds: 5,
     });
-    expect(calls.map((c) => c.useTools)).toEqual([true, false]);
+    expect(calls.map((c) => c.tools)).toEqual(["auto", "none"]);
     expect(r.fetches).toHaveLength(1);
   });
 

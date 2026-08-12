@@ -152,7 +152,17 @@ export interface ModelTurn {
   rawContent: unknown;
 }
 
-export type CallModel = (opts: { messages: unknown[]; useTools: boolean; remainingMs: number }) => Promise<ModelTurn>;
+// How the call treats tools:
+//   off  -> no `tools` parameter at all. The flag-off path is always this, which is what makes it
+//           byte-identical to the pre-brick-B single-shot call.
+//   auto -> tools offered; the model may call one. A normal tool round.
+//   none -> tools still PRESENT (so a tool_use/tool_result history stays valid and the API does not
+//           400), but tool_choice forbids another call. This is the forced FINAL answer, at the
+//           round cap or once the wall-clock deadline is spent. Dropping `tools` here instead would
+//           400: Anthropic rejects a request whose messages contain tool_use blocks without `tools`.
+export type ToolMode = "off" | "auto" | "none";
+
+export type CallModel = (opts: { messages: unknown[]; tools: ToolMode; remainingMs: number }) => Promise<ModelTurn>;
 
 export interface FetchLoopResult {
   text: string;
@@ -193,18 +203,22 @@ export async function runFetchLoop(opts: {
   let text = "";
 
   for (let round = 0; ; round++) {
-    const elapsed = opts.now() - start;
-    const remainingMs = deadlineMs - elapsed;
-    // Tools are offered only while enabled, under the round cap, and with time left. On the OFF
-    // path useTools is always false, so callModel is called exactly once with no tools -- today.
-    const useTools = opts.webFetchEnabled && round < maxToolRounds && remainingMs > 0;
+    const remainingMs = deadlineMs - (opts.now() - start);
+    // OFF whenever the flag is off -> callModel is invoked exactly once with no tools (today).
+    // AUTO under the round cap with time left. Otherwise NONE: the forced final answer, tools still
+    // present so the tool_use history stays valid.
+    const toolMode: ToolMode = !opts.webFetchEnabled
+      ? "off"
+      : round < maxToolRounds && remainingMs > 0
+        ? "auto"
+        : "none";
 
-    const res = await opts.callModel({ messages: working, useTools, remainingMs });
+    const res = await opts.callModel({ messages: working, tools: toolMode, remainingMs });
     usage = addUsage(usage, res.usage);
     stopReason = res.stopReason;
     text = res.text;
 
-    if (useTools && res.stopReason === "tool_use" && res.toolUses.length > 0) {
+    if (toolMode === "auto" && res.stopReason === "tool_use" && res.toolUses.length > 0) {
       // Continue the exchange: the assistant's tool_use turn, then a user turn of tool_results.
       working.push({ role: "assistant", content: res.rawContent });
       const toolResults: unknown[] = [];

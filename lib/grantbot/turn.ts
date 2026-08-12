@@ -155,11 +155,13 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
   try {
     const anthropic = getAnthropicClient();
 
-    // One model call per loop iteration. When useTools is false -- ALWAYS, on the flag-off path --
-    // no `tools` key is added, so the request is byte-identical to the pre-brick-B call, and the
-    // timeout is the full CALL_TIMEOUT_MS on the first call (remainingMs starts at the whole
-    // deadline), shrinking only as the turn's wall-clock budget is spent.
-    const callModel: CallModel = async ({ messages: msgs, useTools, remainingMs }) => {
+    // One model call per loop iteration. On the flag-off path `tools` is "off" -- neither the
+    // `tools` nor the `tool_choice` key is added, so the request is byte-identical to the
+    // pre-brick-B call. "auto" and "none" both keep `tools` PRESENT (a tool_use history without
+    // `tools` is a 400); only "none" adds tool_choice to forbid a further call and force the final
+    // text answer. Timeout is the full CALL_TIMEOUT_MS on the first call (remainingMs starts at the
+    // whole deadline), shrinking only as the turn's wall-clock budget is spent.
+    const callModel: CallModel = async ({ messages: msgs, tools, remainingMs }) => {
       const timeout = Math.min(CALL_TIMEOUT_MS, Math.max(remainingMs, 5_000));
       const res = await anthropic.messages.create(
         {
@@ -167,7 +169,8 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
           max_tokens: MAX_OUTPUT_TOKENS,
           system,
           messages: msgs as Anthropic.MessageParam[],
-          ...(useTools ? { tools: [WEB_FETCH_TOOL] as unknown as Anthropic.Tool[] } : {}),
+          ...(tools === "off" ? {} : { tools: [WEB_FETCH_TOOL] as unknown as Anthropic.Tool[] }),
+          ...(tools === "none" ? { tool_choice: { type: "none" as const } } : {}),
         },
         { timeout, maxRetries: 1 },
       );
