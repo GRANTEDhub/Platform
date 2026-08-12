@@ -66,6 +66,9 @@ const config: Config = {
           orangeFill: BRAND.orangeFill,
           orangeFillHover: BRAND.orangeFillHover,
           amberOnDark: BRAND.amberOnDark,
+          // Green reversed out of navy chrome (GrantBot's live badge). NOT `success` --
+          // see the note in lib/brand.ts: that value fails contrast on a dark ground.
+          successOnDark: BRAND.successOnDark,
           reject: BRAND.reject,
           cream: BRAND.cream,
           creamWarm: BRAND.creamWarm,
@@ -152,6 +155,29 @@ const config: Config = {
       transitionTimingFunction: {
         // One curve for entrances and layout. Nothing bounces.
         entrance: MOTION.entrance,
+      },
+      // AMBIENT loops, all three from GrantBot's full-page chrome and all three used
+      // behind `motion-safe:` so a reduced-motion preference gets a static panel. Nothing
+      // here signals state -- the pulse and the drift are decoration, and the typing dots
+      // duplicate a text label that says the same thing.
+      keyframes: {
+        "pulse-ring": {
+          "0%, 100%": { opacity: "0.55", transform: "scale(1)" },
+          "50%": { opacity: "0", transform: "scale(1.55)" },
+        },
+        "typing-dot": {
+          "0%, 80%, 100%": { opacity: "0.25", transform: "translateY(0)" },
+          "40%": { opacity: "1", transform: "translateY(-2px)" },
+        },
+        "bloom-drift": {
+          "0%, 100%": { transform: "translate(0, 0)" },
+          "50%": { transform: "translate(-18px, 14px)" },
+        },
+      },
+      animation: {
+        "pulse-ring": "pulse-ring 2.4s ease-out infinite",
+        "typing-dot": "typing-dot 1.1s ease-in-out infinite",
+        "bloom-drift": "bloom-drift 14s ease-in-out infinite",
       },
       fontFamily: {
         // Body / default. Tailwind's preflight sets `html { font-family: sans }`,
