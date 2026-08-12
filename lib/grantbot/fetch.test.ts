@@ -349,7 +349,29 @@ describe("fetchGrantSource — PDF", () => {
       pdfExtract: async () => "   \n  \t ",
     });
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toBe("pdf_no_text");
+    if (!r.ok) {
+      expect(r.reason).toBe("pdf_no_text");
+      // An UN-truncated empty parse is honestly a likely scanned image.
+      expect(r.detail).toContain("scanned");
+    }
+  });
+
+  it("does not blame a scanned image when empty text is really the byte cap truncating", async () => {
+    // A large, text-bearing NOFO cut at MAX_RESPONSE_BYTES can leave pdf-parse with a recovered-but-
+    // textless structure. The detail must report the truncation, not guess a scanned source.
+    const { impl } = fetchSequence([new Response(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]), { status: 200, headers: pdfHeaders })]);
+    const r = await fetchGrantSource("https://grants.gov/huge.pdf", {
+      fetchImpl: impl,
+      lookup: lookupWith(),
+      maxBytes: 4,
+      pdfExtract: async () => "   \n  \t ",
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe("pdf_no_text");
+      expect(r.detail).toContain("truncated");
+      expect(r.detail).not.toContain("scanned");
+    }
   });
 
   it("propagates the truncated flag from a PDF over the byte cap", async () => {

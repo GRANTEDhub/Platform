@@ -18,7 +18,9 @@
 //      for v4, and the v6 equivalents parsed structurally (not by string prefix): both textual forms
 //      of IPv4-mapped addresses, 6to4 decoded to its embedded v4, and the non-global v6 ranges.
 //      Anything unparseable or unrecognised is blocked.
-//   3. BUDGETS. HTTPS-only, a per-request timeout that stays armed THROUGH the body read, a
+//   3. BUDGETS. HTTPS-only, a per-request timeout that stays armed THROUGH the body read (with one
+//      exception: the PDF parse step runs after the read and pdf-parse does not honour the signal, so
+//      it is bounded only by the route's 300s maxDuration -- see the note at the pdfExtract call), a
 //      response-size cap, a content-type gate (HTML/text decoded honouring the declared charset;
 //      PDF extracted to text via pdf-parse, with parse failure and no-text-layer as typed results).
 //
@@ -368,13 +370,23 @@ export async function fetchGrantSource(rawUrl: string, opts: FetchGrantSourceOpt
         }
         let text: string;
         try {
+          // The abort timer stays armed, but pdf-parse/pdfjs never inspects controller.signal, so this
+          // parse step is the one place FETCH_TIMEOUT_MS is not enforced: a pathologically slow parse of
+          // an under-cap PDF is bounded only by the route's maxDuration (300s). True cancellation would
+          // need a worker thread that can be killed outright; a Promise.race cannot preempt pdfjs's
+          // mostly-synchronous CPU work.
           text = await pdfExtract(read.bytes);
         } catch (err) {
           // A truncated PDF (over the byte cap) usually lands here too: its trailer/xref was cut.
           return { ok: false, reason: "pdf_parse_failed", detail: err instanceof Error ? err.message : String(err) };
         }
         if (!text.trim()) {
-          return { ok: false, reason: "pdf_no_text", detail: "no extractable text layer (likely a scanned PDF)" };
+          // Don't assert "scanned image" when our own byte cap may be the real cause: a large,
+          // text-bearing NOFO cut at MAX_RESPONSE_BYTES can leave pdf-parse with a recovered-but-
+          // textless structure. Report the truncation honestly rather than guess a scanned source.
+          return read.truncated
+            ? { ok: false, reason: "pdf_no_text", detail: "PDF truncated at the size cap before a text layer could be confirmed" }
+            : { ok: false, reason: "pdf_no_text", detail: "no extractable text layer (likely a scanned PDF)" };
         }
         return {
           ok: true,
