@@ -65,9 +65,7 @@
       "mcp__github__subscribe_pr_activity",
       "mcp__github__unsubscribe_pr_activity",
       "mcp__Supabase__query_logs",
-      "Bash(npm run typecheck)",
-      "Bash(npx tsc --noEmit)",
-      "Bash(npx next build)"
+      "Bash(npx tsc --noEmit)"
     ],
     "deny": [
       "mcp__github__merge_pull_request",
