@@ -10,9 +10,9 @@ import {
 // Brick A guard tests. No network, no model: every guard is exercised through injected seams
 // (fetchImpl, lookup) so the safety-critical half is proven before Brick B can wire it into runTurn.
 
-// A lookup that always resolves to a public address, unless a host->ip map says otherwise.
+// A lookup that always resolves to a genuinely public address, unless a host->ip map says otherwise.
 function lookupWith(map: Record<string, string> = {}): LookupFn {
-  return async (host: string) => [{ address: map[host] ?? "203.0.113.10" }]; // TEST-NET-3 public literal
+  return async (host: string) => [{ address: map[host] ?? "8.8.8.8" }];
 }
 
 // Build a fetchImpl from a scripted sequence of responses (one per hop).
@@ -50,18 +50,34 @@ describe("isAllowlistedHost", () => {
 });
 
 describe("isBlockedAddress", () => {
-  it("blocks loopback, private, link-local, CGNAT, and cloud metadata", () => {
+  it("blocks loopback, private, link-local, CGNAT, and cloud metadata (v4)", () => {
     for (const ip of ["127.0.0.1", "10.0.0.5", "172.16.0.1", "172.31.255.255", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "224.0.0.1"]) {
       expect(isBlockedAddress(ip)).toBe(true);
     }
   });
-  it("blocks IPv6 loopback, ULA, link-local, and IPv4-mapped private", () => {
-    for (const ip of ["::1", "::", "fc00::1", "fd12:3456::1", "fe80::1", "::ffff:10.0.0.1", "::ffff:169.254.169.254"]) {
+  it("blocks the IANA special-use v4 ranges (the SSRF gap Codex flagged)", () => {
+    for (const ip of ["198.18.0.1", "198.19.255.255", "192.0.0.1", "192.0.2.5", "192.88.99.1", "198.51.100.7", "203.0.113.10", "240.0.0.1", "255.255.255.255"]) {
+      expect(isBlockedAddress(ip)).toBe(true);
+    }
+  });
+  it("blocks IPv6 loopback, ULA, link-local, multicast, and IPv4-mapped private", () => {
+    for (const ip of ["::1", "::", "fc00::1", "fd12:3456::1", "fe80::1", "ff02::1", "::ffff:10.0.0.1", "::ffff:169.254.169.254"]) {
+      expect(isBlockedAddress(ip)).toBe(true);
+    }
+  });
+  it("blocks HEX-form IPv4-mapped v6 (the same address the dotted form catches)", () => {
+    // ::ffff:a9fe:a9fe == ::ffff:169.254.169.254 (metadata); ::ffff:a00:1 == ::ffff:10.0.0.1
+    for (const ip of ["::ffff:a9fe:a9fe", "::ffff:a00:1", "::ffff:7f00:1"]) {
+      expect(isBlockedAddress(ip)).toBe(true);
+    }
+  });
+  it("blocks the whole fe80::/10 link-local range, not just fe80::", () => {
+    for (const ip of ["fe80::1", "fe81::1", "fe8f::1", "fe90::1", "fea0::1", "febf::1"]) {
       expect(isBlockedAddress(ip)).toBe(true);
     }
   });
   it("allows routable public addresses", () => {
-    for (const ip of ["203.0.113.10", "8.8.8.8", "172.15.0.1", "172.32.0.1", "2606:2800:220:1::1"]) {
+    for (const ip of ["8.8.8.8", "1.1.1.1", "172.15.0.1", "172.32.0.1", "198.20.0.1", "199.0.0.1", "2606:2800:220:1::1", "2001:4860:4860::8888"]) {
       expect(isBlockedAddress(ip)).toBe(false);
     }
   });
@@ -124,6 +140,27 @@ describe("fetchGrantSource — redirects", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe("blocked_host");
   });
+  it("turns a malformed redirect Location into a typed failure, not a throw", async () => {
+    const { impl } = fetchSequence([htmlResponse("", 302, { location: "http://[not a url" })]);
+    const r = await fetchGrantSource("https://grants.gov/start", { fetchImpl: impl, lookup: lookupWith() });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("bad_url");
+  });
+  it("cancels the intermediate redirect body", async () => {
+    let cancelled = false;
+    const redirect = new Response(
+      new ReadableStream({
+        cancel() {
+          cancelled = true;
+        },
+      }),
+      { status: 302, headers: { location: "https://simpler.grants.gov/final", "content-type": "text/html" } },
+    );
+    const { impl } = fetchSequence([redirect, htmlResponse("<html>final</html>")]);
+    const r = await fetchGrantSource("https://grants.gov/start", { fetchImpl: impl, lookup: lookupWith() });
+    expect(r.ok).toBe(true);
+    expect(cancelled).toBe(true);
+  });
   it("stops after too many redirects", async () => {
     const { impl } = fetchSequence([
       htmlResponse("", 302, { location: "https://grants.gov/a" }),
@@ -150,7 +187,7 @@ describe("fetchGrantSource — private-range block on the first hop", () => {
 });
 
 describe("fetchGrantSource — timeout", () => {
-  it("maps an aborted request to timeout", async () => {
+  it("maps an aborted request (headers never arrive) to timeout", async () => {
     const impl: FetchImpl = (_url, init) =>
       new Promise((_resolve, reject) => {
         init.signal.addEventListener("abort", () => {
@@ -160,6 +197,16 @@ describe("fetchGrantSource — timeout", () => {
         });
       });
     const r = await fetchGrantSource("https://grants.gov/slow", { fetchImpl: impl, lookup: lookupWith(), timeoutMs: 5 });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("timeout");
+  });
+  it("times out a body that returns headers fast then drips forever", async () => {
+    // Headers arrive immediately; the body stream never yields. The timer must still fire during the
+    // body read (the slow-body gap the reviewers flagged) and produce a typed timeout.
+    const stallingBody = new ReadableStream<Uint8Array>({ pull() { return new Promise<void>(() => {}); } });
+    const impl: FetchImpl = async () =>
+      new Response(stallingBody, { status: 200, headers: { "content-type": "text/html" } });
+    const r = await fetchGrantSource("https://grants.gov/dripping", { fetchImpl: impl, lookup: lookupWith(), timeoutMs: 20 });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe("timeout");
   });
@@ -181,6 +228,18 @@ describe("fetchGrantSource — size cap", () => {
     const r = await fetchGrantSource("https://grants.gov/small", { fetchImpl: impl, lookup: lookupWith(), maxBytes: 100 });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.truncated).toBe(false);
+  });
+  it("truncates on a UTF-8 boundary without a replacement char", async () => {
+    // "héllo" is bytes [h, é(2 bytes), l, l, o]. Cutting at 2 bytes lands mid-é; a non-streaming
+    // decode would emit U+FFFD, streaming mode drops the partial sequence.
+    const { impl } = fetchSequence([htmlResponse("héllo")]);
+    const r = await fetchGrantSource("https://grants.gov/utf8", { fetchImpl: impl, lookup: lookupWith(), maxBytes: 2 });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.truncated).toBe(true);
+      expect(r.text).toBe("h"); // no "�"
+      expect(r.text).not.toContain("�");
+    }
   });
 });
 

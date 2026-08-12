@@ -2,7 +2,7 @@
 //
 // PURE AND SELF-CONTAINED, ON PURPOSE. This module is NOT wired into runTurn here -- that is Brick
 // B, the invariant change, behind GRANTBOT_WEB_FETCH_ENABLED. Brick A lands the safety-critical
-// half on its own so every guard can be unit-tested before the model can ever reach it. It performs
+// half on its own so every guard is unit-tested before the model can ever reach it. It performs
 // no model call and holds no Supabase/filesystem/internal reach -- by construction it can only do an
 // outbound HTTPS GET against the allowlist and return text, which is what keeps "GrantBot can fetch
 // a grant source" from becoming "GrantBot has tools."
@@ -13,9 +13,12 @@
 //      .gov host cannot be an internal address), closes the exfiltration channel (an injected model
 //      can only GET allowlisted public URLs -- it cannot POST the context pack anywhere), and keeps
 //      the widening honestly small.
-//   2. IP-RANGE block. Even an allowlisted host is rejected if it resolves to a private, loopback,
-//      link-local or otherwise non-public address -- the SSRF backstop under the allowlist.
-//   3. BUDGETS. HTTPS-only, per-request timeout, response-size cap, content-type gate.
+//   2. IP-RANGE block, FAIL CLOSED. Even an allowlisted host is rejected if it resolves to any
+//      address that is not a routable public unicast address -- the full IANA special-use registry
+//      for v4, and the v6 equivalents parsed structurally (not by string prefix), including both
+//      textual forms of IPv4-mapped addresses. Anything unparseable or unrecognised is blocked.
+//   3. BUDGETS. HTTPS-only, a per-request timeout that stays armed THROUGH the body read, a
+//      response-size cap, a content-type gate.
 //
 // EVERY OUTCOME IS A TYPED RESULT, never a throw. This is the structural half of the discipline:
 // Brick B hands this result verbatim into the transcript, so "could not retrieve" is a fact the
@@ -44,13 +47,12 @@ const EXPLICIT_ALLOWED_HOSTS = new Set<string>([]);
 
 export type FetchFailReason =
   | "bad_scheme" // not https
-  | "bad_url" // unparseable
+  | "bad_url" // unparseable request URL, or a redirect to an unparseable Location
   | "not_allowlisted" // host is not a grant source
   | "blocked_host" // resolves to a private/non-public address
   | "blocked_redirect" // a redirect pointed off the allowlist
   | "too_many_redirects"
-  | "timeout"
-  | "too_large" // exceeded the size cap with no usable prefix
+  | "timeout" // headers or body exceeded the time budget
   | "unsupported_type" // content-type not in ALLOWED_CONTENT_TYPES
   | "http_error" // non-2xx/3xx status
   | "fetch_error"; // network/transport failure
@@ -80,41 +82,99 @@ export function isAllowlistedHost(host: string): boolean {
 
 // ── Pure guard: blocked address ─────────────────────────────────────────────────────────────────
 //
-// True when an IP literal is NOT a routable public address: loopback, private, link-local, CGNAT,
-// unspecified, and the IPv6 equivalents (including IPv4-mapped ::ffff:a.b.c.d, checked on the
-// embedded v4). Anything not recognised as public is blocked -- fail closed.
+// True when an IP literal is NOT a routable public unicast address. FAIL CLOSED: anything that is
+// not positively recognised as public -- including a string that is not an IP literal at all -- is
+// blocked.
 export function isBlockedAddress(ip: string): boolean {
   const v = isIP(ip);
   if (v === 4) return isBlockedV4(ip);
   if (v === 6) return isBlockedV6(ip);
-  return true; // not an IP literal at all -> block
+  return true;
 }
 
+// The IANA IPv4 Special-Purpose Address Registry (the non-global entries) plus multicast/reserved.
+// Enumerated rather than "positively determine global", because the block set is finite and stable
+// and a missed public range only costs a legitimate fetch, while a missed special range is an SSRF
+// hole -- so the conservative direction is to over-block.
 function isBlockedV4(ip: string): boolean {
   const parts = ip.split(".").map((n) => Number(n));
   if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
-  const [a, b] = parts;
-  if (a === 0) return true; // 0.0.0.0/8 "this network" / unspecified
-  if (a === 10) return true; // private
-  if (a === 127) return true; // loopback
-  if (a === 169 && b === 254) return true; // link-local (incl. 169.254.169.254 cloud metadata)
-  if (a === 172 && b >= 16 && b <= 31) return true; // private
-  if (a === 192 && b === 168) return true; // private
-  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64/10
-  if (a >= 224) return true; // multicast / reserved / broadcast
+  const [a, b, c] = parts;
+  if (a === 0) return true; // 0.0.0.0/8 "this network"
+  if (a === 10) return true; // 10/8 private
+  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64/10 CGNAT
+  if (a === 127) return true; // 127/8 loopback
+  if (a === 169 && b === 254) return true; // 169.254/16 link-local (incl. 169.254.169.254 metadata)
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12 private
+  if (a === 192 && b === 0 && c === 0) return true; // 192.0.0/24 IETF protocol assignments
+  if (a === 192 && b === 0 && c === 2) return true; // 192.0.2/24 TEST-NET-1
+  if (a === 192 && b === 88 && c === 99) return true; // 192.88.99/24 6to4 relay anycast (deprecated)
+  if (a === 192 && b === 168) return true; // 192.168/16 private
+  if (a === 198 && (b === 18 || b === 19)) return true; // 198.18/15 benchmarking
+  if (a === 198 && b === 51 && c === 100) return true; // 198.51.100/24 TEST-NET-2
+  if (a === 203 && b === 0 && c === 113) return true; // 203.0.113/24 TEST-NET-3
+  if (a >= 224) return true; // 224/4 multicast, 240/4 reserved, 255.255.255.255 broadcast
   return false;
 }
 
+// Parse an IPv6 literal into its eight 16-bit hextets, handling "::" compression, an optional zone
+// id, and an embedded dotted-decimal IPv4 tail (::ffff:a.b.c.d). Returns null if it cannot be parsed
+// -- and the caller treats null as blocked, so a parse failure fails closed.
+function parseV6(input: string): number[] | null {
+  let s = input.toLowerCase();
+  const zone = s.indexOf("%");
+  if (zone >= 0) s = s.slice(0, zone);
+
+  // Fold an embedded dotted-decimal IPv4 tail into two hex groups, so ::ffff:169.254.169.254 and
+  // ::ffff:a9fe:a9fe -- the SAME address in the two legal textual forms -- normalise identically.
+  const v4 = s.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (v4) {
+    const oct = v4[1].split(".").map((n) => Number(n));
+    if (oct.length !== 4 || oct.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+    const hi = ((oct[0] << 8) | oct[1]).toString(16);
+    const lo = ((oct[2] << 8) | oct[3]).toString(16);
+    s = s.slice(0, s.length - v4[1].length) + `${hi}:${lo}`;
+  }
+
+  const halves = s.split("::");
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const tail = halves.length === 2 ? (halves[1] ? halves[1].split(":") : []) : null;
+
+  let groups: string[];
+  if (tail === null) {
+    groups = head;
+  } else {
+    const missing = 8 - head.length - tail.length;
+    if (missing < 0) return null;
+    groups = [...head, ...Array(missing).fill("0"), ...tail];
+  }
+  if (groups.length !== 8) return null;
+
+  const nums = groups.map((g) => (g === "" ? NaN : parseInt(g, 16)));
+  if (nums.some((n) => Number.isNaN(n) || n < 0 || n > 0xffff)) return null;
+  return nums;
+}
+
+function isBlockedV4Hextets(hi: number, lo: number): boolean {
+  return isBlockedV4(`${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`);
+}
+
 function isBlockedV6(ip: string): boolean {
-  const lower = ip.toLowerCase();
-  // IPv4-mapped/embedded (::ffff:a.b.c.d or ::a.b.c.d) -> judge on the embedded v4.
-  const embedded = lower.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-  if (embedded) return isBlockedV4(embedded[1]);
-  if (lower === "::" || lower === "::1") return true; // unspecified / loopback
-  if (lower.startsWith("fe80") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb"))
-    return true; // link-local fe80::/10
-  if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // unique-local fc00::/7
-  if (lower.startsWith("ff")) return true; // multicast
+  const h = parseV6(ip);
+  if (!h) return true; // unparseable -> block (fail closed)
+
+  const zeroPrefix6 = h[0] === 0 && h[1] === 0 && h[2] === 0 && h[3] === 0 && h[4] === 0;
+  // IPv4-mapped ::ffff:x:y -> judge the embedded v4.
+  if (zeroPrefix6 && h[5] === 0xffff) return isBlockedV4Hextets(h[6], h[7]);
+  // ::, ::1, and IPv4-compatible ::x:y (deprecated) -> all non-global; judge embedded v4 for the rest.
+  if (zeroPrefix6 && h[5] === 0) {
+    if ((h[6] === 0 && h[7] === 0) || (h[6] === 0 && h[7] === 1)) return true; // :: and ::1
+    return isBlockedV4Hextets(h[6], h[7]);
+  }
+  if ((h[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local (fe80–febf)
+  if ((h[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 unique-local
+  if ((h[0] & 0xff00) === 0xff00) return true; // ff00::/8 multicast
   return false;
 }
 
@@ -159,6 +219,10 @@ const defaultLookup: LookupFn = async (host) => {
   return res.map((r) => ({ address: r.address }));
 };
 
+function isAbort(err: unknown): boolean {
+  return (err as { name?: string })?.name === "AbortError";
+}
+
 // ── The orchestration ──────────────────────────────────────────────────────────────────────────────
 export async function fetchGrantSource(rawUrl: string, opts: FetchGrantSourceOptions = {}): Promise<FetchResult> {
   const fetchImpl = opts.fetchImpl ?? (globalThis.fetch as unknown as FetchImpl);
@@ -183,92 +247,133 @@ export async function fetchGrantSource(rawUrl: string, opts: FetchGrantSourceOpt
       return { ok: false, reason: "blocked_host", detail: url.hostname };
     }
 
+    // Guard 3a: the timer stays armed THROUGH the body read (cleared in finally), so a server that
+    // returns headers fast then drips the body cannot outlast the budget.
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    let res: Response;
     try {
-      res = await fetchImpl(url.toString(), { method: "GET", redirect: "manual", signal: controller.signal });
-    } catch (err) {
-      clearTimeout(timer);
-      if (controller.signal.aborted || (err as { name?: string })?.name === "AbortError") {
-        return { ok: false, reason: "timeout", detail: url.toString() };
+      let res: Response;
+      try {
+        res = await fetchImpl(url.toString(), { method: "GET", redirect: "manual", signal: controller.signal });
+      } catch (err) {
+        if (controller.signal.aborted || isAbort(err)) return { ok: false, reason: "timeout", detail: url.toString() };
+        return { ok: false, reason: "fetch_error", detail: err instanceof Error ? err.message : String(err) };
       }
-      return { ok: false, reason: "fetch_error", detail: err instanceof Error ? err.message : String(err) };
+
+      // Redirect: re-loop with the new target so guards 1 + 2 run against it. Drain the intermediate
+      // body so its socket is released rather than left for GC.
+      if (res.status >= 300 && res.status < 400) {
+        await res.body?.cancel().catch(() => {});
+        const loc = res.headers.get("location");
+        if (!loc) return { ok: false, reason: "http_error", detail: `redirect ${res.status} with no Location` };
+        try {
+          current = new URL(loc, url).toString();
+        } catch {
+          return { ok: false, reason: "bad_url", detail: `invalid redirect location: ${loc}` };
+        }
+        continue;
+      }
+
+      if (res.status < 200 || res.status >= 300) {
+        await res.body?.cancel().catch(() => {});
+        return { ok: false, reason: "http_error", detail: `status ${res.status}` };
+      }
+
+      // Guard 3b: content-type gate.
+      const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+      if (!ALLOWED_CONTENT_TYPES.includes(contentType as (typeof ALLOWED_CONTENT_TYPES)[number])) {
+        await res.body?.cancel().catch(() => {});
+        return { ok: false, reason: "unsupported_type", detail: contentType || "(none)" };
+      }
+
+      // Guard 3c: size cap, under the same abort signal as the header fetch.
+      let body: { text: string; truncated: boolean };
+      try {
+        body = await readCapped(res, maxBytes, controller.signal);
+      } catch (err) {
+        if (controller.signal.aborted || isAbort(err)) return { ok: false, reason: "timeout", detail: url.toString() };
+        return { ok: false, reason: "fetch_error", detail: err instanceof Error ? err.message : String(err) };
+      }
+
+      return {
+        ok: true,
+        requestedUrl: rawUrl,
+        finalUrl: url.toString(),
+        contentType,
+        text: body.text,
+        truncated: body.truncated,
+        fetchedAt: now(),
+      };
+    } finally {
+      clearTimeout(timer);
     }
-    clearTimeout(timer);
-
-    // Redirect: re-loop with the new target so guard 1 + 2 run against it. Location resolved against
-    // the current URL so a relative redirect keeps its host.
-    if (res.status >= 300 && res.status < 400) {
-      const loc = res.headers.get("location");
-      if (!loc) return { ok: false, reason: "http_error", detail: `redirect ${res.status} with no Location` };
-      current = new URL(loc, url).toString();
-      continue;
-    }
-
-    if (res.status < 200 || res.status >= 300) {
-      return { ok: false, reason: "http_error", detail: `status ${res.status}` };
-    }
-
-    // Guard 3: content-type gate.
-    const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-    if (!ALLOWED_CONTENT_TYPES.includes(contentType as (typeof ALLOWED_CONTENT_TYPES)[number])) {
-      return { ok: false, reason: "unsupported_type", detail: contentType || "(none)" };
-    }
-
-    // Guard 3: size cap. Stream and stop at the cap, declaring truncation, so a hostile Content-Length
-    // cannot force an unbounded read and an oversized-but-useful page still yields its prefix.
-    const body = await readCapped(res, maxBytes);
-    if (body === null) return { ok: false, reason: "fetch_error", detail: "no body" };
-
-    return {
-      ok: true,
-      requestedUrl: rawUrl,
-      finalUrl: url.toString(),
-      contentType,
-      text: body.text,
-      truncated: body.truncated,
-      fetchedAt: now(),
-    };
   }
 
   return { ok: false, reason: "too_many_redirects" };
 }
 
-// Read up to maxBytes from the response, decoding as UTF-8, flagging truncation. Falls back to text()
-// when the body is not a readable stream (some Response implementations).
-async function readCapped(res: Response, maxBytes: number): Promise<{ text: string; truncated: boolean } | null> {
+// Reject a pending read once the signal aborts, so a slow-drip body is bounded by the same timer as
+// the header fetch even if the underlying stream does not itself honour the signal.
+function abortRace<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (!signal) return p;
+  return new Promise<T>((resolve, reject) => {
+    if (signal.aborted) return reject(makeAbort());
+    const onAbort = () => reject(makeAbort());
+    signal.addEventListener("abort", onAbort, { once: true });
+    p.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
+function makeAbort(): Error {
+  const e = new Error("aborted");
+  e.name = "AbortError";
+  return e;
+}
+
+// Read up to maxBytes from the response, decoding as UTF-8 in STREAMING mode so a multi-byte
+// sequence split across a chunk boundary -- or across the truncation cut -- is not corrupted into a
+// replacement character (the final flush drops an incomplete trailing sequence). Falls back to
+// text() when the body is not a readable stream.
+async function readCapped(
+  res: Response,
+  maxBytes: number,
+  signal: AbortSignal,
+): Promise<{ text: string; truncated: boolean }> {
   const reader = res.body?.getReader?.();
+  const decoder = new TextDecoder();
+
   if (!reader) {
     const full = await res.text();
     const enc = new TextEncoder().encode(full);
     if (enc.length > maxBytes) {
-      return { text: new TextDecoder().decode(enc.slice(0, maxBytes)), truncated: true };
+      // stream:true and NO flush: a sequence split by the cut is dropped, not flushed to U+FFFD.
+      return { text: decoder.decode(enc.slice(0, maxBytes), { stream: true }), truncated: true };
     }
     return { text: full, truncated: false };
   }
-  const chunks: Uint8Array[] = [];
+
+  let text = "";
   let total = 0;
   let truncated = false;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (!value) continue;
-    total += value.length;
-    if (total > maxBytes) {
-      const remaining = maxBytes - (total - value.length);
-      if (remaining > 0) chunks.push(value.slice(0, remaining));
-      truncated = true;
-      await reader.cancel().catch(() => {});
-      break;
+  try {
+    for (;;) {
+      const { done, value } = await abortRace(reader.read(), signal);
+      if (done) break;
+      if (!value) continue;
+      total += value.length;
+      if (total > maxBytes) {
+        const remaining = maxBytes - (total - value.length);
+        if (remaining > 0) text += decoder.decode(value.slice(0, remaining), { stream: true });
+        truncated = true;
+        break;
+      }
+      text += decoder.decode(value, { stream: true });
     }
-    chunks.push(value);
+  } finally {
+    await reader.cancel().catch(() => {});
   }
-  const merged = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
-  let offset = 0;
-  for (const c of chunks) {
-    merged.set(c, offset);
-    offset += c.length;
-  }
-  return { text: new TextDecoder().decode(merged), truncated };
+  // Flush only on a clean end. On truncation the decoder holds the bytes of a sequence split by the
+  // cut; NOT flushing drops them, where a flush would emit a U+FFFD replacement char instead.
+  if (!truncated) text += decoder.decode();
+  return { text, truncated };
 }
