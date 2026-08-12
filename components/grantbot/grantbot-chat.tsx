@@ -12,29 +12,61 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BRAND } from "@/lib/brand";
+import { BLANK_CONVERSATION } from "@/lib/grantbot/wire";
+import type { GrantBotMsg, GrantBotThread } from "@/lib/grantbot/wire";
 
-interface Usage {
-  input_tokens: number | null;
-  output_tokens: number | null;
-  cache_read_input_tokens: number | null;
-  cache_creation_input_tokens: number | null;
+// ── THE COMPOSER SURVIVES THE EXPAND NAVIGATION ──
+//
+// Expanding is a real route change: the corner panel unmounts and the full page mounts a
+// fresh chat, so an unsent draft (or a pasted email thread, which is the expensive one to
+// retype) went in the bin -- at exactly the moment someone reaches for more room to keep
+// writing. sessionStorage rather than a query param: pasted call notes have no business in
+// a URL that gets logged, bookmarked and shared. Per client, because the draft is about
+// that client.
+const draftKey = (clientId: string) => `grantbot:draft:${clientId}`;
+
+interface StashedDraft {
+  draft: string;
+  pasted: string;
+  pasteLabel: string;
 }
 
-export interface GrantBotMsg {
-  id: string;
-  role: "user" | "assistant";
-  text: string;
-  error: string | null;
-  usage: Usage | null;
-  instructionsVersion: string | null;
-  methodologyVersion: string | null;
+function stashDraft(clientId: string, d: StashedDraft) {
+  if (typeof window === "undefined") return;
+  try {
+    if (!d.draft && !d.pasted && !d.pasteLabel) {
+      window.sessionStorage.removeItem(draftKey(clientId));
+      return;
+    }
+    window.sessionStorage.setItem(draftKey(clientId), JSON.stringify(d));
+  } catch {
+    // Private mode / quota. Losing a draft is the status quo, not a reason to break the panel.
+  }
 }
 
-export interface GrantBotThread {
-  id: string;
-  title: string | null;
-  lastMessageAt: string;
+// Read-and-clear: a restored draft belongs to the surface that picks it up, and leaving it
+// behind would resurrect it on the next mount after it had been sent.
+function takeDraft(clientId: string): StashedDraft | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(draftKey(clientId));
+    if (!raw) return null;
+    window.sessionStorage.removeItem(draftKey(clientId));
+    const parsed = JSON.parse(raw) as Partial<StashedDraft>;
+    return {
+      draft: typeof parsed.draft === "string" ? parsed.draft : "",
+      pasted: typeof parsed.pasted === "string" ? parsed.pasted : "",
+      pasteLabel: typeof parsed.pasteLabel === "string" ? parsed.pasteLabel : "",
+    };
+  } catch {
+    return null;
+  }
 }
+
+// The wire shapes and the blank-conversation token live in lib/grantbot/wire.ts, with the
+// one mapper that produces them for both surfaces. Re-exported here because the two pages
+// and the launcher already import this module.
+export type { GrantBotMsg, GrantBotThread } from "@/lib/grantbot/wire";
 
 export interface GrantBotPromptMeta {
   prefixChars: number;
@@ -85,6 +117,7 @@ export function GrantBotChat({
   initial,
   promptMeta,
   initialConversationId,
+  initialBlank = false,
   onConversationChange,
 }: {
   clientId: string;
@@ -95,6 +128,10 @@ export function GrantBotChat({
   // Corner only: open ON a thread (returning from the full page collapses back to the one you
   // were in). Ignored when `initial` is supplied.
   initialConversationId?: string | null;
+  // Corner only: open on a BLANK conversation. Distinct from `initialConversationId: null`,
+  // which means "no preference, give me the most recent thread" -- collapsing back from an
+  // unsent conversation has to be able to ask for neither.
+  initialBlank?: boolean;
   // Lets the launcher keep the expand target pointed at the live conversation without owning
   // conversation state itself.
   onConversationChange?: (id: string | null) => void;
@@ -113,6 +150,31 @@ export function GrantBotChat({
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
+  // WHICH TRANSCRIPT IS ON SCREEN, as a number that changes whenever it is replaced.
+  //
+  // `send()` closes over convId and then awaits a multi-second model call. Its success handler
+  // appends with a functional updater, which applies to whatever `messages` is current when it
+  // runs -- not the transcript the question was asked in. Switching threads or starting a new
+  // conversation mid-flight therefore filed the answer under the thread you switched TO,
+  // producing an assistant bubble with no question above it. (Nothing was lost: the turn route
+  // persists the reply against the conversation it was sent for, so reopening that thread shows
+  // it correctly.) Switching stays available during a turn -- disabling the thread list for the
+  // length of an LLM call would be the worse trade -- so instead every send captures the epoch
+  // it belongs to and drops its UI updates if the transcript moved on.
+  const epochRef = useRef(0);
+
+  // The composer's attachment as it is RIGHT NOW, readable from an async handler.
+  //
+  // Clearing the paste fields after a send is only correct if they still hold what that send
+  // consumed. A turn takes seconds, and nothing stops the reader preparing the next question's
+  // attachment while it runs -- so an unconditional clear on the response deletes work that was
+  // never sent. send()'s own closure cannot tell: it captured the old values, which is exactly
+  // what the comparison needs to be made against.
+  const pasteRef = useRef({ pasted: "", pasteLabel: "" });
+  useEffect(() => {
+    pasteRef.current = { pasted, pasteLabel };
+  }, [pasted, pasteLabel]);
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, sending]);
@@ -121,25 +183,78 @@ export function GrantBotChat({
     onConversationChange?.(convId);
   }, [convId, onConversationChange]);
 
+  // FULL PAGE ONLY: keep ?c naming the conversation actually on screen, INCLUDING when that is
+  // a blank one. Arriving at ?c=new and then sending creates a conversation the URL does not
+  // know about; clicking New conversation goes the other way and leaves the URL naming a thread
+  // that is no longer on screen. Either way a reload, a shared link, or the Collapse control
+  // (which reads this param at click time) lands somewhere the reader is not -- so the blank
+  // case writes the sentinel rather than skipping the sync.
+  //
+  // replaceState rather than router.replace for the usual reason -- the param is read on the
+  // server only on first render, and a re-render here would rebuild the page around a live
+  // conversation.
+  useEffect(() => {
+    if (isCorner || typeof window === "undefined") return;
+    const want = convId ?? BLANK_CONVERSATION;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("c") === want) return;
+    url.searchParams.set("c", want);
+    window.history.replaceState(window.history.state, "", url.toString());
+  }, [isCorner, convId]);
+
+  // Restore a draft stashed by the surface we just came from (expand / collapse). Mount only,
+  // and read-and-clear, so it lands exactly once.
+  useEffect(() => {
+    const stashed = takeDraft(clientId);
+    if (!stashed) return;
+    setDraft(stashed.draft);
+    setPasted(stashed.pasted);
+    setPasteLabel(stashed.pasteLabel);
+    if (stashed.pasted || stashed.pasteLabel) setShowPaste(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Mirror the composer into sessionStorage so a route change cannot swallow it. Cheap enough
+  // to do on every keystroke, and it self-clears when the fields go empty.
+  useEffect(() => {
+    stashDraft(clientId, { draft, pasted, pasteLabel });
+  }, [clientId, draft, pasted, pasteLabel]);
+
+  // ONE fetch of the context route, both callers. They differ only in what they do with the
+  // result, so the query-param spelling and the error shape live here rather than in two
+  // places that have to be edited in lockstep.
+  const fetchContext = useCallback(
+    async (opts: { conversationId?: string | null; threadsOnly?: boolean }) => {
+      const qs = new URLSearchParams({ clientId });
+      if (opts.conversationId) qs.set("conversationId", opts.conversationId);
+      if (opts.threadsOnly) qs.set("threadsOnly", "1");
+      const res = await fetch(`/api/grantbot/context?${qs.toString()}`);
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        return { ok: false as const, error: data.error ?? `Request failed (${res.status}).` };
+      }
+      return { ok: true as const, data };
+    },
+    [clientId],
+  );
+
   // Load (or switch to) a thread. Also the mount path for the corner panel, which is handed no
   // transcript: `null` means "the most recent thread for this client", which is what the full
   // page picks too, so the two surfaces open on the same conversation.
   const loadThread = useCallback(
     async (conversationId: string | null) => {
+      epochRef.current += 1;
       setLoading(true);
       setError(null);
       try {
-        const qs = new URLSearchParams({ clientId });
-        if (conversationId) qs.set("conversationId", conversationId);
-        const res = await fetch(`/api/grantbot/context?${qs.toString()}`);
-        const data = await res.json();
-        if (!res.ok || data.error) {
-          setError(data.error ?? `Could not load the conversation (${res.status}).`);
+        const result = await fetchContext({ conversationId });
+        if (!result.ok) {
+          setError(result.error);
           return;
         }
-        setConversations(data.conversations ?? []);
-        setConvId(data.conversationId ?? null);
-        setMessages(data.messages ?? []);
+        setConversations(result.data.conversations ?? []);
+        setConvId(result.data.conversationId ?? null);
+        setMessages(result.data.messages ?? []);
         setShowThreads(false);
       } catch {
         setError("Could not reach the server.");
@@ -147,39 +262,69 @@ export function GrantBotChat({
         setLoading(false);
       }
     },
-    [clientId],
+    [fetchContext],
   );
+
+  // The thread list alone, for a panel opening on a deliberately blank conversation: the rail
+  // still needs its entries, but there is no transcript to fetch.
+  const loadThreadsOnly = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await fetchContext({ threadsOnly: true });
+      if (result.ok) setConversations(result.data.conversations ?? []);
+    } catch {
+      // The composer works with an empty rail; a failed list is not worth a banner here.
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchContext]);
 
   // The corner panel's first open. `initial` present (the full page) means the server already did
   // this work, so nothing is fetched.
   useEffect(() => {
     if (initial) return;
-    void loadThread(initialConversationId ?? null);
+    if (initialBlank) void loadThreadsOnly();
+    else void loadThread(initialConversationId ?? null);
     // Mount only: re-running on a changed initialConversationId would yank the thread out from
     // under someone who has since switched threads inside the panel.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Thread ordering after a send, without re-rendering the page this is mounted on. Messages are
-  // left alone deliberately: the optimistic transcript is already correct, and replacing it from
-  // the server mid-flight is how a just-sent message flickers.
+  // Thread ordering after a send, without re-rendering the page this is mounted on. `threadsOnly`
+  // because that is all this reads -- without it the route also loaded and serialised a full
+  // transcript that went straight in the bin, on the send path of all places.
   const refreshThreads = useCallback(async () => {
     try {
-      const qs = new URLSearchParams({ clientId });
-      if (convId) qs.set("conversationId", convId);
-      const res = await fetch(`/api/grantbot/context?${qs.toString()}`);
-      const data = await res.json();
-      if (res.ok && !data.error) setConversations(data.conversations ?? []);
+      const result = await fetchContext({ threadsOnly: true });
+      if (result.ok) setConversations(result.data.conversations ?? []);
     } catch {
       // A stale thread list is not worth an error banner over a message that sent fine.
     }
-  }, [clientId, convId]);
+  }, [fetchContext]);
 
   async function send() {
     const text = draft.trim();
     if (!text || sending) return;
     setSending(true);
     setError(null);
+    // The transcript this question belongs to. Every UI write below checks it first -- see the
+    // epochRef note above.
+    const epoch = epochRef.current;
+    const stillMine = () => epochRef.current === epoch;
+
+    // The attachment THIS turn consumes, and a check for whether the composer still holds it.
+    // A turn takes seconds; if the reader has since prepared the next question's paste, clearing
+    // the fields would delete something that was never sent.
+    const sentPasted = pasted;
+    const sentPasteLabel = pasteLabel;
+    const attachmentUntouched = () =>
+      pasteRef.current.pasted === sentPasted && pasteRef.current.pasteLabel === sentPasteLabel;
+    const clearAttachment = () => {
+      if (!attachmentUntouched()) return;
+      setPasted("");
+      setPasteLabel("");
+      setShowPaste(false);
+    };
 
     // Optimistic: the question appears immediately, marked pending by the spinner below rather
     // than by a fake assistant bubble. A placeholder answer that later turns into an error reads
@@ -208,6 +353,18 @@ export function GrantBotChat({
         }),
       });
       const data = await res.json();
+      // THE ANSWER IS ALREADY SAFE ON THE SERVER whether or not it can be shown. If the reader
+      // has moved to another thread, every write below would land in the wrong transcript, so
+      // the only thing left to do is refresh the rail (which is thread-scoped, not
+      // message-scoped) and let the correct thread render it when reopened.
+      if (!stillMine()) {
+        // The turn still went out, so the attachment it consumed should not sit in the composer
+        // waiting to be re-framed and re-sent with the next message -- unless the reader has
+        // already replaced it, which clearAttachment checks.
+        if (res.ok && !data.error) clearAttachment();
+        void refreshThreads();
+        return;
+      }
       if (data.conversationId && data.conversationId !== convId) setConvId(data.conversationId);
       if (!res.ok || data.error) {
         setError(data.error ?? `Request failed (${res.status}).`);
@@ -224,19 +381,22 @@ export function GrantBotChat({
             methodologyVersion: promptMeta?.methodologyVersion ?? null,
           },
         ]);
-        setPasted("");
-        setPasteLabel("");
-        setShowPaste(false);
+        // Same guard on the ordinary path: staying in the thread does not stop someone lining up
+        // the next question's attachment while this answer is still coming back.
+        clearAttachment();
       }
       void refreshThreads();
     } catch {
-      setError("Could not reach the server.");
+      if (stillMine()) setError("Could not reach the server.");
     } finally {
       setSending(false);
     }
   }
 
   function newConversation() {
+    // Same epoch bump as a thread switch: an in-flight answer must not land in the blank
+    // transcript this creates.
+    epochRef.current += 1;
     setConvId(null);
     setMessages([]);
     setError(null);

@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { Loader2, Maximize2, Sparkles, X } from "lucide-react";
 import { BRAND } from "@/lib/brand";
+import { BLANK_CONVERSATION } from "@/lib/grantbot/wire";
 
 // The chat arrives on first open, not with the client record. "Opening is free" would be a
 // half-truth if the transcript were free and its code were not: this mounts on a page staff open
@@ -52,11 +53,15 @@ export function GrantBotLauncher({
   // the conversation that was being read.
   startOpen = false,
   startConversationId = null,
+  startBlank = false,
 }: {
   clientId: string;
   clientName: string;
   startOpen?: boolean;
   startConversationId?: string | null;
+  // Collapsed back from a conversation that had been started but never sent: open blank rather
+  // than falling through to the most recent thread.
+  startBlank?: boolean;
 }) {
   const router = useRouter();
   const [everOpened, setEverOpened] = useState(startOpen);
@@ -78,7 +83,7 @@ export function GrantBotLauncher({
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") close();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -95,8 +100,30 @@ export function GrantBotLauncher({
   // Expand = the page that already exists, carrying the conversation. Not a second full-screen
   // rendering of the panel: one full-page GrantBot, with a URL worth sharing, and no chance of
   // the two drifting.
+  //
+  // A null convId means a started-but-unsent conversation, which has no id to carry -- and
+  // omitting ?c entirely tells the page "no preference", which lands on the most recent thread
+  // instead of the blank one being expanded. So say blank explicitly.
   function expand() {
-    router.push(`/clients/${clientId}/grantbot${convId ? `?c=${convId}` : ""}`);
+    router.push(`/clients/${clientId}/grantbot?c=${convId ?? BLANK_CONVERSATION}`);
+  }
+
+  // Closing has to clear ?grantbot= as well as the open flag. The param is written by the full
+  // page's Collapse link and read server-side into `startOpen`, so a close that left it in place
+  // meant the next refresh (or a shared copy of that URL) reopened the panel the reader had just
+  // dismissed.
+  //
+  // history.replaceState, not router.replace: the param is only ever read on the initial server
+  // render, and router.replace would refetch and re-render the whole client dashboard underneath
+  // the panel -- the exact cost this component was built to avoid. Guarded on the param actually
+  // being present, so the common bubble-opened case touches nothing.
+  function close() {
+    setOpen(false);
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("grantbot")) return;
+    url.searchParams.delete("grantbot");
+    window.history.replaceState(window.history.state, "", url.toString());
   }
 
   return (
@@ -169,7 +196,7 @@ export function GrantBotLauncher({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setOpen(false)}
+                  onClick={close}
                   title="Close"
                   aria-label="Close GrantBot"
                   className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-lg text-white/55 transition-colors hover:bg-white/10 hover:text-white"
@@ -187,6 +214,7 @@ export function GrantBotLauncher({
             clientName={clientName}
             variant="corner"
             initialConversationId={startConversationId}
+            initialBlank={startBlank}
             onConversationChange={onConversationChange}
           />
         </div>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getProfile } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import { getConversation, listConversations, loadMessages } from "@/lib/grantbot/store";
+import { toGrantBotMsg, toGrantBotThread } from "@/lib/grantbot/wire";
 
 // The read half of GrantBot. STAFF ONLY, like the turn route it sits beside.
 //
@@ -28,10 +29,20 @@ export async function GET(req: NextRequest) {
 
   const clientId = req.nextUrl.searchParams.get("clientId") ?? "";
   const requested = req.nextUrl.searchParams.get("conversationId") ?? "";
+  // THREADS ONLY: the list, no transcript. The panel refetches this after every send purely
+  // to re-sort the thread rail, and without the flag that path paid for a full loadMessages
+  // whose result it discarded -- on the send path, which is the one this route advertises as
+  // cheap. Omitting conversationId is NOT the same thing and does not help: the route falls
+  // back to the most recent conversation and loads that transcript instead.
+  const threadsOnly = req.nextUrl.searchParams.get("threadsOnly") === "1";
   if (!clientId) return NextResponse.json({ error: "clientId is required" }, { status: 400 });
 
   const db = createServiceClient();
   const conversations = await listConversations(db, clientId);
+
+  if (threadsOnly) {
+    return NextResponse.json({ conversations: conversations.map(toGrantBotThread) });
+  }
 
   // WHICH THREAD, and the client check on it. Staff can read every client's threads, so a
   // mismatch here is not a leak -- it is a mislabel, which is worse in its own way: a transcript
@@ -56,19 +67,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     conversationId: active,
-    conversations: conversations.map((c) => ({
-      id: c.id,
-      title: c.title,
-      lastMessageAt: c.lastMessageAt,
-    })),
-    messages: messages.map((m) => ({
-      id: m.id,
-      role: m.role,
-      text: m.content.map((c) => c.text).join("\n"),
-      error: m.error,
-      usage: m.usage,
-      instructionsVersion: m.instructionsVersion,
-      methodologyVersion: m.methodologyVersion,
-    })),
+    conversations: conversations.map(toGrantBotThread),
+    messages: messages.map(toGrantBotMsg),
   });
 }

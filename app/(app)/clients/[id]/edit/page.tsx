@@ -181,9 +181,7 @@ export default async function EditClientPage({
           backSlot={<FormExitGuard backHref={dashboardHref} backLabel={`Back to ${client.name}`} />}
         />
         <div className="space-y-6 p-8">
-          <div className="max-w-3xl">
-            <ProfileHubNav clientId={client.id} active="profile" guardProfileForm />
-          </div>
+          <ProfileHubNav clientId={client.id} active="profile" guardProfileForm />
           <ClientForm
             client={client}
             action={action}
@@ -322,9 +320,7 @@ export default async function EditClientPage({
         backSlot={<FormExitGuard backHref={dashboardHref} backLabel={`Back to ${client.name}`} />}
       />
       <div className="space-y-6 p-8">
-        <div className="max-w-3xl">
-          <ProfileHubNav clientId={client.id} active="profile" guardProfileForm />
-        </div>
+        <ProfileHubNav clientId={client.id} active="profile" guardProfileForm />
         <ClientForm
           client={client}
           action={action}

@@ -56,13 +56,26 @@ export function ProfileHubNav({
   // Real <Link>s (prefetch, middle-click, copy-link all keep working) with the confirm
   // layered on top: preventDefault only when the answer is "no".
   function onNavigate(e: React.MouseEvent, href: string) {
+    // MODIFIER CLICKS ARE NOT THIS GUARD'S BUSINESS. cmd/ctrl+click opens a new tab and
+    // leaves the current one -- and its dirty form -- exactly where it was, so there is
+    // nothing to confirm; preventDefault here would cancel the new tab, and then
+    // router.push would navigate the very tab the user was trying to preserve. Middle
+    // click and copy-link never reach onClick at all (auxclick / no click event), which is
+    // why they already worked and this one did not.
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
     if (!dirty) return;
     e.preventDefault();
     if (window.confirm(DISCARD_PROFILE_EDITS_CONFIRM)) router.push(href);
   }
 
   return (
-    <nav aria-label="Profile management" className="flex flex-wrap items-center gap-1.5">
+    // max-w-3xl LIVES HERE, not at the call sites. It has to match ClientForm's column on
+    // the Profile tab, and Documents / Context pack render full-width -- so when the
+    // constraint was a wrapper on one of the three pages, the bar's width and the
+    // right-aligned Context pack tab jumped on every switch between them. That is the same
+    // jitter PageHeader's backSlot exists to prevent, one element lower. Owning the width
+    // inside the component makes the three mounts identical by construction.
+    <nav aria-label="Profile management" className="flex max-w-3xl flex-wrap items-center gap-1.5">
       {TABS.map((t) => {
         const href = `/clients/${clientId}/${t.segment}`;
         const isActive = t.key === active;

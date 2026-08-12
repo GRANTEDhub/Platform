@@ -4,6 +4,7 @@ import { format, parseISO } from "date-fns";
 import { Clock, Layers, Loader2, Mail, MessageSquareText, Plug, Play, type LucideIcon } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { GrantBotLauncher } from "@/components/grantbot/grantbot-launcher";
+import { BLANK_CONVERSATION } from "@/lib/grantbot/wire";
 import { createClient } from "@/lib/supabase/server";
 import { AutoRefresh } from "@/components/ui/auto-refresh";
 import { GenerateReportButton } from "@/components/clients/generate-report-button";
@@ -154,9 +155,14 @@ export default async function ClientDashboardPage({
   const supabase = createClient();
 
   const grantbotParam = searchParams.grantbot;
-  // "1" is the "just open it" form the full page uses when there is no conversation yet to name.
-  const grantbotConversationId =
-    grantbotParam && grantbotParam !== "1" ? grantbotParam : null;
+  // The full page's Collapse link names the conversation it was on, or BLANK_CONVERSATION when
+  // that conversation had been started but never sent and so has no id to name. Blank is NOT the
+  // same as absent: absent means "no preference, open the most recent thread", and treating an
+  // unsent conversation that way dropped the reader into the previous one. ("1" carried the same
+  // intent in the first cut of this link; still honoured so a tab opened before this change does
+  // not land on the wrong thread.)
+  const grantbotBlank = grantbotParam === BLANK_CONVERSATION || grantbotParam === "1";
+  const grantbotConversationId = grantbotParam && !grantbotBlank ? grantbotParam : null;
 
   const { data: client } = await supabase.from("clients").select("*").eq("id", params.id).single<Client>();
   if (!client) notFound();
@@ -813,6 +819,7 @@ export default async function ClientDashboardPage({
       clientName={client.name}
       startOpen={grantbotParam !== undefined}
       startConversationId={grantbotConversationId}
+      startBlank={grantbotBlank}
     />
     </>
   );
