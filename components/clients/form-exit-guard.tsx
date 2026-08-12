@@ -21,24 +21,25 @@ import { ArrowLeft } from "lucide-react";
 // the container is the one place that sees every edit. A programmatic prefill (the
 // website craft) fires no user event, so a crafted-but-untouched form still counts
 // as dirty via `initiallyDirty` -- crafted work is worth confirming before discard.
-export function FormExitGuard({
-  backHref,
-  backLabel,
-  formSelector = "form",
-  initiallyDirty = false,
-}: {
-  backHref: string;
-  backLabel: string;
-  // The form to watch. Defaults to the first <form> on the page.
-  formSelector?: string;
-  initiallyDirty?: boolean;
-}) {
-  const router = useRouter();
+
+// One wording for every control that can discard typed profile work, exported so the
+// Back link and the Profile-management tab bar cannot drift into two different
+// warnings about the same loss.
+export const DISCARD_PROFILE_EDITS_CONFIRM =
+  "You have unsaved changes on this profile. Leave without saving?\n\nOK to discard them, or Cancel to go back and save first.";
+
+// The dirty bit on its own, because the Back link is no longer the only in-app exit:
+// the hub's tab bar leaves this page too, and a client-side <Link> fires no
+// beforeunload, so anything that navigates away has to ask this question itself.
+//
+// `formSelector: null` opts out entirely -- the tab bar mounts on all three hub tabs
+// and only the Profile one has a form to guard.
+export function useFormDirty(formSelector: string | null, initiallyDirty = false) {
   const [dirty, setDirty] = useState(initiallyDirty);
   const submittedRef = useRef(false);
 
-  // Track edits + submission on the form element itself.
   useEffect(() => {
+    if (!formSelector) return;
     const form = document.querySelector(formSelector);
     if (!form) return;
     const onInput = () => setDirty(true);
@@ -58,6 +59,25 @@ export function FormExitGuard({
     };
   }, [formSelector]);
 
+  return { dirty, submittedRef };
+}
+
+export function FormExitGuard({
+  backHref,
+  backLabel,
+  formSelector = "form",
+  initiallyDirty = false,
+}: {
+  backHref: string;
+  backLabel: string;
+  // The form to watch. Defaults to the first <form> on the page.
+  formSelector?: string;
+  initiallyDirty?: boolean;
+}) {
+  const router = useRouter();
+  // Track edits + submission on the form element itself.
+  const { dirty, submittedRef } = useFormDirty(formSelector, initiallyDirty);
+
   // Layer 1: browser-level exits (close / refresh / external navigation).
   useEffect(() => {
     if (!dirty) return;
@@ -74,14 +94,7 @@ export function FormExitGuard({
 
   // Layer 2: our own Back control.
   function goBack() {
-    if (
-      dirty &&
-      !window.confirm(
-        "You have unsaved changes on this profile. Leave without saving?\n\nOK to discard them, or Cancel to go back and save first.",
-      )
-    ) {
-      return;
-    }
+    if (dirty && !window.confirm(DISCARD_PROFILE_EDITS_CONFIRM)) return;
     router.push(backHref);
   }
 

@@ -31,7 +31,7 @@ export const dynamic = "force-dynamic";
 // The per-client dashboard — now the shared, actor-aware hub (Figma format). Staff
 // view (isStaff) mounts here; the client portal mounts the same component (Phase 2).
 // Staff-internal detail (contact / engagement / billing / portal access / repository
-// / notes) lives on Edit profile, not here. Ledger click-throughs are gone — grant
+// / notes) lives on Profile management, not here. Ledger click-throughs are gone — grant
 // ops live in the Ledger only.
 // The grant columns this page reads. award_range_* feed the Grant Report card's amount,
 // which must carry an estimate marker when award_range_is_estimate is set -- an
@@ -228,7 +228,8 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   const base = `/clients/${client.id}/roadmap`;
   const alertsHref = `${base}/triage`;
   const editHref = `/clients/${client.id}/edit`;
-  // The API-data view is a SECTION of Edit profile now, not its own route/button.
+  // The API-data view is a SECTION of Profile management ▸ Profile now, not its own
+  // route/button.
   const apiDataHref = `${editHref}?section=api`;
   // Action items: staff's own review queue, then the client's next step. For an
   // account-managed client the review is a SINGLE gate (the roadmap review list at
@@ -688,40 +689,21 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   // results appearing without a manual reload is behaviour, not decoration.
   const matchNote = matchInProgress ? <AutoRefresh enabled /> : null;
 
-  // On ink now, so both controls are reversed out: Edit profile as an outlined ghost,
+  // On ink now, so both controls are reversed out: Profile management as an outlined ghost,
   // Refresh matches as the one white-filled primary on the band.
+  //
+  // TWO CONTROLS, and that is the whole row. It had grown to five as each brick landed --
+  // Edit profile, Documents, Context pack, GrantBot, Refresh matches -- which flattened a
+  // hierarchy that is not flat: three of them were the same job (what the platform holds
+  // about this org) reached three ways, and one was a conversation. The three are tabs of
+  // the Profile-management hub now, and GrantBot is not a destination at all.
   const actions = (
     <>
       <Link
         href={editHref}
         className="inline-flex h-8 items-center rounded-pill border border-white/20 px-[14px] text-[13px] font-medium text-white/[0.85] transition-colors hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome"
       >
-        Edit profile
-      </Link>
-      {/* Assimilation review (0078). Sits beside Edit profile because it is the same job by a
-          different route -- a document proposing profile changes rather than someone typing
-          them -- and it lands on the same fields. */}
-      <Link
-        href={`/clients/${client.id}/documents`}
-        className="inline-flex h-8 items-center rounded-pill border border-white/20 px-[14px] text-[13px] font-medium text-white/[0.85] transition-colors hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome"
-      >
-        Documents
-      </Link>
-      {/* GrantBot brick 0. Its own route rather than a panel here: the pack runs seven queries
-          and renders a few thousand words, and this page is opened constantly. */}
-      <Link
-        href={`/clients/${client.id}/context-pack`}
-        className="inline-flex h-8 items-center rounded-pill border border-white/20 px-[14px] text-[13px] font-medium text-white/[0.85] transition-colors hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome"
-      >
-        Context pack
-      </Link>
-      {/* GrantBot brick 2. Beside the pack because it is the same context put to use: the pack is
-          where you read it, this is where you ask about it. */}
-      <Link
-        href={`/clients/${client.id}/grantbot`}
-        className="inline-flex h-8 items-center rounded-pill border border-white/20 px-[14px] text-[13px] font-medium text-white/[0.85] transition-colors hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome"
-      >
-        GrantBot
+        Profile management
       </Link>
       <GenerateReportButton
         clientId={client.id}

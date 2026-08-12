@@ -1,8 +1,7 @@
 import { notFound } from "next/navigation";
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { PageHeader } from "@/components/layout/page-header";
+import { ProfileHubNav } from "@/components/clients/profile-hub-nav";
 import { gatherContextPack } from "@/lib/grantbot/gather";
 import { renderMarkdown } from "@/lib/grantbot/context-pack";
 import { buildSystemPrompt } from "@/lib/grantbot/prompt";
@@ -16,7 +15,13 @@ export const dynamic = "force-dynamic";
 // ITS OWN ROUTE, NOT A PANEL ON THE CLIENT PAGE. The pack runs seven queries and renders a few
 // thousand words; inlining it would put that cost on every visit to a page staff open
 // constantly. A separate route keeps that page unchanged, gives the pack a URL worth
-// re-opening, and means a slow pack can never slow the client record down.
+// re-opening, and means a slow pack can never slow the client record down. That argument now
+// also applies one level down: it is the third tab of the Profile-management hub, and still a
+// route rather than a pane of the Profile tab, for the same reason.
+//
+// AN INSPECTION VIEW, which is why the tab is the quiet one. Reading the pack was the point
+// when it was all there was; GrantBot consumes it directly now, so a human comes here to check
+// what GrantBot was told -- a debugging move, not a daily one.
 //
 // requireUser, not requireAdmin: this reads what a staffer can already read. Documents and
 // their commit history come through the CALLER's RLS inside gatherContextPack, so a
@@ -55,16 +60,13 @@ export default async function ContextPackPage({ params }: { params: { id: string
   return (
     <div>
       <PageHeader
-        title="Context pack"
-        description={`Everything the platform knows about ${result.clientName}, with a source and a date on every line — as a document, or as the system prompt GrantBot would read.`}
+        title="Profile management"
+        description={`Context pack — everything the platform knows about ${result.clientName}, with a source and a date on every line. Read it as a document, or as the system prompt GrantBot works from.`}
+        backHref={`/clients/${params.id}`}
+        backLabel={`Back to ${result.clientName}`}
       />
       <div className="space-y-6 p-8">
-        <Link
-          href={`/clients/${params.id}`}
-          className="inline-flex items-center gap-1.5 text-[13px] font-medium text-brand-navy/70 hover:text-brand-navy"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" /> Back to {result.clientName}
-        </Link>
+        <ProfileHubNav clientId={params.id} active="context-pack" />
         <PackClient
           markdown={markdown}
           systemPrompt={systemPrompt.text}

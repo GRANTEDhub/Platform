@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
+import { ProfileHubNav } from "@/components/clients/profile-hub-nav";
 import { buildProposalSet } from "@/lib/documents/proposal";
 import AssimilationReview from "./review-client";
 import UploadPanel from "./upload-panel";
@@ -9,7 +10,13 @@ import type { Client, ClientDocument, ClientProfileChange } from "@/types/databa
 
 export const dynamic = "force-dynamic";
 
-// The staff review surface for document assimilation (step (iii)).
+// PROFILE MANAGEMENT ▸ Documents — the staff review surface for document assimilation
+// (step (iii)).
+//
+// A tab of the Profile-management hub rather than a top-right button of its own: it lands on
+// the same fields the Profile tab types into, so it belongs beside it. Still its own route,
+// because the three queries and buildProposalSet below are not a cost the Profile tab should
+// pay on every load -- see ProfileHubNav's header.
 //
 // STAFF FIRST, by decision: whoever is testing extraction quality against real documents
 // needs this before clients do, and the client-facing surface follows once the shredder is
@@ -116,10 +123,13 @@ export default async function ClientDocumentsPage({ params }: { params: { id: st
   return (
     <div>
       <PageHeader
-        title="Documents"
+        title="Profile management"
         description={`Assimilation review for ${client.name}. Extract, review what it proposes, commit what's right.`}
+        backHref={`/clients/${params.id}`}
+        backLabel={`Back to ${client.name}`}
       />
       <div className="space-y-8 p-8">
+        <ProfileHubNav clientId={params.id} active="documents" />
         {/* ABOVE the list on purpose: the empty state points up at it, and a control that only
             appears once you already have documents is no front door at all. */}
         <UploadPanel clientId={params.id} isAdmin={isAdmin} />
