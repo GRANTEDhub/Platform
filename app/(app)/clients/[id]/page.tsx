@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { format, parseISO } from "date-fns";
 import { Clock, Layers, Loader2, Mail, MessageSquareText, Plug, Play, type LucideIcon } from "lucide-react";
 import { requireUser } from "@/lib/auth";
+import { GrantBotLauncher } from "@/components/grantbot/grantbot-launcher";
 import { createClient } from "@/lib/supabase/server";
 import { AutoRefresh } from "@/components/ui/auto-refresh";
 import { GenerateReportButton } from "@/components/clients/generate-report-button";
@@ -140,9 +141,22 @@ function awardLabel(g: GrantEmbed | null | undefined): string | null {
   return g.award_range_is_estimate ? `${range} est.` : range;
 }
 
-export default async function ClientDashboardPage({ params }: { params: { id: string } }) {
+export default async function ClientDashboardPage({
+  params,
+  searchParams,
+}: {
+  params: { id: string };
+  // ?grantbot=<conversation id> (or any value) reopens the GrantBot panel on arrival — how the
+  // full page collapses back to the corner without losing the thread.
+  searchParams: { grantbot?: string };
+}) {
   await requireUser();
   const supabase = createClient();
+
+  const grantbotParam = searchParams.grantbot;
+  // "1" is the "just open it" form the full page uses when there is no conversation yet to name.
+  const grantbotConversationId =
+    grantbotParam && grantbotParam !== "1" ? grantbotParam : null;
 
   const { data: client } = await supabase.from("clients").select("*").eq("id", params.id).single<Client>();
   if (!client) notFound();
@@ -726,6 +740,7 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
   );
 
   return (
+    <>
     <ClientDashboard
       name={client.name}
       subLine={subLine}
@@ -788,5 +803,17 @@ export default async function ClientDashboardPage({ params }: { params: { id: st
       scorer={isLead ? undefined : <CheckGrant clientId={client.id} clientName={client.name} />}
       matchNote={matchNote}
     />
+    {/* OUTSIDE ClientDashboard, deliberately. That component is the shared actor-aware hub the
+        client portal will mount too (Phase 2), and GrantBot's context pack carries internal staff
+        notes -- so the launcher hangs off this staff-only route instead, where the portal cannot
+        inherit it by rendering the same component. Fixed-position, so it needs no place in the
+        layout. Nothing is fetched until it is opened. */}
+    <GrantBotLauncher
+      clientId={client.id}
+      clientName={client.name}
+      startOpen={grantbotParam !== undefined}
+      startConversationId={grantbotConversationId}
+    />
+    </>
   );
 }
