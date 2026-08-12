@@ -4,7 +4,6 @@ import { resolveIntellEngineContext } from "@/lib/intellengine/context";
 import {
   generateApplicationRequirements,
   saveApplicationRequirements,
-  recordFailedRequirementsAttempt,
   readApplicationRequirements,
   MAX_REQUIREMENTS_ATTEMPTS,
 } from "@/lib/grants/requirements";
@@ -55,19 +54,54 @@ export async function POST(req: NextRequest) {
   // From-scratch draft, or a card with no grant: nothing to derive against.
   if (!grant) return NextResponse.json({ requirements: null });
 
-  // Already cached (another open won the race, or a prior derive succeeded): return it, no second
-  // LLM call. The read-before-write is what makes two staff opening the same grant idempotent.
+  // Already cached (a prior derive succeeded, or another open won the race): return it, no second
+  // LLM call.
   const cached = readApplicationRequirements(grant.application_requirements);
   if (cached) return NextResponse.json({ requirements: cached });
 
+  const attempts = grant.application_requirements_attempts ?? 0;
   // Retry ceiling reached: a grant whose text has failed generation MAX times is parked. Report it
-  // as unavailable rather than spending another call. (A not-retrievable grant never bumps the
-  // counter, so it can't be parked here -- it falls through to the sentinel below.)
-  if ((grant.application_requirements_attempts ?? 0) >= MAX_REQUIREMENTS_ATTEMPTS) {
+  // as unavailable rather than spending another call.
+  if (attempts >= MAX_REQUIREMENTS_ATTEMPTS) {
     return NextResponse.json({ requirements: null, parked: true });
   }
 
   const svc = createServiceClient();
+
+  // ── ATOMIC CLAIM (compare-and-swap) ─────────────────────────────────────────────────────────
+  //
+  // Pre-increment the attempt counter, but ONLY if it still holds the value we read AND nothing is
+  // cached yet. Postgres applies the WHERE and the write as one row-level atomic operation, so of N
+  // concurrent opens exactly one matches `attempts = <read value>` and wins the claim; the rest
+  // update zero rows and skip the model call. This is what actually makes the route single-flight
+  // (no duplicate Anthropic calls, no last-write race) and keeps the 3-cap from being overrun by
+  // concurrent failures -- the read-then-bump it replaces could do neither. An attempt is consumed
+  // per claim, success or failure; a success then caches a non-null value, so `is null` prevents any
+  // further claim regardless.
+  const { data: claimed, error: claimErr } = await svc
+    .from("grants")
+    .update({ application_requirements_attempts: attempts + 1 })
+    .eq("id", grant.id)
+    .eq("application_requirements_attempts", attempts)
+    .is("application_requirements", null)
+    .select("id");
+  if (claimErr) {
+    console.error(`[requirements] claim failed grant=${grant.id}: ${claimErr.message}`);
+    return NextResponse.json({ error: "Couldn't derive requirements right now" }, { status: 503 });
+  }
+  if (!claimed || claimed.length === 0) {
+    // Lost the race: another request claimed or finished. Re-read -- it may already be cached -- and
+    // return that; otherwise the winner is still generating, so tell the client to retry rather than
+    // showing "nothing found."
+    const { data: fresh } = await svc
+      .from("grants")
+      .select("application_requirements")
+      .eq("id", grant.id)
+      .maybeSingle<{ application_requirements: unknown }>();
+    const now = readApplicationRequirements(fresh?.application_requirements);
+    if (now) return NextResponse.json({ requirements: now });
+    return NextResponse.json({ error: "Requirements are being derived — try again in a moment" }, { status: 409 });
+  }
 
   // generateApplicationRequirements owns the retrievability gate: for a non-retrievable grant it
   // returns the nofo_not_retrievable sentinel WITHOUT a model call (a real, terminal value, not
@@ -80,10 +114,10 @@ export async function POST(req: NextRequest) {
     console.error(`[requirements] generation threw grant=${grant.id}:`, e instanceof Error ? e.message : e);
   }
 
-  // Transient failure (API error / malformed tool output): costs an attempt, writes no artifact,
-  // and the client may retry.
+  // Transient failure (API error / malformed tool output): the attempt was already consumed by the
+  // claim above, so this does NOT bump again -- it just reports, and the client may retry until the
+  // cap. Writes no artifact.
   if (!result) {
-    await recordFailedRequirementsAttempt(svc, grant.id, grant.application_requirements_attempts ?? null);
     return NextResponse.json({ error: "Couldn't derive requirements right now" }, { status: 503 });
   }
 

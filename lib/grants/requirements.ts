@@ -391,9 +391,20 @@ export async function generateApplicationRequirements(
 
   const { value, audit } = verifyApplicationRequirements(raw, payload);
 
-  // The model claimed requirements and produced items, and not one survived quote verification.
-  // Its own reason, not folded into no_requirements_found: this is the number that says something
-  // about the model or the extraction.
+  // MALFORMED, NOT all_dropped, and RETRYABLE. The tool schema requires only has_requirements, so a
+  // model can answer has_requirements:true while providing NO item arrays (or non-array junk that
+  // verification reads as empty). That is the model failing to fill the tool, not the NOFO lacking
+  // requirements -- the exact shape allowable-uses guards with its `!Array.isArray(items)` branch,
+  // which returns null (retryable) rather than folding into all_dropped. Caching it as all_dropped
+  // would terminally suppress retries on a grant that DOES have requirements. `returned === 0` is
+  // the discriminator: nothing structurally valid was provided at all.
+  if (audit.returned === 0) {
+    console.error(`[requirements] has_requirements=true but no items provided grant=${grant.id}`);
+    return null;
+  }
+
+  // The model PROVIDED items and not one survived quote verification. Its own reason, terminal:
+  // this is the faithfulness signal, distinct from a malformed payload and from no_requirements.
   if (audit.kept === 0) {
     return { value: { ...EMPTY_REQUIREMENTS, reason: "all_dropped" }, audit };
   }
@@ -416,20 +427,10 @@ export async function saveApplicationRequirements(
 }
 
 // Same three-strike shape as allowable-uses. A grant whose text can never yield a verifiable
-// artifact costs 3 Anthropic calls total, not one per compliance-step open forever.
+// artifact costs 3 Anthropic calls total, not one per compliance-step open forever. The route
+// consumes an attempt by an atomic compare-and-swap CLAIM before generating (not a post-hoc bump),
+// so the ceiling holds even under concurrent opens -- see the claim in the requirements route.
 export const MAX_REQUIREMENTS_ATTEMPTS = 3;
-
-export async function recordFailedRequirementsAttempt(
-  db: SupabaseClient,
-  grantId: string,
-  current: number | null,
-): Promise<void> {
-  const { error } = await db
-    .from("grants")
-    .update({ application_requirements_attempts: (current ?? 0) + 1 })
-    .eq("id", grantId);
-  if (error) console.error(`[requirements] attempt bump failed grant=${grantId}: ${error.message}`);
-}
 
 // ── Read side ─────────────────────────────────────────────────────────────────────────────────
 //
