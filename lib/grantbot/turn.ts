@@ -28,6 +28,7 @@ import {
   TURN_DEADLINE_MS,
   WEB_FETCH_TOOL,
   type CallModel,
+  type FetchAuditRecord,
 } from "@/lib/grantbot/web-fetch";
 
 // One conversational turn: assemble, call, store. The orchestrator between the pure renderer and
@@ -42,9 +43,10 @@ import {
 // the tool set is a server-side constant (never from the request body, same rule as turnBlocks),
 // the executor is a guarded HTTPS GET with no write or internal reach, and the flag defaults OFF.
 //
-// OFF IS BYTE-IDENTICAL TO BEFORE. When the flag is off, `useTools` is always false, so the `tools`
-// key is never added and the fetch-instruction block is never appended -- the system prompt, the
-// request body, the single model call, and the stored row are exactly what they were pre-brick-B.
+// OFF IS BYTE-IDENTICAL TO BEFORE. When the flag is off, the loop's `toolMode` is always "off", so
+// neither the `tools` nor the `tool_choice` key is ever added and the fetch-instruction block is
+// never appended -- the system prompt, the request body, the single model call, and the stored row
+// are exactly what they were pre-brick-B.
 // That is the instant-revert guarantee: turning the env var off restores read-only-by-construction
 // with no deploy. The loop runs exactly once on that path (no tool_use is possible without tools).
 //
@@ -150,7 +152,9 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
   let usage: TurnUsage | null = null;
   let stopReason: string | null = null;
   let failure: string | null = null;
-  let fetches: unknown[] = [];
+  // A stable sink handed to runFetchLoop so that if a later round throws mid-loop, the audit of
+  // fetches that already succeeded is still written on the (failed) turn's row, not discarded.
+  const fetches: FetchAuditRecord[] = [];
 
   try {
     const anthropic = getAnthropicClient();
@@ -211,12 +215,13 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
       executeFetch: (url) => executeWebFetch(url),
       now: () => Date.now(),
       deadlineMs: TURN_DEADLINE_MS,
+      // Same array reference as `fetches` above -> partial audit survives a mid-loop throw.
+      fetches,
     });
 
     answer = loop.text;
     usage = loop.usage;
     stopReason = loop.stopReason;
-    fetches = loop.fetches;
     if (!answer) failure = "The model returned no text.";
   } catch (err) {
     failure = err instanceof Error ? err.message : "Unknown error calling the model.";

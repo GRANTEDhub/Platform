@@ -29,8 +29,10 @@ export function grantbotWebFetchEnabled(): boolean {
 }
 
 // ── Bounds ─────────────────────────────────────────────────────────────────────────────────────
-// At most this many rounds of tool calls per turn; the (round+1)th model call is made with NO tools
-// so the model is forced to produce a final text answer rather than looping.
+// At most this many rounds of tool calls per turn; the (round+1)th model call is made in ToolMode
+// "none" (tools still present, tool_choice:{type:"none"}) so the model is forced to produce a final
+// text answer rather than looping. NOT "no tools" -- dropping the tools array with a tool_use
+// history in the messages would 400 (see the ToolMode doc below).
 export const MAX_TOOL_ROUNDS = 2;
 // Wall-clock budget for the whole turn's model calls + fetches. Sits inside the route's
 // maxDuration=300s with headroom for the context pack (already gathered before this) and the store
@@ -77,7 +79,7 @@ export const FETCH_INSTRUCTION_BLOCK: PromptBlock = {
   cacheable: false,
   text: [
     "WEB FETCH — YOUR ONE TOOL",
-    `You have exactly one tool: ${WEB_FETCH_TOOL_NAME}. It performs a read-only GET of a public U.S. .gov grant source (grants.gov / sam.gov / federalregister.gov / an agency or state .gov page or NOFO) and returns its text. It is your ONLY tool: it cannot write, act, send, file, or reach anything internal, so the READ-ONLY rule above stands in full.`,
+    `The guardrails above say you have no tools; that statement is now qualified. You have exactly one tool: ${WEB_FETCH_TOOL_NAME} — a read-only GET of a public U.S. .gov grant source (grants.gov / sam.gov / federalregister.gov / an agency or state .gov page or NOFO) that returns its text. It is your ONLY tool: it cannot write, act, send, file, or reach anything internal, so the READ-ONLY rule above stands in full.`,
     "",
     "Use it to VERIFY against the live source rather than recalling a NOFO from memory — deadlines, eligibility, award amounts, program details. GRANTED's method is to check the actual source, never to trust recollection for anything time-sensitive.",
     "",
@@ -113,7 +115,11 @@ export function frameFetchResult(
     // Two independent truncations can bite: Brick A's byte cap on the wire, and this LLM-oriented
     // char cap. Either one means the model is seeing a partial page, so it is told so.
     const charCapped = result.text.length > MAX_FETCH_TEXT_CHARS;
-    const body = charCapped ? result.text.slice(0, MAX_FETCH_TEXT_CHARS) : result.text;
+    let body = charCapped ? result.text.slice(0, MAX_FETCH_TEXT_CHARS) : result.text;
+    // slice() cuts on UTF-16 code units; if the boundary split a surrogate pair, drop the dangling
+    // lone high surrogate rather than ride it into the tool_result -- the same boundary-safety
+    // discipline decodeCapped applies at the byte level in fetch.ts.
+    if (charCapped && /[\uD800-\uDBFF]$/.test(body)) body = body.slice(0, -1);
     const partial = result.truncated || charCapped;
     const truncatedNote = partial
       ? "\n\n[The page was longer than the fetch limit and was truncated — treat it as partial, and say so if the answer might depend on the rest.]"
@@ -154,9 +160,11 @@ export async function executeWebFetch(
 // ── The bounded tool-use loop ───────────────────────────────────────────────────────────────────
 //
 // One model call per iteration. The model may call the tool up to MAX_TOOL_ROUNDS times; the call
-// after the last allowed round is made with tools OFF, forcing a final text answer. INJECTED seams
-// (callModel, executeFetch, now) make every branch testable without a model or a network -- and the
-// flag-off path is the same code with webFetchEnabled=false, which is what proves off == today.
+// after the last allowed round is made in ToolMode "none" (tools still present, tool_choice forbids
+// a further call), forcing a final text answer -- NOT with tools dropped, which would 400 against a
+// tool_use history. INJECTED seams (callModel, executeFetch, now) make every branch testable without
+// a model or a network -- and the flag-off path is the same code with webFetchEnabled=false, which
+// is what proves off == today.
 
 export interface ModelTurn {
   text: string;
@@ -206,12 +214,18 @@ export async function runFetchLoop(opts: {
   now: () => number;
   deadlineMs?: number;
   maxToolRounds?: number;
+  // Optional sink for the fetch audit. runFetchLoop pushes each audit here AS IT HAPPENS, so a
+  // caller that holds the same array still sees what was fetched even if a LATER round's callModel
+  // throws (this function does not catch -- the throw propagates so the turn is recorded as failed).
+  // Without it, a mid-loop throw would discard the return value and lose the breadcrumb of a fetch
+  // that already succeeded. Defaults to a fresh array; the return still carries the same reference.
+  fetches?: FetchAuditRecord[];
 }): Promise<FetchLoopResult> {
   const deadlineMs = opts.deadlineMs ?? TURN_DEADLINE_MS;
   const maxToolRounds = opts.maxToolRounds ?? MAX_TOOL_ROUNDS;
   const start = opts.now();
   const working = [...opts.messages];
-  const fetches: FetchAuditRecord[] = [];
+  const fetches: FetchAuditRecord[] = opts.fetches ?? [];
 
   let usage: TurnUsage | null = null;
   let stopReason: string | null = null;

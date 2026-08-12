@@ -9,6 +9,7 @@ import {
   MAX_FETCH_TEXT_CHARS,
   type CallModel,
   type ModelTurn,
+  type FetchAuditRecord,
 } from "./web-fetch";
 import type { FetchResult } from "./fetch";
 import type { TurnUsage } from "./store";
@@ -88,6 +89,15 @@ describe("frameFetchResult", () => {
     expect(resultText).toContain("short body");
     expect(resultText).not.toMatch(/truncated/i);
     expect(audit.truncated).toBe(false);
+  });
+  it("does not leave a lone surrogate when the cap splits a surrogate pair", () => {
+    // Fill exactly to the cap so the next char is a 📄 (surrogate pair) straddling the boundary.
+    const text = "a".repeat(MAX_FETCH_TEXT_CHARS) + "📄" + "b".repeat(10);
+    const result: FetchResult = { ok: true, requestedUrl: "u", finalUrl: "u", contentType: "text/html", text, truncated: false, fetchedAt: "T" };
+    const { resultText } = frameFetchResult("u", result, () => "NOW");
+    // Every code unit in the framed text must be well-formed (no unpaired surrogate).
+    expect(resultText).toBe(resultText.toWellFormed());
+    expect(resultText).toMatch(/truncated/i);
   });
   it("turns a failure into a typed could-not-retrieve fact that forbids inferring", () => {
     const result: FetchResult = { ok: false, reason: "not_allowlisted", detail: "evil.com" };
@@ -218,6 +228,29 @@ describe("runFetchLoop", () => {
     });
     expect(calls.map((c) => c.tools)).toEqual(["auto", "none"]);
     expect(r.fetches).toHaveLength(1);
+  });
+
+  it("surfaces the partial fetch audit via the sink when a later round throws", async () => {
+    const sink: FetchAuditRecord[] = [];
+    let call = 0;
+    const callModel: CallModel = async () => {
+      call += 1;
+      if (call === 1) return turn({ toolUses: [{ id: "t1", url: "https://grants.gov/x" }], stopReason: "tool_use" });
+      throw new Error("boom on the second round");
+    };
+    await expect(
+      runFetchLoop({
+        messages: [{ role: "user", content: "q" }],
+        webFetchEnabled: true,
+        callModel,
+        executeFetch: async (url) => ({ resultText: "F", audit: { url: String(url), ok: true, fetchedAt: "T" } }),
+        now: () => 0,
+        fetches: sink,
+      }),
+    ).rejects.toThrow("boom");
+    // The round-0 fetch that succeeded before the throw is still visible to the caller.
+    expect(sink).toHaveLength(1);
+    expect(sink[0]).toMatchObject({ url: "https://grants.gov/x", ok: true });
   });
 
   it("passes the full remaining budget on the first call (first timeout == CALL_TIMEOUT_MS upstream)", async () => {
