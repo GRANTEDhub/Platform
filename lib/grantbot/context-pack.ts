@@ -170,7 +170,8 @@ export type PackClient = Pick<
   | "federal_grant_history" | "federal_history_verified" | "usaspending_checked_at"
   | "primary_funding_needs" | "project_stage" | "match_cost_share_capacity"
   | "known_constraints" | "hard_constraints" | "matching_rules" | "notes" | "next_step"
-  | "intake_data" | "client_profile" | "profile_confirmed_at" | "created_at" | "updated_at"
+  | "intake_data" | "client_profile" | "client_profile_generated_at" | "profile_confirmed_at"
+  | "created_at" | "updated_at"
 >;
 
 export type PackDocument = Pick<
@@ -194,6 +195,15 @@ export interface PackCardGrant {
   award_range_max: number | null;
   award_range_is_estimate: boolean | null;
   description_brief: string | null;
+  // ── THE GRANT SIDE OF THE HARD GATES ──
+  // Entity type, geography and match are three of the four binary eligibility gates, and the
+  // client side of each is already in this pack. These are the grant side. Absent them, a
+  // reasoning surface has to either refuse every eligibility question or invent the gate from
+  // the brief description; with them it can do the actual work and name the gap when a
+  // particular grant has none recorded.
+  eligible_entity_types: string[] | null;
+  geographic_eligibility: string | null;
+  cost_share: string | null;
 }
 
 export type PackCard = Pick<
@@ -478,10 +488,13 @@ function clientStated(input: PackInput, items: ContextItem[]): void {
 function distilled(input: PackInput, items: ContextItem[]): void {
   const p = input.client.client_profile;
   if (!p) return;
-  // NO capturedAt EXISTS FOR ANY OF THIS. clients.client_profile has no generated_at column
-  // anywhere in the schema (checked 2026-08-10), so every item here is honestly undated. Worth
-  // a one-line migration before GrantBot v1 leans on it; until then the label says so.
-  const at = null;
+  // THE DISTILLED PROFILE NOW HAS A DATE (0080), and it matters more here than on most columns:
+  // this is the `derived` tier, the one GrantBot is told to distrust, and MSET's carried a
+  // different organisation's legal name. Null is still a real answer for the rows distilled
+  // before the column existed -- deliberately not backfilled, since inventing a date on the one
+  // tier the design tells the model to doubt is the wrong kind of tidy. Null renders as
+  // "NO TIMESTAMP RECORDED", the same as everywhere else.
+  const at = input.client.client_profile_generated_at ?? null;
   push(items, "distilled", "Summary", clean(p.summary), "clients.client_profile.summary", "derived", at);
   push(items, "distilled", "Mission (distilled)", clean(p.mission), "clients.client_profile.mission", "derived", at);
   push(
@@ -818,6 +831,31 @@ function matches(input: PackInput, items: ContextItem[], stats: PackStats): void
     return bits.join(" · ");
   };
 
+  // ── THE GRANT SIDE OF THE HARD GATES, AND ITS ABSENCE, BOTH SAID OUT LOUD ──
+  //
+  // Entity type, geography and match are binary eligibility gates. Rendered under their own
+  // heading so they are not read as more competitiveness detail, and NAMED AS MISSING when the
+  // grant row carries none of them -- because "eligible entity types: not recorded" is what
+  // makes the difference between a reader who knows to go to the NOFO and one who assumes the
+  // silence means no restriction. An absent gate is the dangerous case, not the empty one.
+  const gateFacts = (g: PackCardGrant | null): string | null => {
+    if (!g) return null;
+    const entities = Array.isArray(g.eligible_entity_types) && g.eligible_entity_types.length
+      ? g.eligible_entity_types.join(", ")
+      : null;
+    const geo = clean(g.geographic_eligibility);
+    const share = clean(g.cost_share);
+    if (!entities && !geo && !share) {
+      return "ELIGIBILITY GATES (grant side): NONE RECORDED for this grant. Entity type, geographic eligibility and cost share are all absent from the grant row — these must come from the NOFO or the agency program page, not from the brief above.";
+    }
+    return bullets([
+      "ELIGIBILITY GATES (grant side) — binary, not scoring:",
+      `  Eligible entity types: ${entities ?? "NOT RECORDED — check the NOFO"}`,
+      `  Geographic eligibility: ${geo ?? "NOT RECORDED — check the NOFO"}`,
+      `  Cost share / match: ${share ?? "NOT RECORDED — check the NOFO"}`,
+    ]);
+  };
+
   for (const c of detailed) {
     const g = c.grants;
     const award =
@@ -847,6 +885,7 @@ function matches(input: PackInput, items: ContextItem[], stats: PackStats): void
           ? `Before you approve (STAFF VOICE, internal):\n${c.before_you_approve.map((w) => `  - ${w}`).join("\n")}`
           : null,
         clean(g?.description_brief) ? `Grant in brief: ${clean(g?.description_brief)}` : null,
+        gateFacts(g),
       ]),
       "review_cards + grants",
       "platform",
@@ -854,12 +893,41 @@ function matches(input: PackInput, items: ContextItem[], stats: PackStats): void
     );
   }
 
+  // THE GATES RIDE THE ONE-LINERS TOO, compactly.
+  //
+  // The detailed/summary split keys off isLiveCard -- approved, interested, sent, held or in a
+  // pursuit path. A freshly matched card is `pending`, which is NOT live, so it summarises. That
+  // is right for narrative detail and wrong for eligibility: a pending match is precisely the one
+  // a staffer asks "are we even eligible for this?" about, and on a newly loaded roster almost
+  // every card is pending. Gates only on the detailed tier would leave the eligibility half of
+  // the methodology inert exactly when it is most useful.
+  //
+  // Compact, not the full block: three values and no "NOT RECORDED" padding, so 60 summary cards
+  // cost a few KB rather than a section each. Absence is still visible -- a one-liner with no
+  // `gates:` clause has no recorded gates at all.
+  const gateLine = (g: PackCardGrant | null): string | null => {
+    if (!g) return null;
+    const bits = [
+      Array.isArray(g.eligible_entity_types) && g.eligible_entity_types.length
+        ? g.eligible_entity_types.join(", ")
+        : null,
+      clean(g.geographic_eligibility),
+      clean(g.cost_share),
+    ].filter(Boolean);
+    return bits.length ? `gates: ${bits.join(" | ")}` : null;
+  };
+
   for (const c of summary) {
     push(
       items,
       "matches",
       head(c),
-      `Fit ${c.fit_score}/3 · decision: ${c.decision}${c.sent_at ? ` · alert sent ${isoDate(c.sent_at)}` : ""}`,
+      [
+        `Fit ${c.fit_score}/3 · decision: ${c.decision}${c.sent_at ? ` · alert sent ${isoDate(c.sent_at)}` : ""}`,
+        gateLine(c.grants),
+      ]
+        .filter(Boolean)
+        .join(" · "),
       "review_cards + grants",
       "platform",
       c.created_at,
@@ -1001,9 +1069,13 @@ export function buildGaps(input: PackInput): string[] {
   }
   if (!c.client_profile) {
     gaps.push("No distilled profile exists, so there is no matcher-facing read of this organization.");
-  } else {
+  } else if (!c.client_profile_generated_at) {
+    // The absence shrank in 0080 but did not vanish: the column exists now, and a row without a
+    // value means the profile was distilled before it did. Say which of the two it is, because
+    // "we never record this" and "we did not record this one" call for different responses --
+    // the first is a schema gap, the second is fixed by the next enrichment pass.
     gaps.push(
-      "The distilled profile carries NO generation date (no such column exists), so its age relative to everything else here is unknown.",
+      "The distilled profile has NO generation date recorded — it predates the column (0080), so its age relative to everything else here is unknown. The next enrichment pass will stamp it.",
     );
   }
   if (!c.sam_checked_at) {
