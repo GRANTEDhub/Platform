@@ -50,6 +50,12 @@ export const BRAND = {
   orangeWash: "rgba(228,118,31,0.07)",
   orangeWashEdge: "rgba(228,118,31,0.18)",
   orangeTileOnInk: "rgba(228,118,31,0.16)",
+  // The same icon tile ON A LIGHT GROUND (GrantBot's answer avatar, which sits on white
+  // rather than on the navy header). A pair for the same reason orangeDeep/orange and
+  // successOnDark/success are pairs: the alpha that reads as a tile depends on what is
+  // behind it, and one value cannot serve both. Distinct from `orangeWash`, which is a
+  // large fill area -- a 26px tile at wash alpha disappears.
+  orangeTile: "rgba(228,118,31,0.14)",
   // Brand orange darkened until small type on a light ground is legible. #E4761F tops
   // out near 3:1 against white and worse against SURFACE.ground, so it CANNOT carry
   // 9–12px text however much the layout wants orange there. Use this for eyebrows,

@@ -1,7 +1,8 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { AlertTriangle, ArrowRight, Sparkles } from "lucide-react";
 import { requireUser } from "@/lib/auth";
-import { PageHeader } from "@/components/layout/page-header";
+import { BRAND } from "@/lib/brand";
 import { createServiceClient } from "@/lib/supabase/server";
 import { gatherContextPack } from "@/lib/grantbot/gather";
 import { buildSystemPrompt } from "@/lib/grantbot/prompt";
@@ -67,30 +68,115 @@ export default async function GrantBotPage({
       : conversations[0] ?? null;
   const messages = active ? await loadMessages(db, active.id) : [];
 
+  const gaps = gathered.pack.gaps.length;
+
   return (
-    <div>
-      <PageHeader
-        title="GrantBot"
-        description={`A conversation about ${gathered.clientName}, grounded in the platform's own record. Read-only: it cannot change anything here.`}
-      />
-      <div className="space-y-6 p-8">
-        <div className="flex flex-wrap items-center gap-4">
-          {/* COLLAPSE, not just Back: it returns to the client record with the panel reopened on
-              this conversation, so expanding and collapsing is one continuous thread rather than
-              a trip out and a fresh start. A client component because the conversation it must
-              name can be created after this page renders -- see its header. */}
-          <GrantBotCollapse
-            clientId={params.id}
-            clientName={gathered.clientName}
-            fallbackConversationId={active?.id ?? null}
-          />
-          <Link
-            href={`/clients/${params.id}/context-pack`}
-            className="text-[13px] font-medium text-brand-navy/70 hover:text-brand-navy"
-          >
-            Read the context it works from →
-          </Link>
+    // h-full + overflow-hidden, and every band below is shrink-0 except the chat. The app shell
+    // gives <main> a definite height (flex-1 of an h-screen column), so h-full resolves here and
+    // the page itself never scrolls -- which is what lets the transcript own its own scrollbar
+    // instead of the document owning one for everything. NOTHING about the shell or the nav is
+    // touched to achieve that.
+    <div className="flex h-full flex-col overflow-hidden">
+      {/* GrantBot's OWN header, in place of the generic PageHeader: this surface is one tool, not
+          a page of records, and the mock gives it the ink band the launcher's header echoes. */}
+      <header className="relative shrink-0 overflow-hidden bg-brand-navy px-10 pb-[18px] pt-6">
+        {/* One drifting bloom, not the mock's two: the second is STAGE.approved's teal, and a
+            stage colour means exactly one pipeline stage -- as decoration behind a chat header it
+            would make the funnel unreadable everywhere else. Same BRAND.orangeGlow the corner
+            panel uses, so the two headers are lit by the same light. */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -top-[110px] left-[180px] h-[320px] w-[320px] rounded-full motion-safe:animate-bloom-drift"
+          style={{ background: `radial-gradient(circle, ${BRAND.orangeGlow}, transparent 70%)` }}
+        />
+        <div className="relative flex flex-wrap items-center justify-between gap-5">
+          <div className="flex items-center gap-3.5">
+            <div className="relative h-10 w-10 shrink-0">
+              <div
+                aria-hidden="true"
+                className="absolute inset-0 rounded-lg border-[1.5px] border-brand-orange motion-safe:animate-pulse-ring"
+              />
+              <div
+                className="relative flex h-10 w-10 items-center justify-center rounded-lg"
+                style={{ background: BRAND.orangeTileOnInk }}
+              >
+                <Sparkles className="h-5 w-5" style={{ color: BRAND.orange }} />
+              </div>
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2.5">
+                <h1 className="font-serif text-[27px] font-bold leading-none tracking-[-0.01em] text-white">
+                  GrantBot
+                </h1>
+                {/* successOnDark, not `success`: green on navy. See lib/brand.ts. */}
+                <span className="inline-flex items-center gap-1.5 rounded-pill bg-brand-successOnDark/15 py-[3px] pl-[7px] pr-2.5">
+                  <span className="h-[5px] w-[5px] rounded-full bg-brand-successOnDark" />
+                  <span className="font-mono text-[10px] font-semibold tracking-[0.02em] text-brand-successOnDark">
+                    LIVE · GROUNDED
+                  </span>
+                </span>
+              </div>
+              <p className="mt-1.5 text-[12.5px] text-white/55">
+                {gathered.clientName} <span className="text-white/30">·</span> read-only — it cannot
+                edit the profile, run matching, or send anything
+              </p>
+            </div>
+          </div>
+          {/* THE VERSION STAMPS AND WHAT THE PREFIX COSTS. The mock keeps the two versions and
+              drops the size read-out; the size stays, one chip further along, because
+              cache-prefix behaviour is the thing brick 1 made visible on purpose and a figure
+              nobody can see is a figure nobody checks. */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            {[
+              { label: "guardrails", value: prompt.instructionsVersion },
+              { label: "methodology", value: prompt.methodologyVersion },
+              {
+                label: "cached prefix",
+                value: `${prompt.prefixChars.toLocaleString()} ch · ${prompt.sharedChars.toLocaleString()} shared`,
+              },
+            ].map((chip) => (
+              <span
+                key={chip.label}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.14] px-2.5 py-1 font-mono text-[11px] text-white/40"
+              >
+                {chip.label} <span className="text-white/75">{chip.value}</span>
+              </span>
+            ))}
+          </div>
         </div>
+      </header>
+      {/* The accent rule. Carries no type, so it is `orange` and not `orangeFill`. */}
+      <div className="h-0.5 shrink-0 bg-brand-orange" />
+
+      <div className="flex shrink-0 flex-wrap items-center gap-5 border-b border-hairline-strong bg-white px-10 py-[11px]">
+        {/* COLLAPSE, not just Back: it returns to the client record with the panel reopened on
+            this conversation, so expanding and collapsing is one continuous thread rather than
+            a trip out and a fresh start. A client component because the conversation it must
+            name can be created after this page renders -- see its header. */}
+        <GrantBotCollapse
+          clientId={params.id}
+          clientName={gathered.clientName}
+          fallbackConversationId={active?.id ?? null}
+        />
+        <Link
+          href={`/clients/${params.id}/context-pack`}
+          className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-ink-muted transition-colors hover:text-brand-navy"
+        >
+          Read the context it works from <ArrowRight className="h-3.5 w-3.5" />
+        </Link>
+        {/* orangeDeep: 11.5px type on white, which brand orange cannot carry. */}
+        {gaps > 0 && (
+          <span
+            className="ml-auto inline-flex items-center gap-1.5 text-[11.5px] font-semibold"
+            style={{ color: BRAND.orangeDeep }}
+          >
+            <AlertTriangle className="h-3 w-3" />
+            {gaps} known gap{gaps === 1 ? "" : "s"} in what it knows about {gathered.clientName}
+          </span>
+        )}
+      </div>
+
+      <div className="flex min-h-0 flex-1 px-10 pb-6 pt-5">
         <GrantBotChat
           clientId={params.id}
           clientName={gathered.clientName}
@@ -105,7 +191,7 @@ export default async function GrantBotPage({
             sharedChars: prompt.sharedChars,
             instructionsVersion: prompt.instructionsVersion,
             methodologyVersion: prompt.methodologyVersion,
-            gaps: gathered.pack.gaps.length,
+            gaps,
           }}
         />
       </div>

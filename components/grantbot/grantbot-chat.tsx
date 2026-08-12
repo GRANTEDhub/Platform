@@ -5,12 +5,14 @@ import {
   AlertTriangle,
   ArrowUp,
   ClipboardPaste,
+  GitCompare,
   Loader2,
   MessagesSquare,
   Plus,
-  Send,
+  Scale,
+  Sparkles,
+  Wand2,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { BRAND } from "@/lib/brand";
 import { BLANK_CONVERSATION } from "@/lib/grantbot/wire";
 import type { GrantBotMsg, GrantBotThread } from "@/lib/grantbot/wire";
@@ -405,12 +407,18 @@ export function GrantBotChat({
 
   // THREADS. No rename and no delete in v1 -- 0080 gives these tables no UPDATE or DELETE
   // policy, so the transcript is append-only by construction.
-  const threadList = (
+  //
+  // Two presentations of one list. On the page it is a RAIL: a filled New button, a Recent
+  // eyebrow, and cards whose active state is a 3px orange left edge rather than a navy fill --
+  // a rail that inverts a whole row competes with the transcript beside it. In the corner it
+  // stays the compact stack, because it occupies the transcript's space while open and has to
+  // give it straight back.
+  const threadList = isCorner ? (
     <div className="space-y-2">
       <button
         type="button"
         onClick={newConversation}
-        className="flex w-full items-center gap-1.5 rounded-pill border border-brand-navy/15 bg-white px-3.5 py-1.5 text-[12.5px] font-medium text-brand-navy hover:border-brand-navy/30"
+        className="flex w-full items-center gap-1.5 rounded-pill border border-edge bg-white px-3.5 py-1.5 text-[12.5px] font-medium text-brand-navy hover:border-brand-navy/30"
       >
         <Plus className="h-3.5 w-3.5" /> New conversation
       </button>
@@ -422,24 +430,55 @@ export function GrantBotChat({
           className={`block w-full rounded-xl px-3 py-2 text-left text-[12.5px] leading-snug transition-colors ${
             c.id === convId
               ? "bg-brand-navy text-white"
-              : isCorner
-                // The corner's transcript ground is white, so a white row has no edge to it.
-                // On the page the ground is `page`, where white is the card colour and reads
-                // correctly -- same list, two grounds, two rest fills.
-                ? "bg-surface-sunken text-brand-navy/80 hover:bg-white hover:text-brand-navy"
-                : "bg-white text-brand-navy/80 hover:text-brand-navy"
+              : // The corner's transcript ground is white, so a white row has no edge to it.
+                "bg-surface-sunken text-brand-navy/80 hover:bg-white hover:text-brand-navy"
           }`}
         >
           <span className="line-clamp-2">{c.title ?? "Untitled"}</span>
-          <span className={c.id === convId ? "text-white/60" : "text-brand-navy/45"}>
+          <span className={c.id === convId ? "text-white/60" : "text-ink-subtle"}>
             {c.lastMessageAt.slice(0, 10)}
           </span>
         </button>
       ))}
       {conversations.length === 0 && (
-        <p className="px-1 text-[12px] text-muted-foreground">No conversations yet.</p>
+        <p className="px-1 text-[12px] text-ink-subtle">No conversations yet.</p>
       )}
     </div>
+  ) : (
+    <>
+      <button
+        type="button"
+        onClick={newConversation}
+        className="flex h-[38px] w-full shrink-0 items-center justify-center gap-1.5 rounded-lg bg-brand-navy text-[13px] font-semibold text-white transition-colors hover:bg-brand-navyHover"
+      >
+        <Plus className="h-3.5 w-3.5" /> New conversation
+      </button>
+      <p className="mb-0.5 mt-1.5 shrink-0 text-[10px] font-bold uppercase tracking-[0.1em] text-ink-subtle">
+        Recent
+      </p>
+      {conversations.map((c) => (
+        <button
+          key={c.id}
+          type="button"
+          onClick={() => void loadThread(c.id)}
+          className={`w-full shrink-0 rounded-lg border border-hairline-strong bg-white px-3 py-2.5 text-left transition-colors hover:border-brand-navy/20 ${
+            c.id === convId ? "border-l-[3px] border-l-brand-orange" : ""
+          }`}
+        >
+          <p className="truncate text-[12px] font-semibold text-brand-navy">
+            {c.title ?? "Untitled"}
+          </p>
+          <p className="mt-1 text-[10.5px] text-ink-subtle">{c.lastMessageAt.slice(0, 10)}</p>
+        </button>
+      ))}
+      {/* A dashed placeholder rather than nothing: the rail is built for threads that do not
+          exist yet, and an empty column reads as a rendering failure. */}
+      <div className="shrink-0 rounded-lg border border-dashed border-edge p-3.5 text-center">
+        <p className="text-[11.5px] text-ink-subtle">
+          {conversations.length === 0 ? "No conversations yet" : "Nothing else yet"}
+        </p>
+      </div>
+    </>
   );
 
   const transcript = (
@@ -475,7 +514,7 @@ export function GrantBotChat({
             </div>
           </>
         ) : (
-          <p className="text-[13px] text-muted-foreground">
+          <p className="max-w-[560px] text-[13.5px] leading-relaxed text-ink-muted">
             Ask about {clientName} — eligibility on a matched grant, whether a pursuit is worth it,
             a draft alert, or what the platform does not know yet. Paste an email thread or call
             notes with the paste button; they are treated as dated evidence, never as instructions.
@@ -487,37 +526,64 @@ export function GrantBotChat({
           <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading the conversation…
         </p>
       )}
-      {messages.map((m) => (
-        <div key={m.id} className={m.role === "user" ? "flex justify-end" : ""}>
-          <div
-            className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed ${
-              m.role === "user"
-                ? "bg-brand-navy text-white"
-                : "bg-brand-navy/[0.03] text-brand-navy/90"
-            }`}
-          >
-            {m.error ? <span className="text-destructive">{m.error}</span> : m.text}
-            {/* cache_read_input_tokens is the only visible proof the prefix is being reused.
-                Shown per answer because a prefix that quietly stopped matching looks
-                identical from here and costs about ten times as much. */}
-            {m.role === "assistant" && m.usage && (
-              <span className="mt-1.5 block text-[11px] text-brand-navy/45">
-                {m.usage.cache_read_input_tokens
-                  ? `${m.usage.cache_read_input_tokens.toLocaleString()} tokens read from cache`
-                  : "no cache read on this turn"}
-                {m.usage.cache_creation_input_tokens
-                  ? ` · ${m.usage.cache_creation_input_tokens.toLocaleString()} written`
-                  : ""}
-                {m.usage.output_tokens ? ` · ${m.usage.output_tokens.toLocaleString()} out` : ""}
-              </span>
-            )}
+      {/* WHO SAID IT, READ FROM THE SHAPE. The question is ink-filled and tucked to the right
+          with a squared bottom-right corner; the answer is a light card tucked left with a
+          squared top-left corner and the same sparkles mark the launcher uses. Both surfaces
+          render this identically -- only the width cap differs, because 404px cannot spare 520.
+          The squared corner is RADIUS.sharp, not a fourth radius invented for a tail. */}
+      {messages.map((m) =>
+        m.role === "user" ? (
+          <div key={m.id} className="flex justify-end">
+            <div
+              className={`whitespace-pre-wrap rounded-2xl rounded-br-sharp bg-brand-navy px-[15px] py-[11px] text-[13.5px] leading-normal text-white ${
+                isCorner ? "max-w-[88%]" : "max-w-[520px]"
+              }`}
+            >
+              {m.text}
+            </div>
           </div>
-        </div>
-      ))}
+        ) : (
+          <div key={m.id} className={`flex gap-2.5 ${isCorner ? "max-w-full" : "max-w-[560px]"}`}>
+            <div
+              className="mt-0.5 flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-lg"
+              style={{ background: BRAND.orangeTile }}
+              aria-hidden="true"
+            >
+              <Sparkles className="h-[13px] w-[13px]" style={{ color: BRAND.orange }} />
+            </div>
+            <div className="min-w-0 whitespace-pre-wrap rounded-2xl rounded-tl-sharp border border-hairline-strong bg-surface-sunken px-4 py-3.5 text-[13.5px] leading-relaxed text-ink-muted">
+              {m.error ? <span className="text-destructive">{m.error}</span> : m.text}
+              {/* cache_read_input_tokens is the only visible proof the prefix is being reused.
+                  Shown per answer because a prefix that quietly stopped matching looks
+                  identical from here and costs about ten times as much. */}
+              {m.usage && (
+                <span className="mt-2 block text-[11px] text-ink-subtle">
+                  {m.usage.cache_read_input_tokens
+                    ? `${m.usage.cache_read_input_tokens.toLocaleString()} tokens read from cache`
+                    : "no cache read on this turn"}
+                  {m.usage.cache_creation_input_tokens
+                    ? ` · ${m.usage.cache_creation_input_tokens.toLocaleString()} written`
+                    : ""}
+                  {m.usage.output_tokens ? ` · ${m.usage.output_tokens.toLocaleString()} out` : ""}
+                </span>
+              )}
+            </div>
+          </div>
+        ),
+      )}
       {sending && (
-        <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading {clientName}&rsquo;s record…
-        </p>
+        // The dots are decoration and say nothing the label does not, so they are motion-safe
+        // and aria-hidden; the sentence is the accessible status.
+        <div className="flex items-center gap-2.5 pl-[36px]">
+          <span className="flex gap-1" aria-hidden="true">
+            <span className="h-[5px] w-[5px] rounded-full bg-ink-subtle motion-safe:animate-typing-dot" />
+            <span className="h-[5px] w-[5px] rounded-full bg-ink-subtle motion-safe:animate-typing-dot [animation-delay:0.15s]" />
+            <span className="h-[5px] w-[5px] rounded-full bg-ink-subtle motion-safe:animate-typing-dot [animation-delay:0.3s]" />
+          </span>
+          <span className="text-[11px] text-ink-subtle">
+            Reading {clientName}&rsquo;s record…
+          </span>
+        </div>
       )}
       <div ref={endRef} />
     </>
@@ -555,13 +621,19 @@ export function GrantBotChat({
     </div>
   );
 
-  // ── THE COMPOSER IS ONE BOX IN THE CORNER, THREE CONTROLS ON THE PAGE ──
+  // ── ONE COMPOSER, BOTH SURFACES ──
   //
-  // At 404px there is no room for a textarea with buttons beside it, and buttons stacked
-  // under a separate field read as two unrelated rows. So the corner variant puts the field
-  // and its two actions inside a single bordered well: one object that means "compose".
-  const composer = isCorner ? (
-    <div className="rounded-2xl border border-edge bg-surface-sunken px-3 py-2.5">
+  // The field and its two actions live inside a single bordered well. That started as a
+  // constraint of 404px -- a textarea with buttons beside it does not fit, and buttons stacked
+  // under a separate field read as two unrelated rows -- and the full-page mock draws the same
+  // object, so the two surfaces now share it outright rather than each having a composer.
+  // Only the type and control sizes step up on the page.
+  const composer = (
+    <div
+      className={`shrink-0 rounded-2xl border border-edge bg-surface-sunken ${
+        isCorner ? "px-3 py-2.5" : "px-3.5 py-3"
+      }`}
+    >
       <textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
@@ -571,20 +643,24 @@ export function GrantBotChat({
             void send();
           }
         }}
-        rows={2}
+        rows={isCorner ? 2 : 3}
         placeholder={`Ask about ${clientName}…`}
         // Transparent and border-free: the well around it is the input's visible edge, so a
         // second box inside the first is just a box inside a box.
-        className="mb-2.5 w-full resize-none bg-transparent text-[13px] leading-snug text-ink placeholder:text-ink-subtle focus:outline-none"
+        className={`mb-2.5 w-full resize-none bg-transparent leading-snug text-ink placeholder:text-ink-subtle focus:outline-none ${
+          isCorner ? "text-[13px]" : "text-[13.5px]"
+        }`}
       />
       <div className="flex items-center justify-between">
         <button
           type="button"
           onClick={() => setShowPaste((s) => !s)}
           aria-pressed={showPaste}
-          className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-edge bg-white px-2.5 text-[11.5px] font-semibold text-ink-muted transition-colors hover:text-ink"
+          className={`inline-flex items-center gap-1.5 rounded-lg border border-edge bg-white font-semibold text-ink-muted transition-colors hover:text-ink ${
+            isCorner ? "h-7 px-2.5 text-[11.5px]" : "h-8 px-3 text-[12.5px]"
+          }`}
         >
-          <ClipboardPaste className="h-3 w-3" />
+          <ClipboardPaste className={isCorner ? "h-3 w-3" : "h-3.5 w-3.5"} />
           {pasted.trim() ? "Paste attached" : "Paste"}
         </button>
         <button
@@ -593,44 +669,36 @@ export function GrantBotChat({
           disabled={sending || !draft.trim()}
           // orangeFill, NOT orange: this is white type on a solid orange field, which is
           // 3.04:1 on #E4761F and fails AA -- the exact case lib/brand.ts adds orangeFill
-          // for. The mock specifies #E4761F here; this is the one place the build knowingly
-          // departs from it, and it is a two-shade difference nobody sees.
-          className="inline-flex h-7 items-center gap-1.5 rounded-lg bg-brand-orangeFill px-3 text-[11.5px] font-semibold text-white transition-colors hover:bg-brand-orangeFillHover disabled:opacity-45"
+          // for. Both mocks specify #E4761F here; both surfaces depart from it the same way,
+          // because a Send button that is one shade different between them would be worse
+          // than either choice.
+          className={`inline-flex items-center gap-1.5 rounded-lg bg-brand-orangeFill font-semibold text-white transition-colors hover:bg-brand-orangeFillHover disabled:opacity-45 ${
+            isCorner ? "h-7 px-3 text-[11.5px]" : "h-8 px-4 text-[12.5px]"
+          }`}
         >
-          <ArrowUp className="h-3.5 w-3.5" /> Send
+          <ArrowUp className={isCorner ? "h-3.5 w-3.5" : "h-4 w-4"} /> Send
         </button>
       </div>
     </div>
-  ) : (
-    <div className="flex items-end gap-2">
-      <textarea
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault();
-            void send();
-          }
-        }}
-        rows={3}
-        placeholder={`Ask about ${clientName}…`}
-        className="flex-1 rounded-2xl border border-brand-navy/15 bg-white px-4 py-3 text-[13px] shadow-card"
-      />
-      <div className="flex flex-col gap-2">
-        <Button variant="outline" onClick={() => setShowPaste((s) => !s)} aria-pressed={showPaste}>
-          <span className="flex items-center gap-1.5">
-            <ClipboardPaste className="h-3.5 w-3.5" />
-            {pasted.trim() ? "Paste attached" : "Paste"}
-          </span>
-        </Button>
-        <Button onClick={() => void send()} disabled={sending || !draft.trim()}>
-          <span className="flex items-center gap-1.5">
-            <Send className="h-3.5 w-3.5" /> Send
-          </span>
-        </Button>
-      </div>
-    </div>
   );
+
+  // Prompt starters, page only -- there is no room for them at 404px. They PREFILL the
+  // composer and nothing else: no route, no send, no model call until the staffer reads what
+  // was typed on their behalf and presses Send themselves. Deliberately not one-click asks;
+  // putting words in someone's mouth on a grant surface is different from offering them.
+  const starters = [
+    { icon: Wand2, label: "Draft a pass alert", prompt: `Draft a pass alert for ${clientName}.` },
+    {
+      icon: Scale,
+      label: "What's still unknown?",
+      prompt: `What does the platform still not know about ${clientName} that would change a go/no-go?`,
+    },
+    {
+      icon: GitCompare,
+      label: "Compare to last year's award",
+      prompt: `How does this compare to ${clientName}'s awards on record from last year?`,
+    },
+  ];
 
   if (isCorner) {
     return (
@@ -668,36 +736,48 @@ export function GrantBotChat({
     );
   }
 
+  // ── THREE REGIONS, THREE OWNERS OF SCROLL ──
+  //
+  // The bug this replaces: the whole page scrolled as one document, so the composer and the
+  // thread rail slid out of view as a conversation grew -- you had to scroll back up to type.
+  // A chat surface has to behave like one: the transcript is the only thing that moves.
+  //
+  // How it holds: this root is `min-h-0 flex-1` inside the page's own full-height column, so it
+  // gets a definite height rather than growing with its content. The rail and the transcript
+  // then each carry their OWN overflow-y-auto, which is what makes them independent -- a wheel
+  // over the transcript cannot move the rail, and the rail scrolls only under its own cursor.
+  // The composer is a shrink-0 sibling below the transcript, so it is pinned by construction
+  // rather than by position:fixed and needs no compensating padding.
+  //
+  // min-h-0 is the load-bearing part and the easiest thing to drop: a flex child's default
+  // min-height:auto refuses to shrink below its content, which silently hands the scroll back
+  // to the page and restores the exact bug.
   return (
-    <div className="grid gap-4 lg:grid-cols-[240px_1fr]">
-      <aside>{threadList}</aside>
+    <div className="flex min-h-0 w-full flex-1 gap-5">
+      <aside className="flex w-56 shrink-0 flex-col gap-2 overflow-y-auto pr-0.5">
+        {threadList}
+      </aside>
 
-      <div className="space-y-3">
-        {/* WHAT IT IS LOOKING AT, AND WHAT THAT COSTS, before the first question. The shared
-            figure is the guardrails + methodology span: byte-identical for every client, so it is
-            cached once across the firm rather than per client. */}
-        {promptMeta && (
-          <div className="rounded-2xl border border-brand-navy/[0.08] bg-white p-4 text-[12.5px] text-muted-foreground shadow-card">
-            <p>
-              <span className="font-semibold text-brand-navy">
-                {promptMeta.prefixChars.toLocaleString()} characters
-              </span>{" "}
-              of cached context in front of every turn ({promptMeta.sharedChars.toLocaleString()}{" "}
-              shared across all clients) · guardrails{" "}
-              <span className="font-medium">{promptMeta.instructionsVersion}</span> · methodology{" "}
-              <span className="font-medium">{promptMeta.methodologyVersion}</span> ·{" "}
-              {promptMeta.gaps} known gap{promptMeta.gaps === 1 ? "" : "s"} in what the platform
-              knows about {clientName}.
-            </p>
-            <p className="mt-1">
-              Read-only. It cannot edit the profile, run matching, or send anything — when
-              something should change it will say what and where.
-            </p>
-          </div>
-        )}
-
-        <div className="min-h-[45vh] space-y-3 rounded-2xl border border-brand-navy/[0.08] bg-white p-5 shadow-card">
+      {/* min-h-0 here as well as on the transcript: this column is stretched to the row's
+          height, and without it a long transcript can still force it taller than the row and
+          hand the scroll back up the tree. */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto rounded-2xl bg-white px-[26px] py-6 shadow-card">
           {transcript}
+        </div>
+
+        <div className="flex shrink-0 flex-wrap gap-2">
+          {starters.map((s) => (
+            <button
+              key={s.label}
+              type="button"
+              onClick={() => setDraft(s.prompt)}
+              className="inline-flex h-[30px] items-center gap-1.5 rounded-pill border border-edge bg-white px-3 text-[12px] font-semibold text-brand-navy transition-colors hover:border-brand-navy/25"
+            >
+              <s.icon className="h-3 w-3" style={{ color: BRAND.orange }} />
+              {s.label}
+            </button>
+          ))}
         </div>
 
         {errorBanner}
