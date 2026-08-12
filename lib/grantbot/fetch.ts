@@ -177,6 +177,12 @@ function isBlockedV6(ip: string): boolean {
   // analog of ::ffff: -- so 2002:a9fe:a9fe:: is 169.254.169.254. Decode and judge it.
   if (h[0] === 0x2002) return isBlockedV4Hextets(h[1], h[2]);
 
+  // NAT64 well-known prefix 64:ff9b::/96 (RFC 6052): the embedded v4 is the last 32 bits, so
+  // 64:ff9b::a9fe:a9fe is 169.254.169.254. Decode and judge it (the /48 local-use form below has a
+  // length-dependent embedding and is blocked wholesale instead).
+  if (h[0] === 0x0064 && h[1] === 0xff9b && h[2] === 0 && h[3] === 0 && h[4] === 0 && h[5] === 0)
+    return isBlockedV4Hextets(h[6], h[7]);
+
   // Structural non-global ranges. Fail closed: a grant source is normal public unicast, never any of
   // these, so over-blocking only costs an illegitimate fetch. Kept at v4/v6 parity (see isBlockedV4).
   if ((h[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local

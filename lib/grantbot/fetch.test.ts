@@ -87,6 +87,12 @@ describe("isBlockedAddress", () => {
       expect(isBlockedAddress(ip)).toBe(true);
     }
   });
+  it("decodes the NAT64 well-known prefix and blocks metadata/private targets", () => {
+    // 64:ff9b::WWXX:YYZZ embeds a v4 in the last 32 bits (RFC 6052).
+    for (const ip of ["64:ff9b::a9fe:a9fe", "64:ff9b::a00:1", "64:ff9b::7f00:1"]) {
+      expect(isBlockedAddress(ip)).toBe(true);
+    }
+  });
   it("allows routable public addresses", () => {
     for (const ip of ["8.8.8.8", "1.1.1.1", "172.15.0.1", "172.32.0.1", "198.20.0.1", "199.0.0.1", "2606:2800:220:1::1", "2001:4860:4860::8888"]) {
       expect(isBlockedAddress(ip)).toBe(false);
