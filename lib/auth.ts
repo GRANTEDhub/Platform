@@ -126,7 +126,11 @@ export async function requireClient(): Promise<ClientSession> {
  * NOT an approval (approval stays admin-only, via the pursuit chooser). Only the
  * READ/WRITE of the draft happens here; the card-approval trigger is never touched.
  */
-export async function requireClientOrAdmin(): Promise<void> {
+// Returns `{ isStaff }` so a caller that needs to branch staff-vs-client (e.g. the compliance
+// step deciding whether to show the staff-only requirements derive) can reuse the profile lookup
+// this already does, instead of a second getUser()+profiles round-trip on a hot page. Existing
+// callers that `await` and ignore the return value are unaffected.
+export async function requireClientOrAdmin(): Promise<{ isStaff: boolean }> {
   const supabase = createClient();
   const {
     data: { user },
@@ -134,7 +138,7 @@ export async function requireClientOrAdmin(): Promise<void> {
   if (!user) redirect("/login");
 
   const { data: profile } = await supabase.from("profiles").select("id").eq("id", user.id).maybeSingle();
-  if (profile) return; // any staff (admin or contractor)
+  if (profile) return { isStaff: true }; // any staff (admin or contractor)
 
   const { data: rows } = await supabase
     .from("client_members")
@@ -143,4 +147,5 @@ export async function requireClientOrAdmin(): Promise<void> {
     .not("activated_at", "is", null)
     .limit(1);
   if (!rows || rows.length === 0) redirect("/");
+  return { isStaff: false };
 }

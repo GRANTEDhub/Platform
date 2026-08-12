@@ -1,4 +1,4 @@
-import { requireClientOrAdmin, getProfile } from "@/lib/auth";
+import { requireClientOrAdmin } from "@/lib/auth";
 import { requirePursuitVisible } from "@/lib/pursuit/access";
 import { resolveIntellEngineContext } from "@/lib/intellengine/context";
 import { computeEligibility } from "@/lib/intellengine/eligibility";
@@ -14,7 +14,7 @@ import IntellEngineComplianceClient from "./compliance-client";
 export const dynamic = "force-dynamic";
 
 export default async function IntellEngineCompliance({ searchParams }: { searchParams: { draft?: string } }) {
-  await requireClientOrAdmin();
+  const { isStaff } = await requireClientOrAdmin();
   await requirePursuitVisible();
   // Real per-client NOFO eligibility read for a matched grant (null for a
   // from-scratch draft or a staff preview -- no grant, so no gate is shown).
@@ -39,7 +39,6 @@ export default async function IntellEngineCompliance({ searchParams }: { searchP
   // is flipped on. `canDerive` is the staff-only, lazy trigger: offered only when nothing is cached,
   // the NOFO is retrievable, and the retry cap is not spent. computeEligibility is untouched and
   // stays the sole eligibility surface -- this section never repeats it.
-  const isStaff = !!(await getProfile());
   const requirements = grant ? readApplicationRequirements(grant.application_requirements) : null;
   const showRequirements = !!grant && (isStaff || requirementsClientVisible());
   const retrievable = !!grant && requirementsRetrievable(grant);

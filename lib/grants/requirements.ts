@@ -246,11 +246,16 @@ function requirementSource(raw: string): { excerpt: string; anchored: boolean } 
   const hits = sectionHits(raw).filter((h) => h >= HEAD_CHARS); // the head already covers early hits
   if (hits.length === 0) return { excerpt: head, anchored: false };
 
-  const density = (at: number) => hits.filter((h) => Math.abs(h - at) <= WINDOW_CHARS).length;
   const chosen: { start: number; end: number }[] = [];
   const remaining = [...hits];
 
   while (chosen.length < MAX_ANCHORED_WINDOWS && remaining.length > 0) {
+    // Density over REMAINING (the still-uncovered hits), not the full hit set, and recomputed each
+    // iteration. If it scored against all hits, a boundary hit just outside window 1 would inherit
+    // window 1's whole cluster's density and beat a genuinely separate, sparser cluster (a Section V
+    // evaluation-criteria heading far from the Section IV window) -- so window 2 would re-anchor
+    // beside window 1 and silently starve the distant field of excerpt, defeating the second window.
+    const density = (at: number) => remaining.filter((h) => Math.abs(h - at) <= WINDOW_CHARS).length;
     let best = remaining[0];
     let bestScore = density(best);
     for (const h of remaining) {
