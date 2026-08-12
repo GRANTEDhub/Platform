@@ -1,4 +1,5 @@
 import "server-only";
+import type Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAnthropicClient, MODEL } from "@/lib/anthropic";
 import { gatherContextPack } from "@/lib/grantbot/gather";
@@ -19,18 +20,37 @@ import {
   type TurnUsage,
 } from "@/lib/grantbot/store";
 import { budgetHistory } from "@/lib/grantbot/history";
+import {
+  executeWebFetch,
+  grantbotWebFetchEnabled,
+  runFetchLoop,
+  FETCH_INSTRUCTION_BLOCK,
+  TURN_DEADLINE_MS,
+  WEB_FETCH_TOOL,
+  type CallModel,
+} from "@/lib/grantbot/web-fetch";
 
 // One conversational turn: assemble, call, store. The orchestrator between the pure renderer and
 // the store, and the only place that knows anything about the model.
 //
-// ── READ-ONLY, ENFORCED BY CONSTRUCTION AND NOT BY PROMPT ──
+// ── READ-ONLY BY DEFAULT; ONE READ-ONLY TOOL BEHIND A FLAG (brick B) ──
 //
-// No `tools` parameter is passed. Not "no write tools" -- no tools at all, so there is no code
-// path from an answer to a mutation regardless of what the model says or what a paste tells it to
-// do. The instructions say read-only three times because a staffer should not be misled about
-// what GrantBot can do; the reason it CANNOT do it is this function's argument list.
+// Until brick B, no `tools` parameter was ever passed -- no tools at all, so no answer could reach
+// a mutation regardless of what a paste said. Brick B widens that by EXACTLY ONE tool: a read-only
+// GET of an allowlisted .gov grant source (lib/grantbot/web-fetch.ts + the Brick A guards), and
+// only when GRANTBOT_WEB_FETCH_ENABLED is on. The narrowing is held by construction, not by prompt:
+// the tool set is a server-side constant (never from the request body, same rule as turnBlocks),
+// the executor is a guarded HTTPS GET with no write or internal reach, and the flag defaults OFF.
 //
-// The one thing it writes is the conversation itself (0080), which contains no client state.
+// OFF IS BYTE-IDENTICAL TO BEFORE. When the flag is off, `useTools` is always false, so the `tools`
+// key is never added and the fetch-instruction block is never appended -- the system prompt, the
+// request body, the single model call, and the stored row are exactly what they were pre-brick-B.
+// That is the instant-revert guarantee: turning the env var off restores read-only-by-construction
+// with no deploy. The loop runs exactly once on that path (no tool_use is possible without tools).
+//
+// The one thing it writes is the conversation itself (0080), which contains no client state -- now
+// plus a non-text web_fetch_audit block on the assistant message when a fetch happened, so which
+// URLs were read is inspectable after the fact.
 //
 // ── NO STREAMING, DELIBERATELY, AND THE TIMEOUT THAT PAYS FOR IT ──
 //
@@ -105,45 +125,90 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
   const seq = await nextSeq(input.db, input.conversationId);
   await appendUser(input.db, { conversationId: input.conversationId, seq, text: userText });
 
-  const system = assembleSystem(prompt, input.turnBlocks ?? []);
-  const blockManifest = manifest([...prompt.blocks, ...(input.turnBlocks ?? [])]);
+  // The fetch instruction is appended AFTER the cache breakpoint (cacheable: false) and ONLY when
+  // enabled, so it never enters the shared cached prefix -- the flag-off prompt is unchanged and
+  // existing conversations' prompt caches are not busted. Off -> effectiveTurnBlocks is exactly what
+  // it was, so `system` and the manifest are byte-identical to before.
+  const webFetchEnabled = grantbotWebFetchEnabled();
+  const effectiveTurnBlocks = webFetchEnabled
+    ? [...(input.turnBlocks ?? []), FETCH_INSTRUCTION_BLOCK]
+    : input.turnBlocks ?? [];
+
+  const system = assembleSystem(prompt, effectiveTurnBlocks);
+  const blockManifest = manifest([...prompt.blocks, ...effectiveTurnBlocks]);
+
+  const baseMessages: unknown[] = dropped
+    ? [
+        // The truncation, told to the model in its own turn rather than smuggled into the user's
+        // words. It is a fact about the conversation, not something the staffer said.
+        { role: "user" as const, content: `[${dropped} earlier message(s) in this conversation were dropped to fit the context budget. If an answer depends on something said earlier that you cannot see, say so.]` },
+        ...messages,
+      ]
+    : messages;
 
   let answer = "";
   let usage: TurnUsage | null = null;
   let stopReason: string | null = null;
   let failure: string | null = null;
+  let fetches: unknown[] = [];
 
   try {
     const anthropic = getAnthropicClient();
-    const res = await anthropic.messages.create(
-      {
-        model: MODEL,
-        max_tokens: MAX_OUTPUT_TOKENS,
-        system,
-        messages: dropped
-          ? [
-              // The truncation, told to the model in its own turn rather than smuggled into the
-              // user's words. It is a fact about the conversation, not something the staffer said.
-              { role: "user" as const, content: `[${dropped} earlier message(s) in this conversation were dropped to fit the context budget. If an answer depends on something said earlier that you cannot see, say so.]` },
-              ...messages,
-            ]
-          : messages,
-        // NO `tools`. See the header -- this is the read-only property, not the prompt.
-      },
-      { timeout: CALL_TIMEOUT_MS, maxRetries: 1 },
-    );
-    answer = res.content
-      .map((b) => (b.type === "text" ? b.text : ""))
-      .filter(Boolean)
-      .join("\n")
-      .trim();
-    stopReason = res.stop_reason ?? null;
-    usage = {
-      input_tokens: res.usage?.input_tokens ?? null,
-      output_tokens: res.usage?.output_tokens ?? null,
-      cache_read_input_tokens: res.usage?.cache_read_input_tokens ?? null,
-      cache_creation_input_tokens: res.usage?.cache_creation_input_tokens ?? null,
+
+    // One model call per loop iteration. When useTools is false -- ALWAYS, on the flag-off path --
+    // no `tools` key is added, so the request is byte-identical to the pre-brick-B call, and the
+    // timeout is the full CALL_TIMEOUT_MS on the first call (remainingMs starts at the whole
+    // deadline), shrinking only as the turn's wall-clock budget is spent.
+    const callModel: CallModel = async ({ messages: msgs, useTools, remainingMs }) => {
+      const timeout = Math.min(CALL_TIMEOUT_MS, Math.max(remainingMs, 5_000));
+      const res = await anthropic.messages.create(
+        {
+          model: MODEL,
+          max_tokens: MAX_OUTPUT_TOKENS,
+          system,
+          messages: msgs as Anthropic.MessageParam[],
+          ...(useTools ? { tools: [WEB_FETCH_TOOL] as unknown as Anthropic.Tool[] } : {}),
+        },
+        { timeout, maxRetries: 1 },
+      );
+      const text = res.content
+        .map((b) => (b.type === "text" ? b.text : ""))
+        .filter(Boolean)
+        .join("\n")
+        .trim();
+      const toolUses = res.content
+        .filter((b) => b.type === "tool_use")
+        .map((b) => {
+          const tb = b as { id: string; input?: { url?: unknown } };
+          return { id: tb.id, url: tb.input?.url };
+        });
+      return {
+        text,
+        toolUses,
+        stopReason: res.stop_reason ?? null,
+        usage: {
+          input_tokens: res.usage?.input_tokens ?? null,
+          output_tokens: res.usage?.output_tokens ?? null,
+          cache_read_input_tokens: res.usage?.cache_read_input_tokens ?? null,
+          cache_creation_input_tokens: res.usage?.cache_creation_input_tokens ?? null,
+        },
+        rawContent: res.content,
+      };
     };
+
+    const loop = await runFetchLoop({
+      messages: baseMessages,
+      webFetchEnabled,
+      callModel,
+      executeFetch: (url) => executeWebFetch(url),
+      now: () => Date.now(),
+      deadlineMs: TURN_DEADLINE_MS,
+    });
+
+    answer = loop.text;
+    usage = loop.usage;
+    stopReason = loop.stopReason;
+    fetches = loop.fetches;
     if (!answer) failure = "The model returned no text.";
   } catch (err) {
     failure = err instanceof Error ? err.message : "Unknown error calling the model.";
@@ -162,6 +227,8 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
     usage,
     stopReason,
     error: failure,
+    // Empty on the flag-off path -> appendAssistant writes the same content as before.
+    fetches,
   });
   await touchConversation(input.db, input.conversationId);
 

@@ -55,6 +55,9 @@ import { GRANTBOT_METHODOLOGY, METHODOLOGY_VERSION } from "@/lib/grantbot/method
 //   staff           grantbot_client_context (brick 3) -- pasted handoff / per-client guidance
 //   gaps            the pack          -- the closed list of what the platform does not know
 //   skill           NOT BUILT. Reserved so the retrieval step is an array entry, not a reshape.
+//   web-fetch       lib/grantbot/web-fetch.ts (brick B) -- the flag-gated fetch-tool instruction,
+//                   appended AFTER the cache breakpoint and present only when GRANTBOT_WEB_FETCH_ENABLED
+//                   is on, so it never enters the shared cached prefix (flag-off prompt is unchanged).
 export type PromptBlockKind =
   | "guardrails"
   | "methodology"
@@ -62,6 +65,7 @@ export type PromptBlockKind =
   | "staff"
   | "gaps"
   | "skill"
+  | "web-fetch"
   | "closing";
 
 export interface PromptBlock {
