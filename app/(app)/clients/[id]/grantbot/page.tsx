@@ -1,6 +1,5 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { Minimize2 } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { PageHeader } from "@/components/layout/page-header";
 import { createServiceClient } from "@/lib/supabase/server";
@@ -8,6 +7,8 @@ import { gatherContextPack } from "@/lib/grantbot/gather";
 import { buildSystemPrompt } from "@/lib/grantbot/prompt";
 import { listConversations, loadMessages } from "@/lib/grantbot/store";
 import { GrantBotChat } from "@/components/grantbot/grantbot-chat";
+import { GrantBotCollapse } from "@/components/grantbot/grantbot-collapse";
+import { BLANK_CONVERSATION, toGrantBotMsg, toGrantBotThread } from "@/lib/grantbot/wire";
 
 export const dynamic = "force-dynamic";
 
@@ -52,9 +53,18 @@ export default async function GrantBotPage({
   const prompt = buildSystemPrompt({ pack: gathered.pack });
 
   const conversations = await listConversations(db, params.id);
-  const active = searchParams.c
-    ? conversations.find((c) => c.id === searchParams.c) ?? null
-    : conversations[0] ?? null;
+  // ?c=new IS AN EXPLICIT BLANK, and it has to be distinguishable from ?c missing. Absent
+  // means "no preference, open the most recent thread" -- the front-door case. `new` means
+  // the corner panel was sitting on a started-but-unsent conversation when Expand was
+  // clicked; that thread has no server id yet, and falling back to conversations[0] there
+  // dropped the user into the PREVIOUS conversation, which is the opposite of the
+  // expand-keeps-your-place promise.
+  const wantsBlank = searchParams.c === BLANK_CONVERSATION;
+  const active = wantsBlank
+    ? null
+    : searchParams.c
+      ? conversations.find((c) => c.id === searchParams.c) ?? null
+      : conversations[0] ?? null;
   const messages = active ? await loadMessages(db, active.id) : [];
 
   return (
@@ -67,13 +77,13 @@ export default async function GrantBotPage({
         <div className="flex flex-wrap items-center gap-4">
           {/* COLLAPSE, not just Back: it returns to the client record with the panel reopened on
               this conversation, so expanding and collapsing is one continuous thread rather than
-              a trip out and a fresh start. */}
-          <Link
-            href={`/clients/${params.id}?grantbot=${active?.id ?? "1"}`}
-            className="inline-flex items-center gap-1.5 text-[13px] font-medium text-brand-navy/70 hover:text-brand-navy"
-          >
-            <Minimize2 className="h-3.5 w-3.5" /> Collapse to {gathered.clientName}
-          </Link>
+              a trip out and a fresh start. A client component because the conversation it must
+              name can be created after this page renders -- see its header. */}
+          <GrantBotCollapse
+            clientId={params.id}
+            clientName={gathered.clientName}
+            fallbackConversationId={active?.id ?? null}
+          />
           <Link
             href={`/clients/${params.id}/context-pack`}
             className="text-[13px] font-medium text-brand-navy/70 hover:text-brand-navy"
@@ -87,20 +97,8 @@ export default async function GrantBotPage({
           variant="full"
           initial={{
             conversationId: active?.id ?? null,
-            conversations: conversations.map((c) => ({
-              id: c.id,
-              title: c.title,
-              lastMessageAt: c.lastMessageAt,
-            })),
-            messages: messages.map((m) => ({
-              id: m.id,
-              role: m.role,
-              text: m.content.map((c) => c.text).join("\n"),
-              error: m.error,
-              usage: m.usage,
-              instructionsVersion: m.instructionsVersion,
-              methodologyVersion: m.methodologyVersion,
-            })),
+            conversations: conversations.map(toGrantBotThread),
+            messages: messages.map(toGrantBotMsg),
           }}
           promptMeta={{
             prefixChars: prompt.prefixChars,
