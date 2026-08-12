@@ -142,7 +142,12 @@ function normalizeForMatch(s: string): string {
 function tidyText(s: string): string {
   return s
     .trim()
-    .replace(/^[-*•\d.)\s]+/, "")
+    // Strip a leading ENUMERATION MARKER only -- a bullet, or digits followed by . or ) -- and only
+    // when whitespace follows it. The prior `/^[-*•\d.)\s]+/` had no marker gate, so it ate real
+    // leading numerals that ARE the requirement: "990 Form ..." -> "Form ...", "25-page narrative
+    // limit" -> "page narrative limit" (in page_format_limits, where the number is the point),
+    // "501(c)(3) ..." -> "(c)(3) ...". Under-stripping ("1.Foo" with no space) is the safe failure.
+    .replace(/^(?:[-*•]|\d+[.)])\s+/, "")
     .replace(/[\s ]+/g, " ")
     .replace(/\s+$/, "")
     .trim();
@@ -178,6 +183,11 @@ function verifyField(
     kept.push({ text, quote });
   }
 
+  // `returned` is the count the MODEL sent for this field (cap-inclusive), NOT kept+dropped: items
+  // skipped by the shape rules above, and any past MAX_ITEMS_PER_FIELD, are counted here but in
+  // neither kept nor dropped. The tuple is a signal (what the model produced vs. what survived quote
+  // verification), not an arithmetic identity -- a `returned` above the cap tells us the cap is
+  // biting. Same definition as allowable-uses' verify audit, kept deliberately in sync.
   return { kept, returned: items.length, dropped };
 }
 
