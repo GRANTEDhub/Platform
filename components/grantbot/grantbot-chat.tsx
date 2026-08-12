@@ -70,12 +70,13 @@ function takeDraft(clientId: string): StashedDraft | null {
 // and the launcher already import this module.
 export type { GrantBotMsg, GrantBotThread } from "@/lib/grantbot/wire";
 
+// ONLY what the component reads. The prompt's size and the gap count are rendered by the
+// full page's own header chips, straight from `buildSystemPrompt` -- they were in this prop
+// for the cost card that the full-page restyle deleted, and a field declared here that
+// nothing dereferences reads as a dependency the chat does not have.
 export interface GrantBotPromptMeta {
-  prefixChars: number;
-  sharedChars: number;
   instructionsVersion: string;
   methodologyVersion: string;
-  gaps: number;
 }
 
 // Server-rendered transcript, for the surface that has one.
@@ -97,10 +98,11 @@ export interface GrantBotInitial {
 //
 // ── TWO VARIANTS, ONE COMPONENT, ONE CONVERSATION ──
 //
-// `full` is the page: a 240px thread rail beside the transcript, plus the read-out of what the
-// assembled prompt costs. `corner` is the launcher panel on the client dashboard: the rail
-// collapses behind a toggle and the read-out is gone, because 380px of chat is for asking and the
-// cost model is a debugging question (the Context pack tab answers it properly).
+// `full` is the page: a 224px thread rail beside the transcript, with prompt starters under it.
+// `corner` is the launcher panel on the client record: the rail collapses behind a toggle,
+// because 404px of chat is for asking. The prompt's size and version stamps are not in here on
+// either surface -- the full page carries them in its own header band, and the corner shows none,
+// since the cost model is a debugging question the Context pack tab answers properly.
 //
 // The variants differ in CHROME ONLY. Same store, same turn route, same conversation -- expanding
 // the corner panel navigates to the full page carrying the conversation id, so what you were
