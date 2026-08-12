@@ -178,12 +178,23 @@ export async function appendAssistant(
     usage?: TurnUsage | null;
     stopReason?: string | null;
     error?: string | null;
+    // Brick B: the web-fetch audit for this turn -- which URLs the model fetched, and whether each
+    // succeeded. Stored as a NON-TEXT block inside `content` (which is jsonb and, per this file's
+    // header, becomes a block array the moment a tool enters a turn). normalizeContent drops
+    // non-text blocks on read, so render and history replay are unchanged; the raw column keeps the
+    // audit for after-the-fact inspection. When there are no fetches the block is omitted, so the
+    // row is byte-identical to a pre-brick-B assistant message.
+    fetches?: unknown[] | null;
   },
 ): Promise<void> {
+  const content: unknown[] = [{ type: "text", text: opts.text }];
+  if (opts.fetches && opts.fetches.length > 0) {
+    content.push({ type: "web_fetch_audit", fetches: opts.fetches });
+  }
   const { error } = await db.from("grantbot_messages").insert({
     conversation_id: opts.conversationId,
     role: "assistant",
-    content: [{ type: "text", text: opts.text }],
+    content,
     seq: opts.seq,
     context_blocks: opts.contextBlocks,
     instructions_version: opts.instructionsVersion,

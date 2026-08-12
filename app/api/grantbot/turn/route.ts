@@ -6,9 +6,11 @@ import { runTurn } from "@/lib/grantbot/turn";
 
 // One GrantBot turn. STAFF ONLY, read-only, one client per conversation.
 //
-// maxDuration: the model call is bounded at 120s in runTurn, and the pack that precedes it runs
-// seven queries. 300 leaves headroom for a slow pack plus a slow answer rather than truncating an
-// answer the staffer already waited for.
+// maxDuration: the model call(s) are bounded in aggregate at TURN_DEADLINE_MS (220s) by runTurn's
+// runFetchLoop -- up to three sequential calls when GRANTBOT_WEB_FETCH_ENABLED is on (<=2 tool
+// rounds + a forced final answer), one call otherwise -- and the pack that precedes them runs seven
+// queries. 300 leaves ~80s of headroom over the 220s deadline for a slow pack plus the store writes
+// rather than truncating an answer the staffer already waited for.
 export const maxDuration = 300;
 
 // ── THE BODY IS message AND pasted. NOTHING ELSE REACHES THE PROMPT. ──
