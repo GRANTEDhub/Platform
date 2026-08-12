@@ -8,6 +8,7 @@ import { formatCurrency } from "@/lib/utils";
 import { PortalAccess, type PortalMember } from "@/components/clients/portal-access";
 import { ClientRepository } from "@/components/clients/client-repository";
 import { FormExitGuard } from "@/components/clients/form-exit-guard";
+import { ProfileHubNav } from "@/components/clients/profile-hub-nav";
 import { DeleteClient } from "@/components/clients/delete-client";
 import { EnrichmentPanel } from "@/components/clients/enrichment-panel";
 import { deriveEnrichmentSteps } from "@/lib/clients/enrichment-status";
@@ -19,9 +20,15 @@ import type { Client, Invoice, ClientOverview } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
-// Edit profile — the SAME stepped pages as intake, navigated by clicking the section
-// bar at the top rather than walking Back/Next. You come here to change one thing, so
-// the bar is the navigation, not a progress read-out. See ClientForm's header comment.
+// PROFILE MANAGEMENT ▸ Profile — the SAME stepped pages as intake, navigated by clicking
+// the section bar at the top rather than walking Back/Next. You come here to change one
+// thing, so the bar is the navigation, not a progress read-out. See ClientForm's header
+// comment.
+//
+// This is the first tab of the Profile-management hub; Documents and Context pack are its
+// siblings, each still its own route (ProfileHubNav's header says why they are not panes
+// here). So there are two bars on this page and they are different scopes: the hub bar
+// picks WHICH surface, the section bar picks WHERE in this form.
 //
 // It also hosts the two surfaces that used to be separate destinations:
 //   · API data — was its own route plus a hero button next to "Edit profile". Same
@@ -168,11 +175,15 @@ export default async function EditClientPage({
     ];
     return (
       <div>
-        <div className="px-8 pt-6">
-          <FormExitGuard backHref={dashboardHref} backLabel="Back to profile" />
-        </div>
-        <PageHeader title={`Edit ${client.name}`} />
-        <div className="p-8">
+        <PageHeader
+          title="Profile management"
+          description={`What the platform holds about ${client.name}, and how it got there.`}
+          backSlot={<FormExitGuard backHref={dashboardHref} backLabel={`Back to ${client.name}`} />}
+        />
+        <div className="space-y-6 p-8">
+          <div className="max-w-3xl">
+            <ProfileHubNav clientId={client.id} active="profile" guardProfileForm />
+          </div>
           <ClientForm
             client={client}
             action={action}
@@ -305,11 +316,15 @@ export default async function EditClientPage({
 
   return (
     <div>
-      <div className="px-8 pt-6">
-        <FormExitGuard backHref={dashboardHref} backLabel="Back to profile" />
-      </div>
-      <PageHeader title={`Edit ${client.name}`} />
-      <div className="p-8">
+      <PageHeader
+        title="Profile management"
+        description={`What the platform holds about ${client.name}, and how it got there.`}
+        backSlot={<FormExitGuard backHref={dashboardHref} backLabel={`Back to ${client.name}`} />}
+      />
+      <div className="space-y-6 p-8">
+        <div className="max-w-3xl">
+          <ProfileHubNav clientId={client.id} active="profile" guardProfileForm />
+        </div>
         <ClientForm
           client={client}
           action={action}
