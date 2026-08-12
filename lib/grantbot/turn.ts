@@ -170,6 +170,11 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
           system,
           messages: msgs as Anthropic.MessageParam[],
           ...(tools === "off" ? {} : { tools: [WEB_FETCH_TOOL] as unknown as Anthropic.Tool[] }),
+          // "auto" disables PARALLEL tool use so the model emits at most one fetch per round --
+          // that bounds the loop's inner fetch pass to a single request (<=2 fetches per turn) and
+          // keeps the batch's wall-clock well inside TURN_DEADLINE_MS. "none" forbids tools entirely
+          // to force the final text answer.
+          ...(tools === "auto" ? { tool_choice: { type: "auto" as const, disable_parallel_tool_use: true } } : {}),
           ...(tools === "none" ? { tool_choice: { type: "none" as const } } : {}),
         },
         { timeout, maxRetries: 1 },

@@ -38,6 +38,16 @@ export const MAX_TOOL_ROUNDS = 2;
 // CALL_TIMEOUT_MS when nothing has elapsed -- which is what keeps flag-off byte-identical.
 export const TURN_DEADLINE_MS = 220_000;
 
+// LLM-oriented cap on the fetched text handed back to the model. Brick A's MAX_RESPONSE_BYTES
+// (1.5MB) only guards fetch memory/time -- 1.5MB of raw markup is ~375k tokens, over MODEL's
+// context window, so a single large-but-legitimate NOFO page could push the next call past the
+// window and fail the whole turn. Every OTHER input to this conversation is already capped for the
+// model (the user message, and history via budgetHistory), but budgetHistory runs once before the
+// loop and never re-budgets the in-loop fetched result -- so the cap lives here, mirroring the
+// byte-truncation note. ~15k tokens; with parallel tool use disabled the model fetches at most one
+// page per round, so a turn adds at most a couple of these.
+export const MAX_FETCH_TEXT_CHARS = 60_000;
+
 // ── The tool, as a server-side constant ─────────────────────────────────────────────────────────
 export const WEB_FETCH_TOOL_NAME = "fetch_grant_source";
 
@@ -100,13 +110,18 @@ export function frameFetchResult(
   now: () => string,
 ): { resultText: string; audit: FetchAuditRecord } {
   if (result.ok) {
-    const truncatedNote = result.truncated
+    // Two independent truncations can bite: Brick A's byte cap on the wire, and this LLM-oriented
+    // char cap. Either one means the model is seeing a partial page, so it is told so.
+    const charCapped = result.text.length > MAX_FETCH_TEXT_CHARS;
+    const body = charCapped ? result.text.slice(0, MAX_FETCH_TEXT_CHARS) : result.text;
+    const partial = result.truncated || charCapped;
+    const truncatedNote = partial
       ? "\n\n[The page was longer than the fetch limit and was truncated — treat it as partial, and say so if the answer might depend on the rest.]"
       : "";
-    const framed = framePastedContent(result.text, result.fetchedAt, `fetched from ${result.finalUrl}`) + truncatedNote;
+    const framed = framePastedContent(body, result.fetchedAt, `fetched from ${result.finalUrl}`) + truncatedNote;
     return {
       resultText: framed,
-      audit: { url: requestedUrl, ok: true, finalUrl: result.finalUrl, truncated: result.truncated, fetchedAt: result.fetchedAt },
+      audit: { url: requestedUrl, ok: true, finalUrl: result.finalUrl, truncated: partial, fetchedAt: result.fetchedAt },
     };
   }
   const detail = result.detail ? ` (${result.detail})` : "";
@@ -219,7 +234,10 @@ export async function runFetchLoop(opts: {
     text = res.text;
 
     if (toolMode === "auto" && res.stopReason === "tool_use" && res.toolUses.length > 0) {
-      // Continue the exchange: the assistant's tool_use turn, then a user turn of tool_results.
+      // Continue the exchange: the assistant's tool_use turn, then a user turn of tool_results. In
+      // production the real callModel sets disable_parallel_tool_use, so toolUses holds at most one
+      // entry and this pass is a single fetch (<=2 per turn); the loop still iterates for
+      // correctness, and every tool_use in the response gets a matching tool_result either way.
       working.push({ role: "assistant", content: res.rawContent });
       const toolResults: unknown[] = [];
       for (const tu of res.toolUses) {

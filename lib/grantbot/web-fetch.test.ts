@@ -6,6 +6,7 @@ import {
   grantbotWebFetchEnabled,
   FETCH_INSTRUCTION_BLOCK,
   WEB_FETCH_TOOL,
+  MAX_FETCH_TEXT_CHARS,
   type CallModel,
   type ModelTurn,
 } from "./web-fetch";
@@ -70,6 +71,23 @@ describe("frameFetchResult", () => {
     const { resultText, audit } = frameFetchResult("u", result, () => "NOW");
     expect(resultText).toMatch(/truncated/i);
     expect(audit.truncated).toBe(true);
+  });
+  it("caps oversized fetched text for the model and flags it partial", () => {
+    const big = "x".repeat(MAX_FETCH_TEXT_CHARS + 5_000);
+    const result: FetchResult = { ok: true, requestedUrl: "u", finalUrl: "u", contentType: "text/html", text: big, truncated: false, fetchedAt: "T" };
+    const { resultText, audit } = frameFetchResult("u", result, () => "NOW");
+    // The framed body carries at most the cap (plus the frame's own wrapper text), never the full blob.
+    expect(resultText).not.toContain(big);
+    expect((resultText.match(/x/g) ?? []).length).toBe(MAX_FETCH_TEXT_CHARS);
+    expect(resultText).toMatch(/truncated/i);
+    expect(audit.truncated).toBe(true);
+  });
+  it("leaves text at or under the cap untouched and not flagged partial", () => {
+    const result: FetchResult = { ok: true, requestedUrl: "u", finalUrl: "u", contentType: "text/html", text: "short body", truncated: false, fetchedAt: "T" };
+    const { resultText, audit } = frameFetchResult("u", result, () => "NOW");
+    expect(resultText).toContain("short body");
+    expect(resultText).not.toMatch(/truncated/i);
+    expect(audit.truncated).toBe(false);
   });
   it("turns a failure into a typed could-not-retrieve fact that forbids inferring", () => {
     const result: FetchResult = { ok: false, reason: "not_allowlisted", detail: "evil.com" };
