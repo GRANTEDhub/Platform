@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { Loader2, Maximize2, MessagesSquare, X } from "lucide-react";
+import { Loader2, Maximize2, Sparkles, X } from "lucide-react";
+import { BRAND } from "@/lib/brand";
 
 // The chat arrives on first open, not with the client record. "Opening is free" would be a
 // half-truth if the transcript were free and its code were not: this mounts on a page staff open
@@ -104,9 +105,11 @@ export function GrantBotLauncher({
         <button
           type="button"
           onClick={openPanel}
-          className="fixed bottom-6 right-6 z-40 inline-flex h-11 items-center gap-2 rounded-pill bg-brand-navy px-4 text-[13px] font-medium text-white shadow-lg transition-colors hover:bg-brand-navy/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+          className="fixed bottom-7 right-7 z-40 inline-flex h-11 items-center gap-2 rounded-pill bg-brand-navy px-4 text-[13px] font-medium text-white shadow-overlay transition-colors hover:bg-brand-navyHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
         >
-          <MessagesSquare className="h-4 w-4" />
+          {/* Same mark as the panel header's tile, so the thing you click and the thing that
+              opens are recognisably one object. */}
+          <Sparkles className="h-4 w-4" style={{ color: BRAND.orange }} />
           Ask GrantBot
         </button>
       )}
@@ -122,38 +125,62 @@ export function GrantBotLauncher({
           // Kept in the tree while closed so the draft survives, but out of the a11y tree and out
           // of hit-testing -- `invisible` does both, and unlike `hidden` it still transitions.
           aria-hidden={!open}
-          className={`fixed bottom-6 right-6 z-40 flex h-[min(34rem,calc(100vh-6rem))] w-[min(27rem,calc(100vw-3rem))] flex-col overflow-hidden rounded-2xl border border-brand-navy/10 bg-page shadow-2xl transition-all duration-200 ${
-            open && shown ? "visible translate-y-0 opacity-100" : "invisible translate-y-3 opacity-0"
+          // No border: the shadow alone lifts it off the page. A 1px navy rule under a cast
+          // that deep reads as a seam around the panel rather than an edge to it.
+          className={`fixed bottom-7 right-7 z-40 flex h-[min(588px,calc(100vh-3.5rem))] w-[min(404px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl bg-white shadow-floating transition-all duration-[280ms] ease-entrance ${
+            open && shown
+              ? "visible translate-y-0 scale-100 opacity-100"
+              : "invisible translate-y-4 scale-[0.98] opacity-0"
           }`}
         >
-          <div className="flex items-center justify-between gap-2 border-b border-brand-navy/10 bg-brand-navy px-4 py-2.5">
-            <div className="min-w-0">
-              <p className="truncate text-[13px] font-semibold text-white">GrantBot</p>
-              <p className="truncate text-[11px] text-white/60">
-                {clientName} · read-only
-              </p>
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={expand}
-                title="Open full page"
-                aria-label="Open full page"
-                className="rounded-lg p-1.5 text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+          <div className="relative flex-shrink-0 overflow-hidden bg-brand-navy px-[18px] pb-3.5 pt-4">
+            {/* The accent bloom, bled off the top-right corner. Decoration, so it is
+                aria-hidden and pointer-events-none -- and it is BRAND.orangeGlow rather than a
+                fresh rgba, so there is still exactly one orange in the product. */}
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute -right-[30px] -top-[46px] h-[140px] w-[140px] rounded-full"
+              style={{ background: `radial-gradient(circle, ${BRAND.orangeGlow}, transparent 70%)` }}
+            />
+            <div className="relative flex items-start gap-[11px]">
+              <div
+                className="flex h-[30px] w-[30px] flex-shrink-0 items-center justify-center rounded-lg"
+                style={{ background: BRAND.orangeTileOnInk }}
               >
-                <Maximize2 className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                title="Close"
-                aria-label="Close GrantBot"
-                className="rounded-lg p-1.5 text-white/70 transition-colors hover:bg-white/10 hover:text-white"
-              >
-                <X className="h-4 w-4" />
-              </button>
+                <Sparkles className="h-[15px] w-[15px]" style={{ color: BRAND.orange }} />
+              </div>
+              <div className="min-w-0 flex-1">
+                {/* Serif, because this is a title and not a control label -- the same
+                    Libre Baskerville that carries every heading in the product. */}
+                <p className="truncate font-serif text-[16px] font-bold text-white">GrantBot</p>
+                <p className="truncate text-[11.5px] text-white/55">
+                  {clientName} <span className="text-white/30">·</span> read-only
+                </p>
+              </div>
+              <div className="flex flex-shrink-0 items-center gap-0.5 pt-px">
+                <button
+                  type="button"
+                  onClick={expand}
+                  title="Open full page"
+                  aria-label="Open full page"
+                  className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-lg text-white/55 transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  <Maximize2 className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  title="Close"
+                  aria-label="Close GrantBot"
+                  className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-lg text-white/55 transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  <X className="h-[15px] w-[15px]" />
+                </button>
+              </div>
             </div>
           </div>
+          {/* The accent rule. Carries no type, so it is `orange` and not `orangeFill`. */}
+          <div className="h-0.5 flex-shrink-0 bg-brand-orange" />
 
           <GrantBotChat
             clientId={clientId}
