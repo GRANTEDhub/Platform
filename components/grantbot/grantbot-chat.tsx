@@ -649,7 +649,21 @@ export function GrantBotChat({
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+          // Enter sends; Shift+Enter inserts a newline (standard chat composer). Cmd/Ctrl+Enter
+          // still sends too, so the old shortcut keeps working. TWO IME guards, not one: while an
+          // IME candidate is open, Enter CONFIRMS the candidate and must not send. `isComposing`
+          // covers that on well-behaved builds, but on some Chromium/Windows builds (crbug.com/
+          // 1211849) `compositionend` fires BEFORE the confirming Enter keydown, so `isComposing`
+          // already reads false -- `keyCode === 229` (the legacy "IME is processing" sentinel) is
+          // still set on that keydown and catches it. send() itself no-ops on empty/while-sending
+          // (matching the Send button's disabled state), so a bare Enter on an empty draft does
+          // nothing.
+          if (
+            e.key === "Enter" &&
+            !e.shiftKey &&
+            !e.nativeEvent.isComposing &&
+            e.nativeEvent.keyCode !== 229
+          ) {
             e.preventDefault();
             void send();
           }
