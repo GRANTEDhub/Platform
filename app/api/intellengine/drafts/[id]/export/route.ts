@@ -58,12 +58,20 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   // null). Read under the service role, scoped to the draft's client (RLS already proved ownership of
   // the draft above). client_visible mirrors what the client is entitled to see (0075).
   const svc = createServiceClient();
-  const { data: docRows } = await svc
+  const { data: docRows, error: docsError } = await svc
     .from("client_documents")
     .select("id, title, content_type, size_bytes, storage_bucket, storage_path, intellengine_draft_id")
     .eq("client_id", ctx.draft.client_id)
     .eq("client_visible", true)
     .or(`intellengine_draft_id.eq.${params.id},intellengine_draft_id.is.null`);
+  // HONESTY: a failed attachment read must NOT render as "no attachments." A false zero could let
+  // staff file an incomplete federal submission believing there were none. Fail loudly instead --
+  // the panel shows its "couldn't load" state, never a false-complete package. Guards BOTH the links
+  // and the document formats, since both derive their attachment view from this read.
+  if (docsError) {
+    console.error(`[intellengine-export] attachments read failed draft=${params.id}: ${docsError.message}`);
+    return NextResponse.json({ error: "Couldn't load attachments — try again." }, { status: 500 });
+  }
 
   type DocRow = {
     id: string;
