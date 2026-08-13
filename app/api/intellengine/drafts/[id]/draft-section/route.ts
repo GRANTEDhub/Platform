@@ -80,19 +80,31 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ ok: false, reason: result.reason }, { status });
   }
 
-  // Persist source:"ai" using the PATCH route's merge discipline: replace this one section, keep the
-  // others (with their own source), normalize + bound, write under the caller's RLS. normalizeSections
-  // ForSave re-reads through the tolerant reader (so a stored section is always shape-valid) and stamps
-  // updatedAt server-side.
+  // Persist source:"ai" using the PATCH route's read-current-then-merge discipline. RE-READ the
+  // content NOW, after the multi-second LLM call -- NOT from the pre-call `content` snapshot: a
+  // client autosave (a scope edit, or another section) can commit during generation, and merging
+  // into the stale snapshot would rewrite the whole column and clobber it (last-write-wins with an
+  // LLM-latency-wide window). Re-reading here narrows that window to the microseconds between read
+  // and write, exactly as the PATCH route does. Only THIS section is replaced; scope and every other
+  // section come from the fresh row.
+  const { data: fresh } = await supabase
+    .from("intellengine_drafts")
+    .select("content")
+    .eq("id", params.id)
+    .maybeSingle<{ content: unknown }>();
+  // Deleted mid-generation (the delete route cascades documents): nothing to write back to.
+  if (!fresh) return NextResponse.json({ error: "Draft not found" }, { status: 404 });
+  const current = readDraftContent(fresh.content);
+
   const now = new Date().toISOString();
-  const others = content.sections.filter((s) => s.id !== section.id);
+  const others = current.sections.filter((s) => s.id !== section.id);
   const norm = normalizeSectionsForSave(
     [...others, { id: section.id, draft: result.draft, source: "ai", updatedAt: now }],
     now,
   );
   if (!norm.ok) return NextResponse.json({ error: norm.error }, { status: 400 });
 
-  const merged = { ...content, sections: norm.value };
+  const merged = { ...current, sections: norm.value };
   if (JSON.stringify(merged).length > CONTENT_MAX_BYTES) {
     return NextResponse.json(
       { error: "This draft is too large to save. Shorten a section and try again." },
