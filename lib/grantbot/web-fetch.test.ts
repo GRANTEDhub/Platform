@@ -2,23 +2,15 @@ import { describe, it, expect, afterEach } from "vitest";
 import {
   frameFetchResult,
   executeWebFetch,
-  runFetchLoop,
   grantbotWebFetchEnabled,
   FETCH_INSTRUCTION_BLOCK,
   WEB_FETCH_TOOL,
   MAX_FETCH_TEXT_CHARS,
-  type CallModel,
-  type ModelTurn,
-  type FetchAuditRecord,
 } from "./web-fetch";
 import type { FetchResult } from "./fetch";
-import type { TurnUsage } from "./store";
 
-const USAGE: TurnUsage = { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
-
-function turn(over: Partial<ModelTurn> = {}): ModelTurn {
-  return { text: "", toolUses: [], stopReason: "end_turn", usage: USAGE, rawContent: [], ...over };
-}
+// The bounded tool-use LOOP is tested in tool-loop.test.ts (it is tool-agnostic now). This file
+// covers the fetch tool itself: the flag, the instruction block, and the result framing.
 
 describe("grantbotWebFetchEnabled", () => {
   const prev = process.env.GRANTBOT_WEB_FETCH_ENABLED;
@@ -77,7 +69,6 @@ describe("frameFetchResult", () => {
     const big = "x".repeat(MAX_FETCH_TEXT_CHARS + 5_000);
     const result: FetchResult = { ok: true, requestedUrl: "u", finalUrl: "u", contentType: "text/html", text: big, truncated: false, fetchedAt: "T" };
     const { resultText, audit } = frameFetchResult("u", result, () => "NOW");
-    // The framed body carries at most the cap (plus the frame's own wrapper text), never the full blob.
     expect(resultText).not.toContain(big);
     expect((resultText.match(/x/g) ?? []).length).toBe(MAX_FETCH_TEXT_CHARS);
     expect(resultText).toMatch(/truncated/i);
@@ -91,11 +82,9 @@ describe("frameFetchResult", () => {
     expect(audit.truncated).toBe(false);
   });
   it("does not leave a lone surrogate when the cap splits a surrogate pair", () => {
-    // Fill exactly to the cap so the next char is a 📄 (surrogate pair) straddling the boundary.
     const text = "a".repeat(MAX_FETCH_TEXT_CHARS) + "📄" + "b".repeat(10);
     const result: FetchResult = { ok: true, requestedUrl: "u", finalUrl: "u", contentType: "text/html", text, truncated: false, fetchedAt: "T" };
     const { resultText } = frameFetchResult("u", result, () => "NOW");
-    // Every code unit in the framed text must be well-formed (no unpaired surrogate).
     expect(resultText).toBe(resultText.toWellFormed());
     expect(resultText).toMatch(/truncated/i);
   });
@@ -129,140 +118,5 @@ describe("executeWebFetch", () => {
       now: () => "NOW",
     });
     expect(audit).toMatchObject({ url: "https://grants.gov/x", ok: true });
-  });
-});
-
-describe("runFetchLoop", () => {
-  // Record every callModel invocation so we can assert exactly what was sent.
-  function recorder(script: ModelTurn[]) {
-    // Snapshot messagesLen at call time: runFetchLoop mutates one `working` array in place, so
-    // holding the reference would show every call the final length.
-    const calls: { tools: "off" | "auto" | "none"; remainingMs: number; messagesLen: number }[] = [];
-    let i = 0;
-    const callModel: CallModel = async ({ messages, tools, remainingMs }) => {
-      calls.push({ tools, remainingMs, messagesLen: messages.length });
-      return script[Math.min(i++, script.length - 1)];
-    };
-    return { callModel, calls };
-  }
-
-  it("FLAG OFF: exactly one model call, tools 'off', no fetches (== today)", async () => {
-    const { callModel, calls } = recorder([turn({ text: "hi" })]);
-    const r = await runFetchLoop({
-      messages: [{ role: "user", content: "q" }],
-      webFetchEnabled: false,
-      callModel,
-      executeFetch: async () => {
-        throw new Error("must not fetch when the flag is off");
-      },
-      now: () => 0,
-    });
-    expect(calls).toHaveLength(1);
-    expect(calls[0].tools).toBe("off");
-    expect(r.text).toBe("hi");
-    expect(r.fetches).toEqual([]);
-    expect(r.usage).toEqual(USAGE);
-    expect(r.stopReason).toBe("end_turn");
-  });
-
-  it("FLAG ON: fetches once, feeds the result back, then answers", async () => {
-    const { callModel, calls } = recorder([
-      turn({ toolUses: [{ id: "t1", url: "https://grants.gov/x" }], stopReason: "tool_use", rawContent: [{ type: "tool_use", id: "t1" }] }),
-      turn({ text: "answer" }),
-    ]);
-    const executed: unknown[] = [];
-    const r = await runFetchLoop({
-      messages: [{ role: "user", content: "q" }],
-      webFetchEnabled: true,
-      callModel,
-      executeFetch: async (url) => {
-        executed.push(url);
-        return { resultText: "FRAMED", audit: { url: String(url), ok: true, fetchedAt: "T" } };
-      },
-      now: () => 0,
-    });
-    expect(executed).toEqual(["https://grants.gov/x"]);
-    expect(calls.map((c) => c.tools)).toEqual(["auto", "auto"]);
-    expect(r.text).toBe("answer");
-    expect(r.fetches).toHaveLength(1);
-    // The second call carries the appended assistant tool_use turn + user tool_result turn.
-    expect(calls[1].messagesLen).toBe(calls[0].messagesLen + 2);
-    // Usage summed across the two calls.
-    expect(r.usage?.input_tokens).toBe(20);
-  });
-
-  it("at the round cap the forced-final call is 'none' (tools present, not dropped) — regression for the 400", async () => {
-    const { callModel, calls } = recorder([
-      turn({ toolUses: [{ id: "t", url: "https://grants.gov/a" }], stopReason: "tool_use" }),
-    ]); // always asks for a tool
-    const r = await runFetchLoop({
-      messages: [{ role: "user", content: "q" }],
-      webFetchEnabled: true,
-      callModel,
-      executeFetch: async () => ({ resultText: "F", audit: { url: "u", ok: true, fetchedAt: "T" } }),
-      now: () => 0,
-      maxToolRounds: 2,
-    });
-    // round0 tool, round1 tool, round2 forced FINAL -> "none", NOT "off": tools stay present so the
-    // tool_use history does not 400.
-    expect(calls.map((c) => c.tools)).toEqual(["auto", "auto", "none"]);
-    expect(calls.every((c) => c.tools !== "off")).toBe(true);
-    expect(r.fetches).toHaveLength(2);
-  });
-
-  it("once the wall-clock deadline is spent the next call is the forced-final 'none'", async () => {
-    let t = 0;
-    const { callModel, calls } = recorder([turn({ toolUses: [{ id: "t", url: "https://grants.gov/a" }], stopReason: "tool_use" })]);
-    const r = await runFetchLoop({
-      messages: [{ role: "user", content: "q" }],
-      webFetchEnabled: true,
-      callModel: async (opts) => {
-        const res = await callModel(opts);
-        t = 1000; // blow the 500ms deadline after the first call
-        return res;
-      },
-      executeFetch: async () => ({ resultText: "F", audit: { url: "u", ok: true, fetchedAt: "T" } }),
-      now: () => t,
-      deadlineMs: 500,
-      maxToolRounds: 5,
-    });
-    expect(calls.map((c) => c.tools)).toEqual(["auto", "none"]);
-    expect(r.fetches).toHaveLength(1);
-  });
-
-  it("surfaces the partial fetch audit via the sink when a later round throws", async () => {
-    const sink: FetchAuditRecord[] = [];
-    let call = 0;
-    const callModel: CallModel = async () => {
-      call += 1;
-      if (call === 1) return turn({ toolUses: [{ id: "t1", url: "https://grants.gov/x" }], stopReason: "tool_use" });
-      throw new Error("boom on the second round");
-    };
-    await expect(
-      runFetchLoop({
-        messages: [{ role: "user", content: "q" }],
-        webFetchEnabled: true,
-        callModel,
-        executeFetch: async (url) => ({ resultText: "F", audit: { url: String(url), ok: true, fetchedAt: "T" } }),
-        now: () => 0,
-        fetches: sink,
-      }),
-    ).rejects.toThrow("boom");
-    // The round-0 fetch that succeeded before the throw is still visible to the caller.
-    expect(sink).toHaveLength(1);
-    expect(sink[0]).toMatchObject({ url: "https://grants.gov/x", ok: true });
-  });
-
-  it("passes the full remaining budget on the first call (first timeout == CALL_TIMEOUT_MS upstream)", async () => {
-    const { callModel, calls } = recorder([turn({ text: "hi" })]);
-    await runFetchLoop({
-      messages: [{ role: "user", content: "q" }],
-      webFetchEnabled: false,
-      callModel,
-      executeFetch: async () => ({ resultText: "", audit: { url: "", ok: true, fetchedAt: "T" } }),
-      now: () => 0,
-      deadlineMs: 220_000,
-    });
-    expect(calls[0].remainingMs).toBe(220_000);
   });
 });
