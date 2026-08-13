@@ -20,12 +20,30 @@ export async function renderArtifactPdf(sanitizedHtml: string, title: string): P
   // Embed the SAME vendored faces the alert PDF uses (loadFontCss) -- serverless Chromium has no
   // gstatic egress and none of the print CSS's named system fonts installed, so without @font-face
   // data-URIs the PDF renders substitutes or tofu. The launcher and the font read are independent, so
-  // start them together.
-  const [fontCss, browser] = await Promise.all([loadFontCss(), launchAlertBrowser()]);
+  // start them together -- but bind the browser to its OWN promise and close it if the font read
+  // rejects first. A bare Promise.all([loadFontCss(), launchAlertBrowser()]) would reject before the
+  // destructuring binds `browser`, orphaning a resolved-but-unreferenced Chromium process past the
+  // finally below; this mirrors store.ts's close-on-reject discipline for the same concurrent-launch race.
+  const browserPromise = launchAlertBrowser();
+  const fontCss = await loadFontCss().catch((err) => {
+    void browserPromise.then((b) => b.close()).catch(() => {});
+    throw err;
+  });
+  const browser = await browserPromise;
   const html = artifactPrintHtml(title, sanitizedHtml, fontCss);
   try {
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: "load", timeout: 30_000 });
+    // Fonts are embedded @font-face data URIs (no network), so this resolves fast; kept as a
+    // correctness guard that the faces are APPLIED before we print -- verbatim from renderAlertPdf /
+    // renderHorizonPdf. waitUntil:"load" only awaits the load event, not the CSS Font Loading
+    // document.fonts.ready promise, so page.pdf() can otherwise snapshot mid-substitution and print
+    // system fallbacks -- defeating the font embedding above, on a client/staff-facing deliverable.
+    try {
+      await page.evaluate(() => (document as unknown as { fonts?: { ready?: Promise<unknown> } }).fonts?.ready);
+    } catch {
+      /* fonts.ready unsupported -> proceed with whatever loaded */
+    }
     const pdf = await page.pdf({ format: "letter", printBackground: true, preferCSSPageSize: true });
     return Buffer.from(pdf);
   } finally {
