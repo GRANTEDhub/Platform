@@ -1,6 +1,6 @@
 import "server-only";
 import HTMLtoDOCX from "html-to-docx";
-import { launchAlertBrowser } from "@/lib/alerts/render";
+import { launchAlertBrowser, loadFontCss } from "@/lib/alerts/render";
 import { artifactPrintHtml } from "./artifact-html";
 
 // The two rendered exports for a GrantBot document (Brick 1b). Both are PURE FUNCTIONS of the
@@ -17,8 +17,12 @@ import { artifactPrintHtml } from "./artifact-html";
 // pageRanges clamp (the alert pins pageRanges:"1" because it is one fixed letter page; a concept
 // proposal is multi-page), and preferCSSPageSize honours the print stylesheet's @page letter size.
 export async function renderArtifactPdf(sanitizedHtml: string, title: string): Promise<Buffer> {
-  const html = artifactPrintHtml(title, sanitizedHtml);
-  const browser = await launchAlertBrowser();
+  // Embed the SAME vendored faces the alert PDF uses (loadFontCss) -- serverless Chromium has no
+  // gstatic egress and none of the print CSS's named system fonts installed, so without @font-face
+  // data-URIs the PDF renders substitutes or tofu. The launcher and the font read are independent, so
+  // start them together.
+  const [fontCss, browser] = await Promise.all([loadFontCss(), launchAlertBrowser()]);
+  const html = artifactPrintHtml(title, sanitizedHtml, fontCss);
   try {
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: "load", timeout: 30_000 });

@@ -72,7 +72,12 @@ export async function exportArtifact(
     await uploadObject(GRANTBOT_ARTIFACTS_BUCKET, key, bytes, CONTENT_TYPE[opts.format]);
   }
 
+  // By here the object provably exists (cache hit, or just uploaded). signedUrl() swallows a signing
+  // failure into null, so a null here means the SIGNING failed, NOT that the artifact is missing --
+  // THROW so the route surfaces it as 502 "Export failed" rather than a misleading 404 "not found"
+  // (which, because the object is now cached, would otherwise repeat on every retry). `null` is thus
+  // reserved strictly for the genuine not-found above.
   const url = await signedUrl(GRANTBOT_ARTIFACTS_BUCKET, key, EXPORT_URL_TTL_SECONDS, { download: filename });
-  if (!url) return null;
+  if (!url) throw new Error(`signing the export URL failed for ${key}`);
   return { signedUrl: url, filename };
 }

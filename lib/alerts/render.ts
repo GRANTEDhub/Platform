@@ -24,7 +24,11 @@ let cachedFontCss: string | null = null;
 // guarantee correct glyphs and kerning every render. Only Regular (400) and
 // SemiBold (600) weights are vendored, so each face covers a weight RANGE: the
 // template's 400/500 map to Regular and 600/700 to SemiBold.
-async function loadFontCss(): Promise<string> {
+// Exported so the GrantBot artifact PDF export (lib/grantbot/artifact-render.ts) embeds the SAME
+// vendored faces rather than hand-rolling a second loader: it renders in this same serverless
+// Chromium, so it needs @font-face data-URIs for the identical reason (no gstatic egress, no system
+// fonts installed). Cached here, so a shared import pays the file read at most once per process.
+export async function loadFontCss(): Promise<string> {
   if (!cachedFontCss) {
     const dir = path.join(ROOT, "lib/contracts/fonts");
     const [serifReg, serifSemi, interReg, interSemi] = await Promise.all([
