@@ -116,7 +116,15 @@ export function SectionAssistThread({
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            // Two IME guards, same as the GrantBot composer: isComposing, plus keyCode 229 for the
+            // Chromium/Windows builds (crbug.com/1211849) where compositionend fires before the
+            // confirming Enter and isComposing has already flipped false.
+            if (
+              e.key === "Enter" &&
+              !e.shiftKey &&
+              !e.nativeEvent.isComposing &&
+              e.nativeEvent.keyCode !== 229
+            ) {
               e.preventDefault();
               void send();
             }

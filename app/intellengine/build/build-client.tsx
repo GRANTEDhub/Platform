@@ -286,6 +286,10 @@ function SectionCard({
     ) {
       return;
     }
+    // Close any open assist thread: Regenerate replaces the section from scratch, so the thread's
+    // revisions are now based on stale text. Leaving it open would let Accept silently revert the
+    // fresh draft to a superseded revision. Reopening starts fresh from the regenerated text.
+    setAssistOpen(false);
     setBusy(true);
     setNote(null);
     const msg = await onRegenerate();

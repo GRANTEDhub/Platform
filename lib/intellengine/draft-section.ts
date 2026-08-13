@@ -58,6 +58,13 @@ export type SectionDraftResult =
   | { ok: true; draft: string; source: "ai" }
   | { ok: false; reason: SectionDraftReason };
 
+// The HTTP status a refusal reason maps to, kept next to the type so the draft-section and
+// revise-section routes cannot drift when a reason is added or a status changes. The ungrounded
+// reasons (not_retrievable / no_requirements) are a 200 honest "can't do this yet", not an error.
+export function statusForSectionDraftReason(reason: SectionDraftReason): number {
+  return reason === "generation_failed" ? 503 : reason === "too_long" ? 422 : 200;
+}
+
 // The one narrow seam the route (and the tests) can swap. Returns the drafted section text, or null
 // for a transient failure the caller maps to a retry.
 export type DraftModelCall = (args: { system: string; user: string }) => Promise<string | null>;

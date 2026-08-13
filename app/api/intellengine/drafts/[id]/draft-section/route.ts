@@ -10,7 +10,7 @@ import {
   readDraftContent,
   type DraftSection,
 } from "@/lib/intellengine/content";
-import { generateSectionDraft } from "@/lib/intellengine/draft-section";
+import { generateSectionDraft, statusForSectionDraftReason } from "@/lib/intellengine/draft-section";
 import type { Grant } from "@/types/database";
 
 // Step 5a: draft one proposal section, grounded in the grant's step-4 application requirements, and
@@ -71,8 +71,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     // generation_failed is transient (retry); too_long can be retried; not_retrievable / no_requirements
     // are terminal-for-now and reported as an honest "can't ground this yet" at 200 so the UI shows the
     // message rather than an error toast.
-    const status = result.reason === "generation_failed" ? 503 : result.reason === "too_long" ? 422 : 200;
-    return NextResponse.json({ ok: false, reason: result.reason }, { status });
+    return NextResponse.json({ ok: false, reason: result.reason }, { status: statusForSectionDraftReason(result.reason) });
   }
 
   // Persist source:"ai" with OPTIMISTIC CONCURRENCY. The bug this closes: draft-section is a second,

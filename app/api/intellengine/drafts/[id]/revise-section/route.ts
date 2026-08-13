@@ -5,7 +5,7 @@ import { resolveIntellEngineContext } from "@/lib/intellengine/context";
 import { readApplicationRequirements } from "@/lib/grants/requirements";
 import { PROPOSAL_SECTIONS } from "@/lib/intellengine/sections";
 import { readDraftContent } from "@/lib/intellengine/content";
-import { generateSectionDraft } from "@/lib/intellengine/draft-section";
+import { generateSectionDraft, statusForSectionDraftReason } from "@/lib/intellengine/draft-section";
 import type { Grant } from "@/types/database";
 
 // Step 5b: the per-section assist thread's PREVIEW turn. Given a staff instruction + the section's
@@ -32,7 +32,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
   const section = PROPOSAL_SECTIONS.find((s) => s.id === body.sectionId);
   if (!section) return NextResponse.json({ error: "Unknown section" }, { status: 400 });
-  const instruction = (body.instruction ?? "").trim();
+  // typeof guard, not `?? ""`: req.json() returns arbitrary JSON at runtime, and .trim() on a
+  // non-string (e.g. {"instruction":42}) would throw a 500 rather than this intended 400.
+  const instruction = typeof body.instruction === "string" ? body.instruction.trim() : "";
   if (!instruction) return NextResponse.json({ error: "An instruction is required" }, { status: 400 });
 
   const ctx = await resolveIntellEngineContext(params.id);
@@ -52,13 +54,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     section,
     instruction,
     // The current text to revise: what the composer holds (may be an unaccepted prior revision), or
-    // the stored section as a fallback.
-    currentDraft: body.currentDraft ?? content.sections.find((s) => s.id === section.id)?.draft ?? "",
+    // the stored section as a fallback. typeof guard for the same reason as instruction above.
+    currentDraft:
+      typeof body.currentDraft === "string"
+        ? body.currentDraft
+        : content.sections.find((s) => s.id === section.id)?.draft ?? "",
   });
 
   if (!result.ok) {
-    const status = result.reason === "generation_failed" ? 503 : result.reason === "too_long" ? 422 : 200;
-    return NextResponse.json({ ok: false, reason: result.reason }, { status });
+    return NextResponse.json({ ok: false, reason: result.reason }, { status: statusForSectionDraftReason(result.reason) });
   }
   // PREVIEW ONLY -- the revised text goes back to the thread, not the database.
   return NextResponse.json({ ok: true, draft: result.draft });
