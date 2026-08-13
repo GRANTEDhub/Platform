@@ -12,6 +12,7 @@ import { useDraftSave } from "@/components/intellengine/use-draft-save";
 import { PROPOSAL_SECTIONS, type SectionSpec } from "@/lib/intellengine/sections";
 import type { DraftSection, SectionSource } from "@/lib/intellengine/content";
 import { SubmissionPackagePanel } from "@/components/intellengine/submission-package";
+import { SectionAssistThread } from "@/components/intellengine/section-assist";
 
 const SUPPORT = "support@grantedco.com";
 
@@ -99,6 +100,16 @@ export default function IntellEngineBuildClient({
     setDrafts((prev) => ({ ...prev, [id]: value }));
     // A client edit makes this section client-authored, whatever it was before.
     setSources((prev) => (prev[id] === "client" ? prev : { ...prev, [id]: "client" }));
+    touch();
+  }
+
+  // 5b: adopt an accepted assist-thread revision. Same write path as a Regenerate accept -- set the
+  // section, mark it source:"ai", and touch() so it rides the serialized autosave (durable, and it
+  // cannot be clobbered by an in-flight stale save). No server round-trip: the revise route already
+  // returned the text; only the accepted result is persisted, through the builder's normal save.
+  function acceptRevision(id: string, text: string) {
+    setDrafts((prev) => ({ ...prev, [id]: text }));
+    setSources((prev) => ({ ...prev, [id]: "ai" }));
     touch();
   }
 
@@ -202,10 +213,12 @@ export default function IntellEngineBuildClient({
           <SectionCard
             key={spec.id}
             spec={spec}
+            draftId={draftId}
             value={drafts[spec.id] ?? ""}
             source={sources[spec.id] ?? "client"}
             onChange={(v) => updateDraft(spec.id, v)}
             onRegenerate={() => regenerateSection(spec.id)}
+            onAcceptRevision={(text) => acceptRevision(spec.id, text)}
           />
         ))}
 
@@ -233,21 +246,35 @@ export default function IntellEngineBuildClient({
 
 function SectionCard({
   spec,
+  draftId,
   value,
   source,
   onChange,
   onRegenerate,
+  onAcceptRevision,
 }: {
   spec: SectionSpec;
+  draftId?: string;
   value: string;
   source: SectionSource;
   onChange: (value: string) => void;
   // Returns a note to display, or null on success (the parent updates the text + provenance).
   onRegenerate: () => Promise<string | null>;
+  // 5b: adopt an accepted assist revision (parent writes it as source:"ai").
+  onAcceptRevision: (text: string) => void;
 }) {
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [assistOpen, setAssistOpen] = useState(false);
   const written = value.trim().length > 0;
+
+  // Accept the revision, confirming first if it would overwrite CLIENT-authored text (same discipline
+  // as Regenerate). An AI draft or empty section needs no confirmation.
+  function handleAcceptRevision(text: string) {
+    if (written && source === "client" && !window.confirm("Replace your edits with this revision?")) return;
+    onAcceptRevision(text);
+    setAssistOpen(false);
+  }
 
   async function handleRegenerate() {
     // Confirm before overwriting text the CLIENT wrote (same discipline as the concept-proposal
@@ -285,11 +312,18 @@ function SectionCard({
           className="flex-1 rounded-xl border border-brand-navy/15 bg-white px-3.5 py-3 text-sm outline-none focus:border-brand-navy/35 focus:ring-2 focus:ring-brand-navy/10"
         />
         <div className="flex shrink-0 flex-row gap-2 sm:w-44 sm:flex-col">
-          {/* Still a stub in 5a: the interactive assist thread is 5b (the heavier, IntellEngine-
-              native surface). Wiring it here would half-build that tier. */}
+          {/* 5b: opens the per-section assist thread. A staff preview with no draft row can't revise
+              (nothing to ground/persist), so it falls back to the note. */}
           <button
-            onClick={() => setNote("GrantBot chat is coming soon — for now, edit the text directly above.")}
-            className="flex-1 rounded-lg bg-brand-navy px-3 py-2 text-xs font-semibold text-white transition hover:bg-brand-navyDeep sm:flex-none"
+            onClick={() =>
+              draftId
+                ? setAssistOpen((o) => !o)
+                : setNote("Open a real proposal draft to use GrantBot — this is a preview.")
+            }
+            aria-pressed={assistOpen}
+            className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold text-white transition sm:flex-none ${
+              assistOpen ? "bg-brand-navyDeep" : "bg-brand-navy hover:bg-brand-navyDeep"
+            }`}
           >
             Edit with GrantBot
           </button>
@@ -312,6 +346,17 @@ function SectionCard({
       </div>
 
       {note && <p className="mt-2 text-[12px] text-muted-foreground">{note}</p>}
+
+      {assistOpen && draftId && (
+        <SectionAssistThread
+          draftId={draftId}
+          sectionId={spec.id}
+          sectionTitle={spec.title}
+          currentText={value}
+          onAccept={handleAcceptRevision}
+          onClose={() => setAssistOpen(false)}
+        />
+      )}
     </div>
   );
 }
