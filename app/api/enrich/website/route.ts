@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getAnthropicClient, CHEAP_MODEL } from "@/lib/anthropic";
 import { ORG_TYPES } from "@/lib/clients/org-types";
+import { fetchWebsite } from "@/lib/net/fetch-website";
 
 // Craft a client/prospect profile FROM their website, for grant-prospecting.
-// Staff-only. Fetches the page (bounded + a basic SSRF guard), strips it to text,
+// Staff-only. Fetches the page behind the shared SSRF guard (resolve-verdict per
+// hop, manual redirect loop -- lib/net/fetch-website), strips it to text,
 // and asks the cheap model to extract everything the site supports: org identity,
 // address, contact, and the narrative (mission / funding need).
 //
@@ -111,25 +113,6 @@ RULES:
 
 Return everything through the submit_org_profile tool.`;
 
-// Block obviously-internal hosts (SSRF): loopback, link-local (incl. cloud
-// metadata 169.254.x), and RFC1918 private ranges. Not exhaustive -- a defensive
-// baseline for a staff-only tool, matching the "verify, don't trust input" posture.
-function isBlockedHost(host: string): boolean {
-  const h = host.toLowerCase().replace(/\.$/, "");
-  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".internal") || h === "::1" || h === "0.0.0.0") {
-    return true;
-  }
-  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (m) {
-    const a = Number(m[1]);
-    const b = Number(m[2]);
-    if (a === 0 || a === 10 || a === 127 || a === 169 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function stripHtml(html: string): string {
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
@@ -159,27 +142,23 @@ export async function POST(req: NextRequest) {
   if (target.protocol !== "http:" && target.protocol !== "https:") {
     return NextResponse.json({ error: "Only http(s) URLs are supported." }, { status: 400 });
   }
-  if (isBlockedHost(target.hostname)) {
-    return NextResponse.json({ error: "That address isn't reachable." }, { status: 400 });
-  }
 
-  // Fetch the page, bounded by a timeout + a size cap.
-  let html: string;
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12_000);
-    const res = await fetch(target.toString(), {
-      redirect: "follow",
-      signal: controller.signal,
-      headers: { "user-agent": "GRANTEDbot/1.0 (+profile drafting)" },
-    }).finally(() => clearTimeout(timer));
-    if (!res.ok) {
-      return NextResponse.json({ error: `Couldn't reach that site (HTTP ${res.status}).` }, { status: 502 });
+  // Fetch the page behind the shared SSRF guard: every hop is DNS-resolved and must resolve only to
+  // public addresses (hostResolvesPublic), and redirects are followed manually so the guard re-runs
+  // on each target (issue #359). Bounded by a timeout + redirect cap (5) + char cap inside fetchWebsite.
+  const fetched = await fetchWebsite(target.toString());
+  if (!fetched.ok) {
+    // A blocked address, or a redirect off to a non-web scheme, reads as "unreachable" (400, same as
+    // the old guard). Everything else is a fetch/HTTP failure (502). User-facing messages unchanged.
+    if (fetched.reason === "blocked_host" || fetched.reason === "bad_scheme") {
+      return NextResponse.json({ error: "That address isn't reachable." }, { status: 400 });
     }
-    html = (await res.text()).slice(0, 400_000);
-  } catch {
+    if (fetched.reason === "http_error" && typeof fetched.status === "number") {
+      return NextResponse.json({ error: `Couldn't reach that site (HTTP ${fetched.status}).` }, { status: 502 });
+    }
     return NextResponse.json({ error: "Couldn't reach that site — check the URL." }, { status: 502 });
   }
+  const html = fetched.html;
 
   const text = stripHtml(html).slice(0, 12_000);
   if (text.length < 40) {
