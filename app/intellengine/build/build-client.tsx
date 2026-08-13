@@ -11,6 +11,7 @@ import { SaveIndicator } from "@/components/intellengine/save-indicator";
 import { useDraftSave } from "@/components/intellengine/use-draft-save";
 import { PROPOSAL_SECTIONS, type SectionSpec } from "@/lib/intellengine/sections";
 import type { DraftSection, SectionSource } from "@/lib/intellengine/content";
+import { SubmissionPackagePanel } from "@/components/intellengine/submission-package";
 
 const SUPPORT = "support@grantedco.com";
 
@@ -197,6 +198,10 @@ export default function IntellEngineBuildClient({
             onRegenerate={() => regenerateSection(spec.id)}
           />
         ))}
+
+        {/* Step 6: assemble the filable package. Only with a real draft to export -- a staff preview
+            opened on the step URL directly has no draft row and nothing to assemble. */}
+        {draftId && <SubmissionPackagePanel draftId={draftId} />}
 
         <div className="flex flex-wrap items-center justify-end gap-4">
           <SaveIndicator saver={saver} />
