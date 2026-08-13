@@ -122,6 +122,24 @@ describe("generateSectionDraft — grounding", () => {
     expect(system).toMatch(/placeholder/i);
   });
 
+  it("leads the client block with the distilled client_profile when present", async () => {
+    const s = seam("ok");
+    const client = {
+      name: "Rivertown Community Health",
+      client_profile: { summary: "A rural FQHC serving three tri-county service areas" },
+    } as unknown as Client;
+    await generateSectionDraft(input({ client }), { createDraft: s.createDraft });
+    // The distilled profile's narrative signal reaches the model (via formatClientProfileForEnrichment).
+    expect(s.calls[0].user).toContain("A rural FQHC serving three tri-county service areas");
+  });
+
+  it("falls back to structured fields when no distilled profile is on file", async () => {
+    const s = seam("ok");
+    await generateSectionDraft(input({}), { createDraft: s.createDraft }); // CLIENT has no client_profile
+    expect(s.calls[0].user).toContain("No distilled client profile on file yet");
+    expect(s.calls[0].user).toContain("Rivertown Community Health"); // still grounded on the name
+  });
+
   it("includes the concept proposal grounding only when present", async () => {
     const withConcept = seam("ok");
     await generateSectionDraft(

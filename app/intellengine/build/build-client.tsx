@@ -92,8 +92,12 @@ export default function IntellEngineBuildClient({
   }
 
   // Regenerate: draft this section server-side (grounded in the grant's step-4 requirements) and
-  // adopt the result locally. On success we update state WITHOUT touch(), so the debounce does not
-  // fire a redundant autosave -- the route already persisted the section (source:"ai") durably.
+  // adopt the result locally, then touch() so the fresh section joins the client's serialized
+  // autosave stream. The route already persisted it (durable if the client navigates away now), but
+  // an autosave whose payload was built from local state BEFORE this regenerate resolved could
+  // otherwise commit AFTER the server write and silently clobber the AI section. touch() folds the
+  // fresh text into useDraftSave's save chain, which serialises client saves in fire order -- so the
+  // later (fresh) save always wins, closing that reverse race. The redundant write is idempotent.
   // Returns a note to show, or null on success.
   async function regenerateSection(id: string): Promise<string | null> {
     // A staff preview opened on the step URL directly has no draft row to write to.
@@ -105,12 +109,13 @@ export default function IntellEngineBuildClient({
         body: JSON.stringify({ sectionId: id }),
       });
       const data = (await res.json().catch(() => null)) as
-        | { ok?: boolean; reason?: string; section?: { draft?: string } }
+        | { ok?: boolean; reason?: string; error?: string; section?: { draft?: string } }
         | null;
       if (res.ok && data?.ok && typeof data.section?.draft === "string") {
         const text = data.section.draft;
         setDrafts((prev) => ({ ...prev, [id]: text }));
         setSources((prev) => ({ ...prev, [id]: "ai" }));
+        touch();
         return null;
       }
       // Honest failure messages. no_requirements is the one that ties step 5 back to step 4.
@@ -123,6 +128,10 @@ export default function IntellEngineBuildClient({
           return "This draft isn't tied to a matched grant, so there's nothing to ground a draft against.";
         case "too_long":
           return "The draft came back too long — try again.";
+        case "conflict":
+          // CAS exhaustion: the draft was being saved through every retry. The server crafts the
+          // specific message; fall back if it is ever absent.
+          return data?.error ?? "Your draft was changing while this generated — try again in a moment.";
         default:
           return "Couldn't draft this section right now — try again in a moment.";
       }

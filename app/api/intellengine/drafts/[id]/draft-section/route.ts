@@ -7,6 +7,7 @@ import {
   CONTENT_MAX_BYTES,
   normalizeSectionsForSave,
   readDraftContent,
+  type DraftSection,
 } from "@/lib/intellengine/content";
 import { generateSectionDraft } from "@/lib/intellengine/draft-section";
 import type { Grant } from "@/types/database";
@@ -80,41 +81,73 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ ok: false, reason: result.reason }, { status });
   }
 
-  // Persist source:"ai" using the PATCH route's read-current-then-merge discipline. RE-READ the
-  // content NOW, after the multi-second LLM call -- NOT from the pre-call `content` snapshot: a
-  // client autosave (a scope edit, or another section) can commit during generation, and merging
-  // into the stale snapshot would rewrite the whole column and clobber it (last-write-wins with an
-  // LLM-latency-wide window). Re-reading here narrows that window to the microseconds between read
-  // and write, exactly as the PATCH route does. Only THIS section is replaced; scope and every other
-  // section come from the fresh row.
-  const { data: fresh } = await supabase
-    .from("intellengine_drafts")
-    .select("content")
-    .eq("id", params.id)
-    .maybeSingle<{ content: unknown }>();
-  // Deleted mid-generation (the delete route cascades documents): nothing to write back to.
-  if (!fresh) return NextResponse.json({ error: "Draft not found" }, { status: 404 });
-  const current = readDraftContent(fresh.content);
+  // Persist source:"ai" with OPTIMISTIC CONCURRENCY. The bug this closes: draft-section is a second,
+  // uncoordinated writer of the whole `content` column, outside the builder's useDraftSave chain that
+  // serialises the client's own PATCH saves. Re-reading current content just before the write (rather
+  // than merging into the pre-LLM snapshot) already stops the multi-second clobber -- but the read →
+  // merge → write is still not atomic, so a client autosave landing in that tiny window would be lost
+  // silently (regenerateSection skips touch(), so nothing re-saves it). We compare-and-swap on
+  // updated_at (a real column with a before-update bump trigger, 0062): the write only lands if the
+  // row has not changed since we read it; if a concurrent save moved it, we re-read, RE-MERGE this one
+  // section onto the newer content, and retry. So a racing edit is rebased onto, never overwritten.
+  let savedSection: DraftSection | undefined;
+  let committed = false;
+  for (let attempt = 0; attempt < MAX_MERGE_ATTEMPTS; attempt++) {
+    const { data: fresh } = await supabase
+      .from("intellengine_drafts")
+      .select("content, updated_at")
+      .eq("id", params.id)
+      .maybeSingle<{ content: unknown; updated_at: string }>();
+    // Deleted mid-generation (the delete route cascades documents): nothing to write back to.
+    if (!fresh) return NextResponse.json({ error: "Draft not found" }, { status: 404 });
+    const current = readDraftContent(fresh.content);
 
-  const now = new Date().toISOString();
-  const others = current.sections.filter((s) => s.id !== section.id);
-  const norm = normalizeSectionsForSave(
-    [...others, { id: section.id, draft: result.draft, source: "ai", updatedAt: now }],
-    now,
-  );
-  if (!norm.ok) return NextResponse.json({ error: norm.error }, { status: 400 });
+    const now = new Date().toISOString();
+    const others = current.sections.filter((s) => s.id !== section.id);
+    const norm = normalizeSectionsForSave(
+      [...others, { id: section.id, draft: result.draft, source: "ai", updatedAt: now }],
+      now,
+    );
+    if (!norm.ok) return NextResponse.json({ error: norm.error }, { status: 400 });
 
-  const merged = { ...current, sections: norm.value };
-  if (JSON.stringify(merged).length > CONTENT_MAX_BYTES) {
+    const merged = { ...current, sections: norm.value };
+    if (JSON.stringify(merged).length > CONTENT_MAX_BYTES) {
+      return NextResponse.json(
+        { error: "This draft is too large to save. Shorten a section and try again." },
+        { status: 413 },
+      );
+    }
+
+    // CAS: only update the row we read. eq("updated_at", ...) fails to match (0 rows) if another
+    // write bumped it between our read and this write.
+    const { data: rows, error } = await supabase
+      .from("intellengine_drafts")
+      .update({ content: merged })
+      .eq("id", params.id)
+      .eq("updated_at", fresh.updated_at)
+      .select("id");
+    if (error) return NextResponse.json({ error: "Couldn't save the draft" }, { status: 500 });
+    if (rows && rows.length > 0) {
+      savedSection = norm.value.find((s) => s.id === section.id);
+      committed = true;
+      break;
+    }
+    // Lost the CAS: a concurrent save landed. Re-read and re-merge (no LLM call, so this is cheap).
+  }
+
+  // Only when a fast typist keeps committing through every retry. The section was generated fine; the
+  // client can regenerate again once their edits settle.
+  if (!committed) {
     return NextResponse.json(
-      { error: "This draft is too large to save. Shorten a section and try again." },
-      { status: 413 },
+      { ok: false, reason: "conflict", error: "Your draft was changing while this generated — try again in a moment." },
+      { status: 409 },
     );
   }
 
-  const { error } = await supabase.from("intellengine_drafts").update({ content: merged }).eq("id", params.id);
-  if (error) return NextResponse.json({ error: "Couldn't save the draft" }, { status: 500 });
-
-  const saved = norm.value.find((s) => s.id === section.id);
-  return NextResponse.json({ ok: true, section: saved });
+  return NextResponse.json({ ok: true, section: savedSection });
 }
+
+// Bounded re-merge attempts under the optimistic-concurrency CAS. Each retry is a cheap re-read +
+// re-merge (no model call); the bound stops a client editing without pause from holding the request
+// open. In practice one pass succeeds -- a second write racing the exact read/write gap is rare.
+const MAX_MERGE_ATTEMPTS = 4;

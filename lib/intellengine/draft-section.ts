@@ -8,6 +8,7 @@ import {
 } from "@/lib/grants/requirements";
 import { SECTION_MAX_CHARS, type DraftScope } from "@/lib/intellengine/content";
 import type { SectionSpec } from "@/lib/intellengine/sections";
+import { formatClientProfileForEnrichment } from "@/lib/clients/profile";
 
 // Step 5a: draft ONE proposal section, grounded in the grant's step-4 application requirements.
 //
@@ -87,8 +88,18 @@ function renderRequirements(req: ApplicationRequirements): string {
   return blocks.join("\n\n");
 }
 
+// The client: the DISTILLED PROFILE first (the priority narrative signal), always backed by the
+// structured fields so a client whose profile has not been refined yet still grounds something.
+// This mirrors lib/concept/schema.ts::renderClient -- section drafting is the same narrative task
+// class client_profile exists to enrich (CLAUDE.md: client_profile "only enriches narrative", fed to
+// why-this-org / concept / draft-email; NOT the profile-free matcher). Without it a client with a
+// rich profile would draft from raw intake columns alone, thinner than the concept for the same org.
 function renderClient(client: Client | null): string {
-  if (!client) return "(no client profile on file)";
+  if (!client) return "(no client on file)";
+  const profileBlock = client.client_profile
+    ? formatClientProfileForEnrichment(client.client_profile)
+    : "(No distilled client profile on file yet — rely on the structured fields below.)";
+
   const lines: string[] = [`Name: ${client.name}`];
   const add = (label: string, v: string | null | undefined) => {
     if (v && v.trim()) lines.push(`${label}: ${v.trim()}`);
@@ -106,7 +117,7 @@ function renderClient(client: Client | null): string {
   add("Annual budget", client.annual_budget);
   add("Federal grant history", client.federal_grant_history);
   add("Known constraints", client.known_constraints);
-  return lines.join("\n");
+  return `${profileBlock}\n\n--- Structured fields ---\n${lines.join("\n")}`;
 }
 
 function renderScope(scope: DraftScope): string {
