@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAnthropicClient, MODEL } from "@/lib/anthropic";
+import { normalizeForMatch, sectionHits, MIN_QUOTE_CHARS, MAX_QUOTE_CHARS } from "@/lib/grants/nofo-text";
 
 // WHAT THE MONEY MAY BE SPENT ON, per grant, with every line anchored to a verbatim span of
 // the NOFO (migration 0072).
@@ -27,15 +28,10 @@ import { getAnthropicClient, MODEL } from "@/lib/anthropic";
 const MAX_ITEMS = 12;
 // A line is a budget category, not a sentence of narrative.
 const MAX_LINE_WORDS = 25;
-// Long enough to carry a real clause, short enough that "the quote" cannot become "the
-// section". A model that wants to quote 2000 characters is not anchoring a line, it is
-// pasting -- and a huge span is also likelier to straddle a page break and fail the match
-// for reasons that have nothing to do with faithfulness.
-const MAX_QUOTE_CHARS = 300;
-// Below this a quote stops being evidence: a handful of characters will match somewhere in
-// any long document by accident, which would make the gate look like it was passing when it
-// was only finding "and".
-const MIN_QUOTE_CHARS = 24;
+// The quote bounds (MIN_QUOTE_CHARS / MAX_QUOTE_CHARS), the normalizer, and the section-heading
+// scanner now live in lib/grants/nofo-text.ts, shared verbatim with requirements.ts -- see the
+// import above. SECTION_PATTERNS below stay local: they are the allowable-costs headings, distinct
+// from the application/review headings requirements.ts anchors on.
 
 // How much NOFO text to hand the model, centred on the allowable-costs section rather than
 // taken from the top -- see allowableSource.
@@ -145,57 +141,10 @@ Call the tool exactly once.`;
 // gets to look. When no heading matches we fall back to the head rather than skipping the
 // call, because a notice can describe allowable spending without using any of these words,
 // and the attempt cap already bounds what a husk can cost.
-// A TABLE-OF-CONTENTS LINE IS NOT A SECTION, and it was beating the real one.
+// sectionHits (every heading occurrence, contents-page entries removed) and its
+// looksLikeTocEntry helper now live in lib/grants/nofo-text.ts, shared with requirements.ts. The
+// TOC-detection rationale and the "\s\d{1,4}$" regression that shaped it are documented there.
 //
-// The measured failure: 43 of the 468 no_section grants had a section heading sitting in
-// their raw_text, and the excerpt never showed it to the model. A NOFO's contents page says
-// "IV. Allowable Costs .......... 41" at character 2,000, the real section starts at 41,000,
-// and a window anchored on the first hit hands over front matter -- so the model answers
-// has_section: false and the page renders "Not clearly specified in the NOFO" about a
-// document that specifies it in detail.
-//
-// A contents entry is recognisable by its shape rather than its wording: the line it sits on
-// is short and ends in a page number, behind either a dot leader or a column gap.
-//
-// DELIBERATELY CONSERVATIVE, because density scoring below is the primary defence and this is
-// belt-and-braces. A false negative costs nothing -- a surviving contents hit has no cluster
-// around it and loses the density vote anyway. A false positive is expensive: it discards a
-// real hit, and the discarded hit is likely to be one of the best ones.
-//
-// Which is exactly what "\s\d{1,4}$" did, caught in test. "...allowable costs are described
-// in 2 CFR 200" is a body sentence, and that citation is boilerplate sitting immediately
-// beside allowable-costs language in most federal notices -- so a single space before a
-// trailing number threw away the highest-value hits in the document. A page number in a real
-// contents table is set off by a dot leader or column alignment, never by one space.
-function looksLikeTocEntry(raw: string, index: number): boolean {
-  const from = raw.lastIndexOf("\n", index) + 1;
-  const to = raw.indexOf("\n", index);
-  const line = raw.slice(from, to === -1 ? raw.length : to).trim();
-  if (line.length > 120) return false;
-  // "IV. Allowable Costs .......... 41"
-  if (/(?:\.\s?){3,}\s*\d{1,4}$/.test(line)) return true;
-  // "Allowable Costs      41" -- column-aligned, two or more spaces or a tab.
-  return /(?:\s{2,}|\t)\d{1,4}$/.test(line);
-}
-
-// Every heading occurrence in the document, contents entries removed.
-function sectionHits(raw: string): number[] {
-  const hits: number[] = [];
-  for (const re of SECTION_PATTERNS) {
-    // Fresh lastIndex per document: these regexes are module-level and global, so a stale
-    // lastIndex from a previous grant would silently skip the head of this one.
-    re.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(raw)) !== null) {
-      if (!looksLikeTocEntry(raw, m.index)) hits.push(m.index);
-      // A zero-length match cannot happen with these patterns, but an unguarded global exec
-      // loop is one edit away from spinning forever.
-      if (m.index === re.lastIndex) re.lastIndex++;
-    }
-  }
-  return hits.sort((a, b) => a - b);
-}
-
 // WHERE TO LOOK, and why not the top of the document, and why not the first match either.
 //
 // The brief's excerpt takes the first 8000 characters, which is right for its job -- the
@@ -216,7 +165,7 @@ function sectionHits(raw: string): number[] {
 // window that lands badly can only ever cost lines -- it can never admit a quote that is not
 // in the document.
 function allowableSource(raw: string): { excerpt: string; anchored: boolean } {
-  const hits = sectionHits(raw);
+  const hits = sectionHits(raw, SECTION_PATTERNS);
   if (hits.length === 0) return { excerpt: raw.slice(0, HEAD_CHARS), anchored: false };
 
   const density = (at: number) => hits.filter((h) => Math.abs(h - at) <= WINDOW_CHARS).length;
@@ -260,40 +209,8 @@ function allowableSource(raw: string): { excerpt: string; anchored: boolean } {
   return { excerpt, anchored: true };
 }
 
-// THE NORMALIZER — the whole gate turns on this, so it is spelled out.
-//
-// raw_text is extracted from PDFs and HTML, and extraction leaves artifacts that no human
-// would call a difference in the text: a sentence broken across a line, a soft hyphen at a
-// page break, a non-breaking space in a heading, curly quotes from a word processor, an
-// en-dash in a range. A model that copies a span perfectly faithfully still fails a
-// byte-exact includes() against any of those.
-//
-// So both sides are folded identically and the match stays EXACT on the folded forms. This
-// is not fuzzy matching: there is no similarity score, no threshold, no partial credit, no
-// token overlap. A quote either appears in the document or it does not. We are only removing
-// distinctions that exist in the encoding rather than in the writing.
-//
-// Deliberately NOT case-folded. Case is part of the text, models reproduce it reliably, and
-// folding it would let "SHALL NOT" match "shall not" -- a difference that changes meaning.
-function normalizeForMatch(s: string): string {
-  return (
-    s
-      // Soft hyphen, zero-width space/non-joiner/joiner, BOM, word joiner.
-      .replace(/[­​‌‍﻿⁠]/g, "")
-      // Hyphenation across a line break: "appropri-\nate" is one word in the source.
-      .replace(/-[\r\n]+\s*/g, "")
-      // Curly quotes and primes to ASCII.
-      .replace(/[‘’‚‛′]/g, "'")
-      .replace(/[“”„‟″]/g, '"')
-      // Dash family (figure, en, em, minus, non-breaking hyphen) to ASCII hyphen.
-      .replace(/[‐‑‒–—―−]/g, "-")
-      // Ellipsis to three dots, so a quote that spells it either way still matches.
-      .replace(/…/g, "...")
-      // Every whitespace run -- including NBSP and newlines -- to one space.
-      .replace(/[\s ]+/g, " ")
-      .trim()
-  );
-}
+// normalizeForMatch (the encoding fold the quote gate turns on) now lives in
+// lib/grants/nofo-text.ts, imported above and shared verbatim with requirements.ts.
 
 function tidyLine(s: string): string {
   return s
