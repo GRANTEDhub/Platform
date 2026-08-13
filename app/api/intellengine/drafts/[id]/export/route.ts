@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient, createServiceClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/server";
 import { resolveIntellEngineContext } from "@/lib/intellengine/context";
+import { resolveDocumentActor, canReadDocument } from "@/lib/documents/authorize";
 import { readApplicationRequirements } from "@/lib/grants/requirements";
 import { readDraftContent } from "@/lib/intellengine/content";
 import { sanitizeDocument } from "@/lib/sanitize/html";
@@ -20,26 +21,27 @@ import type { Grant } from "@/types/database";
 //                          sections + requirements appendix + attachment listing), rendered via the
 //                          reused artifact renderers. Returns the bytes as a download.
 //   ?format=links       -> JSON for the UI panel: the completeness manifest + one short-lived signed
-//                          download URL per client_visible attachment (files stay separate -- the
-//                          right shape for Grants.gov's per-slot uploads).
+//                          download URL per attachment the caller may read (files stay separate --
+//                          the right shape for Grants.gov's per-slot uploads).
 //
-// STAFF-ONLY BY THE AUTH GATE, same as the requirements / draft-section routes: a profiles row or
-// 404. Reused import-only -- renderArtifactPdf/Docx (multi-page as-is), sanitizeDocument, signedUrl.
-// render.ts is not touched or imported here. No migration, no persistence: render-on-demand, and
-// attachments are already in the client-uploads bucket.
+// STAFF-ONLY, and NOT a bare profiles-row check for the attachments: this route service-role-reads
+// client_documents including ORG-LEVEL firm records (signed contracts, 990s), so it must apply the
+// same per-document firewall the RLS it bypasses would -- resolveDocumentActor + canReadDocument
+// (lib/documents/authorize.ts). A non-admin contractor may read a pursuit's own uploads but NOT the
+// org-level firm records, exactly as app/api/client-documents/[id]/url does. Reused import-only --
+// renderArtifactPdf/Docx (multi-page as-is), sanitizeDocument, signedUrl. render.ts not imported.
+// No migration, no persistence: render-on-demand.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-
-  const { data: profile } = await supabase.from("profiles").select("id").eq("id", user.id).maybeSingle();
-  if (!profile) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  // Resolve the actor's ROLE, not just existence -- a contractor has a profiles row too, and the
+  // attachment read below reaches admin-only org-level documents. 404 (not 403) for a non-staff
+  // caller, so the route reads as absent, matching the sibling IntellEngine routes.
+  const actor = await resolveDocumentActor();
+  if (!actor) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  if (!actor.isStaff) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const format = req.nextUrl.searchParams.get("format") ?? "pdf";
   if (format !== "pdf" && format !== "docx" && format !== "links") {
@@ -56,7 +58,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   // Attachments: the client_visible client_documents for this pursuit -- both the draft's own uploads
   // (intellengine_draft_id = draftId) and reusable org-level firm records (intellengine_draft_id is
   // null). Read under the service role, scoped to the draft's client (RLS already proved ownership of
-  // the draft above). client_visible mirrors what the client is entitled to see (0075).
+  // the draft above).
   const svc = createServiceClient();
   const { data: docRows, error: docsError } = await svc
     .from("client_documents")
@@ -82,7 +84,18 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     storage_path: string;
     intellengine_draft_id: string | null;
   };
-  const docs = (docRows ?? []) as DocRow[];
+  // THE FIREWALL: this route bypasses RLS (service role), so it applies canReadDocument itself. A
+  // non-admin contractor may read a pursuit's own uploads but NOT org-level firm records (990s, signed
+  // contracts) -- the same admin bar the sibling /client-documents/[id]/url route enforces. client_id
+  // and client_visible are fixed by the query above (all rows are this client's + client_visible), so
+  // the only per-row discriminator canReadDocument needs is intellengine_draft_id.
+  const docs = ((docRows ?? []) as DocRow[]).filter((d) =>
+    canReadDocument(actor, {
+      client_id: ctx.draft.client_id,
+      client_visible: true,
+      intellengine_draft_id: d.intellengine_draft_id,
+    }),
+  );
   const attachments: ExportAttachment[] = docs.map((d) => ({
     id: d.id,
     title: d.title,
@@ -94,14 +107,12 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   // ── Links mode: manifest + signed URLs for the panel. No render. ──────────────────────────────
   if (format === "links") {
     const manifest = buildManifest(content, requirements, attachments);
+    // docs and attachments are index-aligned (same source, same order, no filtering between), so the
+    // links map only needs the storage fields ExportAttachment intentionally omits -- from docs[i].
     const links = await Promise.all(
-      docs.map(async (d) => ({
-        id: d.id,
-        title: d.title,
-        contentType: d.content_type,
-        sizeBytes: d.size_bytes,
-        scope: d.intellengine_draft_id ? ("draft" as const) : ("org" as const),
-        url: await signedUrl(d.storage_bucket, d.storage_path, 600, { download: d.title }),
+      attachments.map(async (a, i) => ({
+        ...a,
+        url: await signedUrl(docs[i].storage_bucket, docs[i].storage_path, 600, { download: docs[i].title }),
       })),
     );
     return NextResponse.json({ manifest, attachments: links });

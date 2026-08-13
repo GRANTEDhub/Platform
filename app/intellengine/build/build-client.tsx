@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, RotateCcw, LifeBuoy, CheckCircle2 } from "lucide-react";
 import { HubShell } from "@/components/layout/hub-background";
@@ -82,6 +82,16 @@ export default function IntellEngineBuildClient({
   );
   const saver = useDraftSave(draftId, "sections", payload);
   const { touch } = saver;
+
+  // Bump on every successful save so the submission panel below refetches its manifest + signed URLs
+  // (a Regenerate persists then touch()es, so this covers AI drafts too). Keyed on the save's
+  // timestamp: useDraftSave stamps a fresh Date on each "saved" outcome, so this fires once per save,
+  // not per keystroke.
+  const [packageReloadKey, setPackageReloadKey] = useState(0);
+  const savedAt = saver.state.kind === "saved" ? saver.state.at.getTime() : null;
+  useEffect(() => {
+    if (savedAt !== null) setPackageReloadKey((k) => k + 1);
+  }, [savedAt]);
 
   const completed = PROPOSAL_SECTIONS.filter((s) => (drafts[s.id] ?? "").trim().length > 0).length;
 
@@ -201,7 +211,7 @@ export default function IntellEngineBuildClient({
 
         {/* Step 6: assemble the filable package. Only with a real draft to export -- a staff preview
             opened on the step URL directly has no draft row and nothing to assemble. */}
-        {draftId && <SubmissionPackagePanel draftId={draftId} />}
+        {draftId && <SubmissionPackagePanel draftId={draftId} reloadKey={packageReloadKey} />}
 
         <div className="flex flex-wrap items-center justify-end gap-4">
           <SaveIndicator saver={saver} />

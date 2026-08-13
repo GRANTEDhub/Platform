@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, FileText, Paperclip, AlertTriangle, CheckCircle2 } from "lucide-react";
 
 // Step 6 download surface: the "Submission package" panel on the build step's complete area. It
@@ -31,27 +31,36 @@ function formatBytes(n: number | null): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function SubmissionPackagePanel({ draftId }: { draftId: string }) {
+// reloadKey: the build page bumps it after every successful save, so the manifest + signed URLs
+// REFETCH as the staffer fills in sections above this panel -- otherwise the download buttons and the
+// "before you file" gaps stay frozen on the mount-time snapshot until a full reload. Same reloadKey
+// pattern GrantBotWorkspace's ArtifactPanel uses (onTurnComplete). Refetches also re-mint the
+// short-lived attachment signed URLs.
+export function SubmissionPackagePanel({ draftId, reloadKey = 0 }: { draftId: string; reloadKey?: number }) {
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  // Only the FIRST load shows the "loading" placeholder; a save-triggered refetch swaps data in place
+  // rather than blanking the panel on every keystroke's autosave.
+  const loadedOnce = useRef(false);
 
   const load = useCallback(async () => {
-    setState("loading");
+    if (!loadedOnce.current) setState("loading");
     try {
       const res = await fetch(`/api/intellengine/drafts/${draftId}/export?format=links`);
       if (!res.ok) {
-        setState("error");
+        if (!loadedOnce.current) setState("error");
         return;
       }
       const data = (await res.json()) as { manifest: Manifest; attachments: Attachment[] };
       setManifest(data.manifest);
       setAttachments(data.attachments ?? []);
       setState("ready");
+      loadedOnce.current = true;
     } catch {
-      setState("error");
+      if (!loadedOnce.current) setState("error");
     }
-  }, [draftId]);
+  }, [draftId, reloadKey]);
 
   useEffect(() => {
     void load();
