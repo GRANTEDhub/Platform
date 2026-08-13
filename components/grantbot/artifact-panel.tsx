@@ -132,12 +132,29 @@ export function ArtifactPanel({ clientId, reloadKey = 0 }: { clientId: string; r
           ))}
         </select>
         {detail && detail.currentVersion > 0 && (
-          <a
-            href={`/api/grantbot/artifacts/${detail.id}/html?clientId=${encodeURIComponent(clientId)}`}
-            className="text-[12px] font-semibold text-brand-navy underline-offset-2 hover:underline"
-          >
-            Download HTML
-          </a>
+          <span className="flex items-center gap-2 text-[12px]">
+            <span className="text-ink-subtle">Download</span>
+            {/* HTML from the 1a inline route; PDF/.docx from the 1b rendered-export route. Plain
+                links, same one-click UX -- the export route 302s to a short-lived signed URL. */}
+            <a
+              href={`/api/grantbot/artifacts/${detail.id}/html?clientId=${encodeURIComponent(clientId)}`}
+              className="font-semibold text-brand-navy underline-offset-2 hover:underline"
+            >
+              HTML
+            </a>
+            <a
+              href={`/api/grantbot/artifacts/${detail.id}/export?clientId=${encodeURIComponent(clientId)}&format=pdf`}
+              className="font-semibold text-brand-navy underline-offset-2 hover:underline"
+            >
+              PDF
+            </a>
+            <a
+              href={`/api/grantbot/artifacts/${detail.id}/export?clientId=${encodeURIComponent(clientId)}&format=docx`}
+              className="font-semibold text-brand-navy underline-offset-2 hover:underline"
+            >
+              Word
+            </a>
+          </span>
         )}
         {detail && detail.versions.length > 1 && (
           <span className="text-[12px] text-ink-subtle">{detail.versions.length} versions</span>

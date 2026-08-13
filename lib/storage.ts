@@ -192,14 +192,19 @@ export async function removeObjectsGrouped(
 
 // Create a short-lived signed URL for an admin to download a private object.
 // Returns null on failure so a missing file degrades to "no link" rather than
-// throwing in a page render.
+// throwing in a page render. Pass `download` (a filename) to have storage serve the
+// object as a content-disposition attachment with that name -- used by the GrantBot
+// export links so a redirect to the signed URL downloads a properly-named file.
 export async function signedUrl(
   bucket: string,
   objectPath: string,
   expiresInSeconds = 600,
+  opts?: { download?: string },
 ): Promise<string | null> {
   const db = createServiceClient();
-  const { data, error } = await db.storage.from(bucket).createSignedUrl(objectPath, expiresInSeconds);
+  const { data, error } = await db.storage
+    .from(bucket)
+    .createSignedUrl(objectPath, expiresInSeconds, opts?.download ? { download: opts.download } : undefined);
   if (error || !data) return null;
   return data.signedUrl;
 }
