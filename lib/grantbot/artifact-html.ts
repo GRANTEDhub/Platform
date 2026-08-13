@@ -27,25 +27,65 @@ export const ARTIFACT_DOCUMENT_CSS = `
 `.trim();
 
 // A URL/file-safe slug for a download filename, bounded and never empty.
+function artifactSlug(title: string): string {
+  return (
+    title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || "document"
+  );
+}
+
+// Download filename for a given export format. One source of truth so the .html download (1a) and the
+// PDF/.docx downloads (1b) all slugify the title identically.
+export function artifactExportFilename(title: string, format: "html" | "pdf" | "docx"): string {
+  return `${artifactSlug(title)}.${format}`;
+}
+
+// Back-compat alias: the 1a HTML route imports this. Kept as the .html specialisation of the general
+// helper above rather than a second slugifier.
 export function artifactFilename(title: string): string {
-  const slug = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60);
-  return `${slug || "document"}.html`;
+  return artifactExportFilename(title, "html");
+}
+
+function escapeTitle(title: string): string {
+  return title.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
 }
 
 // Wrap a sanitised HTML body into a self-contained document for download/standalone viewing. The body
 // must already be DOCUMENT-sanitised; this only frames it. escapeHtml is applied to the <title> only.
 export function artifactStandaloneHtml(title: string, sanitizedBodyHtml: string): string {
-  const safeTitle = title.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
   return [
     "<!doctype html>",
     '<html lang="en"><head><meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
-    `<title>${safeTitle}</title>`,
+    `<title>${escapeTitle(title)}</title>`,
     `<style>body{margin:0;background:#fff;}.gb-doc{max-width:800px;margin:40px auto;padding:0 24px;}${ARTIFACT_DOCUMENT_CSS}</style>`,
+    "</head><body>",
+    `<div class="gb-doc">${sanitizedBodyHtml}</div>`,
+    "</body></html>",
+  ].join("\n");
+}
+
+// The PRINT framing for the PDF export (1b): same shared .gb-doc stylesheet, but the page geometry
+// comes from @page (letter, ~0.9in margins) instead of the on-screen centred column -- so the PDF is
+// a MULTI-PAGE letter document, not a screenshot of the panel. Headings avoid orphan breaks and
+// tables/blockquotes/pre avoid splitting mid-block. Overrides sit AFTER the base CSS so they win.
+export function artifactPrintHtml(title: string, sanitizedBodyHtml: string): string {
+  return [
+    "<!doctype html>",
+    '<html lang="en"><head><meta charset="utf-8">',
+    `<title>${escapeTitle(title)}</title>`,
+    "<style>",
+    "@page { size: letter; margin: 0.9in 0.85in; }",
+    "html, body { margin: 0; background: #fff; }",
+    ARTIFACT_DOCUMENT_CSS,
+    // Print geometry + break control, after the base rules so they take effect.
+    ".gb-doc { max-width: none; margin: 0; }",
+    ".gb-doc h1, .gb-doc h2, .gb-doc h3, .gb-doc h4 { break-after: avoid; }",
+    ".gb-doc table, .gb-doc pre, .gb-doc blockquote, .gb-doc tr { break-inside: avoid; }",
+    "</style>",
     "</head><body>",
     `<div class="gb-doc">${sanitizedBodyHtml}</div>`,
     "</body></html>",
