@@ -649,7 +649,12 @@ export function GrantBotChat({
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+          // Enter sends; Shift+Enter inserts a newline (standard chat composer). Cmd/Ctrl+Enter
+          // still sends too, so the old shortcut keeps working. The isComposing guard is
+          // load-bearing: while an IME candidate is open, Enter CONFIRMS the candidate and must
+          // not fire a send. send() itself no-ops on empty/while-sending (matching the Send
+          // button's disabled state), so a bare Enter on an empty draft does nothing.
+          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
             void send();
           }
