@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAnthropicClient, MODEL } from "@/lib/anthropic";
+import { normalizeForMatch, sectionHits, MIN_QUOTE_CHARS, MAX_QUOTE_CHARS } from "@/lib/grants/nofo-text";
 
 // WHAT AN APPLICATION TO THIS PROGRAM MUST CONTAIN, read off the NOFO and quote-verified
 // against raw_text (migration 0081). Step 4 of the Pursuit build order.
@@ -30,10 +31,10 @@ const MAX_ITEMS_PER_FIELD = 15;
 // A requirement line is a clause, not a paragraph -- slightly longer than allowable-uses' budget
 // line because "a five-page narrative on X, Y and Z" legitimately runs longer than a category.
 const MAX_TEXT_WORDS = 40;
-// Same quote bounds as allowable-uses: long enough to carry a real clause, short enough that "the
-// quote" cannot become "the section"; below the floor a span matches by accident in any long doc.
-const MAX_QUOTE_CHARS = 300;
-const MIN_QUOTE_CHARS = 24;
+// MIN_QUOTE_CHARS / MAX_QUOTE_CHARS (the quote bounds), the normalizer, and the section-heading
+// scanner are imported from lib/grants/nofo-text.ts, shared verbatim with allowable-uses.ts.
+// SECTION_PATTERNS below stay local: these are the application/review headings, distinct from the
+// allowable-costs headings allowable-uses.ts anchors on.
 
 // How much NOFO text to hand the model. Requirements are spread across a federal NOFO's
 // application (Section IV) and review (Section V) sections rather than clustered like allowable
@@ -121,24 +122,10 @@ export function requirementsRetrievable(
 
 // ── The quote gate ──────────────────────────────────────────────────────────────────────────
 //
-// MIRROR of lib/grants/allowable-uses.ts::normalizeForMatch -- the same encoding fold, kept local
-// so this brick is self-contained. Both remove only distinctions that live in the ENCODING (soft
-// hyphens, hyphenation across a line break, curly quotes, the dash family, whitespace runs), never
-// in the writing, so they cannot diverge in meaning. NOT case-folded, on purpose: case is part of
-// the text. This is exact containment on the folded forms, not fuzzy matching -- no similarity
-// score, no threshold, no partial credit.
-function normalizeForMatch(s: string): string {
-  return s
-    .replace(/[­​‌‍﻿⁠]/g, "")
-    .replace(/-[\r\n]+\s*/g, "")
-    .replace(/[‘’‚‛′]/g, "'")
-    .replace(/[“”„‟″]/g, '"')
-    .replace(/[‐‑‒–—―−]/g, "-")
-    .replace(/…/g, "...")
-    .replace(/[\s ]+/g, " ")
-    .trim();
-}
-
+// normalizeForMatch (the encoding fold) is imported from lib/grants/nofo-text.ts and shared verbatim
+// with allowable-uses.ts, so the two gates cannot drift. tidyText below stays LOCAL: its enumeration
+// strip is deliberately gated (a leading numeral can BE the requirement -- "990 Form", "25-page
+// limit", "501(c)(3)"), which is narrower than allowable-uses' tidyLine, so the two are not shared.
 function tidyText(s: string): string {
   return s
     .trim()
@@ -223,37 +210,17 @@ export function verifyApplicationRequirements(
 
 // ── The excerpt ───────────────────────────────────────────────────────────────────────────────
 //
-// A contents-page line is not a section. Recognisable by shape rather than wording: short, ending
-// in a page number set off by a dot leader or column gap. Same conservative test as allowable-uses.
-function looksLikeTocEntry(raw: string, index: number): boolean {
-  const from = raw.lastIndexOf("\n", index) + 1;
-  const to = raw.indexOf("\n", index);
-  const line = raw.slice(from, to === -1 ? raw.length : to).trim();
-  if (line.length > 120) return false;
-  if (/(?:\.\s?){3,}\s*\d{1,4}$/.test(line)) return true;
-  return /(?:\s{2,}|\t)\d{1,4}$/.test(line);
-}
-
-function sectionHits(raw: string): number[] {
-  const hits: number[] = [];
-  for (const re of SECTION_PATTERNS) {
-    re.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(raw)) !== null) {
-      if (!looksLikeTocEntry(raw, m.index)) hits.push(m.index);
-      if (m.index === re.lastIndex) re.lastIndex++;
-    }
-  }
-  return hits.sort((a, b) => a - b);
-}
-
+// sectionHits (heading occurrences, contents-page entries removed) and its looksLikeTocEntry helper
+// are imported from lib/grants/nofo-text.ts, shared with allowable-uses.ts. Passed SECTION_PATTERNS
+// (the application/review headings) so the one scanner serves this gate's headings.
+//
 // The head (application format/summary lives up front) plus up to two anchored windows on the
 // densest requirement-heading clusters (Section IV/V run deep). Verification is against full
 // raw_text, so a missed window costs recall only. Windows are joined with a marker so the model
 // cannot read across a join as continuous prose.
 function requirementSource(raw: string): { excerpt: string; anchored: boolean } {
   const head = raw.slice(0, HEAD_CHARS);
-  const hits = sectionHits(raw).filter((h) => h >= HEAD_CHARS); // the head already covers early hits
+  const hits = sectionHits(raw, SECTION_PATTERNS).filter((h) => h >= HEAD_CHARS); // the head already covers early hits
   if (hits.length === 0) return { excerpt: head, anchored: false };
 
   const chosen: { start: number; end: number }[] = [];
