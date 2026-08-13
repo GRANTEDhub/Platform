@@ -33,11 +33,14 @@ const TEXT: sanitizeHtml.IOptions = {
 // structural vocabulary a concept proposal needs (headings, tables, lists, blockquotes, rules, links)
 // while still discarding everything not named -- keeping the text content of a stripped tag.
 //
-// DELIBERATELY EXCLUDED: `style` / `<style>` / inline CSS, `script`, event handlers, and (in 1a)
-// `img`. Brick 1 is PLAIN, not house-styled -- brand fidelity is the future "Brander" build -- so the
-// panel supplies a fixed document stylesheet targeting these semantic tags rather than trusting
-// author CSS. That keeps the sanitised blob free of the highest-risk surface (arbitrary CSS/JS) while
-// the document still reads as a structured document. `a[href]` is allowed only for http(s)/mailto/tel.
+// DELIBERATELY EXCLUDED: `style` / `<style>` / inline CSS, `script`, event handlers, `img`, and
+// `class`. Brick 1 is PLAIN, not house-styled -- brand fidelity is the future "Brander" build -- so
+// the panel supplies a fixed document stylesheet targeting these semantic TAGS (`.gb-doc h1`,
+// `.gb-doc table`, ...), never classes. So `class` provides ZERO benefit and is pure attack surface:
+// the pane renders on a page with the app's global Tailwind loaded, and a surviving utility class
+// (e.g. `fixed inset-0 z-50`) on model-authored HTML -- which can carry pasted, untrusted content --
+// would let a div escape `.gb-doc` and cover the viewport. Dropped, the same way style/script/img are.
+// Only structural tags survive, and `a[href]` only for http(s)/mailto/tel.
 const DOCUMENT: sanitizeHtml.IOptions = {
   allowedTags: [
     "p", "strong", "em", "u", "s", "sub", "sup", "br", "hr",
@@ -52,8 +55,8 @@ const DOCUMENT: sanitizeHtml.IOptions = {
     th: ["colspan", "rowspan", "scope"],
     td: ["colspan", "rowspan"],
     col: ["span"],
-    // A constrained class vocabulary the panel stylesheet can target. No style/id/data-* attributes.
-    "*": ["class"],
+    // No class/style/id/data-* on any tag: the fixed stylesheet targets tags, so nothing here needs
+    // an attribute, and a surviving class would be matched by the app's global stylesheet.
   },
   allowedSchemes: ["http", "https", "mailto", "tel"],
   disallowedTagsMode: "discard",

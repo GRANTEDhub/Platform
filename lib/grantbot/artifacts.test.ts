@@ -24,11 +24,21 @@ function fakeDb(capture: { rows: Record<string, unknown>[]; updates: Record<stri
       capture.updates.push(row);
       return { eq: async () => ok };
     },
-    select: () => ({
-      eq: () => ({
-        maybeSingle: async () => ({ data: { id: "art_1", client_id: "c1", current_version: capture.current ?? 1 }, error: null }),
-      }),
-    }),
+    // Reads: the client-ownership check selects {id, client_id}; editArtifact's max-version lookup
+    // selects {version} via .order().limit().maybeSingle(). One leaf carries both fields so either
+    // caller reads what it needs. `current` now means "highest existing version" (max), not the
+    // artifact row's current_version -- which is exactly the self-healing source editArtifact reads.
+    select: () => {
+      const result = { data: { id: "art_1", client_id: "c1", version: capture.current ?? 1 }, error: null };
+      const leaf: Record<string, unknown> = {
+        maybeSingle: async () => result,
+      };
+      leaf.eq = () => leaf;
+      leaf.order = () => leaf;
+      leaf.limit = () => leaf;
+      leaf.is = () => leaf;
+      return { eq: () => leaf };
+    },
   });
   return { from } as unknown as SupabaseClient;
 }

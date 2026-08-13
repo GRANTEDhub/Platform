@@ -76,20 +76,28 @@ export async function createArtifact(
 // Append a new version to an existing artifact and move the head to it. Verifies the artifact belongs
 // to the given client (the tool handler only ever passes its own conversation's client) so a bad id
 // cannot cross clients.
+//
+// The next version is derived from MAX(version) in the append-only versions table, NOT from the
+// artifact row's `current_version`. The two normally agree, but the create/edit writes are three
+// ordered statements (version insert, then head bump) with no transaction, so a bump that fails
+// after its insert leaves `current_version` one behind the real head. Deriving `next` from the
+// versions table self-heals that: it always lands one past the highest version that actually exists,
+// so a retried edit can never collide with the unique(artifact_id, version) index and brick the
+// document. (bumpHead is idempotent-safe here -- re-bumping to the same head is a no-op update.)
 export async function editArtifact(
   db: SupabaseClient,
   opts: { artifactId: string; clientId: string; html: string; summary: string | null; createdBy?: string | null },
 ): Promise<{ artifactId: string; version: number }> {
   const cur = await db
     .from("grantbot_artifacts")
-    .select("id, client_id, current_version")
+    .select("id, client_id")
     .eq("id", opts.artifactId)
     .maybeSingle();
   if (cur.error) throw new Error(`artifact read failed: ${cur.error.message}`);
   if (!cur.data || cur.data.client_id !== opts.clientId) {
     throw new Error("artifact not found for this client");
   }
-  const next = (cur.data.current_version as number) + 1;
+  const next = (await maxVersion(db, opts.artifactId)) + 1;
   await insertVersion(db, { artifactId: opts.artifactId, version: next, html: opts.html, summary: opts.summary, createdBy: opts.createdBy });
   await bumpHead(db, opts.artifactId, next);
   return { artifactId: opts.artifactId, version: next };
@@ -123,6 +131,21 @@ async function insertVersion(
     created_by: opts.createdBy ?? null,
   });
   if (error) throw new Error(`artifact version insert failed: ${error.message}`);
+}
+
+// Highest version that actually exists in the append-only versions table, or 0 if none. The source
+// of truth for "what is the next version" -- see editArtifact for why this is not read off the
+// artifact row's current_version.
+async function maxVersion(db: SupabaseClient, artifactId: string): Promise<number> {
+  const { data, error } = await db
+    .from("grantbot_artifact_versions")
+    .select("version")
+    .eq("artifact_id", artifactId)
+    .order("version", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`artifact max-version read failed: ${error.message}`);
+  return data ? (data.version as number) : 0;
 }
 
 async function bumpHead(db: SupabaseClient, artifactId: string, version: number): Promise<void> {
