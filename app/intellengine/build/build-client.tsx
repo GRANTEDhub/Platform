@@ -244,6 +244,13 @@ export default function IntellEngineBuildClient({
   );
 }
 
+// The one overwrite invariant, in one place: never silently replace text the CLIENT typed. Returns
+// true to proceed. Both Regenerate and Accept-revision gate on it (only the message differs), so the
+// rule can't drift between them.
+function confirmOverwriteIfClientAuthored(written: boolean, source: SectionSource, message: string): boolean {
+  return !written || source !== "client" || window.confirm(message);
+}
+
 function SectionCard({
   spec,
   draftId,
@@ -271,7 +278,7 @@ function SectionCard({
   // Accept the revision, confirming first if it would overwrite CLIENT-authored text (same discipline
   // as Regenerate). An AI draft or empty section needs no confirmation.
   function handleAcceptRevision(text: string) {
-    if (written && source === "client" && !window.confirm("Replace your edits with this revision?")) return;
+    if (!confirmOverwriteIfClientAuthored(written, source, "Replace your edits with this revision?")) return;
     onAcceptRevision(text);
     setAssistOpen(false);
   }
@@ -279,11 +286,7 @@ function SectionCard({
   async function handleRegenerate() {
     // Confirm before overwriting text the CLIENT wrote (same discipline as the concept-proposal
     // panel). Overwriting an existing AI draft needs no confirmation -- it was not their words.
-    if (
-      written &&
-      source === "client" &&
-      !window.confirm("This replaces your edits with a fresh AI draft. Continue?")
-    ) {
+    if (!confirmOverwriteIfClientAuthored(written, source, "This replaces your edits with a fresh AI draft. Continue?")) {
       return;
     }
     // Close any open assist thread: Regenerate replaces the section from scratch, so the thread's
@@ -324,8 +327,12 @@ function SectionCard({
                 ? setAssistOpen((o) => !o)
                 : setNote("Open a real proposal draft to use GrantBot — this is a preview.")
             }
+            // Disabled while a Regenerate is in flight (matches the Regenerate button): opening a
+            // thread mid-Regenerate would ground it on the pre-Regenerate text, and accepting it would
+            // then clobber the fresh draft. Closing the window is simpler than resyncing an open thread.
+            disabled={busy}
             aria-pressed={assistOpen}
-            className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold text-white transition sm:flex-none ${
+            className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold text-white transition disabled:opacity-60 sm:flex-none ${
               assistOpen ? "bg-brand-navyDeep" : "bg-brand-navy hover:bg-brand-navyDeep"
             }`}
           >
