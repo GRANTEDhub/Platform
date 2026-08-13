@@ -10,7 +10,7 @@ import { ContinueButton } from "@/components/intellengine/step-nav";
 import { SaveIndicator } from "@/components/intellengine/save-indicator";
 import { useDraftSave } from "@/components/intellengine/use-draft-save";
 import { PROPOSAL_SECTIONS, type SectionSpec } from "@/lib/intellengine/sections";
-import type { DraftSection } from "@/lib/intellengine/content";
+import type { DraftSection, SectionSource } from "@/lib/intellengine/content";
 
 const SUPPORT = "support@grantedco.com";
 
@@ -53,6 +53,17 @@ export default function IntellEngineBuildClient({
     for (const s of saved) if (s.id in byId) byId[s.id] = s.draft;
     return byId;
   });
+  // PROVENANCE, tracked per section rather than hardcoded (step 5a). A section drafted by
+  // Regenerate is source:"ai"; a section the client types (or edits after an AI draft) is
+  // source:"client". The old code sent "client" for every section, which would have re-stamped
+  // an untouched AI draft as client-authored on the next autosave -- so "last touched by" would
+  // lie. It flips to "client" only on a real edit of THAT section (see updateDraft).
+  const [sources, setSources] = useState<Record<string, SectionSource>>(() => {
+    const byId: Record<string, SectionSource> = {};
+    for (const spec of PROPOSAL_SECTIONS) byId[spec.id] = "client";
+    for (const s of saved) if (s.id in byId) byId[s.id] = s.source;
+    return byId;
+  });
   const [templateNote, setTemplateNote] = useState<string | null>(null);
 
   // EVERY section is sent, including empty ones, and that is what keeps completeness honest.
@@ -64,9 +75,9 @@ export default function IntellEngineBuildClient({
       PROPOSAL_SECTIONS.map((spec) => ({
         id: spec.id,
         draft: drafts[spec.id] ?? "",
-        source: "client" as const,
+        source: sources[spec.id] ?? "client",
       })),
-    [drafts],
+    [drafts, sources],
   );
   const saver = useDraftSave(draftId, "sections", payload);
   const { touch } = saver;
@@ -75,7 +86,49 @@ export default function IntellEngineBuildClient({
 
   function updateDraft(id: string, value: string) {
     setDrafts((prev) => ({ ...prev, [id]: value }));
+    // A client edit makes this section client-authored, whatever it was before.
+    setSources((prev) => (prev[id] === "client" ? prev : { ...prev, [id]: "client" }));
     touch();
+  }
+
+  // Regenerate: draft this section server-side (grounded in the grant's step-4 requirements) and
+  // adopt the result locally. On success we update state WITHOUT touch(), so the debounce does not
+  // fire a redundant autosave -- the route already persisted the section (source:"ai") durably.
+  // Returns a note to show, or null on success.
+  async function regenerateSection(id: string): Promise<string | null> {
+    // A staff preview opened on the step URL directly has no draft row to write to.
+    if (!draftId) return "Open a real proposal draft to generate — this is a preview.";
+    try {
+      const res = await fetch(`/api/intellengine/drafts/${draftId}/draft-section`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sectionId: id }),
+      });
+      const data = (await res.json().catch(() => null)) as
+        | { ok?: boolean; reason?: string; section?: { draft?: string } }
+        | null;
+      if (res.ok && data?.ok && typeof data.section?.draft === "string") {
+        const text = data.section.draft;
+        setDrafts((prev) => ({ ...prev, [id]: text }));
+        setSources((prev) => ({ ...prev, [id]: "ai" }));
+        return null;
+      }
+      // Honest failure messages. no_requirements is the one that ties step 5 back to step 4.
+      switch (data?.reason) {
+        case "no_requirements":
+          return "This grant's application requirements haven't been derived yet — open the Compliance step to derive them, then try again.";
+        case "not_retrievable":
+          return "This grant's NOFO isn't retrievable, so a grounded draft isn't possible — ask your GRANTED team.";
+        case "no_grant":
+          return "This draft isn't tied to a matched grant, so there's nothing to ground a draft against.";
+        case "too_long":
+          return "The draft came back too long — try again.";
+        default:
+          return "Couldn't draft this section right now — try again in a moment.";
+      }
+    } catch {
+      return "Couldn't reach the server — try again.";
+    }
   }
 
   return (
@@ -130,7 +183,9 @@ export default function IntellEngineBuildClient({
             key={spec.id}
             spec={spec}
             value={drafts[spec.id] ?? ""}
+            source={sources[spec.id] ?? "client"}
             onChange={(v) => updateDraft(spec.id, v)}
+            onRegenerate={() => regenerateSection(spec.id)}
           />
         ))}
 
@@ -155,14 +210,37 @@ export default function IntellEngineBuildClient({
 function SectionCard({
   spec,
   value,
+  source,
   onChange,
+  onRegenerate,
 }: {
   spec: SectionSpec;
   value: string;
+  source: SectionSource;
   onChange: (value: string) => void;
+  // Returns a note to display, or null on success (the parent updates the text + provenance).
+  onRegenerate: () => Promise<string | null>;
 }) {
   const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const written = value.trim().length > 0;
+
+  async function handleRegenerate() {
+    // Confirm before overwriting text the CLIENT wrote (same discipline as the concept-proposal
+    // panel). Overwriting an existing AI draft needs no confirmation -- it was not their words.
+    if (
+      written &&
+      source === "client" &&
+      !window.confirm("This replaces your edits with a fresh AI draft. Continue?")
+    ) {
+      return;
+    }
+    setBusy(true);
+    setNote(null);
+    const msg = await onRegenerate();
+    setBusy(false);
+    if (msg) setNote(msg);
+  }
 
   return (
     <div className="rounded-2xl bg-white p-6 shadow-grounded">
@@ -183,6 +261,8 @@ function SectionCard({
           className="flex-1 rounded-xl border border-brand-navy/15 bg-white px-3.5 py-3 text-sm outline-none focus:border-brand-navy/35 focus:ring-2 focus:ring-brand-navy/10"
         />
         <div className="flex shrink-0 flex-row gap-2 sm:w-44 sm:flex-col">
+          {/* Still a stub in 5a: the interactive assist thread is 5b (the heavier, IntellEngine-
+              native surface). Wiring it here would half-build that tier. */}
           <button
             onClick={() => setNote("GrantBot chat is coming soon — for now, edit the text directly above.")}
             className="flex-1 rounded-lg bg-brand-navy px-3 py-2 text-xs font-semibold text-white transition hover:bg-brand-navyDeep sm:flex-none"
@@ -190,11 +270,12 @@ function SectionCard({
             Edit with GrantBot
           </button>
           <button
-            onClick={() => setNote("Regenerating is coming soon — this will redraft the section from scratch.")}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-brand-navy px-3 py-2 text-xs font-semibold text-white transition hover:bg-brand-navyDeep sm:flex-none"
+            onClick={handleRegenerate}
+            disabled={busy}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-brand-navy px-3 py-2 text-xs font-semibold text-white transition hover:bg-brand-navyDeep disabled:opacity-60 sm:flex-none"
           >
-            <RotateCcw className="h-3.5 w-3.5" />
-            Regenerate
+            <RotateCcw className={`h-3.5 w-3.5${busy ? " animate-spin" : ""}`} />
+            {busy ? "Drafting…" : "Regenerate"}
           </button>
           <a
             href={`mailto:${SUPPORT}?subject=${encodeURIComponent(`Question on "${spec.title}" — proposal draft`)}`}
