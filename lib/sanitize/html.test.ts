@@ -33,10 +33,12 @@ describe("sanitizeDocument (GrantBot artifacts profile)", () => {
     expect(out).not.toMatch(/<script/i);
     expect(out).not.toMatch(/<img/i);
     expect(out).not.toMatch(/onclick|onerror|style=/i);
-    // text content of stripped tags is kept; the allowed `class` survives.
+    // text content of stripped tags is kept, and `class` is dropped -- the fixed stylesheet targets
+    // tags, so a surviving utility class (e.g. `fixed inset-0 z-50`) would only be attack surface
+    // once the page's global Tailwind matched it. See the DOCUMENT profile comment.
     expect(out).toContain("hello");
     expect(out).toContain("world");
-    expect(out).toContain('class="lead"');
+    expect(out).not.toMatch(/class=/i);
   });
 
   it("drops a javascript: link scheme but keeps http(s)/mailto", () => {
