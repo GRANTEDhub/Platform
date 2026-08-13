@@ -58,6 +58,8 @@ import { GRANTBOT_METHODOLOGY, METHODOLOGY_VERSION } from "@/lib/grantbot/method
 //   web-fetch       lib/grantbot/web-fetch.ts (brick B) -- the flag-gated fetch-tool instruction,
 //                   appended AFTER the cache breakpoint and present only when GRANTBOT_WEB_FETCH_ENABLED
 //                   is on, so it never enters the shared cached prefix (flag-off prompt is unchanged).
+//   artifacts       lib/grantbot/artifacts.ts (brick 1a) -- the flag-gated document-tool instruction,
+//                   same after-the-breakpoint / GRANTBOT_ARTIFACTS_ENABLED discipline as web-fetch.
 export type PromptBlockKind =
   | "guardrails"
   | "methodology"
@@ -66,6 +68,7 @@ export type PromptBlockKind =
   | "gaps"
   | "skill"
   | "web-fetch"
+  | "artifacts"
   | "closing";
 
 export interface PromptBlock {

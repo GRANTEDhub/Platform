@@ -23,13 +23,20 @@ import { budgetHistory } from "@/lib/grantbot/history";
 import {
   executeWebFetch,
   grantbotWebFetchEnabled,
-  runFetchLoop,
   FETCH_INSTRUCTION_BLOCK,
-  TURN_DEADLINE_MS,
   WEB_FETCH_TOOL,
-  type CallModel,
+  WEB_FETCH_TOOL_NAME,
   type FetchAuditRecord,
 } from "@/lib/grantbot/web-fetch";
+import { runToolLoop, TURN_DEADLINE_MS, type CallModel, type ToolDispatch } from "@/lib/grantbot/tool-loop";
+import {
+  grantbotArtifactsEnabled,
+  executeArtifactTool,
+  ARTIFACT_INSTRUCTION_BLOCK,
+  CREATE_ARTIFACT_TOOL,
+  EDIT_ARTIFACT_TOOL,
+  type ArtifactAuditRecord,
+} from "@/lib/grantbot/artifacts";
 
 // One conversational turn: assemble, call, store. The orchestrator between the pure renderer and
 // the store, and the only place that knows anything about the model.
@@ -132,9 +139,17 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
   // existing conversations' prompt caches are not busted. Off -> effectiveTurnBlocks is exactly what
   // it was, so `system` and the manifest are byte-identical to before.
   const webFetchEnabled = grantbotWebFetchEnabled();
-  const effectiveTurnBlocks = webFetchEnabled
-    ? [...(input.turnBlocks ?? []), FETCH_INSTRUCTION_BLOCK]
-    : input.turnBlocks ?? [];
+  const artifactsEnabled = grantbotArtifactsEnabled();
+  const toolsEnabled = webFetchEnabled || artifactsEnabled;
+  // Each instruction block is cacheable:false and appended ONLY when its flag is on, so it never
+  // enters the shared cached prefix -- the flag-off system prompt is unchanged and existing caches
+  // are not busted. When BOTH flags are off, effectiveTurnBlocks equals input.turnBlocks and the
+  // assembled system + manifest are byte-identical to the pre-tools turn.
+  const effectiveTurnBlocks = [
+    ...(input.turnBlocks ?? []),
+    ...(webFetchEnabled ? [FETCH_INSTRUCTION_BLOCK] : []),
+    ...(artifactsEnabled ? [ARTIFACT_INSTRUCTION_BLOCK] : []),
+  ];
 
   const system = assembleSystem(prompt, effectiveTurnBlocks);
   const blockManifest = manifest([...prompt.blocks, ...effectiveTurnBlocks]);
@@ -152,19 +167,25 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
   let usage: TurnUsage | null = null;
   let stopReason: string | null = null;
   let failure: string | null = null;
-  // A stable sink handed to runFetchLoop so that if a later round throws mid-loop, the audit of
-  // fetches that already succeeded is still written on the (failed) turn's row, not discarded.
+  // Stable audit sinks: dispatch pushes into these AS IT RUNS, so if a later round throws mid-loop
+  // the audit of tools already executed is still written on the (failed) turn's row, not discarded.
   const fetches: FetchAuditRecord[] = [];
+  const artifacts: ArtifactAuditRecord[] = [];
 
   try {
     const anthropic = getAnthropicClient();
 
-    // One model call per loop iteration. On the flag-off path `tools` is "off" -- neither the
-    // `tools` nor the `tool_choice` key is added, so the request is byte-identical to the
-    // pre-brick-B call. "auto" and "none" both keep `tools` PRESENT (a tool_use history without
-    // `tools` is a 400); only "none" adds tool_choice to forbid a further call and force the final
-    // text answer. Timeout is the full CALL_TIMEOUT_MS on the first call (remainingMs starts at the
-    // whole deadline), shrinking only as the turn's wall-clock budget is spent.
+    // The tool set is assembled SERVER-SIDE from the flags, never from the request body (the same
+    // rule as turnBlocks): web-fetch adds its one read-only tool, artifacts add create/edit. On the
+    // all-flags-off path `tools` is "off" -- neither `tools` nor `tool_choice` is added, so the
+    // request is byte-identical to the pre-tools call. "auto" and "none" both keep `tools` PRESENT
+    // (a tool_use history without `tools` is a 400); only "none" adds tool_choice to force the final
+    // text answer. Timeout is the full CALL_TIMEOUT_MS on the first call, shrinking as budget spends.
+    const toolSet = [
+      ...(webFetchEnabled ? [WEB_FETCH_TOOL] : []),
+      ...(artifactsEnabled ? [CREATE_ARTIFACT_TOOL, EDIT_ARTIFACT_TOOL] : []),
+    ] as unknown as Anthropic.Tool[];
+
     const callModel: CallModel = async ({ messages: msgs, tools, remainingMs }) => {
       const timeout = Math.min(CALL_TIMEOUT_MS, Math.max(remainingMs, 5_000));
       const res = await anthropic.messages.create(
@@ -173,11 +194,10 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
           max_tokens: MAX_OUTPUT_TOKENS,
           system,
           messages: msgs as Anthropic.MessageParam[],
-          ...(tools === "off" ? {} : { tools: [WEB_FETCH_TOOL] as unknown as Anthropic.Tool[] }),
-          // "auto" disables PARALLEL tool use so the model emits at most one fetch per round --
-          // that bounds the loop's inner fetch pass to a single request (<=2 fetches per turn) and
-          // keeps the batch's wall-clock well inside TURN_DEADLINE_MS. "none" forbids tools entirely
-          // to force the final text answer.
+          ...(tools === "off" ? {} : { tools: toolSet }),
+          // "auto" disables PARALLEL tool use so the model emits at most one tool call per round,
+          // bounding the loop's inner pass to a single execution; "none" forbids further calls to
+          // force the final text answer.
           ...(tools === "auto" ? { tool_choice: { type: "auto" as const, disable_parallel_tool_use: true } } : {}),
           ...(tools === "none" ? { tool_choice: { type: "none" as const } } : {}),
         },
@@ -191,8 +211,8 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
       const toolUses = res.content
         .filter((b) => b.type === "tool_use")
         .map((b) => {
-          const tb = b as { id: string; input?: { url?: unknown } };
-          return { id: tb.id, url: tb.input?.url };
+          const tb = b as { id: string; name: string; input?: unknown };
+          return { id: tb.id, name: tb.name, input: tb.input };
         });
       return {
         text,
@@ -208,15 +228,32 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
       };
     };
 
-    const loop = await runFetchLoop({
+    // Route each tool_use to its executor BY NAME, pushing the typed audit into the matching sink.
+    // The dispatch closes over the sinks, so an execution's audit is recorded the moment it runs.
+    const dispatch: ToolDispatch = async (tu) => {
+      if (tu.name === WEB_FETCH_TOOL_NAME) {
+        const { resultText, audit } = await executeWebFetch((tu.input as { url?: unknown } | undefined)?.url);
+        fetches.push(audit);
+        return { resultText };
+      }
+      if (tu.name === CREATE_ARTIFACT_TOOL.name || tu.name === EDIT_ARTIFACT_TOOL.name) {
+        const { resultText, audit } = await executeArtifactTool(
+          { name: tu.name, input: tu.input },
+          { db: input.db, clientId: input.clientId, originConversationId: input.conversationId, createdBy: null },
+        );
+        artifacts.push(audit);
+        return { resultText };
+      }
+      return { resultText: `Unknown tool "${tu.name}". Nothing was done.` };
+    };
+
+    const loop = await runToolLoop({
       messages: baseMessages,
-      webFetchEnabled,
+      toolsEnabled,
       callModel,
-      executeFetch: (url) => executeWebFetch(url),
+      dispatch,
       now: () => Date.now(),
       deadlineMs: TURN_DEADLINE_MS,
-      // Same array reference as `fetches` above -> partial audit survives a mid-loop throw.
-      fetches,
     });
 
     answer = loop.text;
@@ -240,8 +277,9 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
     usage,
     stopReason,
     error: failure,
-    // Empty on the flag-off path -> appendAssistant writes the same content as before.
+    // Both empty on the all-flags-off path -> appendAssistant writes the same content as before.
     fetches,
+    artifacts,
   });
   await touchConversation(input.db, input.conversationId);
 

@@ -1,25 +1,25 @@
-// GrantBot's web-fetch tool: the ONE read-only tool, and the bounded loop that runs it (Brick B).
+// GrantBot's web-fetch tool: the ONE read-only tool (Brick B). The bounded loop that RUNS it is now
+// the tool-agnostic runToolLoop (lib/grantbot/tool-loop.ts) -- this file holds only the fetch tool,
+// its instruction block, and the framing of a fetch result for the transcript.
 //
-// This is the first change to GrantBot's read-only invariant since it shipped. The invariant does
-// NOT become "GrantBot has tools" -- it becomes "GrantBot has EXACTLY ONE tool, a read-only GET of
-// an allowlisted .gov grant source, and only when GRANTBOT_WEB_FETCH_ENABLED is on." The narrowing
-// is held three ways, all here or in turn.ts:
+// This was the first change to GrantBot's read-only invariant. The invariant is NOT "GrantBot has
+// tools" -- it is "GrantBot has a read-only GET of an allowlisted .gov grant source, and only when
+// GRANTBOT_WEB_FETCH_ENABLED is on." The narrowing is held three ways, here and in turn.ts:
 //   1. The tool set is a server-side constant (WEB_FETCH_TOOL), never assembled from the request
 //      body -- the same rule that protects turnBlocks. A browser cannot add or change a tool.
 //   2. The executor is Brick A's fetchGrantSource: an outbound HTTPS GET against the .gov allowlist
 //      with the SSRF/IP guards, a timeout, and a size cap. It has no write, no internal reach.
 //   3. The whole thing is behind a flag that defaults OFF, and "off" is byte-identical to the
-//      previous no-tools single-shot call (see turn.ts).
+//      previous no-tools single-shot call (see turn.ts + tool-loop.ts).
 //
-// PURE-TESTABLE. runFetchLoop takes the model call and the fetch as INJECTED seams, so the loop's
-// bounds and -- most importantly -- the flag-off equivalence are unit-tested without a live model
-// or a network. Not marked "server-only" for that reason (its only real caller is turn.ts, which
-// is server-only, so the egress stays server-side regardless).
+// PURE-TESTABLE. frameFetchResult and executeWebFetch take the clock and the fetcher as INJECTED
+// seams, so framing and the typed-failure discipline are unit-tested without a live model or a
+// network. Not marked "server-only": its only real caller is turn.ts (server-only), so the egress
+// stays server-side regardless.
 
 import { framePastedContent } from "@/lib/grantbot/prompt";
 import { fetchGrantSource, type FetchResult } from "@/lib/grantbot/fetch";
 import type { PromptBlock } from "@/lib/grantbot/prompt";
-import type { TurnUsage } from "@/lib/grantbot/store";
 
 // Off unless the value is exactly "true" -- same shape as canSendEmail() and
 // requirementsClientVisible(). Read SERVER-SIDE; never NEXT_PUBLIC_, so flipping it is a config
@@ -29,17 +29,8 @@ export function grantbotWebFetchEnabled(): boolean {
 }
 
 // ── Bounds ─────────────────────────────────────────────────────────────────────────────────────
-// At most this many rounds of tool calls per turn; the (round+1)th model call is made in ToolMode
-// "none" (tools still present, tool_choice:{type:"none"}) so the model is forced to produce a final
-// text answer rather than looping. NOT "no tools" -- dropping the tools array with a tool_use
-// history in the messages would 400 (see the ToolMode doc below).
-export const MAX_TOOL_ROUNDS = 2;
-// Wall-clock budget for the whole turn's model calls + fetches. Sits inside the route's
-// maxDuration=300s with headroom for the context pack (already gathered before this) and the store
-// writes. The per-call timeout is clamped to what remains, so the first call is still the full
-// CALL_TIMEOUT_MS when nothing has elapsed -- which is what keeps flag-off byte-identical.
-export const TURN_DEADLINE_MS = 220_000;
-
+// The loop bounds (MAX_TOOL_ROUNDS, TURN_DEADLINE_MS) live with the loop, in tool-loop.ts.
+//
 // LLM-oriented cap on the fetched text handed back to the model. Brick A's MAX_RESPONSE_BYTES
 // (1.5MB) only guards fetch memory/time -- 1.5MB of raw markup is ~375k tokens, over MODEL's
 // context window, so a single large-but-legitimate NOFO page could push the next call past the
@@ -155,116 +146,4 @@ export async function executeWebFetch(
   }
   const result = await fetcher(url);
   return frameFetchResult(url, result, now);
-}
-
-// ── The bounded tool-use loop ───────────────────────────────────────────────────────────────────
-//
-// One model call per iteration. The model may call the tool up to MAX_TOOL_ROUNDS times; the call
-// after the last allowed round is made in ToolMode "none" (tools still present, tool_choice forbids
-// a further call), forcing a final text answer -- NOT with tools dropped, which would 400 against a
-// tool_use history. INJECTED seams (callModel, executeFetch, now) make every branch testable without
-// a model or a network -- and the flag-off path is the same code with webFetchEnabled=false, which
-// is what proves off == today.
-
-export interface ModelTurn {
-  text: string;
-  toolUses: { id: string; url: unknown }[];
-  stopReason: string | null;
-  usage: TurnUsage | null;
-  // The raw assistant content blocks, pushed back verbatim when continuing a tool exchange.
-  rawContent: unknown;
-}
-
-// How the call treats tools:
-//   off  -> no `tools` parameter at all. The flag-off path is always this, which is what makes it
-//           byte-identical to the pre-brick-B single-shot call.
-//   auto -> tools offered; the model may call one. A normal tool round.
-//   none -> tools still PRESENT (so a tool_use/tool_result history stays valid and the API does not
-//           400), but tool_choice forbids another call. This is the forced FINAL answer, at the
-//           round cap or once the wall-clock deadline is spent. Dropping `tools` here instead would
-//           400: Anthropic rejects a request whose messages contain tool_use blocks without `tools`.
-export type ToolMode = "off" | "auto" | "none";
-
-export type CallModel = (opts: { messages: unknown[]; tools: ToolMode; remainingMs: number }) => Promise<ModelTurn>;
-
-export interface FetchLoopResult {
-  text: string;
-  fetches: FetchAuditRecord[];
-  usage: TurnUsage | null;
-  stopReason: string | null;
-}
-
-function addUsage(a: TurnUsage | null, b: TurnUsage | null): TurnUsage | null {
-  if (!b) return a;
-  if (!a) return b;
-  const sum = (x: number | null, y: number | null) => (x == null && y == null ? null : (x ?? 0) + (y ?? 0));
-  return {
-    input_tokens: sum(a.input_tokens, b.input_tokens),
-    output_tokens: sum(a.output_tokens, b.output_tokens),
-    cache_read_input_tokens: sum(a.cache_read_input_tokens, b.cache_read_input_tokens),
-    cache_creation_input_tokens: sum(a.cache_creation_input_tokens, b.cache_creation_input_tokens),
-  };
-}
-
-export async function runFetchLoop(opts: {
-  messages: unknown[];
-  webFetchEnabled: boolean;
-  callModel: CallModel;
-  executeFetch: (url: unknown) => Promise<{ resultText: string; audit: FetchAuditRecord }>;
-  now: () => number;
-  deadlineMs?: number;
-  maxToolRounds?: number;
-  // Optional sink for the fetch audit. runFetchLoop pushes each audit here AS IT HAPPENS, so a
-  // caller that holds the same array still sees what was fetched even if a LATER round's callModel
-  // throws (this function does not catch -- the throw propagates so the turn is recorded as failed).
-  // Without it, a mid-loop throw would discard the return value and lose the breadcrumb of a fetch
-  // that already succeeded. Defaults to a fresh array; the return still carries the same reference.
-  fetches?: FetchAuditRecord[];
-}): Promise<FetchLoopResult> {
-  const deadlineMs = opts.deadlineMs ?? TURN_DEADLINE_MS;
-  const maxToolRounds = opts.maxToolRounds ?? MAX_TOOL_ROUNDS;
-  const start = opts.now();
-  const working = [...opts.messages];
-  const fetches: FetchAuditRecord[] = opts.fetches ?? [];
-
-  let usage: TurnUsage | null = null;
-  let stopReason: string | null = null;
-  let text = "";
-
-  for (let round = 0; ; round++) {
-    const remainingMs = deadlineMs - (opts.now() - start);
-    // OFF whenever the flag is off -> callModel is invoked exactly once with no tools (today).
-    // AUTO under the round cap with time left. Otherwise NONE: the forced final answer, tools still
-    // present so the tool_use history stays valid.
-    const toolMode: ToolMode = !opts.webFetchEnabled
-      ? "off"
-      : round < maxToolRounds && remainingMs > 0
-        ? "auto"
-        : "none";
-
-    const res = await opts.callModel({ messages: working, tools: toolMode, remainingMs });
-    usage = addUsage(usage, res.usage);
-    stopReason = res.stopReason;
-    text = res.text;
-
-    if (toolMode === "auto" && res.stopReason === "tool_use" && res.toolUses.length > 0) {
-      // Continue the exchange: the assistant's tool_use turn, then a user turn of tool_results. In
-      // production the real callModel sets disable_parallel_tool_use, so toolUses holds at most one
-      // entry and this pass is a single fetch (<=2 per turn); the loop still iterates for
-      // correctness, and every tool_use in the response gets a matching tool_result either way.
-      working.push({ role: "assistant", content: res.rawContent });
-      const toolResults: unknown[] = [];
-      for (const tu of res.toolUses) {
-        const { resultText, audit } = await opts.executeFetch(tu.url);
-        fetches.push(audit);
-        toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: resultText });
-      }
-      working.push({ role: "user", content: toolResults });
-      continue;
-    }
-
-    break;
-  }
-
-  return { text, fetches, usage, stopReason };
 }

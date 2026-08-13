@@ -8,6 +8,9 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL(".", import.meta.url)),
+      // `server-only` throws when imported outside an RSC context; alias it to a no-op so modules
+      // that mark themselves server-only can be unit-tested. The real guard still holds in the build.
+      "server-only": fileURLToPath(new URL("./test/server-only-stub.ts", import.meta.url)),
     },
   },
 });

@@ -123,6 +123,7 @@ export function GrantBotChat({
   initialConversationId,
   initialBlank = false,
   onConversationChange,
+  onTurnComplete,
 }: {
   clientId: string;
   clientName: string;
@@ -139,6 +140,9 @@ export function GrantBotChat({
   // Lets the launcher keep the expand target pointed at the live conversation without owning
   // conversation state itself.
   onConversationChange?: (id: string | null) => void;
+  // Fired after a turn the server processed (ok, no error), whether or not the reader is still on
+  // the thread -- a turn can WRITE a document artifact, so the artifact pane refetches on this.
+  onTurnComplete?: () => void;
 }) {
   const isCorner = variant === "corner";
   const [convId, setConvId] = useState<string | null>(initial?.conversationId ?? null);
@@ -361,11 +365,15 @@ export function GrantBotChat({
       // has moved to another thread, every write below would land in the wrong transcript, so
       // the only thing left to do is refresh the rail (which is thread-scoped, not
       // message-scoped) and let the correct thread render it when reopened.
+      const turnOk = res.ok && !data.error;
       if (!stillMine()) {
         // The turn still went out, so the attachment it consumed should not sit in the composer
         // waiting to be re-framed and re-sent with the next message -- unless the reader has
         // already replaced it, which clearAttachment checks.
-        if (res.ok && !data.error) clearAttachment();
+        if (turnOk) {
+          clearAttachment();
+          onTurnComplete?.();
+        }
         void refreshThreads();
         return;
       }
@@ -388,6 +396,7 @@ export function GrantBotChat({
         // Same guard on the ordinary path: staying in the thread does not stop someone lining up
         // the next question's attachment while this answer is still coming back.
         clearAttachment();
+        onTurnComplete?.();
       }
       void refreshThreads();
     } catch {

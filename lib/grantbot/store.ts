@@ -185,11 +185,18 @@ export async function appendAssistant(
     // audit for after-the-fact inspection. When there are no fetches the block is omitted, so the
     // row is byte-identical to a pre-brick-B assistant message.
     fetches?: unknown[] | null;
+    // Brick 1a: the artifact audit for this turn -- which documents the model created/edited. Same
+    // NON-TEXT-block mechanism as fetches (normalizeContent drops it on read, so render/replay are
+    // unchanged); omitted when empty, so an artifact-free turn is byte-identical to before.
+    artifacts?: unknown[] | null;
   },
 ): Promise<void> {
   const content: unknown[] = [{ type: "text", text: opts.text }];
   if (opts.fetches && opts.fetches.length > 0) {
     content.push({ type: "web_fetch_audit", fetches: opts.fetches });
+  }
+  if (opts.artifacts && opts.artifacts.length > 0) {
+    content.push({ type: "artifact_ref", artifacts: opts.artifacts });
   }
   const { error } = await db.from("grantbot_messages").insert({
     conversation_id: opts.conversationId,
