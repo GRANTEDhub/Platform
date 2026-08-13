@@ -12,7 +12,7 @@ vi.mock("./artifact-render", () => ({
 
 const getObjectInfo = vi.fn();
 const uploadObject = vi.fn(async () => undefined);
-const signedUrl = vi.fn(async () => "https://signed.example/x");
+const signedUrl = vi.fn(async (): Promise<string | null> => "https://signed.example/x");
 vi.mock("@/lib/storage", () => ({
   getObjectInfo: (...a: unknown[]) => getObjectInfo(...(a as [])),
   uploadObject: (...a: unknown[]) => uploadObject(...(a as [])),
@@ -91,6 +91,14 @@ describe("exportArtifact", () => {
       Buffer.from("DOCXBYTES"),
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     );
+  });
+
+  it("THROWS (not null) when signing fails after the object exists -> route surfaces 502, not 404", async () => {
+    getArtifactHtmlForClient.mockResolvedValue({ title: "Doc", kind: "html_document", version: 2, html: "<p>x</p>" });
+    getObjectInfo.mockResolvedValue({ size: 1, contentType: "application/pdf" }); // cache hit: object exists
+    signedUrl.mockResolvedValue(null); // signing outage
+
+    await expect(exportArtifact(db, { artifactId: "art_1", clientId: "c1", format: "pdf" })).rejects.toThrow(/signing/i);
   });
 
   it("returns null (renders nothing) when the artifact isn't found / isn't this client's", async () => {

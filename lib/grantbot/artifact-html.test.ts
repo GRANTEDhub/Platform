@@ -29,6 +29,13 @@ describe("artifactPrintHtml", () => {
     expect(out).toContain("<title>A &lt;b&gt; &amp; &quot;Q&quot;</title>");
     expect(out).toContain("<p>kept</p>");
   });
+  it("embeds the passed @font-face CSS and prefers the embedded families (serverless Chromium has no system fonts)", () => {
+    const fontCss = "@font-face{font-family:'Source Serif 4';src:url(data:font/ttf;base64,AAAA) format('truetype');}";
+    const out = artifactPrintHtml("Title", "<p>x</p>", fontCss);
+    expect(out).toContain(fontCss);
+    expect(out).toContain('.gb-doc { font-family: "Source Serif 4", Georgia, "Times New Roman", serif; }');
+    expect(out).toContain('font-family: "Inter Tight"');
+  });
 });
 
 describe("artifactStandaloneHtml (unchanged 1a framing)", () => {
