@@ -104,6 +104,31 @@ describe("generateSectionDraft — generation + validation", () => {
   });
 });
 
+describe("generateSectionDraft — revise mode (5b)", () => {
+  it("still refuses without a real requirements artifact, even with an instruction", async () => {
+    const s = seam("should not be used");
+    const r = await generateSectionDraft(input({ requirements: null, instruction: "make it assertive", currentDraft: "x" }), {
+      createDraft: s.createDraft,
+    });
+    expect(r).toEqual({ ok: false, reason: "no_requirements" });
+    expect(s.calls).toHaveLength(0);
+  });
+
+  it("hands the model the current draft and the staff instruction to revise", async () => {
+    const s = seam("A more assertive problem statement.");
+    const r = await generateSectionDraft(
+      input({ instruction: "make this more assertive", currentDraft: "Rivertown has some needs." }),
+      { createDraft: s.createDraft },
+    );
+    expect(r).toEqual({ ok: true, draft: "A more assertive problem statement.", source: "ai" });
+    const { user } = s.calls[0];
+    expect(user).toContain("STAFF INSTRUCTION");
+    expect(user).toContain("make this more assertive");
+    expect(user).toContain("CURRENT DRAFT");
+    expect(user).toContain("Rivertown has some needs.");
+  });
+});
+
 describe("generateSectionDraft — grounding", () => {
   it("grounds the prompt in the section, the funder's requirements, the client, and the scope", async () => {
     const s = seam("ok");

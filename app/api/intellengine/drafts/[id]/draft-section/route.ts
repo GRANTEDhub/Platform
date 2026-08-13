@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { requireStaffUser } from "@/lib/pursuit/access";
 import { resolveIntellEngineContext } from "@/lib/intellengine/context";
 import { readApplicationRequirements } from "@/lib/grants/requirements";
 import { PROPOSAL_SECTIONS } from "@/lib/intellengine/sections";
@@ -9,7 +10,7 @@ import {
   readDraftContent,
   type DraftSection,
 } from "@/lib/intellengine/content";
-import { generateSectionDraft } from "@/lib/intellengine/draft-section";
+import { generateSectionDraft, statusForSectionDraftReason } from "@/lib/intellengine/draft-section";
 import type { Grant } from "@/types/database";
 
 // Step 5a: draft one proposal section, grounded in the grant's step-4 application requirements, and
@@ -31,16 +32,9 @@ export const maxDuration = 60;
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-
-  // Staff = a profiles row (admin or contractor); a client portal member has none. 404 so the route
-  // reads as absent to a non-staff caller rather than advertising a forbidden endpoint -- same gate
-  // and reasoning as the requirements route.
-  const { data: profile } = await supabase.from("profiles").select("id").eq("id", user.id).maybeSingle();
-  if (!profile) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  // Staff-only (a profiles row); a client portal member gets 404. Shared gate -- see requireStaffUser.
+  const gate = await requireStaffUser(supabase);
+  if (!gate.ok) return gate.response;
 
   let body: { sectionId?: string };
   try {
@@ -77,8 +71,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     // generation_failed is transient (retry); too_long can be retried; not_retrievable / no_requirements
     // are terminal-for-now and reported as an honest "can't ground this yet" at 200 so the UI shows the
     // message rather than an error toast.
-    const status = result.reason === "generation_failed" ? 503 : result.reason === "too_long" ? 422 : 200;
-    return NextResponse.json({ ok: false, reason: result.reason }, { status });
+    return NextResponse.json({ ok: false, reason: result.reason }, { status: statusForSectionDraftReason(result.reason) });
   }
 
   // Persist source:"ai" with OPTIMISTIC CONCURRENCY. The bug this closes: draft-section is a second,

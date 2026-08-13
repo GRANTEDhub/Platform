@@ -27,6 +27,8 @@
 // finished one.
 
 import { notFound } from "next/navigation";
+import { NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getProfile } from "@/lib/auth";
 
 export function pursuitClientAccessEnabled(): boolean {
@@ -62,4 +64,23 @@ export async function requirePursuitVisible(): Promise<void> {
 export async function pursuitApiDenied(): Promise<boolean> {
   if (pursuitClientAccessEnabled()) return false;
   return !(await getProfile());
+}
+
+// The STAFF-ONLY gate the IntellEngine LLM routes (requirements, draft-section, revise-section)
+// share: authenticated + a profiles row (admin or contractor). A client portal member has none.
+// 404 (not 403) so the route reads as ABSENT to a non-staff caller rather than advertising a
+// forbidden endpoint. One definition rather than the same eight lines hand-copied per route -- a
+// security policy that drifts silently is the failure mode this removes. Returns a discriminated
+// result the route returns directly. (The export route intentionally uses resolveDocumentActor
+// instead: it reaches admin-only org-level documents and needs the role, not just staff-ness.)
+export type StaffGate = { ok: true; userId: string } | { ok: false; response: NextResponse };
+
+export async function requireStaffUser(supabase: SupabaseClient): Promise<StaffGate> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, response: NextResponse.json({ error: "Not authenticated" }, { status: 401 }) };
+  const { data: profile } = await supabase.from("profiles").select("id").eq("id", user.id).maybeSingle();
+  if (!profile) return { ok: false, response: NextResponse.json({ error: "Not found" }, { status: 404 }) };
+  return { ok: true, userId: user.id };
 }
