@@ -7,8 +7,9 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { gatherContextPack } from "@/lib/grantbot/gather";
 import { buildSystemPrompt } from "@/lib/grantbot/prompt";
 import { listConversations, loadMessages } from "@/lib/grantbot/store";
-import { GrantBotChat } from "@/components/grantbot/grantbot-chat";
+import { GrantBotWorkspace } from "@/components/grantbot/grantbot-workspace";
 import { GrantBotCollapse } from "@/components/grantbot/grantbot-collapse";
+import { grantbotArtifactsEnabled } from "@/lib/grantbot/artifacts";
 import { BLANK_CONVERSATION, toGrantBotMsg, toGrantBotThread } from "@/lib/grantbot/wire";
 
 export const dynamic = "force-dynamic";
@@ -177,7 +178,10 @@ export default async function GrantBotPage({
       </div>
 
       <div className="flex min-h-0 flex-1 px-10 pb-6 pt-5">
-        <GrantBotChat
+        {/* Workspace = chat + (flag-gated) document pane. artifactsEnabled off -> just the chat,
+            byte-identical to the pre-1a page. */}
+        <GrantBotWorkspace
+          artifactsEnabled={grantbotArtifactsEnabled()}
           clientId={params.id}
           clientName={gathered.clientName}
           variant="full"

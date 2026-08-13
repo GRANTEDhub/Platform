@@ -153,7 +153,7 @@ export async function listArtifacts(db: SupabaseClient, clientId: string): Promi
   }));
 }
 
-export async function getArtifact(db: SupabaseClient, artifactId: string): Promise<ArtifactDetail | null> {
+export async function getArtifact(db: SupabaseClient, artifactId: string, clientId?: string): Promise<ArtifactDetail | null> {
   const { data: a, error } = await db
     .from("grantbot_artifacts")
     .select("id, client_id, kind, title, current_version, updated_at")
@@ -161,6 +161,10 @@ export async function getArtifact(db: SupabaseClient, artifactId: string): Promi
     .maybeSingle();
   if (error) throw new Error(`artifact read failed: ${error.message}`);
   if (!a) return null;
+  // Cross-client guard: staff can read any client's artifacts, but rendering one under the wrong
+  // client's panel is a mislabel (the same concern the context route guards). Scope to the caller's
+  // client when one is given.
+  if (clientId && a.client_id !== clientId) return null;
 
   const { data: vs, error: vErr } = await db
     .from("grantbot_artifact_versions")
