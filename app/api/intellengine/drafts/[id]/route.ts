@@ -4,7 +4,7 @@ import { removeObjectsGrouped, type StorageObjectRef } from "@/lib/storage";
 import { pursuitApiDenied } from "@/lib/pursuit/access";
 import { STEP_ORDER, furthestStatus } from "@/lib/intellengine/drafts";
 import {
-  CONTENT_MAX_BYTES,
+  checkContentSize,
   normalizeScopeForSave,
   normalizeSectionsForSave,
   readDraftContent,
@@ -94,15 +94,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       merged.sections = r.value;
     }
 
-    // Bound the WHOLE column, not just the field that arrived: five list surfaces select
-    // this column (the roster pulls it for every client's drafts), so one draft's ceiling
-    // is that query's ceiling. Checked post-merge because that is the value being stored.
-    if (JSON.stringify(merged).length > CONTENT_MAX_BYTES) {
-      return NextResponse.json(
-        { error: "This draft is too large to save. Shorten a section and try again." },
-        { status: 413 },
-      );
-    }
+    const size = checkContentSize(merged);
+    if (!size.ok) return NextResponse.json({ error: size.error }, { status: 413 });
 
     update.content = merged;
   }

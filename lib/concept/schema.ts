@@ -5,7 +5,7 @@
 // testable; store.ts does the DB reads and generate.ts makes the model call.
 
 import type { Client, Grant, Prospect } from "@/types/database";
-import { formatClientProfileForEnrichment } from "@/lib/clients/profile";
+import { renderClientProfileBlock } from "@/lib/clients/profile";
 
 // The card's already-computed match signals -- fed as a STARTING hint (the match
 // engine already reasoned about role/why/concept), not a constraint to re-derive.
@@ -185,9 +185,7 @@ function renderGrant(grant: Grant): string {
 // backed by the structured fields, so a client whose profile has not been refined
 // yet still generates something grounded.
 function renderClient(client: Client): string {
-  const profileBlock = client.client_profile
-    ? formatClientProfileForEnrichment(client.client_profile)
-    : "(No distilled client profile on file yet -- rely on the structured fields below.)";
+  const profileBlock = renderClientProfileBlock(client.client_profile);
 
   const intake = (client.intake_data ?? {}) as Record<string, unknown>;
   const structured = [

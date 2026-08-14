@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, FileText, Paperclip, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { formatBytes } from "@/lib/format/bytes";
 
 // Step 6 download surface: the "Submission package" panel on the build step's complete area. It
 // fetches the completeness manifest + per-attachment signed URLs from ?format=links (no render), and
@@ -22,13 +23,6 @@ interface Manifest {
   rows: { label: string; present: boolean }[];
   missing: string[];
   empty: boolean;
-}
-
-function formatBytes(n: number | null): string {
-  if (!n || n <= 0) return "";
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 // reloadKey: the build page bumps it after every successful save, so the manifest + signed URLs

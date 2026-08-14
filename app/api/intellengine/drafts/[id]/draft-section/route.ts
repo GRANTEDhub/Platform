@@ -5,7 +5,7 @@ import { resolveIntellEngineContext } from "@/lib/intellengine/context";
 import { readApplicationRequirements } from "@/lib/grants/requirements";
 import { PROPOSAL_SECTIONS } from "@/lib/intellengine/sections";
 import {
-  CONTENT_MAX_BYTES,
+  checkContentSize,
   normalizeSectionsForSave,
   readDraftContent,
   type DraftSection,
@@ -104,12 +104,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (!norm.ok) return NextResponse.json({ error: norm.error }, { status: 400 });
 
     const merged = { ...current, sections: norm.value };
-    if (JSON.stringify(merged).length > CONTENT_MAX_BYTES) {
-      return NextResponse.json(
-        { error: "This draft is too large to save. Shorten a section and try again." },
-        { status: 413 },
-      );
-    }
+    const size = checkContentSize(merged);
+    if (!size.ok) return NextResponse.json({ error: size.error }, { status: 413 });
 
     // CAS: only update the row we read. eq("updated_at", ...) fails to match (0 rows) if another
     // write bumped it between our read and this write.

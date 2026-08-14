@@ -438,3 +438,14 @@ export function formatClientProfileForEnrichment(profile: ClientProfile | null |
     `${lines.join("\n")}`
   );
 }
+
+// The "distilled profile first, else fall back to the structured fields" preface shared by every
+// narrative renderer (section drafting + concept). The distilled profile is the priority signal;
+// when it is absent the caller still grounds on the structured fields it renders below this line, so
+// the fallback says exactly that rather than emitting nothing. Kept beside
+// formatClientProfileForEnrichment so the two cannot drift.
+export function renderClientProfileBlock(profile: ClientProfile | null | undefined): string {
+  return profile
+    ? formatClientProfileForEnrichment(profile)
+    : "(No distilled client profile on file yet -- rely on the structured fields below.)";
+}
