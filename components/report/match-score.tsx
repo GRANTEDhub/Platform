@@ -1,4 +1,5 @@
 import type { FactorScore, FactorScores, FactorRating } from "@/types/database";
+import { RationaleHoverPopover } from "@/components/report/rationale-hover";
 
 // The platform's honest match-scoring graphic, extracted so BOTH the staff review
 // (/review/[id]) and the shared Grant Report detail render the exact same chart.
@@ -49,7 +50,10 @@ function FactorRow({ label, score }: { label: string; score: FactorScore }) {
       // the browser's own styling and a short delay. The styled version still shows
       // wherever it is not clipped.
       title={score.rationale ?? undefined}
-      className={`group relative flex items-center justify-between gap-3 rounded-md px-1.5 py-1.5 transition-colors hover:bg-brand-cream/70 ${
+      // Focusable when it has a rationale, so the pop-out (group-focus-within) is reachable by
+      // keyboard, not hover-only. Rows with no rationale stay out of the tab order.
+      tabIndex={score.rationale ? 0 : undefined}
+      className={`group relative flex items-center justify-between gap-3 rounded-md px-1.5 py-1.5 outline-none transition-colors hover:bg-brand-cream/70 focus-visible:ring-1 focus-visible:ring-brand-navy/40 ${
         insufficient ? "opacity-60" : ""
       }`}
     >
@@ -73,12 +77,7 @@ function FactorRow({ label, score }: { label: string; score: FactorScore }) {
           </span>
         )}
       </div>
-      {score.rationale && (
-        <div className="pointer-events-none absolute bottom-full right-0 z-10 mb-1.5 hidden max-w-[262px] rounded-lg bg-brand-navy px-3 py-2 text-xs leading-relaxed text-white shadow-lg group-hover:block">
-          {score.rationale}
-          <span className="absolute right-6 top-full h-0 w-0 border-x-[6px] border-t-[6px] border-x-transparent border-t-brand-navy" />
-        </div>
-      )}
+      {score.rationale && <RationaleHoverPopover rationale={score.rationale} />}
     </li>
   );
 }

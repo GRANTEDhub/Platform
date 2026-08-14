@@ -5,15 +5,17 @@ import {
   AlertTriangle,
   ArrowUp,
   ClipboardPaste,
-  GitCompare,
+  FileText,
+  Link2,
   Loader2,
   MessagesSquare,
+  Paperclip,
   Plus,
-  Scale,
   Sparkles,
-  Wand2,
+  type LucideIcon,
 } from "lucide-react";
 import { BRAND } from "@/lib/brand";
+import { stripControlChars, truncateSafely } from "@/lib/grantbot/label";
 import { BLANK_CONVERSATION } from "@/lib/grantbot/wire";
 import type { GrantBotMsg, GrantBotThread } from "@/lib/grantbot/wire";
 
@@ -157,6 +159,52 @@ export function GrantBotChat({
   const [loading, setLoading] = useState(!initial);
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // "Attach a file" quick action: read a TEXT-based file (an exported email thread, notes, a NOFO
+  // pasted to .txt) into the SAME paste-attachment channel the paste panel uses -- the server frames
+  // it as untrusted pasted content (framePastedContent), so this adds no new trust surface. Text only
+  // for now; binary .pdf/.docx parsing is a follow-on (it would garble as raw text). Bounded so a
+  // huge file can't blow the model's context window.
+  const MAX_ATTACH_CHARS = 200_000;
+  // Generous for the declared use (email threads, notes, a NOFO saved to .txt), while still bounding
+  // the READ itself -- readAsText buffers the whole file into memory before truncateSafely ever caps
+  // the string, and accept="" is only a picker hint (a staffer can pick "All files"), so a size guard
+  // here mirrors fetch.ts's MAX_RESPONSE_BYTES on the wire.
+  const MAX_ATTACH_BYTES = 5 * 1024 * 1024;
+  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-picking the same file
+    if (!file) return;
+    setError(null); // a new pick clears any prior "too large" / "couldn't read" banner
+    if (file.size > MAX_ATTACH_BYTES) {
+      setError("That file is too large to attach (limit 5 MB). Paste the relevant section instead.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = typeof reader.result === "string" ? reader.result : "";
+      const { text: sliced, truncated } = truncateSafely(text, MAX_ATTACH_CHARS);
+      // Bake the truncation note into the BODY, not the label: the paste label is an editable field a
+      // staffer may reword, so a note living only there can be edited away, leaving the model to answer
+      // from a partial document believing it complete. In the body it survives -- mirrors web-fetch.ts's
+      // frameFetchResult, which appends its note to the text the model reads.
+      const body = truncated
+        ? `${sliced}\n\n[The attachment was longer than the limit and was truncated -- treat it as partial, and say so if the answer might depend on the rest.]`
+        : sliced;
+      // The label rides the untrusted-content frame's marker line, so strip every line-breaking char a
+      // crafted filename could carry (POSIX allows them) before it could forge a fence -- stripControlChars
+      // is the same helper framePastedContent uses server-side, so the editable label the staffer sees
+      // matches exactly what is sent.
+      const name = stripControlChars(file.name) || "attached file";
+      setPasted(body);
+      setPasteLabel(name);
+      setShowPaste(true);
+    };
+    reader.onerror = () =>
+      setError("Couldn't read that file. Text files only for now — or paste the text in instead.");
+    reader.readAsText(file);
+  }, []);
 
   // WHICH TRANSCRIPT IS ON SCREEN, as a number that changes whenever it is replaced.
   //
@@ -707,21 +755,28 @@ export function GrantBotChat({
     </div>
   );
 
-  // Prompt starters, page only -- there is no room for them at 404px. They PREFILL the
-  // composer and nothing else: no route, no send, no model call until the staffer reads what
-  // was typed on their behalf and presses Send themselves. Deliberately not one-click asks;
-  // putting words in someone's mouth on a grant surface is different from offering them.
-  const starters = [
-    { icon: Wand2, label: "Draft a pass alert", prompt: `Draft a pass alert for ${clientName}.` },
+  // Quick actions, page only (no room at 404px), mapped to GrantBot's actual capabilities. Two
+  // PREFILL the composer and nothing else -- no route, no send, no model call until the staffer
+  // reads what was typed and presses Send (putting words in someone's mouth on a grant surface is
+  // different from offering them). "Attach a file" opens the file picker straight away, since it is
+  // an attachment action, not a phrasing. The draft/assess capabilities activate their tools
+  // server-side only when GRANTBOT_ARTIFACTS_ENABLED / GRANTBOT_WEB_FETCH_ENABLED are on; the
+  // prompt is real either way, and the model answers in text when a flag is off.
+  const starters: { icon: LucideIcon; label: string; action: () => void }[] = [
+    { icon: Paperclip, label: "Attach a file", action: () => fileInputRef.current?.click() },
     {
-      icon: Scale,
-      label: "What's still unknown?",
-      prompt: `What does the platform still not know about ${clientName} that would change a go/no-go?`,
+      icon: FileText,
+      label: "Draft a document",
+      action: () =>
+        setDraft(
+          `Draft a document for ${clientName} — a concept proposal, report, or letter. Start with a concept proposal for the grant we're discussing.`,
+        ),
     },
     {
-      icon: GitCompare,
-      label: "Compare to last year's award",
-      prompt: `How does this compare to ${clientName}'s awards on record from last year?`,
+      icon: Link2,
+      label: "Assess a grant link",
+      action: () =>
+        setDraft(`Assess this grant against ${clientName} and triage the fit — here's the link: `),
     },
   ];
 
@@ -796,13 +851,21 @@ export function GrantBotChat({
             <button
               key={s.label}
               type="button"
-              onClick={() => setDraft(s.prompt)}
+              onClick={s.action}
               className="inline-flex h-[30px] items-center gap-1.5 rounded-pill border border-edge bg-white px-3 text-[12px] font-semibold text-brand-navy transition-colors hover:border-brand-navy/25"
             >
               <s.icon className="h-3 w-3" style={{ color: BRAND.orange }} />
               {s.label}
             </button>
           ))}
+          {/* Hidden picker driven by the "Attach a file" action. Text-based files only for now. */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".txt,.md,.eml,.csv,.json,.html,.htm,text/*"
+            onChange={handleFileUpload}
+            className="hidden"
+          />
         </div>
 
         {errorBanner}

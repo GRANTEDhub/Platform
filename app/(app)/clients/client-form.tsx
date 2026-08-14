@@ -275,15 +275,52 @@ export function ClientForm({
     // type-flipped node) and must not create the record halfway through the intake.
     // Deliberately independent of the DOM/React fix above -- this one cannot be
     // defeated by a reconciliation detail.
-    if (!isEdit && step !== lastStep) return;
+    if (!isEdit && step !== lastStep) {
+      // A stray implicit submit (Enter on a single-field wizard step) still fires the native submit
+      // that disarms FormExitGuard. Re-arm before bailing, or backing out afterward would silently
+      // drop the in-progress wizard work -- the same drop item 2a's re-arm exists to prevent.
+      reArmDirty();
+      return;
+    }
     setSubmitting(true);
     setFormError(null);
     setDirty(false);
-    const result = await action(formData);
-    if (result?.error) {
-      setFormError(result.error);
+    // A successful create ends in redirect(): the server action resolves, the framework
+    // navigates, and this component unmounts -- so `submitting` stays true through the redirect
+    // (that is what keeps the "Saving…" screen up). The bug this try/catch fixes is the OTHER
+    // exit: if the action THROWS (a DB blip, an unexpected 500) instead of returning {error}, the
+    // await rejected and nothing reset `submitting` -- the "Saving the client" screen hung forever
+    // with the work neither saved nor recoverable on screen. Now a throw resets it and surfaces an
+    // error the reader can retry from. (A redirect does NOT throw on the client, so success is
+    // unaffected.)
+    try {
+      const result = await action(formData);
+      if (result?.error) {
+        setFormError(result.error);
+        setSubmitting(false);
+        reArmDirty();
+      }
+    } catch {
+      setFormError(
+        isEdit
+          ? "Couldn't save your changes. Please try again."
+          : "Couldn't save the record — it may not have been created. Please try again.",
+      );
       setSubmitting(false);
+      reArmDirty();
     }
+  }
+
+  // A FAILED save leaves the reader on the form with unsaved work, but the native `submit` already
+  // fired and DISARMED the exit guard (FormExitGuard listens on this same <form> element and drops
+  // its dirty bit on submit so a successful redirect isn't interrupted). Without re-arming here, a
+  // reader who sees the error and immediately clicks Back or closes the tab -- without typing again
+  // first -- loses the work silently, the exact drop item 2a exists to prevent. Restore this form's
+  // own dirty flag AND dispatch a synthetic input event so the separate guard re-arms through the
+  // same channel a keystroke uses (it re-arms on `input`), rather than waiting for the next edit.
+  function reArmDirty() {
+    setDirty(true);
+    formRef.current?.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
   // Name is the one field the server hard-requires. Catch it while its step is on

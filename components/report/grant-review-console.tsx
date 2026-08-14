@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowLeft, Check, ExternalLink } from "lucide-react";
 import { BRAND, INK, RATING } from "@/lib/brand";
 import { sanitizeRichText } from "@/lib/sanitize/html";
+import { RationaleHoverPopover } from "@/components/report/rationale-hover";
 import { collapseDuplicatedBlock, previewHtml } from "@/lib/grants/description";
 import type { FitFactorView, ReviewFactor } from "@/lib/report/fit-factors";
 import type { EligibilityVerdict } from "@/lib/intellengine/eligibility";
@@ -458,15 +459,15 @@ function RationaleCard({
           padding is 4px and the footnote is pinned — check the six rows still fit before
           shipping any change to the card above.
 
-          overflow-y-auto BECAUSE THE ROWS CAN NOW GROW FROM THE INSIDE. The six-row budget was
-          calculated against a native `title` tooltip, which is an overlay and never
-          participates in layout. FactorRow's <details> disclosure does: opening one inserts a
-          paragraph into normal flow, and the parent <section> is a fixed-height
-          overflow-hidden box, so past the pinned footnote's slack the expanded reason (or a
-          lower row) was silently clipped — the third variant of the clip #300 and #306 chased,
-          reintroduced by the fix for it. Scrolling here is right rather than budgeting slack:
-          opening a disclosure is a momentary, deliberate act, not part of the steady-state
-          layout that has to fit. */}
+          overflow-y-auto BECAUSE ROWS CAN STILL GROW FROM THE INSIDE. The hover pop-out is an
+          overlay and never participates in layout — but the UNASSESSED-factor branch renders its
+          full rationale INLINE, in normal flow, and enforceFactorDataFloors can mark up to three
+          factors insufficient_data at once on a sparse client record, so the six-row budget is
+          genuinely exceedable. The parent <section> is a fixed-height overflow-hidden box, so
+          without a scrollbar here those inline rows (or the pinned footnote) clip with no way to
+          recover them. Scrolling is the recovery. The styled hover pop-out may be clipped by this
+          container the same way match-score.tsx accepts for its own tooltip; the native `title` on
+          each hover row is the clip-proof fallback that always reveals on hover. */}
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pb-3.5">
         <p className={`mb-[3px] border-t border-hairline-strong pt-[11px] ${EYEBROW} tracking-[0.13em]`}>
           Fit factors
@@ -502,27 +503,24 @@ function RationaleCard({
 // column of nothing.
 // One factor row, and the reason behind it.
 //
-// THE RATIONALE IS A DISCLOSURE NOW, NOT A TOOLTIP. Two passes tried to make a hover work
-// here — first by moving the styled tooltip out of an overflow-hidden ancestor, then by
-// putting a native `title` on the whole row instead of just the label — and it was still
-// reported as not working. A native tooltip was the wrong mechanism regardless of where it
-// was attached: it needs a ~1s dwell, it does not exist on touch, it cannot be styled, and
-// when the underlying text is missing it shows NOTHING, which is indistinguishable from
-// broken. That last property is what made this hard to diagnose twice.
-//
-// <details>/<summary> fixes all of it with no JavaScript, which matters because this file is
-// a SERVER component (no "use client", so no useState here). The reason renders in normal
-// flow, so no ancestor's overflow can clip it, it works on touch, and it is keyboard
-// operable for free.
+// THE RATIONALE IS A HOVER POP-OUT (restored, per Shannon), matching the sibling
+// match-score.tsx. An ASSESSED row reveals its reason in a styled group-hover pop-out and ALSO
+// carries a native `title`: the pop-out is the nice version but can be clipped by the card's
+// fixed-height overflow, so the `title` is the always-renders fallback (the exact accepted
+// tradeoff match-score.tsx documents). Known cost of hover: no reveal on touch — accepted here
+// because the primary rationale is always visible above in RationaleCard and the sr-only span
+// still carries the full text to assistive tech. This was previously a <details>/<summary>
+// disclosure; hover was chosen back over it deliberately, so keep the two factor surfaces on the
+// one hover pattern rather than reintroducing a second mechanism here.
 //
 // AND WHEN THERE IS NO RATIONALE, THE ROW SAYS SO. `rationale` is required in the scorer's
 // tool schema, so a null should be rare — but silence is exactly what cost two debugging
 // rounds, so absence is now stated rather than rendered as a control that does nothing.
 function FactorRow({ factor, last }: { factor: ReviewFactor; last: boolean }) {
-  // An unassessed row already prints its reason in full (see below), so wrapping it in a
-  // disclosure would hide text that is deliberately always visible.
+  // An unassessed row already prints its reason in full (see below), so revealing it on hover
+  // would hide text that is deliberately always visible.
   const inline = factor.filled === 0 && !!factor.rationale;
-  const expandable = !!factor.rationale && !inline;
+  const hover = !!factor.rationale && !inline;
   const rowStyle = factor.lead
     ? { backgroundColor: "rgba(228,118,31,0.07)", margin: "0 -20px", padding: "4px 20px" }
     : undefined;
@@ -581,9 +579,6 @@ function FactorRow({ factor, last }: { factor: ReviewFactor; last: boolean }) {
         >
           {factor.word}
         </p>
-        {expandable && (
-          <span className="mt-[3px] block text-[10px] text-ink-faint group-open:hidden">why</span>
-        )}
       </div>
     </>
   );
@@ -595,31 +590,28 @@ function FactorRow({ factor, last }: { factor: ReviewFactor; last: boolean }) {
     </span>
   );
 
-  if (!expandable) {
-    return (
-      <div
-        className={`flex items-start justify-between gap-3.5 py-1 ${last ? "" : "border-b border-brand-navy/[0.05]"}`}
-        style={rowStyle}
-      >
-        {content}
-        {srOnly}
-      </div>
-    );
-  }
-
+  // HOVER-TO-REVEAL (restored, per Shannon): the rationale rides a desktop CSS group-hover
+  // pop-out over the row, matching match-score.tsx. The overlay does NOT participate in layout,
+  // so the six-row budget holds and no ancestor's flow grows. A native `title` on the row is the
+  // clip-proof fallback -- the styled pop-out can still be clipped by the card's fixed-height
+  // overflow, but the title always reveals on hover. (The inline-full unassessed row and the
+  // no-rationale row are unchanged and never get a pop-out.)
   return (
-    <details className={`group ${last ? "" : "border-b border-brand-navy/[0.05]"}`} style={rowStyle}>
-      {/* list-none + the webkit marker reset: the default disclosure triangle would sit
-          outside the row's grid and break the label column's alignment. The "why" hint in
-          the right-hand column is the affordance instead, and it hides once open. */}
-      <summary className="flex cursor-pointer list-none items-start justify-between gap-3.5 py-1 [&::-webkit-details-marker]:hidden">
-        {content}
-        {srOnly}
-      </summary>
-      <p className="pb-1.5 pr-[136px] text-[11px] leading-[1.45] text-ink-muted [text-wrap:pretty]">
-        {factor.rationale}
-      </p>
-    </details>
+    <div
+      title={hover ? factor.rationale ?? undefined : undefined}
+      // Focusable ONLY when it has a rationale to reveal, so Tab+focus surfaces the pop-out
+      // (group-focus-within) for keyboard/motor users -- the reachability the old <details> gave
+      // for free. Rows with no pop-out stay out of the tab order.
+      tabIndex={hover ? 0 : undefined}
+      className={`group relative flex items-start justify-between gap-3.5 rounded-sharp py-1 outline-none focus-visible:ring-1 focus-visible:ring-brand-navy/40 ${
+        hover ? "cursor-help" : ""
+      } ${last ? "" : "border-b border-brand-navy/[0.05]"}`}
+      style={rowStyle}
+    >
+      {content}
+      {srOnly}
+      {hover && factor.rationale && <RationaleHoverPopover rationale={factor.rationale} />}
+    </div>
   );
 }
 

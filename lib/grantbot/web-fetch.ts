@@ -18,6 +18,7 @@
 // stays server-side regardless.
 
 import { framePastedContent } from "@/lib/grantbot/prompt";
+import { truncateSafely } from "@/lib/grantbot/label";
 import { fetchGrantSource, type FetchResult } from "@/lib/grantbot/fetch";
 import type { PromptBlock } from "@/lib/grantbot/prompt";
 
@@ -104,13 +105,9 @@ export function frameFetchResult(
 ): { resultText: string; audit: FetchAuditRecord } {
   if (result.ok) {
     // Two independent truncations can bite: Brick A's byte cap on the wire, and this LLM-oriented
-    // char cap. Either one means the model is seeing a partial page, so it is told so.
-    const charCapped = result.text.length > MAX_FETCH_TEXT_CHARS;
-    let body = charCapped ? result.text.slice(0, MAX_FETCH_TEXT_CHARS) : result.text;
-    // slice() cuts on UTF-16 code units; if the boundary split a surrogate pair, drop the dangling
-    // lone high surrogate rather than ride it into the tool_result -- the same boundary-safety
-    // discipline decodeCapped applies at the byte level in fetch.ts.
-    if (charCapped && /[\uD800-\uDBFF]$/.test(body)) body = body.slice(0, -1);
+    // char cap (truncateSafely, which also drops a surrogate-pair split at the boundary). Either one
+    // means the model is seeing a partial page, so it is told so.
+    const { text: body, truncated: charCapped } = truncateSafely(result.text, MAX_FETCH_TEXT_CHARS);
     const partial = result.truncated || charCapped;
     const truncatedNote = partial
       ? "\n\n[The page was longer than the fetch limit and was truncated — treat it as partial, and say so if the answer might depend on the rest.]"
