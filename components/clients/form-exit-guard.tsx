@@ -42,7 +42,15 @@ export function useFormDirty(formSelector: string | null, initiallyDirty = false
     if (!formSelector) return;
     const form = document.querySelector(formSelector);
     if (!form) return;
-    const onInput = () => setDirty(true);
+    // Any real edit re-marks dirty AND re-arms the guard. The re-arm matters after a FAILED save:
+    // onSubmit below disarms the guard (submittedRef) so a successful redirect isn't interrupted,
+    // but if the save threw/returned an error the reader is still on the form with unsaved work --
+    // without this, both the Back confirm and beforeunload would stay silenced and the work would
+    // drop silently on the next exit. The first keystroke after a failed save restores the guard.
+    const onInput = () => {
+      submittedRef.current = false;
+      setDirty(true);
+    };
     // A submit means the work is being saved, so stop guarding (the redirect that
     // follows must not be interrupted by a confirm).
     const onSubmit = () => {

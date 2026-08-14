@@ -458,16 +458,13 @@ function RationaleCard({
           padding is 4px and the footnote is pinned — check the six rows still fit before
           shipping any change to the card above.
 
-          overflow-y-auto BECAUSE THE ROWS CAN NOW GROW FROM THE INSIDE. The six-row budget was
-          calculated against a native `title` tooltip, which is an overlay and never
-          participates in layout. FactorRow's <details> disclosure does: opening one inserts a
-          paragraph into normal flow, and the parent <section> is a fixed-height
-          overflow-hidden box, so past the pinned footnote's slack the expanded reason (or a
-          lower row) was silently clipped — the third variant of the clip #300 and #306 chased,
-          reintroduced by the fix for it. Scrolling here is right rather than budgeting slack:
-          opening a disclosure is a momentary, deliberate act, not part of the steady-state
-          layout that has to fit. */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pb-3.5">
+          overflow-visible NOW THAT THE RATIONALE IS A HOVER POP-OUT AGAIN: an overlay tooltip
+          never participates in layout, so the rows return to their fixed six-row budget and
+          nothing grows from the inside (the reason overflow-y-auto was added for the <details>
+          disclosure is gone). Visible overflow lets the styled pop-out render; the parent
+          <section> is still a fixed-height box, so a top row's pop-out can clip there — the
+          native `title` on each row is the clip-proof fallback that always reveals on hover. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-visible px-5 pb-3.5">
         <p className={`mb-[3px] border-t border-hairline-strong pt-[11px] ${EYEBROW} tracking-[0.13em]`}>
           Fit factors
         </p>
@@ -519,10 +516,10 @@ function RationaleCard({
 // tool schema, so a null should be rare — but silence is exactly what cost two debugging
 // rounds, so absence is now stated rather than rendered as a control that does nothing.
 function FactorRow({ factor, last }: { factor: ReviewFactor; last: boolean }) {
-  // An unassessed row already prints its reason in full (see below), so wrapping it in a
-  // disclosure would hide text that is deliberately always visible.
+  // An unassessed row already prints its reason in full (see below), so revealing it on hover
+  // would hide text that is deliberately always visible.
   const inline = factor.filled === 0 && !!factor.rationale;
-  const expandable = !!factor.rationale && !inline;
+  const hover = !!factor.rationale && !inline;
   const rowStyle = factor.lead
     ? { backgroundColor: "rgba(228,118,31,0.07)", margin: "0 -20px", padding: "4px 20px" }
     : undefined;
@@ -581,9 +578,6 @@ function FactorRow({ factor, last }: { factor: ReviewFactor; last: boolean }) {
         >
           {factor.word}
         </p>
-        {expandable && (
-          <span className="mt-[3px] block text-[10px] text-ink-faint group-open:hidden">why</span>
-        )}
       </div>
     </>
   );
@@ -595,31 +589,29 @@ function FactorRow({ factor, last }: { factor: ReviewFactor; last: boolean }) {
     </span>
   );
 
-  if (!expandable) {
-    return (
-      <div
-        className={`flex items-start justify-between gap-3.5 py-1 ${last ? "" : "border-b border-brand-navy/[0.05]"}`}
-        style={rowStyle}
-      >
-        {content}
-        {srOnly}
-      </div>
-    );
-  }
-
+  // HOVER-TO-REVEAL (restored, per Shannon): the rationale rides a desktop CSS group-hover
+  // pop-out over the row, matching match-score.tsx. The overlay does NOT participate in layout,
+  // so the six-row budget holds and no ancestor's flow grows. A native `title` on the row is the
+  // clip-proof fallback -- the styled pop-out can still be clipped by the card's fixed-height
+  // overflow, but the title always reveals on hover. (The inline-full unassessed row and the
+  // no-rationale row are unchanged and never get a pop-out.)
   return (
-    <details className={`group ${last ? "" : "border-b border-brand-navy/[0.05]"}`} style={rowStyle}>
-      {/* list-none + the webkit marker reset: the default disclosure triangle would sit
-          outside the row's grid and break the label column's alignment. The "why" hint in
-          the right-hand column is the affordance instead, and it hides once open. */}
-      <summary className="flex cursor-pointer list-none items-start justify-between gap-3.5 py-1 [&::-webkit-details-marker]:hidden">
-        {content}
-        {srOnly}
-      </summary>
-      <p className="pb-1.5 pr-[136px] text-[11px] leading-[1.45] text-ink-muted [text-wrap:pretty]">
-        {factor.rationale}
-      </p>
-    </details>
+    <div
+      title={hover ? factor.rationale ?? undefined : undefined}
+      className={`group relative flex items-start justify-between gap-3.5 py-1 ${hover ? "cursor-help" : ""} ${
+        last ? "" : "border-b border-brand-navy/[0.05]"
+      }`}
+      style={rowStyle}
+    >
+      {content}
+      {srOnly}
+      {hover && (
+        <div className="pointer-events-none absolute bottom-full right-0 z-20 mb-1.5 hidden max-w-[262px] rounded-lg bg-brand-navy px-3 py-2 text-[11px] leading-relaxed text-white shadow-lg group-hover:block">
+          {factor.rationale}
+          <span className="absolute right-6 top-full h-0 w-0 border-x-[6px] border-t-[6px] border-x-transparent border-t-brand-navy" />
+        </div>
+      )}
+    </div>
   );
 }
 

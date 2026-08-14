@@ -279,9 +279,22 @@ export function ClientForm({
     setSubmitting(true);
     setFormError(null);
     setDirty(false);
-    const result = await action(formData);
-    if (result?.error) {
-      setFormError(result.error);
+    // A successful create ends in redirect(): the server action resolves, the framework
+    // navigates, and this component unmounts -- so `submitting` stays true through the redirect
+    // (that is what keeps the "Saving…" screen up). The bug this try/catch fixes is the OTHER
+    // exit: if the action THROWS (a DB blip, an unexpected 500) instead of returning {error}, the
+    // await rejected and nothing reset `submitting` -- the "Saving the client" screen hung forever
+    // with the work neither saved nor recoverable on screen. Now a throw resets it and surfaces an
+    // error the reader can retry from. (A redirect does NOT throw on the client, so success is
+    // unaffected.)
+    try {
+      const result = await action(formData);
+      if (result?.error) {
+        setFormError(result.error);
+        setSubmitting(false);
+      }
+    } catch {
+      setFormError("Couldn't save the record — it may not have been created. Please try again.");
       setSubmitting(false);
     }
   }
