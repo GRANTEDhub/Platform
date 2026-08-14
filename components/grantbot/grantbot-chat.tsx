@@ -15,6 +15,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { BRAND } from "@/lib/brand";
+import { stripControlChars } from "@/lib/grantbot/label";
 import { BLANK_CONVERSATION } from "@/lib/grantbot/wire";
 import type { GrantBotMsg, GrantBotThread } from "@/lib/grantbot/wire";
 
@@ -174,11 +175,11 @@ export function GrantBotChat({
     reader.onload = () => {
       const text = typeof reader.result === "string" ? reader.result : "";
       const truncated = text.length > MAX_ATTACH_CHARS;
-      // The label rides the untrusted-content frame's marker line, so strip any newline/control char
-      // a crafted filename could carry (POSIX allows them) before it could forge a fence.
-      // framePastedContent strips them server-side too; doing it here keeps the editable label the
-      // staffer sees honest as well.
-      const name = file.name.replace(/[\u0000-\u001F\u007F]+/g, " ").trim() || "attached file";
+      // The label rides the untrusted-content frame's marker line, so strip every line-breaking char a
+      // crafted filename could carry (POSIX allows them) before it could forge a fence -- stripControlChars
+      // is the same helper framePastedContent uses server-side, so the editable label the staffer sees
+      // matches exactly what is sent.
+      const name = stripControlChars(file.name) || "attached file";
       // Tell the model when the file was cut, mirroring web-fetch's truncation note -- otherwise it
       // answers from a partial document with no signal (deadlines / eligibility often sit past the cut).
       setPasted(truncated ? text.slice(0, MAX_ATTACH_CHARS) : text);
