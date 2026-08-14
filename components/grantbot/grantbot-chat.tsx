@@ -200,7 +200,8 @@ export function GrantBotChat({
       setPasteLabel(name);
       setShowPaste(true);
     };
-    reader.onerror = () => setError("Couldn't read that file. Text files only for now (.txt, .md, .eml, .csv).");
+    reader.onerror = () =>
+      setError("Couldn't read that file. Text files only for now — or paste the text in instead.");
     reader.readAsText(file);
   }, []);
 
