@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import Handlebars from "handlebars";
-import puppeteer, { type Browser } from "puppeteer-core";
+import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import type { AlertData } from "./types";
 
 // Render the grant-alert HTML template to a branded letter-size PDF via headless
@@ -125,6 +125,32 @@ export async function launchAlertBrowser(): Promise<Browser> {
   });
 }
 
+// The print-time font guard, shared by every Chromium PDF render here and in the GrantBot artifact
+// export. Fonts are embedded as @font-face data URIs (no network), so `document.fonts.ready` resolves
+// fast; this waits for the faces to APPLY before `page.pdf()` snapshots, so a print can't race font
+// substitution. Swallowed if `fonts.ready` is unsupported -- proceed with whatever loaded rather than
+// fail the render.
+export async function waitForFontsReady(page: Page): Promise<void> {
+  try {
+    await page.evaluate(() => (document as unknown as { fonts?: { ready?: Promise<unknown> } }).fonts?.ready);
+  } catch {
+    /* fonts.ready unsupported -> proceed with whatever loaded */
+  }
+}
+
+// Tear down a PRE-LAUNCHED browser if the concurrent work it was overlapped with rejects before the
+// browser is handed to the renderer that would own (and close) it -- otherwise a resolved-but-
+// unreferenced Chromium process leaks. Used where launch is kicked off alongside another async op
+// (enrich in store.ts, the font read in artifact-render.ts) and that op can throw first. Returns
+// `work` so the caller keeps its resolved value; on rejection the browser is closed best-effort and
+// the original error re-thrown unchanged.
+export function closeBrowserOnReject<T>(browserPromise: Promise<Browser>, work: Promise<T>): Promise<T> {
+  return work.catch((err) => {
+    void browserPromise.then((b) => b.close()).catch(() => {});
+    throw err;
+  });
+}
+
 // Render the alert HTML to a one-page PDF. `browserPromise` (optional) lets the caller
 // pre-launch Chromium concurrently with other work (store.ts overlaps it with the enrich
 // LLM call) so the cold-start is already paid by render time; when omitted we launch
@@ -144,13 +170,7 @@ export async function renderAlertPdf(
   try {
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: "load", timeout: 30_000 });
-    // Fonts are embedded @font-face data URIs (no network), so this resolves fast; kept
-    // as a correctness guard that the faces are applied before we print.
-    try {
-      await page.evaluate(() => (document as unknown as { fonts?: { ready?: Promise<unknown> } }).fonts?.ready);
-    } catch {
-      /* fonts.ready unsupported -> proceed with whatever loaded */
-    }
+    await waitForFontsReady(page);
     const tContent = Date.now();
     // pageRanges:"1" is a hard backstop -- the template is sized to exactly one
     // letter page (fixed 1056px height, overflow hidden), but this guarantees we
@@ -250,11 +270,7 @@ export async function renderHorizonPdf(items: HorizonRenderItem[]): Promise<Buff
   try {
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: "load", timeout: 30_000 });
-    try {
-      await page.evaluate(() => (document as unknown as { fonts?: { ready?: Promise<unknown> } }).fonts?.ready);
-    } catch {
-      /* proceed with whatever loaded */
-    }
+    await waitForFontsReady(page);
     // One page: the cap of 8 items fits comfortably. pageRanges "1" backstops overflow.
     const pdf = await page.pdf({ format: "letter", printBackground: true, preferCSSPageSize: true, pageRanges: "1" });
     return Buffer.from(pdf);

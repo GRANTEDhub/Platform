@@ -8,7 +8,7 @@ import { ensureGrantBrief } from "@/lib/grants/brief";
 import { conceptHookForCard } from "@/lib/concept/store";
 import { buildAlertData, buildAlertEmailBody, buildProspectEmailBody } from "./data";
 import { senderFirstName } from "./sender";
-import { renderAlertPdf, renderHorizonPdf, launchAlertBrowser } from "./render";
+import { renderAlertPdf, renderHorizonPdf, launchAlertBrowser, closeBrowserOnReject } from "./render";
 import { mergeAlertPdfs } from "./merge-pdf";
 import { getForecastHorizon } from "@/lib/grants/forecast-relevance";
 import {
@@ -104,10 +104,7 @@ export async function generateDraftAlert(
   // the one artifact a client actually reads: a grant ingested twenty minutes ago must not
   // go out describing itself in the agency's clipped one-liner.
   const [enrichment, brief] = await Promise.all([
-    enrichAlert(ctx.grant, ctx.card).catch((err) => {
-      void browserPromise.then((b) => b.close()).catch(() => {});
-      throw err;
-    }),
+    closeBrowserOnReject(browserPromise, enrichAlert(ctx.grant, ctx.card)),
     ensureGrantBrief(db, ctx.grant),
   ]);
   const enrichedAt = Date.now();
