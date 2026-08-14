@@ -167,10 +167,19 @@ export function GrantBotChat({
   // for now; binary .pdf/.docx parsing is a follow-on (it would garble as raw text). Bounded so a
   // huge file can't blow the model's context window.
   const MAX_ATTACH_CHARS = 200_000;
+  // Generous for the declared use (email threads, notes, a NOFO saved to .txt), while still bounding
+  // the READ itself -- readAsText buffers the whole file into memory before truncateSafely ever caps
+  // the string, and accept="" is only a picker hint (a staffer can pick "All files"), so a size guard
+  // here mirrors fetch.ts's MAX_RESPONSE_BYTES on the wire.
+  const MAX_ATTACH_BYTES = 5 * 1024 * 1024;
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = ""; // allow re-picking the same file
     if (!file) return;
+    if (file.size > MAX_ATTACH_BYTES) {
+      setError("That file is too large to attach (limit 5 MB). Paste the relevant section instead.");
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       const text = typeof reader.result === "string" ? reader.result : "";
