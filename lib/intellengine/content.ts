@@ -86,6 +86,17 @@ export const CONTENT_MAX_BYTES = 262_144; // 256KB for the whole merged column
 
 export const EMPTY_CONTENT: DraftContent = { scope: EMPTY_SCOPE, sections: [] };
 
+// Bound the WHOLE merged column, not just the field that arrived: five list surfaces select this
+// column (the roster pulls it for every client's drafts), so one draft's ceiling is that query's
+// ceiling. Checked post-merge because that is the value being stored. Returns a typed result the
+// two draft-write routes map to 413, so they cannot drift on the ceiling or the message.
+export function checkContentSize(merged: DraftContent): { ok: true } | { ok: false; error: string } {
+  if (JSON.stringify(merged).length > CONTENT_MAX_BYTES) {
+    return { ok: false, error: "This draft is too large to save. Shorten a section and try again." };
+  }
+  return { ok: true };
+}
+
 function str(v: unknown): string {
   return typeof v === "string" ? v : "";
 }

@@ -2,6 +2,7 @@ import type { ApplicationRequirements } from "@/lib/grants/requirements";
 import { REQUIREMENT_FIELDS, REQUIREMENT_FIELD_LABELS, hasAnyRequirement } from "@/lib/grants/requirements";
 import { PROPOSAL_SECTIONS } from "@/lib/intellengine/sections";
 import type { DraftContent } from "@/lib/intellengine/content";
+import { formatBytes } from "@/lib/format/bytes";
 
 // Step 6 (export MVP): assemble a completed pursuit into ONE filable narrative document. Pure and
 // I/O-free -- the route resolves the draft/grant/client/attachments and hands them here, so the
@@ -103,13 +104,6 @@ function paragraphs(text: string): string {
     .filter(Boolean);
   if (blocks.length === 0) return "<p><strong>⚠ Not yet drafted.</strong></p>";
   return blocks.map((b) => `<p>${escapeHtml(b).replace(/\n/g, "<br />")}</p>`).join("\n");
-}
-
-function formatBytes(n: number | null): string {
-  if (!n || n <= 0) return "";
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 // Assemble the narrative body HTML (the .gb-doc inner content). Sanitised + rendered by the route.

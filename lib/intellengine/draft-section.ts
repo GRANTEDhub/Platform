@@ -8,7 +8,7 @@ import {
 } from "@/lib/grants/requirements";
 import { SECTION_MAX_CHARS, type DraftScope } from "@/lib/intellengine/content";
 import type { SectionSpec } from "@/lib/intellengine/sections";
-import { formatClientProfileForEnrichment } from "@/lib/clients/profile";
+import { renderClientProfileBlock } from "@/lib/clients/profile";
 
 // Step 5a: draft ONE proposal section, grounded in the grant's step-4 application requirements.
 //
@@ -124,9 +124,7 @@ function renderRequirements(req: ApplicationRequirements): string {
 // rich profile would draft from raw intake columns alone, thinner than the concept for the same org.
 function renderClient(client: Client | null): string {
   if (!client) return "(no client on file)";
-  const profileBlock = client.client_profile
-    ? formatClientProfileForEnrichment(client.client_profile)
-    : "(No distilled client profile on file yet — rely on the structured fields below.)";
+  const profileBlock = renderClientProfileBlock(client.client_profile);
 
   const lines: string[] = [`Name: ${client.name}`];
   const add = (label: string, v: string | null | undefined) => {
