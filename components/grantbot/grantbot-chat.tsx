@@ -12,7 +12,7 @@ import {
   Paperclip,
   Plus,
   Sparkles,
-  Wand2,
+  type LucideIcon,
 } from "lucide-react";
 import { BRAND } from "@/lib/brand";
 import { BLANK_CONVERSATION } from "@/lib/grantbot/wire";
@@ -737,7 +737,7 @@ export function GrantBotChat({
   // an attachment action, not a phrasing. The draft/assess capabilities activate their tools
   // server-side only when GRANTBOT_ARTIFACTS_ENABLED / GRANTBOT_WEB_FETCH_ENABLED are on; the
   // prompt is real either way, and the model answers in text when a flag is off.
-  const starters: { icon: typeof Wand2; label: string; action: () => void }[] = [
+  const starters: { icon: LucideIcon; label: string; action: () => void }[] = [
     { icon: Paperclip, label: "Attach a file", action: () => fileInputRef.current?.click() },
     {
       icon: FileText,

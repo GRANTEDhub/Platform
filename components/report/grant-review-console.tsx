@@ -458,13 +458,16 @@ function RationaleCard({
           padding is 4px and the footnote is pinned — check the six rows still fit before
           shipping any change to the card above.
 
-          overflow-visible NOW THAT THE RATIONALE IS A HOVER POP-OUT AGAIN: an overlay tooltip
-          never participates in layout, so the rows return to their fixed six-row budget and
-          nothing grows from the inside (the reason overflow-y-auto was added for the <details>
-          disclosure is gone). Visible overflow lets the styled pop-out render; the parent
-          <section> is still a fixed-height box, so a top row's pop-out can clip there — the
-          native `title` on each row is the clip-proof fallback that always reveals on hover. */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-visible px-5 pb-3.5">
+          overflow-y-auto BECAUSE ROWS CAN STILL GROW FROM THE INSIDE. The hover pop-out is an
+          overlay and never participates in layout — but the UNASSESSED-factor branch renders its
+          full rationale INLINE, in normal flow, and enforceFactorDataFloors can mark up to three
+          factors insufficient_data at once on a sparse client record, so the six-row budget is
+          genuinely exceedable. The parent <section> is a fixed-height overflow-hidden box, so
+          without a scrollbar here those inline rows (or the pinned footnote) clip with no way to
+          recover them. Scrolling is the recovery. The styled hover pop-out may be clipped by this
+          container the same way match-score.tsx accepts for its own tooltip; the native `title` on
+          each hover row is the clip-proof fallback that always reveals on hover. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pb-3.5">
         <p className={`mb-[3px] border-t border-hairline-strong pt-[11px] ${EYEBROW} tracking-[0.13em]`}>
           Fit factors
         </p>
@@ -499,18 +502,15 @@ function RationaleCard({
 // column of nothing.
 // One factor row, and the reason behind it.
 //
-// THE RATIONALE IS A DISCLOSURE NOW, NOT A TOOLTIP. Two passes tried to make a hover work
-// here — first by moving the styled tooltip out of an overflow-hidden ancestor, then by
-// putting a native `title` on the whole row instead of just the label — and it was still
-// reported as not working. A native tooltip was the wrong mechanism regardless of where it
-// was attached: it needs a ~1s dwell, it does not exist on touch, it cannot be styled, and
-// when the underlying text is missing it shows NOTHING, which is indistinguishable from
-// broken. That last property is what made this hard to diagnose twice.
-//
-// <details>/<summary> fixes all of it with no JavaScript, which matters because this file is
-// a SERVER component (no "use client", so no useState here). The reason renders in normal
-// flow, so no ancestor's overflow can clip it, it works on touch, and it is keyboard
-// operable for free.
+// THE RATIONALE IS A HOVER POP-OUT (restored, per Shannon), matching the sibling
+// match-score.tsx. An ASSESSED row reveals its reason in a styled group-hover pop-out and ALSO
+// carries a native `title`: the pop-out is the nice version but can be clipped by the card's
+// fixed-height overflow, so the `title` is the always-renders fallback (the exact accepted
+// tradeoff match-score.tsx documents). Known cost of hover: no reveal on touch — accepted here
+// because the primary rationale is always visible above in RationaleCard and the sr-only span
+// still carries the full text to assistive tech. This was previously a <details>/<summary>
+// disclosure; hover was chosen back over it deliberately, so keep the two factor surfaces on the
+// one hover pattern rather than reintroducing a second mechanism here.
 //
 // AND WHEN THERE IS NO RATIONALE, THE ROW SAYS SO. `rationale` is required in the scorer's
 // tool schema, so a null should be rare — but silence is exactly what cost two debugging

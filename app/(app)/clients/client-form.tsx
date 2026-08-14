@@ -292,11 +292,25 @@ export function ClientForm({
       if (result?.error) {
         setFormError(result.error);
         setSubmitting(false);
+        reArmDirty();
       }
     } catch {
       setFormError("Couldn't save the record — it may not have been created. Please try again.");
       setSubmitting(false);
+      reArmDirty();
     }
+  }
+
+  // A FAILED save leaves the reader on the form with unsaved work, but the native `submit` already
+  // fired and DISARMED the exit guard (FormExitGuard listens on this same <form> element and drops
+  // its dirty bit on submit so a successful redirect isn't interrupted). Without re-arming here, a
+  // reader who sees the error and immediately clicks Back or closes the tab -- without typing again
+  // first -- loses the work silently, the exact drop item 2a exists to prevent. Restore this form's
+  // own dirty flag AND dispatch a synthetic input event so the separate guard re-arms through the
+  // same channel a keystroke uses (it re-arms on `input`), rather than waiting for the next edit.
+  function reArmDirty() {
+    setDirty(true);
+    formRef.current?.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
   // Name is the one field the server hard-requires. Catch it while its step is on
