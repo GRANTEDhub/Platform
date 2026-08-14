@@ -9,6 +9,7 @@ import {
   type ClientUploadKind,
 } from "@/lib/documents/kinds";
 import { useDocumentUpload } from "./use-document-upload";
+import { formatBytes } from "@/lib/format/bytes";
 import type { DocumentListItem } from "@/lib/documents/list";
 
 // The real supporting-files control (Pursuit step 3c). Replaces the placeholder card that
@@ -128,7 +129,7 @@ export default function DocumentUploadList({
                   <p className="truncate text-sm font-medium text-brand-navy">{d.title}</p>
                   <p className="text-[11px] text-muted-foreground">
                     {KIND_LABEL[d.kind as ClientUploadKind] ?? d.kind}
-                    {d.size_bytes !== null ? ` · ${formatSize(d.size_bytes)}` : ""}
+                    {d.size_bytes ? ` · ${formatBytes(d.size_bytes)}` : ""}
                   </p>
                 </div>
               </div>
@@ -208,10 +209,4 @@ export default function DocumentUploadList({
       {error && <p className="mt-3 text-[12px] font-medium text-destructive">{error}</p>}
     </div>
   );
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
