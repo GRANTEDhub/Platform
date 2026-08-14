@@ -295,7 +295,11 @@ export function ClientForm({
         reArmDirty();
       }
     } catch {
-      setFormError("Couldn't save the record — it may not have been created. Please try again.");
+      setFormError(
+        isEdit
+          ? "Couldn't save your changes. Please try again."
+          : "Couldn't save the record — it may not have been created. Please try again.",
+      );
       setSubmitting(false);
       reArmDirty();
     }
