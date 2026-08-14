@@ -1,4 +1,9 @@
-// Single source for the pasted-content frame's label sanitiser.
+// Shared, client-safe helpers for bounding untrusted text before it reaches the model: the
+// pasted-content frame's label sanitiser and the char-cap truncator. Kept together, zero imports,
+// so both the server frame (prompt.ts / web-fetch.ts) and the client file-attach path
+// (grantbot-chat.tsx) import them from one place and cannot drift.
+//
+// stripControlChars: single source for the pasted-content frame's label sanitiser.
 //
 // The label rides the PASTED_OPEN marker line (framePastedContent) ahead of the untrusted-content
 // disclaimer, so ANY character that renders as a forced line break would let a crafted label (a POSIX
@@ -13,3 +18,15 @@
 export function stripControlChars(s: string): string {
   return s.replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]+/g, " ").trim();
 }
+
+// Char-cap a string for the model's context window. slice() cuts on UTF-16 code units, so a cut
+// landing inside an astral character's surrogate pair would leave a dangling lone high surrogate --
+// drop it. Shared by the web-fetch char cap (web-fetch.ts) and the file-attach cap (grantbot-chat.tsx)
+// so the two truncation sites cannot drift, the same reason stripControlChars is shared.
+export function truncateSafely(text: string, max: number): { text: string; truncated: boolean } {
+  if (text.length <= max) return { text, truncated: false };
+  let out = text.slice(0, max);
+  if (/[\uD800-\uDBFF]$/.test(out)) out = out.slice(0, -1);
+  return { text: out, truncated: true };
+}
+

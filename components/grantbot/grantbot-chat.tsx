@@ -15,7 +15,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { BRAND } from "@/lib/brand";
-import { stripControlChars } from "@/lib/grantbot/label";
+import { stripControlChars, truncateSafely } from "@/lib/grantbot/label";
 import { BLANK_CONVERSATION } from "@/lib/grantbot/wire";
 import type { GrantBotMsg, GrantBotThread } from "@/lib/grantbot/wire";
 
@@ -174,20 +174,21 @@ export function GrantBotChat({
     const reader = new FileReader();
     reader.onload = () => {
       const text = typeof reader.result === "string" ? reader.result : "";
-      const truncated = text.length > MAX_ATTACH_CHARS;
-      // slice() cuts on UTF-16 code units; if the cut split an astral char's surrogate pair, drop the
-      // dangling lone high surrogate rather than send a broken half-char (mirrors web-fetch.ts's guard).
-      let body = truncated ? text.slice(0, MAX_ATTACH_CHARS) : text;
-      if (truncated && /[\uD800-\uDBFF]$/.test(body)) body = body.slice(0, -1);
+      const { text: sliced, truncated } = truncateSafely(text, MAX_ATTACH_CHARS);
+      // Bake the truncation note into the BODY, not the label: the paste label is an editable field a
+      // staffer may reword, so a note living only there can be edited away, leaving the model to answer
+      // from a partial document believing it complete. In the body it survives -- mirrors web-fetch.ts's
+      // frameFetchResult, which appends its note to the text the model reads.
+      const body = truncated
+        ? `${sliced}\n\n[The attachment was longer than the limit and was truncated -- treat it as partial, and say so if the answer might depend on the rest.]`
+        : sliced;
       // The label rides the untrusted-content frame's marker line, so strip every line-breaking char a
       // crafted filename could carry (POSIX allows them) before it could forge a fence -- stripControlChars
       // is the same helper framePastedContent uses server-side, so the editable label the staffer sees
       // matches exactly what is sent.
       const name = stripControlChars(file.name) || "attached file";
-      // Tell the model when the file was cut, mirroring web-fetch's truncation note -- otherwise it
-      // answers from a partial document with no signal (deadlines / eligibility often sit past the cut).
       setPasted(body);
-      setPasteLabel(truncated ? `${name} (truncated at ${MAX_ATTACH_CHARS.toLocaleString()} characters)` : name);
+      setPasteLabel(name);
       setShowPaste(true);
     };
     reader.onerror = () => setError("Couldn't read that file. Text files only for now (.txt, .md, .eml, .csv).");
