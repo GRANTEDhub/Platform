@@ -173,8 +173,16 @@ export function GrantBotChat({
     const reader = new FileReader();
     reader.onload = () => {
       const text = typeof reader.result === "string" ? reader.result : "";
-      setPasted(text.length > MAX_ATTACH_CHARS ? text.slice(0, MAX_ATTACH_CHARS) : text);
-      setPasteLabel(file.name);
+      const truncated = text.length > MAX_ATTACH_CHARS;
+      // The label rides the untrusted-content frame's marker line, so strip any newline/control char
+      // a crafted filename could carry (POSIX allows them) before it could forge a fence.
+      // framePastedContent strips them server-side too; doing it here keeps the editable label the
+      // staffer sees honest as well.
+      const name = file.name.replace(/[\u0000-\u001F\u007F]+/g, " ").trim() || "attached file";
+      // Tell the model when the file was cut, mirroring web-fetch's truncation note -- otherwise it
+      // answers from a partial document with no signal (deadlines / eligibility often sit past the cut).
+      setPasted(truncated ? text.slice(0, MAX_ATTACH_CHARS) : text);
+      setPasteLabel(truncated ? `${name} (truncated at ${MAX_ATTACH_CHARS.toLocaleString()} characters)` : name);
       setShowPaste(true);
     };
     reader.onerror = () => setError("Couldn't read that file. Text files only for now (.txt, .md, .eml, .csv).");
