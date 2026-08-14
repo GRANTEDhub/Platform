@@ -176,6 +176,7 @@ export function GrantBotChat({
     const file = e.target.files?.[0];
     e.target.value = ""; // allow re-picking the same file
     if (!file) return;
+    setError(null); // a new pick clears any prior "too large" / "couldn't read" banner
     if (file.size > MAX_ATTACH_BYTES) {
       setError("That file is too large to attach (limit 5 MB). Paste the relevant section instead.");
       return;

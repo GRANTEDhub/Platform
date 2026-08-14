@@ -275,7 +275,13 @@ export function ClientForm({
     // type-flipped node) and must not create the record halfway through the intake.
     // Deliberately independent of the DOM/React fix above -- this one cannot be
     // defeated by a reconciliation detail.
-    if (!isEdit && step !== lastStep) return;
+    if (!isEdit && step !== lastStep) {
+      // A stray implicit submit (Enter on a single-field wizard step) still fires the native submit
+      // that disarms FormExitGuard. Re-arm before bailing, or backing out afterward would silently
+      // drop the in-progress wizard work -- the same drop item 2a's re-arm exists to prevent.
+      reArmDirty();
+      return;
+    }
     setSubmitting(true);
     setFormError(null);
     setDirty(false);
