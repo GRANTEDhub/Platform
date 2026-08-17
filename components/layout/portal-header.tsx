@@ -74,10 +74,13 @@ function NavLinks({
               key={item.href}
               aria-disabled="true"
               title="Coming soon"
-              className="cursor-default whitespace-nowrap rounded-sharp px-3 py-[7px] text-[13.5px] font-medium text-white/40"
+              // Not a link: no hover fill and cursor-default are the "inactive" cue, so the text can
+              // stay AA-legible rather than dimmed out. white/40 on the #0A1420 chrome was ~3.9:1
+              // (under AA); white/60 is ~6.5:1. The "(coming soon)" is TEXT, not a colour cue.
+              className="cursor-default whitespace-nowrap rounded-sharp px-3 py-[7px] text-[13.5px] font-medium text-white/[0.6]"
             >
               {item.label}
-              <span className="ml-1.5 text-[11px] font-semibold uppercase tracking-wide text-white/50">
+              <span className="ml-1.5 text-[11px] font-semibold uppercase tracking-wide text-white/[0.6]">
                 (coming soon)
               </span>
             </span>
