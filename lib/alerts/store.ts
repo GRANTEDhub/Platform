@@ -206,11 +206,20 @@ export async function generateDraftAlert(
 // `withHorizon` (single-send paths only) computes + freezes the forecasted horizon,
 // backfilling an existing draft that lacks one (e.g. a batch-prepared or pre-feature
 // draft) so single-send always carries it; batch prepare omits it (no horizon).
+//
+// `withDecisionLinks` mints + freezes the one-click Interested / Not-for-us block into
+// the body. DECOUPLED from the horizon on purpose: the horizon is a PDF-only compute,
+// but the decision block has to be present anywhere the BODY is shown-or-sent, including
+// the text-only draft preview (the modal loads this body and posts it straight back on an
+// as-is send). withHorizon implies it -- the send/PDF paths carry both -- but the preview
+// asks for links WITHOUT paying for a forecast it never renders. Without this the previewed
+// (and therefore sent) body lacked the URLs, bodyCarriesDecisionUrls was false, and the
+// alert shipped text-only with a bare portal URL instead of the decision box.
 export async function getOrCreateDraftAlert(
   ctx: AlertContext,
   userId: string | null,
   origin: string,
-  opts?: { withHorizon?: boolean },
+  opts?: { withHorizon?: boolean; withDecisionLinks?: boolean },
 ): Promise<GrantAlertRow> {
   const existing = await getDraftAlert(ctx.card.id);
   const draft = existing
@@ -218,10 +227,9 @@ export async function getOrCreateDraftAlert(
       ? await ensureHorizon(ctx, existing)
       : existing
     : await generateDraftAlert(ctx, userId, origin, opts);
-  // Decision links ride the same single-send path as the horizon, and for the same
-  // reason: minted once, frozen in the draft, so the preview shows the exact URLs that
-  // go out. Backfills a draft made before this existed.
-  return opts?.withHorizon ? ensureDecisionLinks(ctx, draft, userId, origin) : draft;
+  return opts?.withHorizon || opts?.withDecisionLinks
+    ? ensureDecisionLinks(ctx, draft, userId, origin)
+    : draft;
 }
 
 // Mint the one-click Interested / Not-for-us links and FREEZE them on the draft --
@@ -278,7 +286,11 @@ async function ensureDecisionUrls(
   }
 }
 
-async function ensureDecisionLinks(
+// Exported for the regenerate path (draft POST), which builds a brand-new draft and so has
+// to re-wire the block itself -- the same "the body must carry the URLs before it is shown
+// or sent" invariant getOrCreateDraftAlert enforces on reuse. No-op for any non-managed card
+// (ensureDecisionUrls returns null urls), so callers can apply it unconditionally.
+export async function ensureDecisionLinks(
   ctx: AlertContext,
   alert: GrantAlertRow,
   userId: string | null,

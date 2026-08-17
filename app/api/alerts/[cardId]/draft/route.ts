@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { appBaseUrl } from "@/lib/site-url";
 import { loadAlertContext, alertRecipient } from "@/lib/alerts/generate";
-import { getOrCreateDraftAlert, generateDraftAlert, type GrantAlertRow } from "@/lib/alerts/store";
+import { getOrCreateDraftAlert, generateDraftAlert, ensureDecisionLinks, type GrantAlertRow } from "@/lib/alerts/store";
 import { getPriorAlertForEmail } from "@/lib/alerts/sent-status";
 import { buildProspectEmailBody } from "@/lib/alerts/data";
 
@@ -69,7 +69,11 @@ export async function GET(req: Request, { params }: { params: { cardId: string }
   const c = await adminCtx(params.cardId);
   if ("error" in c) return c.error;
   try {
-    const alert = await getOrCreateDraftAlert(c.ctx, c.user.id, appBaseUrl(req));
+    // withDecisionLinks (NOT withHorizon): wire the Interested / Not-for-us block into the
+    // previewed body so the modal shows it and posts it back on an as-is send -- the box only
+    // renders when the sent body carries the URLs. The horizon is a PDF-only cost the text
+    // preview skips (the PDF preview route pays it separately).
+    const alert = await getOrCreateDraftAlert(c.ctx, c.user.id, appBaseUrl(req), { withDecisionLinks: true });
     return NextResponse.json(await draftPayload(c.ctx, alert));
   } catch (err) {
     return NextResponse.json(
@@ -83,7 +87,10 @@ export async function POST(req: Request, { params }: { params: { cardId: string 
   const c = await adminCtx(params.cardId);
   if ("error" in c) return c.error;
   try {
-    const alert = await generateDraftAlert(c.ctx, c.user.id, appBaseUrl(req));
+    // A fresh draft has no decision block; wire it back so the regenerated preview matches
+    // what will be sent (same reason as GET). No-op for non-managed cards.
+    const fresh = await generateDraftAlert(c.ctx, c.user.id, appBaseUrl(req));
+    const alert = await ensureDecisionLinks(c.ctx, fresh, c.user.id, appBaseUrl(req));
     return NextResponse.json(await draftPayload(c.ctx, alert));
   } catch (err) {
     return NextResponse.json(
