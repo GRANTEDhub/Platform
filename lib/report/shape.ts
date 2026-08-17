@@ -147,6 +147,12 @@ export interface ReportItem {
   eligibleTypes: string[]; // cleaned eligible entity types (first few)
   geography: string | null; // geographic_eligibility
   programIdea: string | null; // concept_synopsis (client-facing narrative)
+  // Client Grant Alert card fields (populated only when the query selects them). The
+  // category pill is the first focus area; nofoNumber is the funding opportunity number
+  // (grants.fon); sourceUrl backs the "Read full NOFO" link (grants.source_url).
+  category: string | null;
+  nofoNumber: string | null;
+  sourceUrl: string | null;
   // Staff-only read visibility into the account-manager gate (0059) -- true once
   // staff has released this card to the client. Only meaningful when the query
   // selected sme_released_at (the staff roadmap list); false/absent everywhere
@@ -224,7 +230,7 @@ export type ReportCardRow = Pick<
         Grant,
         "title" | "funder" | "submission_deadline" | "award_range_min" | "award_range_max" | "award_range_is_estimate" | "focus_areas"
       > &
-        Partial<Pick<Grant, "total_funding" | "cost_share" | "geographic_eligibility" | "eligible_entity_types" | "description">>)
+        Partial<Pick<Grant, "total_funding" | "cost_share" | "geographic_eligibility" | "eligible_entity_types" | "description" | "fon" | "source_url">>)
     | null;
 };
 
@@ -262,6 +268,9 @@ export function toReportItem(card: ReportCardRow, side: ReadSide): ReportItem {
     eligibleTypes: (g?.eligible_entity_types ?? []).map((t) => t.replace(/_/g, " ")).slice(0, 4),
     geography: g?.geographic_eligibility ?? null,
     programIdea: toPlain(card.concept_synopsis, 220),
+    category: (g?.focus_areas ?? [])[0] ?? null,
+    nofoNumber: g?.fon ?? null,
+    sourceUrl: g?.source_url ?? null,
     smeReleased: !!card.sme_released_at,
     pursuitPath: card.pursuit_path ?? null,
     read: !!(side === "staff" ? card.staff_read_at : card.client_read_at),

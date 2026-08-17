@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { FileText, Sparkles, X } from "lucide-react";
+import { ArrowRight, FileText, Sparkles, X } from "lucide-react";
 import { ConceptProposalView } from "./concept-proposal-view";
 import type { ConceptReveal } from "@/lib/report/shape";
 import type { ConceptProposal } from "@/types/database";
@@ -53,7 +53,9 @@ export function ConceptProposalReveal({
 }: {
   concept: ConceptReveal | null | undefined;
   clientName?: string;
-  variant?: "row" | "card";
+  // "alert" is the client Grant Alert card's CTA row (icon tile + two-line label + arrow),
+  // reusing this component's slide-over and tier logic rather than a bespoke trigger.
+  variant?: "row" | "card" | "alert";
 }) {
   const [open, setOpen] = useState(false);
 
@@ -63,23 +65,44 @@ export function ConceptProposalReveal({
   if (!isBase && !premiumReady) return null; // premium-but-not-ready: hide entirely
 
   const label = isBase ? "See a concept proposal" : "View concept proposal";
+  // On the report row this button sits over a stretched navigation link; stop the click
+  // from also triggering the row's View navigation.
+  const openClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setOpen(true);
+  };
 
-  return (
-    <>
+  const trigger =
+    variant === "alert" ? (
       <button
         type="button"
-        onClick={(e) => {
-          // On the report row this button sits over a stretched navigation link;
-          // stop the click from also triggering the row's View navigation.
-          e.preventDefault();
-          e.stopPropagation();
-          setOpen(true);
-        }}
-        className={triggerClass(variant, isBase)}
+        onClick={openClick}
+        className="flex w-full items-center justify-between gap-[14px] rounded-[4px] border border-brand-orange/30 bg-brand-orange/[0.07] px-4 py-[11px] text-left transition hover:bg-brand-orange/[0.12]"
       >
+        <span className="flex min-w-0 items-center gap-[10px]">
+          <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-brand-orangeFill">
+            <FileText className="h-3.5 w-3.5 text-white" />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-[13px] font-semibold text-brand-navy">{label}</span>
+            <span className="mt-px block text-[11px] text-ink-subtle">
+              {isBase ? "See how we'd scope a run at this" : "Two pages on how we'd scope this"}
+            </span>
+          </span>
+        </span>
+        <ArrowRight className="h-4 w-4 shrink-0 text-brand-orangeDeep" />
+      </button>
+    ) : (
+      <button type="button" onClick={openClick} className={triggerClass(variant, isBase)}>
         {isBase ? <Sparkles className="h-3.5 w-3.5" /> : <FileText className="h-3.5 w-3.5" />}
         {label}
       </button>
+    );
+
+  return (
+    <>
+      {trigger}
 
       {open && (
         <SlideOver onClose={() => setOpen(false)}>
