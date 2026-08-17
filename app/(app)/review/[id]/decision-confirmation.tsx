@@ -70,13 +70,28 @@ function ConfirmationShell({ children }: { children: React.ReactNode }) {
 // the modal closed, the page refreshed in place, and nothing said the client had been
 // emailed or moved you off the card you had just finished. Same destination as State A --
 // the release IS the end of the work on this card, so it ends the way an approve does.
-export function ReleaseConfirmation({ sent, to }: { sent: boolean; to?: string | null }) {
+// doneHref/doneLabel (#8): the console (ReleaseToClientBar) passes the client's Grant Report
+// or dashboard so a managed release returns there, not to the cross-client Matches queue.
+// Absent on the /review worklist path, where /matches is the correct home.
+export function ReleaseConfirmation({
+  sent,
+  to,
+  doneHref,
+  doneLabel,
+}: {
+  sent: boolean;
+  to?: string | null;
+  doneHref?: string;
+  doneLabel?: string;
+}) {
   const router = useRouter();
+  const dest = doneHref ?? "/matches";
+  const destLabel = doneLabel ?? "Matches";
 
   useEffect(() => {
-    const t = setTimeout(() => router.push("/matches"), REDIRECT_MS);
+    const t = setTimeout(() => router.push(dest), REDIRECT_MS);
     return () => clearTimeout(t);
-  }, [router]);
+  }, [router, dest]);
 
   return (
     <ConfirmationShell>
@@ -89,7 +104,7 @@ export function ReleaseConfirmation({ sent, to }: { sent: boolean; to?: string |
         <p className="text-sm text-neutral-600">
           {sent && to ? `Alert emailed to ${to}.` : "Recorded and visible in their portal — email not sent."}
         </p>
-        <p className="pt-2 text-xs text-neutral-400">Redirecting to Matches…</p>
+        <p className="pt-2 text-xs text-neutral-400">Redirecting to {destLabel}…</p>
       </div>
     </ConfirmationShell>
   );
