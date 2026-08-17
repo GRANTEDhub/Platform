@@ -144,13 +144,14 @@ function LoginForm() {
                   <button
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
-                    // Not a form control: aria-label names the action, aria-pressed reports the
-                    // toggle state, and tabIndex=-1 keeps it out of the Tab path between the field
-                    // and the submit button (mouse/AT users still reach it by its label).
+                    // aria-label names the action, aria-pressed reports the toggle state. It IS in the
+                    // Tab order (default tabIndex) so a keyboard-only user can reveal the password —
+                    // WCAG 2.1.1. It sits after the password field and before Submit, the expected
+                    // spot. A real focus ring, not a colour swap: the ring carries focus for a
+                    // colourblind user where a hue change alone would not.
                     aria-label={showPassword ? "Hide password" : "Show password"}
                     aria-pressed={showPassword}
-                    tabIndex={-1}
-                    className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground transition-colors hover:text-brand-navy focus-visible:outline-none focus-visible:text-brand-navy"
+                    className="absolute inset-y-0 right-0 flex items-center rounded-sharp px-3 text-muted-foreground transition-colors hover:text-brand-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60"
                   >
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
