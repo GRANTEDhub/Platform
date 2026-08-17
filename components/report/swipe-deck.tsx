@@ -31,6 +31,7 @@ export function SwipeDeck({
   interestMode = "client",
   clientName,
   startCardId,
+  requireReason = false,
 }: {
   items: ReportItem[];
   detailBasePath: string; // detail = `${detailBasePath}/${id}`
@@ -38,6 +39,12 @@ export function SwipeDeck({
   // Client org name — only threaded on the client portal, for the concept-proposal
   // reveal / base-tier upsell mailto. Absent on staff surfaces (no reveal there).
   clientName?: string;
+  // Require a non-empty Pass reason before the confirm button enables. Set true ONLY by the
+  // CLIENT portal (/portal/triage): a client Pass is the calibration signal, and the server only
+  // records the match_feedback datapoint when a reason is present, so an empty pass silently drops
+  // it (mirrors the DecisionBar guard on the grant-report detail). Staff surfaces leave it false —
+  // the staff-console pass-control is the deferred console half. Defaults false.
+  requireReason?: boolean;
   // "client" (default): right sets interested_at (the client's own gate, 0057). "sme":
   // right sets sme_interested_at instead — staff's OWN separate first pass for an
   // account-managed client (0059). Pass is identical either way (decision='passed').
@@ -175,6 +182,7 @@ export function SwipeDeck({
           onInterested={() => decide("interested")}
           onNavigate={go}
           clientName={clientName}
+          requireReason={requireReason}
         />
       </div>
 
@@ -218,6 +226,7 @@ function BrowseCard({
   onInterested,
   onNavigate,
   clientName,
+  requireReason,
 }: {
   item: ReportItem;
   detailBasePath: string;
@@ -225,6 +234,7 @@ function BrowseCard({
   onInterested: () => void;
   onNavigate: (delta: number) => void;
   clientName?: string;
+  requireReason?: boolean;
 }) {
   const dragControls = useDragControls();
   return (
@@ -249,6 +259,7 @@ function BrowseCard({
         onHandlePointerDown={(e) => dragControls.start(e)}
         detailHref={`${detailBasePath}/${item.id}?from=alerts`}
         clientName={clientName}
+        requireReason={requireReason}
       />
     </motion.div>
   );
@@ -279,6 +290,7 @@ function CardFace({
   onHandlePointerDown,
   detailHref,
   clientName,
+  requireReason,
 }: {
   item: ReportItem;
   onArchive: (reason?: string) => void;
@@ -286,9 +298,13 @@ function CardFace({
   onHandlePointerDown: (e: React.PointerEvent) => void;
   detailHref: string;
   clientName?: string;
+  requireReason?: boolean;
 }) {
-  // Pass opens an OPTIONAL reason step; the reason (when given) is routed to the
-  // match_feedback calibration store server-side (replaced the old agree/flag box).
+  // Pass opens a reason step. The reason is routed to the match_feedback calibration store
+  // server-side (replaced the old agree/flag box), and the server records a datapoint ONLY when a
+  // reason is present. On the client portal (requireReason) it is REQUIRED — the confirm stays
+  // disabled until non-empty — so a client Pass never silently drops the calibration signal (mirrors
+  // DecisionBar on the grant-report detail). On staff surfaces it stays optional.
   const [passing, setPassing] = useState(false);
   const [passReason, setPassReason] = useState("");
   return (
@@ -360,7 +376,11 @@ function CardFace({
       <div className="shrink-0 border-t border-brand-navy/[0.06] px-6 py-4">
         {passing ? (
           <div className="space-y-2.5">
-            <p className="text-center text-[13px] font-medium text-brand-navy">Why pass? (optional)</p>
+            <p className="text-center text-[13px] font-medium text-brand-navy">
+              {requireReason
+                ? "Why pass? This is how we tune your matches — tell us what's off and we'll send fewer like it."
+                : "Why pass? (optional)"}
+            </p>
             <textarea
               value={passReason}
               onChange={(e) => setPassReason(e.target.value)}
@@ -378,7 +398,8 @@ function CardFace({
               </button>
               <button
                 onClick={() => onArchive(passReason)}
-                className="flex items-center gap-2 rounded-full bg-destructive px-6 py-2 text-sm font-semibold text-white shadow-soft transition hover:opacity-90"
+                disabled={requireReason && !passReason.trim()}
+                className="flex items-center gap-2 rounded-full bg-destructive px-6 py-2 text-sm font-semibold text-white shadow-soft transition hover:opacity-90 disabled:opacity-50"
               >
                 <X className="h-4 w-4" />
                 Pass on this grant

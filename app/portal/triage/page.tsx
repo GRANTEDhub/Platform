@@ -62,6 +62,9 @@ export default async function PortalTriage({ searchParams }: { searchParams: { c
         // A card they have already answered is not in `items`, so the deck falls back to
         // the front of the queue rather than 404-ing an old link.
         startCardId={searchParams?.card}
+        // Client portal: a Pass here is the client's calibration signal, so require the reason
+        // (matches the DecisionBar grant-report guard). Staff triage leaves it optional.
+        requireReason
       />
     </HubShell>
   );
