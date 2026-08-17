@@ -330,9 +330,12 @@ function ChooserPanel({
                 onClick={() => setSmeOpen((v) => !v)}
                 busy={busy === "sme"}
                 active={pursuitPath === "sme"}
+                ariaExpanded={smeOpen}
+                ariaControls="sme-choices"
               />
               {smeOpen && (
                 <SmeChoices
+                  id="sme-choices"
                   busy={busy === "sme"}
                   emailChosen={smeEmailChosen}
                   onSchedule={chooseSme}
@@ -387,6 +390,8 @@ function OptionCard({
   busy,
   active,
   premiumLock,
+  ariaExpanded,
+  ariaControls,
 }: {
   icon: React.ReactNode;
   title: string;
@@ -395,12 +400,19 @@ function OptionCard({
   busy: boolean;
   active: boolean;
   premiumLock?: boolean;
+  // Set ONLY on the SME card, which is a disclosure toggle (reveals SmeChoices). The other
+  // two cards are one-shot actions; left undefined, the attributes are omitted — annotating a
+  // non-disclosure button as expandable would be its own a11y bug.
+  ariaExpanded?: boolean;
+  ariaControls?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={busy}
+      aria-expanded={ariaExpanded}
+      aria-controls={ariaControls}
       className={`${OPTION_FRAME} transition disabled:opacity-60 ${
         active
           ? "border-brand-navy/40 bg-brand-navy/[0.04]"
@@ -430,11 +442,13 @@ function OptionCard({
 // SME" either way — they differ only in HOW the client reaches out. Schedule opens the booking
 // page; Email records the pursuit and reveals the account managers to write to.
 function SmeChoices({
+  id,
   busy,
   emailChosen,
   onSchedule,
   onEmail,
 }: {
+  id: string;
   busy: boolean;
   emailChosen: boolean;
   onSchedule: () => void;
@@ -443,7 +457,7 @@ function SmeChoices({
   const btn =
     "inline-flex items-center justify-center gap-2 rounded-full border border-brand-navy/20 bg-white px-4 py-2.5 text-sm font-semibold text-brand-navy transition hover:border-brand-navy/40 hover:bg-brand-navy/[0.03] disabled:opacity-60";
   return (
-    <div className="rounded-2xl border border-brand-navy/[0.1] bg-brand-navy/[0.02] p-4">
+    <div id={id} className="rounded-2xl border border-brand-navy/[0.1] bg-brand-navy/[0.02] p-4">
       <p className="text-[13px] leading-relaxed text-muted-foreground">
         Two ways to reach a GRANTED advisor — either one moves this grant into your pursuing queue.
       </p>
