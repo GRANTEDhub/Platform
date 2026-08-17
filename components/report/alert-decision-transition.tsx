@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { SpinningMark } from "@/components/ui/spinning-mark";
 
@@ -26,9 +25,12 @@ export function AlertDecisionTransition({
   decision: "interested" | "passed";
   morePending: boolean;
 }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-  if (!mounted) return null;
+  // No SSR mount-guard: this only ever renders client-side — SwipeDeck gates it on
+  // `transition` state, which starts null and is set inside an event handler, so it is never
+  // in the server tree. A mount-flag guard would flip AFTER paint, exposing one unmasked frame
+  // of the just-advanced deck before the overlay covers it (the very "All caught up" screen
+  // this replaces, on the last-card decision). A synchronous document check is enough.
+  if (typeof document === "undefined") return null;
 
   const top = decision === "interested" ? "Added to Grant Report" : "Grant passed on";
   const below = morePending ? "Redirecting to grant alerts" : "Redirecting to dashboard";

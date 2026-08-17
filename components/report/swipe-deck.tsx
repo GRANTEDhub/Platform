@@ -114,7 +114,10 @@ export function SwipeDeck({
   // there other cards besides this one".
   const decide = useCallback(
     (action: "interested" | "passed", reason?: string) => {
-      if (!current) return;
+      // Freeze while the transition overlay is up: it covers the deck but the underlying
+      // CardFace buttons stay in the tab order, so a keyboard user could otherwise Enter a
+      // second decision behind the overlay and double-persist. Mirrors the browse guard below.
+      if (!current || transition) return;
       const id = current.id;
       persist(id, action, reason);
       const morePending = total > 1;
@@ -122,7 +125,7 @@ export function SwipeDeck({
       setIndex((i) => Math.max(0, Math.min(i, total - 2)));
       if (dashboardHref) setTransition({ decision: action, morePending });
     },
-    [current, persist, total, dashboardHref],
+    [current, persist, total, dashboardHref, transition],
   );
 
   // Drive the post-decision transition (client portal). It plays over the deck — which has
@@ -150,14 +153,19 @@ export function SwipeDeck({
     return () => window.removeEventListener("keydown", onKey);
   }, [go, transition]);
 
+  // Defined once and rendered in BOTH return branches below (a decision can empty the deck →
+  // the !current branch, or leave cards → the main branch). Portal-rendered, so its position
+  // in the tree has no layout effect; single definition keeps the two branches from drifting.
+  const overlay = transition ? (
+    <AlertDecisionTransition decision={transition.decision} morePending={transition.morePending} />
+  ) : null;
+
   if (!current) {
     return (
       <div className="mx-auto max-w-2xl py-16 text-center">
         {/* On the client portal, a decision that emptied the deck routes to the dashboard;
             the transition overlay (portal) covers this "All caught up" state until it does. */}
-        {transition && (
-          <AlertDecisionTransition decision={transition.decision} morePending={transition.morePending} />
-        )}
+        {overlay}
         {interestMode === "sme" && (
           <div className="mb-6 rounded-xl bg-brand-navy px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-white">
             Account manager review — the client does not see this pass
@@ -186,9 +194,7 @@ export function SwipeDeck({
     <div className="mx-auto max-w-2xl">
       {/* Post-decision branded transition (client portal). Portal-rendered, so it sits over
           the deck that has already advanced to the next card underneath it. */}
-      {transition && (
-        <AlertDecisionTransition decision={transition.decision} morePending={transition.morePending} />
-      )}
+      {overlay}
       {interestMode === "sme" && (
         <div className="mb-4 rounded-xl bg-brand-navy px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-white">
           Account manager review — the client does not see this pass
