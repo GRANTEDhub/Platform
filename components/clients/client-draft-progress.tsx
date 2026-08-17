@@ -232,16 +232,7 @@ function ConsoleDraftPanel({
   return (
     <section className="relative flex flex-col overflow-hidden rounded-sharp bg-brand-chrome px-5 pb-[18px] pt-[17px] text-white">
       <div className="relative flex flex-1 flex-col">
-        <div className="flex items-center gap-[7px]">
-          <Sparkles className="h-3.5 w-3.5 text-brand-orange" aria-hidden="true" />
-          <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-brand-orange">
-            AI proposal developer
-          </p>
-        </div>
-        <h2 className="mt-[7px] font-serif text-[18px] font-bold">IntellEngine</h2>
-        <p className="mt-[5px] text-[12.5px] leading-[1.5] text-white/[0.65]">
-          Turns an approved match into a scoped draft — narrative, budget frame, consortium.
-        </p>
+        <IntellEnginePanelHeader />
 
         <div className="mt-3.5 flex flex-1 flex-col border-t border-white/[0.14] pt-[13px]">
           {!lead || !progress ? (
