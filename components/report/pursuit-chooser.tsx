@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { Building2, Check, ChevronRight, Loader2, Lock, Sparkles, Users, X } from "lucide-react";
+import { ComingSoonOverlay } from "@/components/ui/coming-soon-overlay";
 import type { PursuitPath } from "@/types/database";
 
 const SUPPORT = "support@grantedco.com";
@@ -36,23 +37,27 @@ export function PursuitChooser({
   tier,
   variant = "detail",
   showPursuitPath = false,
+  intellEngineComingSoon = false,
 }: {
   cardId: string;
   pursuitPath: PursuitPath | null;
   tier: "premium" | "base";
   variant?: "row" | "detail";
-  // Whether the IntellEngine path is offered at all. Server-resolved from
-  // pursuitClientAccessEnabled() and threaded through DecisionBar, because this is a
-  // "use client" component and cannot read the env var itself.
+  // Whether the IntellEngine path is offered as a LIVE, selectable option. Server-resolved from
+  // pursuitClientAccessEnabled() and threaded through DecisionBar, because this is a "use client"
+  // component and cannot read the env var itself.
   //
-  // Offering the path while the screens are gated would be the worst version of the bug
-  // it is closing: the click records decision='approved' with pursuit_path='intellengine'
-  // and THEN navigates into a 404, leaving the card claiming a pursuit route the client
-  // was never able to walk. Hidden, not locked -- premiumLock already means "upgrade to
-  // reach this", which is a different and answerable proposition.
-  //
-  // Defaults to FALSE, so a caller that forgets the prop hides the path.
+  // Offering a LIVE path while the screens are gated would be the worst version of the bug it is
+  // closing: the click records decision='approved' with pursuit_path='intellengine' and THEN
+  // navigates into a 404, leaving the card claiming a pursuit route the client was never able to
+  // walk. Defaults to FALSE, so a caller that forgets the prop hides the live path.
   showPursuitPath?: boolean;
+  // CLIENT soft-launch: when the live path is off, show the IntellEngine option as an INERT
+  // "COMING SOON" card instead of omitting it (see intellEngineComingSoon() in lib/pursuit/access.ts).
+  // The chooser is client-only (it renders only when DecisionBar has a `tier`, set on the portal),
+  // so this can never reach staff. Defaults FALSE. When showPursuitPath is true this is ignored --
+  // the live option wins.
+  intellEngineComingSoon?: boolean;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -110,6 +115,7 @@ export function PursuitChooser({
           pursuitPath={pursuitPath}
           tier={tier}
           showPursuitPath={showPursuitPath}
+          intellEngineComingSoon={intellEngineComingSoon}
           onClose={() => setOpen(false)}
         />
       )}
@@ -122,12 +128,14 @@ function ChooserPanel({
   pursuitPath,
   tier,
   showPursuitPath,
+  intellEngineComingSoon,
   onClose,
 }: {
   cardId: string;
   pursuitPath: PursuitPath | null;
   tier: "premium" | "base";
   showPursuitPath: boolean;
+  intellEngineComingSoon: boolean;
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -273,7 +281,7 @@ function ChooserPanel({
             </div>
           ) : (
             <>
-              {showPursuitPath && (
+              {showPursuitPath ? (
                 <>
                   <OptionCard
                     icon={<Sparkles className="h-5 w-5" />}
@@ -286,7 +294,9 @@ function ChooserPanel({
                   />
                   {tier === "base" && showTeaser && <IntellEngineTeaser />}
                 </>
-              )}
+              ) : intellEngineComingSoon ? (
+                <ComingSoonOption active={pursuitPath === "intellengine"} />
+              ) : null}
 
               <OptionCard
                 icon={<Users className="h-5 w-5" />}
@@ -326,6 +336,16 @@ function ChooserPanel({
   );
 }
 
+// Shared card geometry for the pursue options (live OptionCard + inert ComingSoonOption), so the
+// two cannot drift on frame or icon-tile styling.
+const OPTION_FRAME = "flex w-full items-start gap-3.5 rounded-2xl border p-4 text-left";
+const OPTION_ICON =
+  "mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-navy/[0.06] text-brand-navy";
+const CURRENT_BADGE =
+  "rounded-full bg-brand-navy/[0.06] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-navy";
+const OPTION_TITLE = "text-sm font-semibold text-brand-navy";
+const OPTION_SUB = "mt-0.5 block text-[13px] leading-relaxed text-muted-foreground";
+
 function OptionCard({
   icon,
   title,
@@ -348,23 +368,17 @@ function OptionCard({
       type="button"
       onClick={onClick}
       disabled={busy}
-      className={`flex w-full items-start gap-3.5 rounded-2xl border p-4 text-left transition disabled:opacity-60 ${
+      className={`${OPTION_FRAME} transition disabled:opacity-60 ${
         active
           ? "border-brand-navy/40 bg-brand-navy/[0.04]"
           : "border-brand-navy/[0.1] hover:border-brand-navy/30 hover:bg-brand-navy/[0.02]"
       }`}
     >
-      <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-navy/[0.06] text-brand-navy">
-        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : icon}
-      </span>
+      <span className={OPTION_ICON}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : icon}</span>
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-brand-navy">{title}</span>
-          {active && (
-            <span className="rounded-full bg-brand-navy/[0.06] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-navy">
-              Current
-            </span>
-          )}
+          <span className={OPTION_TITLE}>{title}</span>
+          {active && <span className={CURRENT_BADGE}>Current</span>}
           {premiumLock && (
             <span className="inline-flex items-center gap-1 rounded-full bg-brand-orange/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-orange">
               <Lock className="h-2.5 w-2.5" />
@@ -372,9 +386,41 @@ function OptionCard({
             </span>
           )}
         </span>
-        <span className="mt-0.5 block text-[13px] leading-relaxed text-muted-foreground">{sub}</span>
+        <span className={OPTION_SUB}>{sub}</span>
       </span>
     </button>
+  );
+}
+
+// CLIENT soft-launch: the IntellEngine path shown as an INERT card with a diagonal "COMING SOON"
+// watermark, in place of the live selectable option. A <div>, not a <button> -- there is nothing to
+// click, so a client cannot record pursuit_path='intellengine' into the 404 the route would give
+// them (the API refuses it too, pursuitApiDenied). The muted "Coming soon" line carries the state to
+// assistive tech; the rotated overlay is decorative. Mirrors OptionCard's frame so it reads as the
+// same third option, not open yet.
+//
+// `active` keeps the card COHERENT for the rare client who already has pursuit_path='intellengine'
+// stored (only reachable if the flag was toggled on, a selection recorded, then off again -- the API
+// blocks recording it while gated). Without it the trigger reads "Pursuing · IntellEngine" while this
+// card says only "Coming soon"; the "Current" badge reconciles the two into "you picked it, it's on
+// the way".
+function ComingSoonOption({ active }: { active: boolean }) {
+  return (
+    <div className={`relative overflow-hidden bg-white opacity-90 ${OPTION_FRAME} border-brand-navy/[0.1]`}>
+      <span className={OPTION_ICON}>
+        <Sparkles className="h-5 w-5" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-2">
+          <span className={OPTION_TITLE}>Write with IntellEngine</span>
+          {active && <span className={CURRENT_BADGE}>Current</span>}
+        </span>
+        <span className={OPTION_SUB}>
+          Draft the proposal with GRANTED&apos;s AI. Coming soon — we&apos;ll let you know the moment it&apos;s ready.
+        </span>
+      </span>
+      <ComingSoonOverlay tone="onLight" />
+    </div>
   );
 }
 
