@@ -46,35 +46,28 @@ export async function updateSession(request: NextRequest) {
     pathname === "/favicon.ico";
   if (isPublicAsset) return response;
 
-  // Remember a portal DEEP LINK before any redirect can swallow it. Middleware is the only
-  // place in the request that sees the full URL ahead of the first-login gate in
-  // app/portal/layout.tsx, which lives in a layout and so cannot name where the client was
-  // going (see lib/portal/next-destination.ts). Applied to the /login redirect below as
-  // well, because a client clicking an alert while signed out passes through it first.
+  // Remember THE DEEP LINK THAT PROMPTED SIGN-IN, so it survives the first-login gate in
+  // app/portal/layout.tsx (a layout, so it cannot name where the client was going -- see
+  // lib/portal/next-destination.ts). Middleware is the only place that sees the full URL, and
+  // the cookie is set ONLY on the /login redirect below -- i.e. only when we bounce a
+  // SIGNED-OUT client to sign in. That is exactly "arrived via a deep link that prompted
+  // sign-in": a client following an alert email's /portal/triage?card=... link while logged
+  // out lands here first, and the cookie carries that destination through /login and the
+  // first-login gate to the confirm action, which honours it once.
   //
-  // ── TOP-LEVEL DOCUMENT REQUESTS ONLY. PREFETCHES ARE NOT DESTINATIONS. ──
+  // NOT written on the authenticated pass-through. A page a client loads while ALREADY signed
+  // in is not a "prompted sign-in" destination -- nothing intercepted them -- so honouring it
+  // post-welcome is wrong. That was the reported bug: a signed-in-but-unconfirmed client who
+  // opened /portal/grants recorded it as their destination, and completing /welcome dropped
+  // them on an empty grant report instead of the dashboard. Default is now the dashboard for
+  // every path except a genuine sign-in-prompting deep link (the confirm action's `?? "/portal"`).
   //
-  // The bug this closes: React/Next PREFETCH a <Link> when it enters the viewport, and that
-  // prefetch is an ordinary matched request here -- so merely rendering the portal dashboard,
-  // which links to /portal/profile, recorded "/portal/profile" as where the client was headed.
-  // On their next confirm they were pushed to the profile editor: they filled in the /welcome
-  // form, saw the transition, and landed on a SECOND profile form. Nothing they clicked.
-  // Worst hit would have been the clients staff just un-exempted, since they have all browsed
-  // the portal and so all carry a poisoned cookie into the gate.
-  //
-  // Keyed on the ABSENCE OF THE `RSC` HEADER rather than on `Next-Router-Prefetch`. The
-  // prefetch header would have looked sufficient -- and would have worked today, since every
-  // Link in this codebase uses the App Router default -- but Next only sends it for
-  // PrefetchKind.AUTO (see next/dist/client/components/router-reducer/fetch-server-response),
-  // so a single `prefetch={true}` added later would silently reopen this. `RSC` is present on
-  // every client-side router fetch, prefetch or navigation, and absent on a real document load.
-  //
-  // Excluding client-side NAVIGATIONS along with prefetches is deliberate, not collateral.
-  // This cookie exists for one case -- a client following an alert email's deep link, which is
-  // always a fresh document request. A client already navigating inside the portal is past the
-  // gate, so there is nothing for them to remember; the one scenario that loses anything is a
-  // client un-exempted mid-session, who now lands on their dashboard instead of the page they
-  // were on. That is the same staleness the short TTL already argues against.
+  // PREFETCHES ARE NOT DESTINATIONS. React/Next PREFETCH a <Link> (an ordinary matched request
+  // that, while signed out, also 302s to /login), so without this guard a prefetched link would
+  // be recorded as the deep link. Keyed on the ABSENCE OF THE `RSC` HEADER, not `Next-Router-
+  // Prefetch`: Next only sends the prefetch header for PrefetchKind.AUTO, so a later
+  // `prefetch={true}` would silently reopen the hole; `RSC` is present on every client-side
+  // router fetch (prefetch or navigation) and absent on a real document load.
   const isRouterFetch = request.headers.has("RSC");
   const portalNext = isRouterFetch ? null : sanitizePortalNext(pathname + request.nextUrl.search);
   const withPortalNext = <T extends NextResponse>(res: T): T => {
@@ -98,7 +91,7 @@ export async function updateSession(request: NextRequest) {
   // protect data, so this fails closed on protected pages, not open.
   if (!supabaseUrl || !supabaseAnonKey) {
     console.error("Auth middleware: Supabase env vars are not set");
-    return withPortalNext(response);
+    return response;
   }
 
   try {
@@ -140,10 +133,12 @@ export async function updateSession(request: NextRequest) {
       return NextResponse.redirect(url);
     }
 
-    return withPortalNext(response);
+    // Authenticated pass-through: a page loaded while signed in is NOT a prompted-sign-in
+    // destination, so it is never recorded (see the note above the withPortalNext helper).
+    return response;
   } catch (err) {
     // A transient Supabase/network failure should not take down every route.
     console.error("Auth middleware error:", err);
-    return withPortalNext(response);
+    return response;
   }
 }

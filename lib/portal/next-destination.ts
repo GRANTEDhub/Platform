@@ -21,17 +21,21 @@
 //
 // ── THREE EDGES, AND ALL THREE HAVE NOW BITTEN ──
 //
-// This cookie has produced the same class of bug three times: a page the client had merely
-// LOADED became a destination they were sent to. The fixes live in three different files, so
-// they are listed here, beside the cookie they all constrain:
-//   1. WRITE. Only top-level document requests record a destination -- a prefetch is not a
-//      destination (lib/supabase/middleware.ts, #336).
+// This cookie has produced the same class of bug repeatedly: a page the client had merely
+// LOADED became a destination they were sent to. The constraints live in three files, so they
+// are listed here, beside the cookie they all constrain:
+//   1. WRITE. Recorded ONLY when middleware bounces a SIGNED-OUT client to /login -- i.e. only
+//      a deep link that PROMPTED SIGN-IN, and only for a real document request, never a prefetch
+//      (lib/supabase/middleware.ts). It is NOT written on the authenticated pass-through: a page
+//      loaded while already signed in is not a prompted-sign-in destination. The earlier version
+//      recorded every top-level portal document load, so a signed-in-but-unconfirmed client who
+//      opened /portal/grants completed /welcome onto an empty grant report instead of the
+//      dashboard.
 //   2. SANITISE. /portal/profile is never a destination; it is the form you just submitted
 //      (sanitizePortalNext below, #336).
 //   3. READ. Honoured only by the save that SATISFIES the gate -- a confirmed client editing
 //      their profile had nothing swallowed, so there is nothing to restore
-//      (app/portal/profile/actions.ts). Its absence sent an editing client to their grant
-//      report, because loading the report is what wrote the cookie.
+//      (app/portal/profile/actions.ts).
 // Anything added here should say which of the three it touches.
 
 import { safeNextPath } from "@/lib/safe-redirect";
