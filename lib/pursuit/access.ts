@@ -10,10 +10,19 @@
 // navigate away, and lose all of it. Losing the work is bad; being told it was saved is
 // worse. See docs/matching-pursuit-model.md §7.
 //
-// DECISION: gated off entirely for clients -- invisible and unreachable, not
-// show-but-disabled and not a placeholder. A disabled control still advertises a feature
-// we cannot honour yet, and the "Soon" nav links were already rejected once for that
-// reason. When persistence lands and the silent-drop behaviour is fixed, the flag flips.
+// DECISION (original): gated off entirely for clients -- invisible and unreachable, not
+// show-but-disabled and not a placeholder. When persistence lands and the silent-drop
+// behaviour is fixed, the flag flips.
+//
+// AMENDED FOR THE SOFT-LAUNCH (UAMS/NWACC): while the flag is off, the client-facing
+// surfaces now render a VISIBLE, unclickable "COMING SOON" gate instead of being omitted --
+// see intellEngineComingSoon() below. This deliberately reverses the "invisible, not
+// show-but-disabled" stance above, on the owner's call, because for the soft-launch we want
+// these clients to see the feature is coming. It is safe precisely because the reachability
+// guards here are unchanged: a visible-but-inert tile still 404s (requirePursuitVisible) and
+// the API still refuses (pursuitApiDenied), so nothing about what a client can REACH changed
+// -- only what they can SEE. The presentation gate is scoped to client render paths; staff
+// render IntellEngine live everywhere, as before.
 //
 // STAFF ARE UNAFFECTED, deliberately. Staff drive the same wizard on a client's behalf
 // from the console and rely on these routes for preview; the problem is what a CLIENT is
@@ -33,6 +42,23 @@ import { getProfile } from "@/lib/auth";
 
 export function pursuitClientAccessEnabled(): boolean {
   return process.env.PURSUIT_CLIENT_ACCESS_ENABLED === "true";
+}
+
+/**
+ * The single client-visibility condition for the "COMING SOON" soft-launch gate.
+ *
+ * True while client access is gated off -- the client-facing IntellEngine surfaces (portal nav
+ * tab, dashboard tile, Grant Report pursue-chooser option) then render VISIBLE but unclickable,
+ * with a "COMING SOON" label, instead of being hidden. It is the exact negation of
+ * pursuitClientAccessEnabled(), so there is ONE switch: set PURSUIT_CLIENT_ACCESS_ENABLED=true and
+ * every surface goes live in the same flip that un-guards the routes (this returns false, the live
+ * links/options render, the coming-soon treatment disappears).
+ *
+ * CLIENT SURFACES ONLY. Staff never call this; the console renders IntellEngine live regardless of
+ * the flag (staff reach it per-client at /clients/:id/intellengine), so the gate cannot touch them.
+ */
+export function intellEngineComingSoon(): boolean {
+  return !pursuitClientAccessEnabled();
 }
 
 /**

@@ -20,23 +20,31 @@ import type { ClientNotifications } from "@/lib/portal/notifications";
 // own route tree and mounts this same header -- which is exactly why it belongs in the nav
 // rather than only being reachable from a dashboard tile.
 //
-// The IntellEngine tab is conditional while Pursuit is gated off for clients
-// (lib/pursuit/access.ts). The flag is read SERVER-SIDE and handed down as a prop rather
-// than read here: this is a "use client" component, so process.env would be undefined at
-// runtime unless the var were NEXT_PUBLIC_, which would bake it into the bundle at build
-// time and make the kill switch a redeploy. Omitted entirely, not disabled -- a greyed
-// tab still advertises the feature, which is the "Soon" nav link this codebase already
-// rejected once.
-const NAV: { href: string; label: string }[] = [
+// The IntellEngine tab reflects the Pursuit client-access flag (lib/pursuit/access.ts), read
+// SERVER-SIDE and handed down as `showPursuit` rather than read here: this is a "use client"
+// component, so process.env would be undefined at runtime unless the var were NEXT_PUBLIC_, which
+// would bake it into the bundle and make the kill switch a redeploy.
+//
+// SOFT-LAUNCH TREATMENT: while the flag is off the tab is ALWAYS listed but renders as an
+// unclickable "IntellEngine (coming soon)" item -- not a live link, and not omitted. This reverses
+// the earlier "omit entirely, a greyed tab advertises an unfinished feature" stance, on the owner's
+// call for the UAMS/NWACC soft-launch (see intellEngineComingSoon() in lib/pursuit/access.ts). Flip
+// PURSUIT_CLIENT_ACCESS_ENABLED=true and `showPursuit` becomes true, turning it back into a live
+// link. Only ever shown to a real client member (the nav renders under showClientChrome), so a staff
+// admin previewing IntellEngine still sees the bare header, and the staff console nav (top-nav.tsx)
+// has no IntellEngine link at all -- both untouched.
+type NavEntry = { href: string; label: string; comingSoon?: boolean };
+
+const NAV: NavEntry[] = [
   { href: "/portal", label: "Dashboard" },
   { href: "/portal/triage", label: "Grant Alerts" },
   { href: "/portal/grants", label: "Grant Report" },
 ];
 
-const PURSUIT_NAV = { href: "/intellengine", label: "IntellEngine" };
+const PURSUIT_NAV: NavEntry = { href: "/intellengine", label: "IntellEngine" };
 
-function navItems(showPursuit: boolean): { href: string; label: string }[] {
-  return showPursuit ? [...NAV, PURSUIT_NAV] : NAV;
+function navItems(showPursuit: boolean): NavEntry[] {
+  return [...NAV, showPursuit ? PURSUIT_NAV : { ...PURSUIT_NAV, comingSoon: true }];
 }
 
 function isActive(pathname: string, href: string): boolean {
@@ -58,6 +66,23 @@ function NavLinks({
   return (
     <nav className={className}>
       {navItems(showPursuit).map((item) => {
+        // Coming-soon: an unclickable label, not a link. The "(coming soon)" is TEXT, not a colour
+        // cue, so the gated state reads without relying on hue (colorblind-safe).
+        if (item.comingSoon) {
+          return (
+            <span
+              key={item.href}
+              aria-disabled="true"
+              title="Coming soon"
+              className="cursor-default whitespace-nowrap rounded-sharp px-3 py-[7px] text-[13.5px] font-medium text-white/40"
+            >
+              {item.label}
+              <span className="ml-1.5 text-[11px] font-semibold uppercase tracking-wide text-white/50">
+                (coming soon)
+              </span>
+            </span>
+          );
+        }
         const active = isActive(pathname, item.href);
         return (
           <Link

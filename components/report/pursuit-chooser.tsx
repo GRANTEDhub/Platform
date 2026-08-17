@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { Building2, Check, ChevronRight, Loader2, Lock, Sparkles, Users, X } from "lucide-react";
+import { ComingSoonOverlay } from "@/components/ui/coming-soon-overlay";
 import type { PursuitPath } from "@/types/database";
 
 const SUPPORT = "support@grantedco.com";
@@ -36,23 +37,27 @@ export function PursuitChooser({
   tier,
   variant = "detail",
   showPursuitPath = false,
+  intellEngineComingSoon = false,
 }: {
   cardId: string;
   pursuitPath: PursuitPath | null;
   tier: "premium" | "base";
   variant?: "row" | "detail";
-  // Whether the IntellEngine path is offered at all. Server-resolved from
-  // pursuitClientAccessEnabled() and threaded through DecisionBar, because this is a
-  // "use client" component and cannot read the env var itself.
+  // Whether the IntellEngine path is offered as a LIVE, selectable option. Server-resolved from
+  // pursuitClientAccessEnabled() and threaded through DecisionBar, because this is a "use client"
+  // component and cannot read the env var itself.
   //
-  // Offering the path while the screens are gated would be the worst version of the bug
-  // it is closing: the click records decision='approved' with pursuit_path='intellengine'
-  // and THEN navigates into a 404, leaving the card claiming a pursuit route the client
-  // was never able to walk. Hidden, not locked -- premiumLock already means "upgrade to
-  // reach this", which is a different and answerable proposition.
-  //
-  // Defaults to FALSE, so a caller that forgets the prop hides the path.
+  // Offering a LIVE path while the screens are gated would be the worst version of the bug it is
+  // closing: the click records decision='approved' with pursuit_path='intellengine' and THEN
+  // navigates into a 404, leaving the card claiming a pursuit route the client was never able to
+  // walk. Defaults to FALSE, so a caller that forgets the prop hides the live path.
   showPursuitPath?: boolean;
+  // CLIENT soft-launch: when the live path is off, show the IntellEngine option as an INERT
+  // "COMING SOON" card instead of omitting it (see intellEngineComingSoon() in lib/pursuit/access.ts).
+  // The chooser is client-only (it renders only when DecisionBar has a `tier`, set on the portal),
+  // so this can never reach staff. Defaults FALSE. When showPursuitPath is true this is ignored --
+  // the live option wins.
+  intellEngineComingSoon?: boolean;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -110,6 +115,7 @@ export function PursuitChooser({
           pursuitPath={pursuitPath}
           tier={tier}
           showPursuitPath={showPursuitPath}
+          intellEngineComingSoon={intellEngineComingSoon}
           onClose={() => setOpen(false)}
         />
       )}
@@ -122,12 +128,14 @@ function ChooserPanel({
   pursuitPath,
   tier,
   showPursuitPath,
+  intellEngineComingSoon,
   onClose,
 }: {
   cardId: string;
   pursuitPath: PursuitPath | null;
   tier: "premium" | "base";
   showPursuitPath: boolean;
+  intellEngineComingSoon: boolean;
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -273,7 +281,7 @@ function ChooserPanel({
             </div>
           ) : (
             <>
-              {showPursuitPath && (
+              {showPursuitPath ? (
                 <>
                   <OptionCard
                     icon={<Sparkles className="h-5 w-5" />}
@@ -286,7 +294,9 @@ function ChooserPanel({
                   />
                   {tier === "base" && showTeaser && <IntellEngineTeaser />}
                 </>
-              )}
+              ) : intellEngineComingSoon ? (
+                <ComingSoonOption />
+              ) : null}
 
               <OptionCard
                 icon={<Users className="h-5 w-5" />}
@@ -375,6 +385,29 @@ function OptionCard({
         <span className="mt-0.5 block text-[13px] leading-relaxed text-muted-foreground">{sub}</span>
       </span>
     </button>
+  );
+}
+
+// CLIENT soft-launch: the IntellEngine path shown as an INERT card with a diagonal "COMING SOON"
+// watermark, in place of the live selectable option. A <div>, not a <button> -- there is nothing to
+// click, so a client cannot record pursuit_path='intellengine' into the 404 the route would give
+// them (the API refuses it too, pursuitApiDenied). The muted "Coming soon" line carries the state to
+// assistive tech; the rotated overlay is decorative. Mirrors OptionCard's frame so it reads as the
+// same third option, not open yet.
+function ComingSoonOption() {
+  return (
+    <div className="relative flex w-full items-start gap-3.5 overflow-hidden rounded-2xl border border-brand-navy/[0.1] bg-white p-4 text-left opacity-90">
+      <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-navy/[0.06] text-brand-navy">
+        <Sparkles className="h-5 w-5" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="text-sm font-semibold text-brand-navy">Write with IntellEngine</span>
+        <span className="mt-0.5 block text-[13px] leading-relaxed text-muted-foreground">
+          Draft the proposal with GRANTED&apos;s AI. Coming soon — we&apos;ll let you know the moment it&apos;s ready.
+        </span>
+      </span>
+      <ComingSoonOverlay tone="onLight" />
+    </div>
   );
 }
 
