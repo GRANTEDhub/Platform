@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { requireClient } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/server";
 import { ConfirmProfile } from "@/components/portal/confirm-profile";
 import { confirmClientProfileAction } from "@/app/portal/profile/actions";
 import { narrativeFromClient } from "@/lib/intake/narrative";
@@ -14,7 +14,13 @@ export const dynamic = "force-dynamic";
 // into the portal (or into the grant they were deep-linked to).
 //
 // This route lives OUTSIDE the portal layout on purpose, so its gate can't loop back
-// onto itself. Reads run under RLS as the client (own row only).
+// onto itself. The client row is read VIA SERVICE-ROLE, scoped to the caller's OWN
+// verified clientId (requireClient just proved an activated membership for it) -- the
+// SAME reliable read the portal layout's first-login gate now uses. The layout gate fails
+// CLOSED (redirect to /welcome unless it positively reads a confirmation timestamp), so
+// this page must be able to read the row it renders; an RLS self-read that came back null
+// here would bounce the client back to the gate, which would bounce them here again --
+// the redirect loop the fail-closed gate makes possible. The service read closes that.
 //
 // SAME FORM AS /portal/profile. It renders ConfirmProfile and confirmClientProfileAction
 // rather than a form of its own. It used to have its own simpler pair, which meant the
@@ -27,13 +33,16 @@ export default async function WelcomePage() {
   const org = memberships[0];
   if (!org) redirect("/");
 
-  const supabase = createClient();
-  const { data: client } = await supabase
+  const admin = createServiceClient();
+  const { data: client } = await admin
     .from("clients")
     .select("*")
     .eq("id", org.clientId)
     .maybeSingle<Client>();
-  if (!client) redirect("/portal");
+  // Send to the router, NOT /portal: /portal's layout fails closed and would bounce a
+  // client whose row we somehow can't read straight back here, looping. / re-resolves
+  // access cleanly (staff -> /clients, activated member -> /portal, else no-access).
+  if (!client) redirect("/");
 
   return (
     <div className="min-h-screen bg-page px-4 py-12">
