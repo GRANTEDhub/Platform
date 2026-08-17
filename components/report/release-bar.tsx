@@ -417,7 +417,7 @@ function RecallDropdown({
             <div className="fixed inset-0 z-[70]" aria-hidden="true" onClick={() => setOpen(false)} />
             <div
               role="menu"
-              className="fixed z-[71] w-64 rounded-sharp border border-edge bg-white p-1 shadow-lg"
+              className="fixed z-[71] w-64 rounded-sharp border border-edge bg-white p-1 shadow-overlay"
               style={{ left: pos.left, top: pos.top }}
             >
               <button
