@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion, useDragControls } from "motion/react";
 import { ArrowUpRight, Check, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { ScoreRing, Tag } from "./primitives";
 import { ConceptProposalReveal } from "./concept-proposal-reveal";
+import { AlertDecisionTransition } from "./alert-decision-transition";
 import type { ReportItem } from "@/lib/report/shape";
 
 // Grant Alerts (browse) for the client's brand-new, not-yet-triaged matches — the gate
@@ -32,6 +34,7 @@ export function SwipeDeck({
   clientName,
   startCardId,
   requireReason = false,
+  dashboardHref,
 }: {
   items: ReportItem[];
   detailBasePath: string; // detail = `${detailBasePath}/${id}`
@@ -54,8 +57,19 @@ export function SwipeDeck({
   // of the queue. Unknown / already-decided id falls back to 0 -- a stale link from an old
   // email should still open the deck, not an error.
   startCardId?: string;
+  // CLIENT PORTAL ONLY (#12): the client's dashboard route. Its presence turns on the
+  // branded rotating-logo transition after each decision — more pending → "Redirecting to
+  // grant alerts" (next card), none left → "Redirecting to dashboard" (this href). Absent on
+  // staff triage, which keeps the plain slide-to-next / "All caught up" behaviour.
+  dashboardHref?: string;
 }) {
+  const router = useRouter();
   const [queue, setQueue] = useState(items);
+  // The post-decision transition overlay (client portal). Null on staff triage and between
+  // decisions; set on a decision to play the branded redirect, which its effect then drives.
+  const [transition, setTransition] = useState<{ decision: "interested" | "passed"; morePending: boolean } | null>(
+    null,
+  );
   const [index, setIndex] = useState(() => {
     if (!startCardId) return 0;
     const at = items.findIndex((i) => i.id === startCardId);
@@ -95,30 +109,63 @@ export function SwipeDeck({
 
   // Decide on the current card: persist, drop it from the queue, and stay at the same
   // position so the next card slides into view (clamped when we removed the last one).
+  // On the client portal (dashboardHref set) the branded transition plays over the top and
+  // drives where we go next — `morePending` is captured BEFORE removal, so it means "were
+  // there other cards besides this one".
   const decide = useCallback(
     (action: "interested" | "passed", reason?: string) => {
-      if (!current) return;
+      // Freeze while the transition overlay is up: it covers the deck but the underlying
+      // CardFace buttons stay in the tab order, so a keyboard user could otherwise Enter a
+      // second decision behind the overlay and double-persist. Mirrors the browse guard below.
+      if (!current || transition) return;
       const id = current.id;
       persist(id, action, reason);
+      const morePending = total > 1;
       setQueue((q) => q.filter((it) => it.id !== id));
       setIndex((i) => Math.max(0, Math.min(i, total - 2)));
+      if (dashboardHref) setTransition({ decision: action, morePending });
     },
-    [current, persist, total],
+    [current, persist, total, dashboardHref, transition],
   );
 
-  // Keyboard browse — ← / → move between alerts (never decide).
+  // Drive the post-decision transition (client portal). It plays over the deck — which has
+  // already advanced underneath it — then either lifts to reveal the next alert, or leaves
+  // for the dashboard when the deck is empty. The card is decided the instant the button is
+  // pressed (persist above); this only paces the redirect.
+  useEffect(() => {
+    if (!transition) return;
+    const t = setTimeout(() => {
+      if (transition.morePending) setTransition(null);
+      else if (dashboardHref) router.push(dashboardHref);
+    }, 1800);
+    return () => clearTimeout(t);
+  }, [transition, dashboardHref, router]);
+
+  // Keyboard browse — ← / → move between alerts (never decide). Ignored while the transition
+  // overlay is up, so a stray arrow can't shift the deck underneath it before the redirect.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (transition) return;
       if (e.key === "ArrowLeft") go(-1);
       else if (e.key === "ArrowRight") go(1);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [go]);
+  }, [go, transition]);
+
+  // Defined once and rendered in BOTH return branches below (a decision can empty the deck →
+  // the !current branch, or leave cards → the main branch). Portal-rendered, so its position
+  // in the tree has no layout effect; single definition keeps the two branches from drifting.
+  const overlay = transition ? (
+    <AlertDecisionTransition decision={transition.decision} morePending={transition.morePending} />
+  ) : null;
 
   if (!current) {
     return (
       <div className="mx-auto max-w-2xl py-16 text-center">
+        {/* On the client portal, a decision that emptied the deck routes to the dashboard;
+            the transition overlay (portal) covers this "All caught up" state until it does. */}
+        {overlay}
         {interestMode === "sme" && (
           <div className="mb-6 rounded-xl bg-brand-navy px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-white">
             Account manager review — the client does not see this pass
@@ -145,6 +192,9 @@ export function SwipeDeck({
 
   return (
     <div className="mx-auto max-w-2xl">
+      {/* Post-decision branded transition (client portal). Portal-rendered, so it sits over
+          the deck that has already advanced to the next card underneath it. */}
+      {overlay}
       {interestMode === "sme" && (
         <div className="mb-4 rounded-xl bg-brand-navy px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-white">
           Account manager review — the client does not see this pass
