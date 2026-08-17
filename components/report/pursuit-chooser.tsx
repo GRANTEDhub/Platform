@@ -3,11 +3,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
-import { Building2, Check, ChevronRight, Loader2, Lock, Sparkles, Users, X } from "lucide-react";
+import { Building2, Calendar, Check, ChevronRight, Loader2, Lock, Mail, Sparkles, Users, X } from "lucide-react";
 import { ComingSoonOverlay } from "@/components/ui/coming-soon-overlay";
 import type { PursuitPath } from "@/types/database";
 
 const SUPPORT = "support@grantedco.com";
+
+// The account managers a client emails to pursue with an SME (#13). Simple hardcoded list —
+// the same two senders in lib/alerts/sender.ts. Client-safe; no lookup, no new data path.
+const ACCOUNT_MANAGERS: ReadonlyArray<{ name: string; email: string }> = [
+  { name: "Shannon", email: "shannon@grantedco.com" },
+  { name: "Tara", email: "tara@grantedco.com" },
+];
 
 // How a client acts on a grant that's in their Grant Report: choose HOW to pursue
 // it (migration 0061). One chooser, mounted on both the report row (compact) and
@@ -144,6 +151,11 @@ function ChooserPanel({
   const [error, setError] = useState<string | null>(null);
   const [showTeaser, setShowTeaser] = useState(false);
   const [confirmedInHouse, setConfirmedInHouse] = useState(false);
+  // #13: the SME option now opens a box offering two ways to reach an advisor — schedule
+  // (the existing booking flow) or email. `smeOpen` reveals the box; `smeEmailChosen` reveals
+  // the account-manager addresses once the email path has recorded the pursuit.
+  const [smeOpen, setSmeOpen] = useState(false);
+  const [smeEmailChosen, setSmeEmailChosen] = useState(false);
 
   const close = useCallback(() => {
     setShown(false);
@@ -216,11 +228,24 @@ function ChooserPanel({
     }
   }
 
+  // SCHEDULE path: record the pursuit, then open the booking page. Unchanged from before #13
+  // beyond now being one of two ways to reach an advisor.
   async function chooseSme() {
     if (await record("sme")) {
       window.open(bookingHref(), "_blank", "noopener,noreferrer");
       router.refresh();
       close();
+    }
+  }
+
+  // EMAIL path (#13): the SAME state transition as schedule — record("sme") moves the grant
+  // into the pursuing queue as "Pursuing with an SME" — it just reveals the account-manager
+  // addresses instead of the booking page. Deliberately does NOT close: the client needs the
+  // emails on screen to click one.
+  async function chooseSmeEmail() {
+    if (await record("sme")) {
+      setSmeEmailChosen(true);
+      router.refresh();
     }
   }
 
@@ -301,11 +326,22 @@ function ChooserPanel({
               <OptionCard
                 icon={<Users className="h-5 w-5" />}
                 title="Work with a subject-matter expert"
-                sub="Book time with a GRANTED advisor to scope and write it together."
-                onClick={chooseSme}
+                sub="Scope and write it with a GRANTED advisor — schedule a call or email your account manager."
+                onClick={() => setSmeOpen((v) => !v)}
                 busy={busy === "sme"}
                 active={pursuitPath === "sme"}
+                ariaExpanded={smeOpen}
+                ariaControls="sme-choices"
               />
+              {smeOpen && (
+                <SmeChoices
+                  id="sme-choices"
+                  busy={busy === "sme"}
+                  emailChosen={smeEmailChosen}
+                  onSchedule={chooseSme}
+                  onEmail={chooseSmeEmail}
+                />
+              )}
 
               <OptionCard
                 icon={<Building2 className="h-5 w-5" />}
@@ -354,6 +390,8 @@ function OptionCard({
   busy,
   active,
   premiumLock,
+  ariaExpanded,
+  ariaControls,
 }: {
   icon: React.ReactNode;
   title: string;
@@ -362,12 +400,19 @@ function OptionCard({
   busy: boolean;
   active: boolean;
   premiumLock?: boolean;
+  // Set ONLY on the SME card, which is a disclosure toggle (reveals SmeChoices). The other
+  // two cards are one-shot actions; left undefined, the attributes are omitted — annotating a
+  // non-disclosure button as expandable would be its own a11y bug.
+  ariaExpanded?: boolean;
+  ariaControls?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={busy}
+      aria-expanded={ariaExpanded}
+      aria-controls={ariaControls}
       className={`${OPTION_FRAME} transition disabled:opacity-60 ${
         active
           ? "border-brand-navy/40 bg-brand-navy/[0.04]"
@@ -389,6 +434,64 @@ function OptionCard({
         <span className={OPTION_SUB}>{sub}</span>
       </span>
     </button>
+  );
+}
+
+// #13: the two ways to pursue with an SME. Both call the SAME record("sme") transition (via the
+// parent's onSchedule / onEmail) — the grant lands in the pursuing queue as "Pursuing with an
+// SME" either way — they differ only in HOW the client reaches out. Schedule opens the booking
+// page; Email records the pursuit and reveals the account managers to write to.
+function SmeChoices({
+  id,
+  busy,
+  emailChosen,
+  onSchedule,
+  onEmail,
+}: {
+  id: string;
+  busy: boolean;
+  emailChosen: boolean;
+  onSchedule: () => void;
+  onEmail: () => void;
+}) {
+  const btn =
+    "inline-flex items-center justify-center gap-2 rounded-full border border-brand-navy/20 bg-white px-4 py-2.5 text-sm font-semibold text-brand-navy transition hover:border-brand-navy/40 hover:bg-brand-navy/[0.03] disabled:opacity-60";
+  return (
+    <div id={id} className="rounded-2xl border border-brand-navy/[0.1] bg-brand-navy/[0.02] p-4">
+      <p className="text-[13px] leading-relaxed text-muted-foreground">
+        Two ways to reach a GRANTED advisor — either one moves this grant into your pursuing queue.
+      </p>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <button type="button" onClick={onSchedule} disabled={busy} className={btn}>
+          <Calendar className="h-4 w-4" />
+          Schedule a call
+        </button>
+        <button type="button" onClick={onEmail} disabled={busy} className={btn}>
+          <Mail className="h-4 w-4" />
+          Email an account manager
+        </button>
+      </div>
+
+      {emailChosen && (
+        <div className="mt-3 rounded-xl border border-brand-navy/[0.08] bg-white p-3.5">
+          <p className="text-[13px] font-medium text-brand-navy">
+            Please email your preferred account manager below.
+          </p>
+          <div className="mt-2 flex flex-col gap-1.5">
+            {ACCOUNT_MANAGERS.map((am) => (
+              <a
+                key={am.email}
+                href={`mailto:${am.email}`}
+                className="inline-flex items-center gap-2 text-[13px] font-medium text-brand-orange hover:underline"
+              >
+                <Mail className="h-3.5 w-3.5" />
+                {am.name} · {am.email}
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
