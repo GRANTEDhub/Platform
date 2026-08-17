@@ -65,6 +65,9 @@ export default async function PortalTriage({ searchParams }: { searchParams: { c
         // Client portal: a Pass here is the client's calibration signal, so require the reason
         // (matches the DecisionBar grant-report guard). Staff triage leaves it optional.
         requireReason
+        // #12: turns on the branded rotating-logo transition after each decision. "/portal" is
+        // the client dashboard — where the deck routes once no alerts remain.
+        dashboardHref="/portal"
       />
     </HubShell>
   );
