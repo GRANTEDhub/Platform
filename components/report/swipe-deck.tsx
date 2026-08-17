@@ -702,7 +702,18 @@ function AlertCard({
   detailHref: string;
 }) {
   const parts = titleParts(item.title);
-  const closes = item.deadlineDaysLeft !== null ? `${item.deadlineLabel} · ${item.deadlineDaysLeft}d` : item.deadlineLabel;
+  // "Sep 4 · 32d" for a future deadline; never a raw negative countdown. A past deadline
+  // reads "closed", a same-day one "today" (still winnable — federal cutoffs carry a time we
+  // don't store, mirroring isOverdue in report/shape.ts).
+  const d = item.deadlineDaysLeft;
+  const closes =
+    d === null
+      ? item.deadlineLabel
+      : d < 0
+        ? `${item.deadlineLabel} · closed`
+        : d === 0
+          ? `${item.deadlineLabel} · today`
+          : `${item.deadlineLabel} · ${d}d`;
   const meta = [item.nofoNumber, item.role ? `${item.role} applicant` : null].filter(Boolean).join(" · ");
   return (
     <div
