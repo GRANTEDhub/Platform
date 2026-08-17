@@ -343,6 +343,8 @@ const OPTION_ICON =
   "mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-navy/[0.06] text-brand-navy";
 const CURRENT_BADGE =
   "rounded-full bg-brand-navy/[0.06] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-navy";
+const OPTION_TITLE = "text-sm font-semibold text-brand-navy";
+const OPTION_SUB = "mt-0.5 block text-[13px] leading-relaxed text-muted-foreground";
 
 function OptionCard({
   icon,
@@ -375,7 +377,7 @@ function OptionCard({
       <span className={OPTION_ICON}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : icon}</span>
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-brand-navy">{title}</span>
+          <span className={OPTION_TITLE}>{title}</span>
           {active && <span className={CURRENT_BADGE}>Current</span>}
           {premiumLock && (
             <span className="inline-flex items-center gap-1 rounded-full bg-brand-orange/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-orange">
@@ -384,7 +386,7 @@ function OptionCard({
             </span>
           )}
         </span>
-        <span className="mt-0.5 block text-[13px] leading-relaxed text-muted-foreground">{sub}</span>
+        <span className={OPTION_SUB}>{sub}</span>
       </span>
     </button>
   );
@@ -410,10 +412,10 @@ function ComingSoonOption({ active }: { active: boolean }) {
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-brand-navy">Write with IntellEngine</span>
+          <span className={OPTION_TITLE}>Write with IntellEngine</span>
           {active && <span className={CURRENT_BADGE}>Current</span>}
         </span>
-        <span className="mt-0.5 block text-[13px] leading-relaxed text-muted-foreground">
+        <span className={OPTION_SUB}>
           Draft the proposal with GRANTED&apos;s AI. Coming soon — we&apos;ll let you know the moment it&apos;s ready.
         </span>
       </span>
