@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { requireClient } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import { PortalHeader } from "@/components/layout/portal-header";
-import { pursuitClientAccessEnabled } from "@/lib/pursuit/access";
+import { pursuitClientAccessEnabled, intellEngineComingSoon } from "@/lib/pursuit/access";
 import { getClientNotifications } from "@/lib/portal/notifications";
 
 // The client portal shell. Distinct from the staff (app) layout: no firm nav,
@@ -48,7 +48,12 @@ export default async function PortalLayout({
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
-      <PortalHeader orgName={orgName} notifications={notifications} showPursuit={pursuitClientAccessEnabled()} />
+      <PortalHeader
+        orgName={orgName}
+        notifications={notifications}
+        showPursuit={pursuitClientAccessEnabled()}
+        comingSoon={intellEngineComingSoon()}
+      />
       {/* Each portal page provides its own HubShell backdrop (list = crisp,
           detail/swipe = warm), mirroring the staff roadmap surfaces. */}
       {/* flex-1 + the scroll HERE, mirroring the staff shell: the nav band stays put and

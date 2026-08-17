@@ -4,7 +4,7 @@ import { Bell, ClipboardCheck } from "lucide-react";
 import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { ClientDashboard, type DashPinnedRow } from "@/components/clients/client-dashboard";
-import { pursuitClientAccessEnabled } from "@/lib/pursuit/access";
+import { pursuitClientAccessEnabled, intellEngineComingSoon } from "@/lib/pursuit/access";
 import { ClientMasthead } from "@/components/clients/client-masthead";
 import { CheckGrant } from "@/components/clients/check-grant";
 import { AutoRefresh } from "@/components/ui/auto-refresh";
@@ -281,10 +281,13 @@ export default async function PortalHome() {
           subLine={subLine}
           isStaff={false}
           roadmapHref={base}
-          // Omitted while Pursuit is gated off for clients (lib/pursuit/access.ts).
-          // ClientDashboard renders the draft panel only when it has BOTH drafts and an
-          // href, so dropping the href removes the tile without touching that component.
+          // TWO INDEPENDENT flags (lib/pursuit/access.ts). The live href is present only while client
+          // access is enabled -- ClientDashboard renders the live panel only with BOTH drafts and an
+          // href. Separately, intellEngineComingSoon() decides whether the slot shows the inert
+          // "COMING SOON" tile when there is no live href; with both off the slot is empty. Access
+          // wins: a live href is rendered live even if the teaser flag is also on.
           intellEngineHref={pursuitClientAccessEnabled() ? "/intellengine" : undefined}
+          intellEngineComingSoon={intellEngineComingSoon()}
           // Same masthead component staff get, variant="portal" swapping the four figures
           // and the stage labels. No backlog sparkline: it measures our throughput.
           hero={
