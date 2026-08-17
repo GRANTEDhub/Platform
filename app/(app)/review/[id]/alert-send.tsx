@@ -26,6 +26,8 @@ export function AlertSend({
   autoOpen = false,
   onClose,
   overdue,
+  doneHref,
+  doneLabel,
 }: {
   cardId: string;
   sentAt?: string | null;
@@ -43,6 +45,12 @@ export function AlertSend({
   // only. Omitted when rendered from ReleaseToClientBar's dropdown, which already gated
   // the click — passing it there would prompt twice inside one workflow.
   overdue?: OverdueGateConfig;
+  // #8: where the RELEASE confirmation lands. Passed from the console (ReleaseToClientBar)
+  // so a managed release returns to the client's Grant Report or dashboard instead of the
+  // cross-client Matches queue. Absent on the /review worklist and prospect paths, where
+  // ReleaseConfirmation keeps its /matches default.
+  doneHref?: string;
+  doneLabel?: string;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -223,7 +231,7 @@ export function AlertSend({
   }
 
   if (summary) return <DecisionConfirmation summary={summary} />;
-  if (release) return <ReleaseConfirmation sent={release.sent} to={release.to} />;
+  if (release) return <ReleaseConfirmation sent={release.sent} to={release.to} doneHref={doneHref} doneLabel={doneLabel} />;
 
   // Alerted state: a grant_alerts row is sent AND has a recorded recipient.
   // LIVE state, not history: sentAt/sentTo are the CARD's own copy, which recall clears.

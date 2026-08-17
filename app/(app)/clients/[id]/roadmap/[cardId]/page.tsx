@@ -238,6 +238,13 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
 
 
   const backHref = `/clients/${params.id}/roadmap`;
+  // #8: where a send/pass DECISION lands. Grant Report while this client still has grants
+  // pending review, else the client's dashboard — never the cross-client Matches queue.
+  // `remaining` already excludes this card, so it is "what's left for this client after this
+  // one". Threaded into ReleaseToClientBar (pass) and, via it, AlertSend's release confirm (send).
+  const clientDashboardHref = `/clients/${params.id}`;
+  const doneHref = remaining > 0 ? backHref : clientDashboardHref;
+  const doneLabel = remaining > 0 ? "the Grant Report" : "the dashboard";
   // Shared by all three gated actions. backHref is where Archive lands — the Grant
   // Report, since an archived card is gone from this queue.
   const overdueConfig = { cardId: params.cardId, daysLeft: days, deadlineLabel, backHref };
@@ -329,12 +336,15 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
             <ReleaseToClientBar
               cardId={params.cardId}
               released={!!card.sme_released_at}
+              passed={card.decision === "passed"}
               backHref={backHref}
+              doneHref={doneHref}
+              doneLabel={doneLabel}
               overdue={overdueConfig}
               returnNote={
                 remaining > 0
                   ? `Either way you'll go back to the Grant Report — ${remaining} left.`
-                  : "Either way you'll go back to the Grant Report — this is the last one."
+                  : "Either way you'll go back to the client's dashboard — this was the last one."
               }
             />
           ) : isLead && isAdmin ? (
