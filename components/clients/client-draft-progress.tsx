@@ -161,6 +161,21 @@ export function ClientDraftProgress({
 export function IntellEngineComingSoonPanel() {
   return (
     <section className="relative flex flex-col overflow-hidden rounded-sharp bg-brand-chrome px-5 pb-[18px] pt-[17px] text-white">
+      <IntellEnginePanelHeader />
+      <div className="mt-3.5 flex flex-1 flex-col justify-end border-t border-white/[0.14] pt-[13px]">
+        <p className="text-[12.5px] font-medium text-white/[0.7]">Coming soon to your workspace.</p>
+      </div>
+      <ComingSoonOverlay tone="onDark" />
+    </section>
+  );
+}
+
+// The dark IntellEngine panel's header — eyebrow, title, one-liner — shared by the live
+// ConsoleDraftPanel and the inert IntellEngineComingSoonPanel so the two read as the same feature
+// and their copy cannot drift.
+function IntellEnginePanelHeader() {
+  return (
+    <>
       <div className="flex items-center gap-[7px]">
         <Sparkles className="h-3.5 w-3.5 text-brand-orange" aria-hidden="true" />
         <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-brand-orange">
@@ -171,11 +186,7 @@ export function IntellEngineComingSoonPanel() {
       <p className="mt-[5px] text-[12.5px] leading-[1.5] text-white/[0.65]">
         Turns an approved match into a scoped draft — narrative, budget frame, consortium.
       </p>
-      <div className="mt-3.5 flex flex-1 flex-col justify-end border-t border-white/[0.14] pt-[13px]">
-        <p className="text-[12.5px] font-medium text-white/[0.7]">Coming soon to your workspace.</p>
-      </div>
-      <ComingSoonOverlay tone="onDark" />
-    </section>
+    </>
   );
 }
 

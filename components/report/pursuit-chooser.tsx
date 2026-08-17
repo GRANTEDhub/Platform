@@ -295,7 +295,7 @@ function ChooserPanel({
                   {tier === "base" && showTeaser && <IntellEngineTeaser />}
                 </>
               ) : intellEngineComingSoon ? (
-                <ComingSoonOption />
+                <ComingSoonOption active={pursuitPath === "intellengine"} />
               ) : null}
 
               <OptionCard
@@ -336,6 +336,14 @@ function ChooserPanel({
   );
 }
 
+// Shared card geometry for the pursue options (live OptionCard + inert ComingSoonOption), so the
+// two cannot drift on frame or icon-tile styling.
+const OPTION_FRAME = "flex w-full items-start gap-3.5 rounded-2xl border p-4 text-left";
+const OPTION_ICON =
+  "mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-navy/[0.06] text-brand-navy";
+const CURRENT_BADGE =
+  "rounded-full bg-brand-navy/[0.06] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-navy";
+
 function OptionCard({
   icon,
   title,
@@ -358,23 +366,17 @@ function OptionCard({
       type="button"
       onClick={onClick}
       disabled={busy}
-      className={`flex w-full items-start gap-3.5 rounded-2xl border p-4 text-left transition disabled:opacity-60 ${
+      className={`${OPTION_FRAME} transition disabled:opacity-60 ${
         active
           ? "border-brand-navy/40 bg-brand-navy/[0.04]"
           : "border-brand-navy/[0.1] hover:border-brand-navy/30 hover:bg-brand-navy/[0.02]"
       }`}
     >
-      <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-navy/[0.06] text-brand-navy">
-        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : icon}
-      </span>
+      <span className={OPTION_ICON}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : icon}</span>
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-2">
           <span className="text-sm font-semibold text-brand-navy">{title}</span>
-          {active && (
-            <span className="rounded-full bg-brand-navy/[0.06] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-navy">
-              Current
-            </span>
-          )}
+          {active && <span className={CURRENT_BADGE}>Current</span>}
           {premiumLock && (
             <span className="inline-flex items-center gap-1 rounded-full bg-brand-orange/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-orange">
               <Lock className="h-2.5 w-2.5" />
@@ -394,14 +396,23 @@ function OptionCard({
 // them (the API refuses it too, pursuitApiDenied). The muted "Coming soon" line carries the state to
 // assistive tech; the rotated overlay is decorative. Mirrors OptionCard's frame so it reads as the
 // same third option, not open yet.
-function ComingSoonOption() {
+//
+// `active` keeps the card COHERENT for the rare client who already has pursuit_path='intellengine'
+// stored (only reachable if the flag was toggled on, a selection recorded, then off again -- the API
+// blocks recording it while gated). Without it the trigger reads "Pursuing · IntellEngine" while this
+// card says only "Coming soon"; the "Current" badge reconciles the two into "you picked it, it's on
+// the way".
+function ComingSoonOption({ active }: { active: boolean }) {
   return (
-    <div className="relative flex w-full items-start gap-3.5 overflow-hidden rounded-2xl border border-brand-navy/[0.1] bg-white p-4 text-left opacity-90">
-      <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-navy/[0.06] text-brand-navy">
+    <div className={`relative overflow-hidden bg-white opacity-90 ${OPTION_FRAME} border-brand-navy/[0.1]`}>
+      <span className={OPTION_ICON}>
         <Sparkles className="h-5 w-5" />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="text-sm font-semibold text-brand-navy">Write with IntellEngine</span>
+        <span className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-brand-navy">Write with IntellEngine</span>
+          {active && <span className={CURRENT_BADGE}>Current</span>}
+        </span>
         <span className="mt-0.5 block text-[13px] leading-relaxed text-muted-foreground">
           Draft the proposal with GRANTED&apos;s AI. Coming soon — we&apos;ll let you know the moment it&apos;s ready.
         </span>
