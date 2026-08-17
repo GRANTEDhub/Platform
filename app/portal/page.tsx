@@ -281,11 +281,11 @@ export default async function PortalHome() {
           subLine={subLine}
           isStaff={false}
           roadmapHref={base}
-          // The live href is present only while Pursuit is enabled for clients
-          // (lib/pursuit/access.ts) -- ClientDashboard renders the live panel only with BOTH drafts
-          // and an href. While gated off, intellEngineComingSoon renders the inert "COMING SOON"
-          // tile in that slot instead. Flip PURSUIT_CLIENT_ACCESS_ENABLED=true and this becomes the
-          // live href (and comingSoon becomes false), in one switch.
+          // TWO INDEPENDENT flags (lib/pursuit/access.ts). The live href is present only while client
+          // access is enabled -- ClientDashboard renders the live panel only with BOTH drafts and an
+          // href. Separately, intellEngineComingSoon() decides whether the slot shows the inert
+          // "COMING SOON" tile when there is no live href; with both off the slot is empty. Access
+          // wins: a live href is rendered live even if the teaser flag is also on.
           intellEngineHref={pursuitClientAccessEnabled() ? "/intellengine" : undefined}
           intellEngineComingSoon={intellEngineComingSoon()}
           // Same masthead component staff get, variant="portal" swapping the four figures

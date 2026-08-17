@@ -20,19 +20,18 @@ import type { ClientNotifications } from "@/lib/portal/notifications";
 // own route tree and mounts this same header -- which is exactly why it belongs in the nav
 // rather than only being reachable from a dashboard tile.
 //
-// The IntellEngine tab reflects the Pursuit client-access flag (lib/pursuit/access.ts), read
-// SERVER-SIDE and handed down as `showPursuit` rather than read here: this is a "use client"
-// component, so process.env would be undefined at runtime unless the var were NEXT_PUBLIC_, which
-// would bake it into the bundle and make the kill switch a redeploy.
+// The IntellEngine tab reflects the TWO Pursuit flags (lib/pursuit/access.ts), read SERVER-SIDE and
+// handed down as `showPursuit` (access) + `comingSoon` (teaser) rather than read here: this is a "use
+// client" component, so process.env would be undefined at runtime unless the vars were NEXT_PUBLIC_,
+// which would bake them into the bundle and make the kill switches a redeploy.
 //
-// SOFT-LAUNCH TREATMENT: while the flag is off the tab is ALWAYS listed but renders as an
-// unclickable "IntellEngine (coming soon)" item -- not a live link, and not omitted. This reverses
-// the earlier "omit entirely, a greyed tab advertises an unfinished feature" stance, on the owner's
-// call for the UAMS/NWACC soft-launch (see intellEngineComingSoon() in lib/pursuit/access.ts). Flip
-// PURSUIT_CLIENT_ACCESS_ENABLED=true and `showPursuit` becomes true, turning it back into a live
-// link. Only ever shown to a real client member (the nav renders under showClientChrome), so a staff
-// admin previewing IntellEngine still sees the bare header, and the staff console nav (top-nav.tsx)
-// has no IntellEngine link at all -- both untouched.
+// THREE STATES, from the two independent flags (see intellEngineComingSoon() in lib/pursuit/access.ts):
+//   access on               -> live link
+//   access off · teaser on   -> an unclickable "IntellEngine (coming soon)" label (soft-launch)
+//   access off · teaser off  -> the tab is OMITTED entirely (the original gated state)
+// Only ever shown to a real client member (the nav renders under showClientChrome), so a staff admin
+// previewing IntellEngine still sees the bare header, and the staff console nav (top-nav.tsx) has no
+// IntellEngine link at all -- both untouched.
 type NavEntry = { href: string; label: string; comingSoon?: boolean };
 
 const NAV: NavEntry[] = [
@@ -43,8 +42,11 @@ const NAV: NavEntry[] = [
 
 const PURSUIT_NAV: NavEntry = { href: "/intellengine", label: "IntellEngine" };
 
-function navItems(showPursuit: boolean): NavEntry[] {
-  return [...NAV, showPursuit ? PURSUIT_NAV : { ...PURSUIT_NAV, comingSoon: true }];
+function navItems(showPursuit: boolean, comingSoon: boolean): NavEntry[] {
+  // Access first (live wins), then the teaser, else omit -- the three states above.
+  if (showPursuit) return [...NAV, PURSUIT_NAV];
+  if (comingSoon) return [...NAV, { ...PURSUIT_NAV, comingSoon: true }];
+  return NAV;
 }
 
 function isActive(pathname: string, href: string): boolean {
@@ -58,14 +60,16 @@ function NavLinks({
   pathname,
   className,
   showPursuit,
+  comingSoon,
 }: {
   pathname: string;
   className?: string;
   showPursuit: boolean;
+  comingSoon: boolean;
 }) {
   return (
     <nav className={className}>
-      {navItems(showPursuit).map((item) => {
+      {navItems(showPursuit, comingSoon).map((item) => {
         // Coming-soon: an unclickable label, not a link. The "(coming soon)" is TEXT, not a colour
         // cue, so the gated state reads without relying on hue (colorblind-safe).
         if (item.comingSoon) {
@@ -113,14 +117,18 @@ export function PortalHeader({
   orgName,
   notifications,
   showPursuit = false,
+  comingSoon = false,
 }: {
   orgName: string | null;
   notifications: ClientNotifications | null;
-  // Whether the IntellEngine tab is a LIVE LINK. The tab is always listed now (see navItems);
-  // this only picks live link vs. the unclickable "coming soon" label. Resolved server-side by the
-  // layout from pursuitClientAccessEnabled(); defaults to FALSE, so a caller that forgets to pass it
-  // renders the coming-soon variant rather than a live link into an unfinished surface.
+  // Whether the IntellEngine tab is a LIVE LINK. Resolved server-side by the layout from
+  // pursuitClientAccessEnabled(); defaults FALSE so a caller that forgets it never links into an
+  // unfinished surface.
   showPursuit?: boolean;
+  // Whether to show the tab as an unclickable "coming soon" label when it is NOT a live link.
+  // Resolved server-side from intellEngineComingSoon(); independent of showPursuit. Defaults FALSE,
+  // so with both off the tab is omitted entirely (the fully-hidden state).
+  comingSoon?: boolean;
 }) {
   const pathname = usePathname();
   const showClientChrome = notifications !== null;
@@ -144,6 +152,7 @@ export function PortalHeader({
             <NavLinks
               pathname={pathname}
               showPursuit={showPursuit}
+              comingSoon={comingSoon}
               className="hidden items-center gap-[2px] md:flex"
             />
           )}
@@ -170,6 +179,7 @@ export function PortalHeader({
         <NavLinks
           pathname={pathname}
           showPursuit={showPursuit}
+          comingSoon={comingSoon}
           className="flex items-center gap-[2px] overflow-x-auto px-[26px] pb-2 md:hidden"
         />
       )}
