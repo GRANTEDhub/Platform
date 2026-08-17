@@ -465,9 +465,9 @@ function RationaleCard({
           factors insufficient_data at once on a sparse client record, so the six-row budget is
           genuinely exceedable. The parent <section> is a fixed-height overflow-hidden box, so
           without a scrollbar here those inline rows (or the pinned footnote) clip with no way to
-          recover them. Scrolling is the recovery. The styled hover pop-out may be clipped by this
-          container the same way match-score.tsx accepts for its own tooltip; the native `title` on
-          each hover row is the clip-proof fallback that always reveals on hover. */}
+          recover them. Scrolling is the recovery. The styled hover pop-out is NOT clipped by this
+          container -- RationaleHoverPopover renders in a portal on document.body, above every
+          overflow ancestor -- and the native `title` on each hover row remains the no-JS fallback. */}
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pb-3.5">
         <p className={`mb-[3px] border-t border-hairline-strong pt-[11px] ${EYEBROW} tracking-[0.13em]`}>
           Fit factors
@@ -504,10 +504,10 @@ function RationaleCard({
 // One factor row, and the reason behind it.
 //
 // THE RATIONALE IS A HOVER POP-OUT (restored, per Shannon), matching the sibling
-// match-score.tsx. An ASSESSED row reveals its reason in a styled group-hover pop-out and ALSO
-// carries a native `title`: the pop-out is the nice version but can be clipped by the card's
-// fixed-height overflow, so the `title` is the always-renders fallback (the exact accepted
-// tradeoff match-score.tsx documents). Known cost of hover: no reveal on touch — accepted here
+// match-score.tsx. An ASSESSED row reveals its reason in a styled hover/focus pop-out and ALSO
+// carries a native `title`: the pop-out (RationaleHoverPopover) now renders in a portal so the
+// card's fixed-height overflow no longer clips it, and the `title` remains the no-JS / assistive-
+// tech fallback. Known cost of hover: limited reveal on touch — accepted here
 // because the primary rationale is always visible above in RationaleCard and the sr-only span
 // still carries the full text to assistive tech. This was previously a <details>/<summary>
 // disclosure; hover was chosen back over it deliberately, so keep the two factor surfaces on the
@@ -590,12 +590,12 @@ function FactorRow({ factor, last }: { factor: ReviewFactor; last: boolean }) {
     </span>
   );
 
-  // HOVER-TO-REVEAL (restored, per Shannon): the rationale rides a desktop CSS group-hover
-  // pop-out over the row, matching match-score.tsx. The overlay does NOT participate in layout,
-  // so the six-row budget holds and no ancestor's flow grows. A native `title` on the row is the
-  // clip-proof fallback -- the styled pop-out can still be clipped by the card's fixed-height
-  // overflow, but the title always reveals on hover. (The inline-full unassessed row and the
-  // no-rationale row are unchanged and never get a pop-out.)
+  // HOVER-TO-REVEAL (restored, per Shannon): the rationale rides a hover/focus pop-out over the
+  // row, matching match-score.tsx. The overlay is portal-rendered and does NOT participate in
+  // layout, so the six-row budget holds and no ancestor's flow grows. A native `title` on the row
+  // is the no-JS fallback -- the portal means the styled pop-out is no longer clipped by the card's
+  // fixed-height overflow. (The inline-full unassessed row and the no-rationale row are unchanged
+  // and never get a pop-out.)
   return (
     <div
       title={hover ? factor.rationale ?? undefined : undefined}

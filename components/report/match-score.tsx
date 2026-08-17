@@ -4,8 +4,9 @@ import { RationaleHoverPopover } from "@/components/report/rationale-hover";
 // The platform's honest match-scoring graphic, extracted so BOTH the staff review
 // (/review/[id]) and the shared Grant Report detail render the exact same chart.
 // Ordinal, never a percentage: the ring fills fit_score/3 and each factor is a
-// 3-segment bar (fill carries meaning, not hue — the user is colorblind). Server-
-// safe (native CSS hover for rationale, no client JS).
+// 3-segment bar (fill carries meaning, not hue — the user is colorblind). This chart is
+// itself a server component; its ONLY client leaf is RationaleHoverPopover, the
+// portal-rendered per-row rationale pop-out.
 
 // Segment count per rating. "insufficient_data" is a dashed hollow track —
 // deliberately NOT a 1-segment bar, so it never reads as "Weak".
@@ -41,14 +42,11 @@ function FactorRow({ label, score }: { label: string; score: FactorScore }) {
   const filled = score.rating === "insufficient_data" ? 0 : FACTOR_SEGMENTS[score.rating];
   return (
     <li
-      // NATIVE title AS WELL AS the styled tooltip. The tooltip is an absolutely
-      // positioned `bottom-full` div revealed by group-hover, which means any ancestor
-      // with overflow:hidden clips it out of existence -- and the redesign added
-      // overflow-hidden to the console body and to most cards, so it silently stopped
-      // appearing on both sides. Chasing the clipping ancestor would mean unpicking
-      // layout that is doing real work; a native title always renders, at the cost of
-      // the browser's own styling and a short delay. The styled version still shows
-      // wherever it is not clipped.
+      // NATIVE title AS WELL AS the styled pop-out. The styled RationaleHoverPopover now
+      // renders in a PORTAL (document.body), so an overflow:hidden ancestor no longer
+      // clips it -- the reason it used to vanish once the redesign wrapped these cards in
+      // fixed-height overflow boxes. The native title stays as the no-JS / assistive-tech
+      // fallback that always reveals on hover, even before the pop-out's JS has mounted.
       title={score.rationale ?? undefined}
       // Focusable when it has a rationale, so the pop-out (group-focus-within) is reachable by
       // keyboard, not hover-only. Rows with no rationale stay out of the tab order.
