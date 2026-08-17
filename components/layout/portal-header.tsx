@@ -113,9 +113,10 @@ export function PortalHeader({
 }: {
   orgName: string | null;
   notifications: ClientNotifications | null;
-  // Whether the IntellEngine tab appears. Resolved server-side by the layout from
-  // pursuitClientAccessEnabled(); defaults to FALSE so a caller that forgets to pass it
-  // hides the tab rather than exposing an unfinished surface.
+  // Whether the IntellEngine tab is a LIVE LINK. The tab is always listed now (see navItems);
+  // this only picks live link vs. the unclickable "coming soon" label. Resolved server-side by the
+  // layout from pursuitClientAccessEnabled(); defaults to FALSE, so a caller that forgets to pass it
+  // renders the coming-soon variant rather than a live link into an unfinished surface.
   showPursuit?: boolean;
 }) {
   const pathname = usePathname();
