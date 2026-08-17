@@ -599,11 +599,11 @@ function FactorRow({ factor, last }: { factor: ReviewFactor; last: boolean }) {
   return (
     <div
       title={hover ? factor.rationale ?? undefined : undefined}
-      // Focusable ONLY when it has a rationale to reveal, so Tab+focus surfaces the pop-out
-      // (group-focus-within) for keyboard/motor users -- the reachability the old <details> gave
+      // Focusable ONLY when it has a rationale to reveal, so Tab+focus surfaces the pop-out (via
+      // focusin on this row) for keyboard/motor users -- the reachability the old <details> gave
       // for free. Rows with no pop-out stay out of the tab order.
       tabIndex={hover ? 0 : undefined}
-      className={`group relative flex items-start justify-between gap-3.5 rounded-sharp py-1 outline-none focus-visible:ring-1 focus-visible:ring-brand-navy/40 ${
+      className={`flex items-start justify-between gap-3.5 rounded-sharp py-1 outline-none focus-visible:ring-1 focus-visible:ring-brand-navy/40 ${
         hover ? "cursor-help" : ""
       } ${last ? "" : "border-b border-brand-navy/[0.05]"}`}
       style={rowStyle}

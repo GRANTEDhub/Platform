@@ -35,8 +35,8 @@ const DEFAULT_NOTE =
   "Bar fill = rating (3 / 2 / 1 segments). Dashed = no data yet — distinct from a one-segment “Weak.” Hover a row for the rationale.";
 
 // One factor row: name + word label + 3-segment bar (or a dashed hollow track for
-// insufficient data). The one-line rationale rides in a desktop-only CSS
-// group-hover tooltip.
+// insufficient data). The one-line rationale rides in a desktop hover/focus pop-out
+// (RationaleHoverPopover, portal-rendered).
 function FactorRow({ label, score }: { label: string; score: FactorScore }) {
   const insufficient = score.rating === "insufficient_data";
   const filled = score.rating === "insufficient_data" ? 0 : FACTOR_SEGMENTS[score.rating];
@@ -48,10 +48,10 @@ function FactorRow({ label, score }: { label: string; score: FactorScore }) {
       // fixed-height overflow boxes. The native title stays as the no-JS / assistive-tech
       // fallback that always reveals on hover, even before the pop-out's JS has mounted.
       title={score.rationale ?? undefined}
-      // Focusable when it has a rationale, so the pop-out (group-focus-within) is reachable by
-      // keyboard, not hover-only. Rows with no rationale stay out of the tab order.
+      // Focusable when it has a rationale, so the pop-out (revealed by focusin on this row) is
+      // reachable by keyboard, not hover-only. Rows with no rationale stay out of the tab order.
       tabIndex={score.rationale ? 0 : undefined}
-      className={`group relative flex items-center justify-between gap-3 rounded-md px-1.5 py-1.5 outline-none transition-colors hover:bg-brand-cream/70 focus-visible:ring-1 focus-visible:ring-brand-navy/40 ${
+      className={`flex items-center justify-between gap-3 rounded-md px-1.5 py-1.5 outline-none transition-colors hover:bg-brand-cream/70 focus-visible:ring-1 focus-visible:ring-brand-navy/40 ${
         insufficient ? "opacity-60" : ""
       }`}
     >
