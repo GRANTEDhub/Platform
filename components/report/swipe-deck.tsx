@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, useDragControls } from "motion/react";
-import { ArrowUpRight, Check, ChevronLeft, ChevronRight, X } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Check, ChevronLeft, ChevronRight, ExternalLink, X } from "lucide-react";
+import { BRAND } from "@/lib/brand";
 import { ScoreRing, Tag } from "./primitives";
 import { ConceptProposalReveal } from "./concept-proposal-reveal";
 import { AlertDecisionTransition } from "./alert-decision-transition";
@@ -25,6 +26,10 @@ import type { ReportItem } from "@/lib/report/shape";
 
 const THRESHOLD = 90;
 const ROAD_BG = "/login-bg.jpg";
+// The navy scrim over the road photo on the client Grant Alert view (`presentation="alert"`).
+// Design's "blue filter" is our brand navy #0B1E3A — darker at top and bottom so the white
+// card and the top-bar / button chrome stay legible over a busy photo.
+const ALERT_SCRIM = "linear-gradient(180deg,rgba(11,30,58,.82),rgba(11,30,58,.7) 55%,rgba(11,30,58,.88))";
 
 export function SwipeDeck({
   items,
@@ -35,6 +40,7 @@ export function SwipeDeck({
   startCardId,
   requireReason = false,
   dashboardHref,
+  presentation = "classic",
 }: {
   items: ReportItem[];
   detailBasePath: string; // detail = `${detailBasePath}/${id}`
@@ -62,6 +68,11 @@ export function SwipeDeck({
   // grant alerts" (next card), none left → "Redirecting to dashboard" (this href). Absent on
   // staff triage, which keeps the plain slide-to-next / "All caught up" behaviour.
   dashboardHref?: string;
+  // "classic" (default): the scrollable white card used by staff triage AND (until the client
+  // redesign) the client. "alert": the client Grant Alert redesign — a full-bleed
+  // road photo + navy scrim, a centered one-glance card, and floating Pass/Interested. Only
+  // /portal/triage passes "alert"; staff triage stays "classic", untouched.
+  presentation?: "classic" | "alert";
 }) {
   const router = useRouter();
   const [queue, setQueue] = useState(items);
@@ -159,6 +170,27 @@ export function SwipeDeck({
   const overlay = transition ? (
     <AlertDecisionTransition decision={transition.decision} morePending={transition.morePending} />
   ) : null;
+
+  // Client Grant Alert redesign — the full-bleed immersive layout. Shares every bit of deck
+  // state above (queue, browse, decide, the #12 transition); only the presentation differs.
+  if (presentation === "alert") {
+    return (
+      <AlertDeck
+        current={current}
+        index={index}
+        total={total}
+        decided={decided}
+        transitioning={!!transition}
+        overlay={overlay}
+        onBrowse={go}
+        onDecide={decide}
+        clientName={clientName}
+        detailBasePath={detailBasePath}
+        requireReason={requireReason}
+        dashboardHref={dashboardHref}
+      />
+    );
+  }
 
   if (!current) {
     return (
@@ -485,6 +517,385 @@ function CardFace({
             </p>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── Client Grant Alert redesign (`presentation="alert"`) ────────────────────────────────
+// A one-glance, no-scroll card over the road photo + navy scrim, with Pass/Interested as
+// floating circles below it. All deck state (browse, decide, the #12 transition) is owned by
+// SwipeDeck and passed in; this tree is presentation + the local Pass-reason step only.
+
+// Small stopword set + the emphasis rule: italic-orange the single most DISTINCTIVE word in
+// the title (longest content word, skipping short words and stopwords), falling back to the
+// last word. A deterministic stand-in for "most relevant" — no LLM at render — that reproduces
+// Design's emphasis on the mock ("Scholarships for Disadvantaged Students" → "Disadvantaged").
+const TITLE_STOPWORDS = new Set([
+  "for", "of", "the", "and", "to", "in", "a", "an", "on", "with", "from", "by", "or", "at", "as", "its", "your",
+]);
+function titleParts(title: string): { text: string; em: boolean }[] {
+  const words = title.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= 1) return words.map((text) => ({ text, em: false }));
+  let idx = -1;
+  let best = 0;
+  words.forEach((w, i) => {
+    const clean = w.replace(/[^A-Za-z-]/g, "");
+    if (clean.length < 6 || TITLE_STOPWORDS.has(clean.toLowerCase())) return;
+    if (clean.length > best) {
+      best = clean.length;
+      idx = i;
+    }
+  });
+  if (idx === -1) idx = words.length - 1; // nothing qualified → the last word
+  return words.map((text, i) => ({ text, em: i === idx }));
+}
+
+function AlertDeck({
+  current,
+  index,
+  total,
+  decided,
+  transitioning,
+  overlay,
+  onBrowse,
+  onDecide,
+  clientName,
+  detailBasePath,
+  requireReason,
+  dashboardHref,
+}: {
+  current: ReportItem | undefined;
+  index: number;
+  total: number;
+  decided: number;
+  transitioning: boolean;
+  overlay: React.ReactNode;
+  onBrowse: (delta: number) => void;
+  onDecide: (action: "interested" | "passed", reason?: string) => void;
+  clientName?: string;
+  detailBasePath: string;
+  requireReason?: boolean;
+  dashboardHref?: string;
+}) {
+  const [passing, setPassing] = useState(false);
+  const [passReason, setPassReason] = useState("");
+  const dashHref = dashboardHref ?? "/portal";
+
+  // A new card is a fresh decision: never carry a half-typed Pass reason across a browse.
+  useEffect(() => {
+    setPassing(false);
+    setPassReason("");
+  }, [current?.id]);
+
+  return (
+    <div className="relative min-h-full overflow-hidden bg-brand-navy">
+      {overlay}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        style={{ backgroundImage: `url('${ROAD_BG}')`, backgroundSize: "cover", backgroundPosition: "center" }}
+      />
+      <div aria-hidden className="pointer-events-none absolute inset-0" style={{ background: ALERT_SCRIM }} />
+
+      <div className="relative flex min-h-full flex-col items-center justify-center px-5 py-10">
+        {current ? (
+          <>
+            {/* top bar — Dashboard exit on the left, browse on the right */}
+            <div className="mb-4 flex w-full max-w-[620px] items-center justify-between">
+              <Link
+                href={dashHref}
+                className="inline-flex items-center gap-[7px] text-[12.5px] font-medium text-white/65 transition hover:text-white"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+                Dashboard
+              </Link>
+              <div className="flex items-center gap-[10px]">
+                <span className="text-[12px] tabular-nums text-white/50">
+                  {index + 1} of {total}
+                </span>
+                <AlertBrowseButton dir="left" disabled={index === 0 || transitioning} onClick={() => onBrowse(-1)} />
+                <AlertBrowseButton
+                  dir="right"
+                  disabled={index >= total - 1 || transitioning}
+                  onClick={() => onBrowse(1)}
+                />
+              </div>
+            </div>
+
+            <AlertCard
+              key={current.id}
+              item={current}
+              clientName={clientName}
+              detailHref={`${detailBasePath}/${current.id}?from=alerts`}
+            />
+
+            {passing ? (
+              <AlertPassReason
+                requireReason={requireReason}
+                value={passReason}
+                onChange={setPassReason}
+                onCancel={() => {
+                  setPassing(false);
+                  setPassReason("");
+                }}
+                onConfirm={() => onDecide("passed", passReason)}
+                disabled={transitioning}
+              />
+            ) : (
+              <div className="mt-[22px] flex w-full max-w-[620px] items-center justify-center gap-[56px]">
+                <AlertAction kind="pass" onClick={() => setPassing(true)} disabled={transitioning} />
+                <AlertAction kind="interested" onClick={() => onDecide("interested")} disabled={transitioning} />
+              </div>
+            )}
+          </>
+        ) : (
+          // Only the INITIAL empty deck reaches this (nothing to review). A decision that
+          // empties the deck is handled by the #12 transition, which redirects before this shows.
+          <div className="w-full max-w-[620px] text-center">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-white/10 backdrop-blur-[6px]">
+              <Check className="h-7 w-7 text-white" strokeWidth={3} />
+            </div>
+            <h2 className="mt-5 font-serif text-2xl font-semibold text-white">All caught up</h2>
+            <p className="mt-2 text-sm text-white/70">
+              {decided > 0
+                ? `You reviewed ${decided} ${decided === 1 ? "grant" : "grants"}.`
+                : "Nothing new to review right now."}
+            </p>
+            <Link
+              href={dashHref}
+              className="mt-6 inline-block rounded-full bg-brand-orangeFill px-6 py-2.5 text-sm font-semibold text-white transition hover:brightness-105"
+            >
+              Back to dashboard
+            </Link>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AlertBrowseButton({ dir, disabled, onClick }: { dir: "left" | "right"; disabled: boolean; onClick: () => void }) {
+  const Icon = dir === "left" ? ChevronLeft : ChevronRight;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={dir === "left" ? "Previous alert" : "Next alert"}
+      className={`inline-flex h-[26px] w-[26px] items-center justify-center rounded-full border border-white/20 text-white/75 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 ${
+        disabled ? "cursor-not-allowed opacity-40" : "hover:border-white/45 hover:text-white"
+      }`}
+    >
+      <Icon className="h-[13px] w-[13px]" />
+    </button>
+  );
+}
+
+function AlertCard({
+  item,
+  clientName,
+  detailHref,
+}: {
+  item: ReportItem;
+  clientName?: string;
+  detailHref: string;
+}) {
+  const parts = titleParts(item.title);
+  // "Sep 4 · 32d" for a future deadline; never a raw negative countdown. A past deadline
+  // reads "closed", a same-day one "today" (still winnable — federal cutoffs carry a time we
+  // don't store, mirroring isOverdue in report/shape.ts).
+  const d = item.deadlineDaysLeft;
+  const closes =
+    d === null
+      ? item.deadlineLabel
+      : d < 0
+        ? `${item.deadlineLabel} · closed`
+        : d === 0
+          ? `${item.deadlineLabel} · today`
+          : `${item.deadlineLabel} · ${d}d`;
+  const meta = [item.nofoNumber, item.role ? `${item.role} applicant` : null].filter(Boolean).join(" · ");
+  return (
+    <div
+      className="relative w-full max-w-[620px] overflow-visible rounded-[4px] bg-white"
+      style={{
+        borderTop: `4px solid ${BRAND.orange}`,
+        boxShadow:
+          "0 0 0 1px rgba(255,255,255,.05),0 40px 80px -24px rgba(0,0,0,.6),0 0 70px -18px rgba(228,118,31,.35)",
+      }}
+    >
+      {item.fitScore !== null && (
+        <div
+          className="absolute -top-[18px] right-[28px] flex h-[74px] w-[74px] flex-col items-center justify-center rounded-full border-[3px] border-brand-orange bg-brand-navy"
+          style={{ boxShadow: "0 10px 24px rgba(0,0,0,.35)" }}
+        >
+          <span className="font-serif text-[22px] font-bold leading-none tabular-nums text-white">{item.fitScore}</span>
+          <span className="mt-0.5 text-[8px] font-bold uppercase tracking-[.08em] text-brand-orange">score</span>
+        </div>
+      )}
+
+      <div className="pl-[30px] pr-[100px] pt-[26px]">
+        <div className="flex flex-wrap items-center gap-x-[9px] gap-y-1">
+          {item.category && (
+            <span className="inline-flex rounded-[2px] bg-brand-navy px-[9px] py-[3px] text-[10.5px] font-semibold tracking-[.03em] text-white">
+              {item.category}
+            </span>
+          )}
+          {meta && <span className="text-[11.5px] text-ink-subtle">{meta}</span>}
+        </div>
+        <h1 className="mt-3 font-serif text-[25px] font-bold leading-[1.2] tracking-[-.01em] text-brand-navy [text-wrap:pretty]">
+          {parts.map((p, i) => (
+            <Fragment key={i}>
+              {i > 0 && " "}
+              {p.em ? <em className="italic text-brand-orange">{p.text}</em> : p.text}
+            </Fragment>
+          ))}
+        </h1>
+        {item.funder && <p className="mt-[7px] text-[12.5px] text-ink-subtle">{item.funder}</p>}
+      </div>
+
+      <div className="mx-[30px] mt-[18px] flex items-center gap-3">
+        <span className="h-[3px] w-10 shrink-0 bg-brand-orange" />
+        <span className="h-px flex-1 bg-brand-navy/10" />
+      </div>
+
+      {item.purpose && (
+        <div className="px-[30px] pt-[14px]">
+          <p className="mb-[6px] text-[9.5px] font-bold uppercase tracking-[.12em] text-brand-orangeDeep">
+            Grant description
+          </p>
+          <p className="text-[13px] leading-[1.6] text-[#3d4756] [text-wrap:pretty]">{item.purpose}</p>
+        </div>
+      )}
+
+      <div className="mx-[30px] mt-4 grid grid-cols-5 gap-px overflow-hidden rounded-[4px] bg-brand-navy/[0.08]">
+        <AlertStat label="Total avail." value={item.totalAvailable || "—"} />
+        <AlertStat label="Award range" value={item.awardRange} />
+        <AlertStat label="Match req." value={item.matchRequired} />
+        <AlertStat label="Your role" value={item.role || "—"} />
+        <AlertStat label="Closes" value={closes} highlight />
+      </div>
+
+      {item.concept && (
+        <div className="mx-[30px] mt-4">
+          <ConceptProposalReveal concept={item.concept} clientName={clientName} variant="alert" />
+        </div>
+      )}
+
+      <div className="mx-[30px] mb-[22px] mt-3 flex justify-end">
+        {item.sourceUrl ? (
+          <a
+            href={item.sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-[12px] font-medium text-ink-muted transition hover:text-brand-navy"
+          >
+            Read full NOFO
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        ) : (
+          <Link
+            href={detailHref}
+            className="inline-flex items-center gap-1.5 text-[12px] font-medium text-ink-muted transition hover:text-brand-navy"
+          >
+            See the full breakdown
+            <ArrowUpRight className="h-3 w-3" />
+          </Link>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AlertStat({ label, value, highlight = false }: { label: string; value: string; highlight?: boolean }) {
+  return (
+    <div className={`px-3 py-[10px] ${highlight ? "bg-brand-orangeFill" : "bg-[#FBFAF8]"}`}>
+      <p className={`text-[9px] uppercase tracking-[.05em] ${highlight ? "text-white/75" : "text-ink-subtle"}`}>{label}</p>
+      <p
+        className={`mt-1 text-[12.5px] tabular-nums ${highlight ? "font-bold text-white" : "font-semibold text-brand-navy"}`}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function AlertAction({ kind, onClick, disabled }: { kind: "pass" | "interested"; onClick: () => void; disabled: boolean }) {
+  const interested = kind === "interested";
+  return (
+    <div className="flex flex-col items-center gap-[10px]">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={interested ? "Interested" : "Pass"}
+        className={`flex h-[60px] w-[60px] items-center justify-center rounded-full border-[1.5px] transition disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 ${
+          interested
+            ? "border-white/50 bg-brand-orangeFill hover:brightness-105"
+            : "border-white/40 bg-white/10 backdrop-blur-[6px] hover:bg-white/20"
+        }`}
+        style={interested ? { boxShadow: "0 10px 26px rgba(228,118,31,.5)" } : undefined}
+      >
+        {interested ? (
+          <Check className="h-6 w-6 text-white" strokeWidth={3} />
+        ) : (
+          <X className="h-[22px] w-[22px] text-white" />
+        )}
+      </button>
+      <span className={`text-[12.5px] ${interested ? "font-bold text-white" : "font-semibold text-white/75"}`}>
+        {interested ? "Interested" : "Pass"}
+      </span>
+    </div>
+  );
+}
+
+function AlertPassReason({
+  requireReason,
+  value,
+  onChange,
+  onCancel,
+  onConfirm,
+  disabled,
+}: {
+  requireReason?: boolean;
+  value: string;
+  onChange: (v: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="mt-[22px] w-full max-w-[620px] rounded-lg border border-white/15 bg-white p-4 shadow-overlay">
+      <p className="text-center text-[13px] font-medium text-brand-navy">
+        {requireReason
+          ? "Why pass? This is how we tune your matches — tell us what's off and we'll send fewer like it."
+          : "Why pass? (optional)"}
+      </p>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        rows={2}
+        autoFocus
+        placeholder="e.g. wrong geography, no capacity this cycle, not a fit"
+        className="mt-2.5 w-full rounded-lg border border-input bg-white px-3 py-2 text-sm outline-none focus:border-brand-navy/35"
+      />
+      <div className="mt-2.5 flex items-center justify-center gap-3">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-full border border-brand-navy/20 bg-white px-5 py-2 text-sm font-medium text-ink-muted transition hover:text-brand-navy"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={disabled || (requireReason && !value.trim())}
+          className="flex items-center gap-2 rounded-full bg-destructive px-6 py-2 text-sm font-semibold text-white shadow-soft transition hover:opacity-90 disabled:opacity-50"
+        >
+          <X className="h-4 w-4" />
+          Pass on this grant
+        </button>
       </div>
     </div>
   );

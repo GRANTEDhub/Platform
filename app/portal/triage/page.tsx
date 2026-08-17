@@ -1,7 +1,6 @@
 import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { SwipeDeck } from "@/components/report/swipe-deck";
-import { HubShell } from "@/components/layout/hub-background";
 import { toReportItems, withConcept, type ReportCardRow } from "@/lib/report/shape";
 import { getConceptProposalsByCardIds } from "@/lib/concept/store";
 
@@ -29,7 +28,7 @@ export default async function PortalTriage({ searchParams }: { searchParams: { c
   let query = supabase
     .from("review_cards")
     .select(
-      "id, grant_id, fit_score, proposed_role, decision, factor_scores, concept_synopsis, grants(title, funder, submission_deadline, award_range_min, award_range_max, award_range_is_estimate, focus_areas, total_funding, cost_share, geographic_eligibility, eligible_entity_types, description)",
+      "id, grant_id, fit_score, proposed_role, decision, factor_scores, concept_synopsis, grants(title, funder, fon, source_url, submission_deadline, award_range_min, award_range_max, award_range_is_estimate, focus_areas, total_funding, cost_share, geographic_eligibility, eligible_entity_types, description)",
     )
     .eq("client_id", org.clientId)
     .eq("decision", "pending")
@@ -51,24 +50,27 @@ export default async function PortalTriage({ searchParams }: { searchParams: { c
       : new Map();
   const items = withConcept(baseItems, tier, byCard);
 
+  // No HubShell: the alert redesign is full-bleed (road photo + navy scrim) and fills the
+  // portal <main> under the nav itself, so it provides its own backdrop rather than sitting in
+  // a max-width HubShell column.
   return (
-    <HubShell variant="texture">
-      <SwipeDeck
-        items={items}
-        detailBasePath="/portal/grants"
-        backHref="/portal/grants"
-        clientName={org.clientName}
-        // ?card= comes from the alert email: open on the grant we wrote to them about.
-        // A card they have already answered is not in `items`, so the deck falls back to
-        // the front of the queue rather than 404-ing an old link.
-        startCardId={searchParams?.card}
-        // Client portal: a Pass here is the client's calibration signal, so require the reason
-        // (matches the DecisionBar grant-report guard). Staff triage leaves it optional.
-        requireReason
-        // #12: turns on the branded rotating-logo transition after each decision. "/portal" is
-        // the client dashboard — where the deck routes once no alerts remain.
-        dashboardHref="/portal"
-      />
-    </HubShell>
+    <SwipeDeck
+      items={items}
+      detailBasePath="/portal/grants"
+      backHref="/portal/grants"
+      clientName={org.clientName}
+      // ?card= comes from the alert email: open on the grant we wrote to them about.
+      // A card they have already answered is not in `items`, so the deck falls back to
+      // the front of the queue rather than 404-ing an old link.
+      startCardId={searchParams?.card}
+      // Client portal: a Pass here is the client's calibration signal, so require the reason
+      // (matches the DecisionBar grant-report guard). Staff triage leaves it optional.
+      requireReason
+      // #12: turns on the branded rotating-logo transition after each decision. "/portal" is
+      // the client dashboard — where the deck routes once no alerts remain.
+      dashboardHref="/portal"
+      // Client Grant Alert redesign — the full-bleed immersive card. Client portal only.
+      presentation="alert"
+    />
   );
 }
