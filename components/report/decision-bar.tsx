@@ -19,6 +19,7 @@ export function DecisionBar({
   tier,
   pursuitPath = null,
   showPursuitPath = false,
+  intellEngineComingSoon = false,
 }: {
   cardId: string;
   decision: CardDecision;
@@ -29,10 +30,13 @@ export function DecisionBar({
   // pursuit chooser (IntellEngine / SME / in-house, migration 0061). Save-for-later
   // and Pass are unchanged. Absent on the staff view, which keeps plain Pursue.
   tier?: "premium" | "base";
-  // Forwarded to PursuitChooser: whether the IntellEngine path is offered. Server-resolved
-  // from pursuitClientAccessEnabled(); false hides that one option, leaving SME and
-  // in-house. Defaults false so a missing prop hides rather than exposes.
+  // Forwarded to PursuitChooser: whether the IntellEngine path is offered as a LIVE option.
+  // Server-resolved from pursuitClientAccessEnabled(); false hides the live option. Defaults false.
   showPursuitPath?: boolean;
+  // Forwarded to PursuitChooser: when the live option is off, show it as an inert "COMING SOON"
+  // card instead of omitting it (client soft-launch). The chooser only renders when `tier` is set
+  // (portal-only), so this never reaches staff. Defaults false.
+  intellEngineComingSoon?: boolean;
   pursuitPath?: PursuitPath | null;
 }) {
   const router = useRouter();
@@ -82,6 +86,7 @@ export function DecisionBar({
               tier={tier}
               variant="detail"
               showPursuitPath={showPursuitPath}
+              intellEngineComingSoon={intellEngineComingSoon}
             />
           ) : (
             <button

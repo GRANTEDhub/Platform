@@ -18,7 +18,12 @@ import {
   type DashReportRow,
   type DashReportMetrics,
 } from "@/components/clients/client-grant-report-card";
-import { ClientDraftProgress, type DashDraft, type DraftNext } from "@/components/clients/client-draft-progress";
+import {
+  ClientDraftProgress,
+  IntellEngineComingSoonPanel,
+  type DashDraft,
+  type DraftNext,
+} from "@/components/clients/client-draft-progress";
 import { ClientCommunityContext } from "@/components/clients/client-community-context";
 import { ClientActivity } from "@/components/clients/client-activity";
 import type { CommunityView } from "@/lib/clients/community";
@@ -127,6 +132,7 @@ export function ClientDashboard({
   isStaff,
   roadmapHref,
   intellEngineHref,
+  intellEngineComingSoon,
   hero,
   actionItems,
   pinnedRows,
@@ -149,6 +155,11 @@ export function ClientDashboard({
   // (IntellEngine). Renders a shortcut tile only when provided (client portal
   // passes it; the staff dashboard doesn't).
   intellEngineHref?: string;
+  // CLIENT-only soft-launch gate. When true (and no live href), the IntellEngine slot renders an
+  // inert "COMING SOON" tile instead of the live panel. Set from intellEngineComingSoon() by the
+  // portal page; the staff dashboard never passes it (defaults false), so staff always get the live
+  // panel via their unconditional intellEngineHref.
+  intellEngineComingSoon?: boolean;
   // The masthead — ClientMasthead on both sides, `variant` picking whose funnel it
   // states. Full-bleed and outside the body gutter: it is chrome continuous with the
   // command band, not content. Both callers pass one; there is no fallback hero any more.
@@ -227,6 +238,7 @@ export function ClientDashboard({
             attentionNote={attentionNote}
             roadmapHref={roadmapHref}
             intellEngineHref={intellEngineHref}
+            intellEngineComingSoon={intellEngineComingSoon}
             // The one place the actor changes COLOUR rather than content: the client-facing
             // stage palette is brand-only (see STAGE_PORTAL).
             variant={isStaff ? "console" : "portal"}
@@ -291,6 +303,7 @@ function ConsoleBody({
   attentionNote,
   roadmapHref,
   intellEngineHref,
+  intellEngineComingSoon,
   variant,
 }: {
   actionItems: DashActionItem[];
@@ -311,6 +324,7 @@ function ConsoleBody({
   attentionNote?: string | null;
   roadmapHref: string;
   intellEngineHref?: string;
+  intellEngineComingSoon?: boolean;
   variant: "console" | "portal";
 }) {
   return (
@@ -346,7 +360,7 @@ function ConsoleBody({
               rowsLabel={report.rowsLabel}
             />
           )}
-          {drafts && intellEngineHref && (
+          {drafts && intellEngineHref ? (
             <ClientDraftProgress
               variant="console"
               drafts={drafts.list}
@@ -354,7 +368,11 @@ function ConsoleBody({
               emptyNote={drafts.emptyNote}
               next={draftNext}
             />
-          )}
+          ) : intellEngineComingSoon ? (
+            // CLIENT soft-launch: no live href (flag off) but the slot shows the inert COMING SOON
+            // tile. Staff never reach this branch -- they always pass intellEngineHref.
+            <IntellEngineComingSoonPanel />
+          ) : null}
         </div>
       </div>
 
