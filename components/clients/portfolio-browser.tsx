@@ -114,8 +114,7 @@ export function PortfolioBrowser({
   const questionsWaiting = rows.reduce((n, r) => n + r.questions, 0);
   const emptyCount = quiet.filter((r) => r.emptyPipeline).length;
 
-  // Two views now: "action" shows only the action tier; "all" adds the quiet index beneath it.
-  const showAction = true;
+  // Two views now: the action tier always renders; "all" adds the quiet index beneath it.
   const showQuiet = filter === "all";
 
   return (
@@ -243,50 +242,48 @@ export function PortfolioBrowser({
             </p>
           ) : (
             <>
-              {showAction && (
-                <>
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pb-[11px]">
-                    <h2 className="font-serif text-[17px] font-bold text-brand-navy">Requires action</h2>
-                    <span className="inline-flex h-[19px] items-center rounded-full bg-brand-orangeFill px-2 text-[10.5px] font-bold tabular-nums text-white">
-                      {action.length}
-                    </span>
-                    <span aria-hidden="true" className="h-px flex-1 bg-brand-navy/20" />
-                    {/* The legend states the rule the split is made on, so the page
-                        explains itself rather than requiring you to infer the thresholds
-                        from which cards happen to be up here. */}
-                    <div className="flex flex-wrap items-center gap-3.5 text-[11.5px] text-ink-muted">
-                      <Key color={STAGE.triage.color}>Awaiting review</Key>
-                      <Key color={STAGE.client.color}>Deadline ≤ {DEADLINE_DAYS}d</Key>
-                      <Key color={STAGE.approved.color}>Question waiting</Key>
-                    </div>
-                  </div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pb-[11px]">
+                <h2 className="font-serif text-[17px] font-bold text-brand-navy">Requires action</h2>
+                <span className="inline-flex h-[19px] items-center rounded-full bg-brand-orangeFill px-2 text-[10.5px] font-bold tabular-nums text-white">
+                  {action.length}
+                </span>
+                <span aria-hidden="true" className="h-px flex-1 bg-brand-navy/20" />
+                {/* The legend states the rule the split is made on, so the page
+                    explains itself rather than requiring you to infer the thresholds
+                    from which cards happen to be up here. */}
+                <div className="flex flex-wrap items-center gap-3.5 text-[11.5px] text-ink-muted">
+                  <Key color={STAGE.triage.color}>Awaiting review</Key>
+                  <Key color={STAGE.client.color}>Deadline ≤ {DEADLINE_DAYS}d</Key>
+                  <Key color={STAGE.approved.color}>Question waiting</Key>
+                </div>
+              </div>
 
-                  {action.length === 0 ? (
-                    <p className="rounded-sharp border border-edge bg-white/40 px-4 py-3 text-[12.5px] text-ink-muted">
-                      Nothing needs you right now — no client has a grant awaiting review or a deadline inside the window.
-                    </p>
-                  ) : (
-                    <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:auto-rows-[214px] xl:grid-cols-4">
-                      {action.map((r) => (
-                        <ActionCard key={r.id} row={r} />
-                      ))}
-                      {/* Closes the grid, and ONLY when it actually closes it: rendered
-                          when the cards leave a gap in the last row of the 4-up layout,
-                          never when they fill it exactly (which would strand this alone
-                          on a fresh row and read as a missing card). */}
-                      {action.length % 4 !== 0 && (
-                        <div className="hidden flex-col items-center justify-center gap-2 rounded-sharp border border-edge bg-white/[0.42] px-[18px] xl:flex">
-                          <p className="font-serif text-[15px] font-bold text-ink-muted">And that&rsquo;s all</p>
-                          <p className="text-center text-[11.5px] leading-[1.5] text-ink-muted">
-                            {quiet.length > 0
-                              ? `The other ${quiet.length} are settled — see them under All`
-                              : "Everyone else is settled"}
-                          </p>
-                        </div>
-                      )}
+              {action.length === 0 ? (
+                <p className="rounded-sharp border border-edge bg-white/40 px-4 py-3 text-[12.5px] text-ink-muted">
+                  Nothing needs you right now — no client has a grant awaiting review or a deadline inside the window.
+                </p>
+              ) : (
+                <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:auto-rows-[214px] xl:grid-cols-4">
+                  {action.map((r) => (
+                    <ActionCard key={r.id} row={r} />
+                  ))}
+                  {/* Closes the grid, and ONLY when it actually closes it: rendered
+                      when the cards leave a gap in the last row of the 4-up layout,
+                      never when they fill it exactly (which would strand this alone
+                      on a fresh row and read as a missing card). */}
+                  {action.length % 4 !== 0 && (
+                    <div className="hidden flex-col items-center justify-center gap-2 rounded-sharp border border-edge bg-white/[0.42] px-[18px] xl:flex">
+                      <p className="font-serif text-[15px] font-bold text-ink-muted">And that&rsquo;s all</p>
+                      <p className="text-center text-[11.5px] leading-[1.5] text-ink-muted">
+                        {quiet.length === 0
+                          ? "Everyone else is settled"
+                          : showQuiet
+                            ? `The other ${quiet.length} are settled, listed below`
+                            : `The other ${quiet.length} are settled — see them under All`}
+                      </p>
                     </div>
                   )}
-                </>
+                </div>
               )}
 
               {showQuiet && (
