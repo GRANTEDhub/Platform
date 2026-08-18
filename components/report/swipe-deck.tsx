@@ -26,10 +26,6 @@ import type { ReportItem } from "@/lib/report/shape";
 
 const THRESHOLD = 90;
 const ROAD_BG = "/login-bg.jpg";
-// The navy scrim over the road photo on the client Grant Alert view (`presentation="alert"`).
-// Design's "blue filter" is our brand navy #0B1E3A — darker at top and bottom so the white
-// card and the top-bar / button chrome stay legible over a busy photo.
-const ALERT_SCRIM = "linear-gradient(180deg,rgba(11,30,58,.82),rgba(11,30,58,.7) 55%,rgba(11,30,58,.88))";
 
 export function SwipeDeck({
   items,
@@ -457,36 +453,14 @@ function CardFace({
       {/* decision controls — the ONLY way to decide; browsing never decides */}
       <div className="shrink-0 border-t border-brand-navy/[0.06] px-6 py-4">
         {passing ? (
-          <div className="space-y-2.5">
-            <p className="text-center text-[13px] font-medium text-brand-navy">
-              {requireReason
-                ? "Why pass? This is how we tune your matches — tell us what's off and we'll send fewer like it."
-                : "Why pass? (optional)"}
-            </p>
-            <textarea
+          <div>
+            <PassReasonStep
+              requireReason={requireReason}
               value={passReason}
-              onChange={(e) => setPassReason(e.target.value)}
-              rows={2}
-              autoFocus
-              placeholder="e.g. wrong geography, no capacity this cycle, not a fit"
-              className="w-full rounded-lg border border-input bg-white px-3 py-2 text-sm outline-none focus:border-brand-navy/35"
+              onChange={setPassReason}
+              onCancel={() => setPassing(false)}
+              onConfirm={() => onArchive(passReason)}
             />
-            <div className="flex items-center justify-center gap-3">
-              <button
-                onClick={() => setPassing(false)}
-                className="rounded-full border border-brand-navy/20 bg-white px-5 py-2 text-sm font-medium text-muted-foreground transition hover:text-brand-navy"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => onArchive(passReason)}
-                disabled={requireReason && !passReason.trim()}
-                className="flex items-center gap-2 rounded-full bg-destructive px-6 py-2 text-sm font-semibold text-white shadow-soft transition hover:opacity-90 disabled:opacity-50"
-              >
-                <X className="h-4 w-4" />
-                Pass on this grant
-              </button>
-            </div>
           </div>
         ) : (
           <>
@@ -596,7 +570,7 @@ function AlertDeck({
         className="pointer-events-none absolute inset-0"
         style={{ backgroundImage: `url('${ROAD_BG}')`, backgroundSize: "cover", backgroundPosition: "center" }}
       />
-      <div aria-hidden className="pointer-events-none absolute inset-0" style={{ background: ALERT_SCRIM }} />
+      <div aria-hidden className="pointer-events-none absolute inset-0" style={{ background: BRAND.alertScrim }} />
 
       <div className="relative flex min-h-full flex-col items-center justify-center px-5 py-10">
         {current ? (
@@ -720,8 +694,7 @@ function AlertCard({
       className="relative w-full max-w-[620px] overflow-visible rounded-[4px] bg-white"
       style={{
         borderTop: `4px solid ${BRAND.orange}`,
-        boxShadow:
-          "0 0 0 1px rgba(255,255,255,.05),0 40px 80px -24px rgba(0,0,0,.6),0 0 70px -18px rgba(228,118,31,.35)",
+        boxShadow: `0 0 0 1px rgba(255,255,255,.05),0 40px 80px -24px rgba(0,0,0,.6),0 0 70px -18px ${BRAND.orangeGlowCard}`,
       }}
     >
       {item.fitScore !== null && (
@@ -834,7 +807,7 @@ function AlertAction({ kind, onClick, disabled }: { kind: "pass" | "interested";
             ? "border-white/50 bg-brand-orangeFill hover:brightness-105"
             : "border-white/40 bg-white/10 backdrop-blur-[6px] hover:bg-white/20"
         }`}
-        style={interested ? { boxShadow: "0 10px 26px rgba(228,118,31,.5)" } : undefined}
+        style={interested ? { boxShadow: `0 10px 26px ${BRAND.orangeGlowAction}` } : undefined}
       >
         {interested ? (
           <Check className="h-6 w-6 text-white" strokeWidth={3} />
@@ -849,23 +822,27 @@ function AlertAction({ kind, onClick, disabled }: { kind: "pass" | "interested";
   );
 }
 
-function AlertPassReason({
+// The "Why pass?" reason step — shared by the classic CardFace footer and the alert view's
+// floating panel so the copy, placeholder and required-reason gating can't drift between the
+// two presentations; only the wrapper around it differs. requireReason locks the confirm until
+// a non-empty reason is entered (the client-portal calibration signal).
+function PassReasonStep({
   requireReason,
   value,
   onChange,
   onCancel,
   onConfirm,
-  disabled,
+  disabled = false,
 }: {
   requireReason?: boolean;
   value: string;
   onChange: (v: string) => void;
   onCancel: () => void;
   onConfirm: () => void;
-  disabled: boolean;
+  disabled?: boolean;
 }) {
   return (
-    <div className="mt-[22px] w-full max-w-[620px] rounded-lg border border-white/15 bg-white p-4 shadow-overlay">
+    <>
       <p className="text-center text-[13px] font-medium text-brand-navy">
         {requireReason
           ? "Why pass? This is how we tune your matches — tell us what's off and we'll send fewer like it."
@@ -897,6 +874,36 @@ function AlertPassReason({
           Pass on this grant
         </button>
       </div>
+    </>
+  );
+}
+
+// The alert view's floating wrapper around the shared reason step (dark scrim behind it).
+function AlertPassReason({
+  requireReason,
+  value,
+  onChange,
+  onCancel,
+  onConfirm,
+  disabled,
+}: {
+  requireReason?: boolean;
+  value: string;
+  onChange: (v: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="mt-[22px] w-full max-w-[620px] rounded-lg border border-white/15 bg-white p-4 shadow-overlay">
+      <PassReasonStep
+        requireReason={requireReason}
+        value={value}
+        onChange={onChange}
+        onCancel={onCancel}
+        onConfirm={onConfirm}
+        disabled={disabled}
+      />
     </div>
   );
 }

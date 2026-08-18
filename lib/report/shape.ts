@@ -270,7 +270,11 @@ export function toReportItem(card: ReportCardRow, side: ReadSide): ReportItem {
     programIdea: toPlain(card.concept_synopsis, 220),
     category: (g?.focus_areas ?? [])[0] ?? null,
     nofoNumber: g?.fon ?? null,
-    sourceUrl: g?.source_url ?? null,
+    // "manual-paste" is the ingest sentinel for a grant with no real source URL (see
+    // app/api/grants/ingest). Every other source_url consumer filters it; do the same here so
+    // a "Read full NOFO" link never points at the literal string (it falls back to the detail
+    // page instead).
+    sourceUrl: g?.source_url && g.source_url !== "manual-paste" ? g.source_url : null,
     smeReleased: !!card.sme_released_at,
     pursuitPath: card.pursuit_path ?? null,
     read: !!(side === "staff" ? card.staff_read_at : card.client_read_at),

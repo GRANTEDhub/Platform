@@ -35,6 +35,13 @@ export const BRAND = {
   // rather than inline at the call site so the glow cannot drift into a second orange:
   // the gradient geometry belongs to the component, the COLOUR belongs to this file.
   orangeGlow: "rgba(228,118,31,0.32)",
+  // The client Grant Alert view's two orange glows (card halo + Interested-button lift) and
+  // its navy scrim over the road photo — named here for the SAME reason orangeGlow is: the
+  // shadow/gradient geometry belongs to the component, the colour belongs to this file, so a
+  // call-site alpha can't drift into a third and fourth orange. Navy = the locked brand navy.
+  orangeGlowCard: "rgba(228,118,31,0.35)",
+  orangeGlowAction: "rgba(228,118,31,0.5)",
+  alertScrim: "linear-gradient(180deg,rgba(11,30,58,.82),rgba(11,30,58,.7) 55%,rgba(11,30,58,.88))",
   // Brand orange at the three alphas the GrantBot panel needs, named here for exactly the
   // reason `orangeGlow` is: an alpha invented at a call site is how a second orange gets
   // into the product.
