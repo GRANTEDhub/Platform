@@ -8,10 +8,11 @@ import type { Pipeline, PipelineStageKey } from "@/lib/clients/pipeline";
 // staff look at first should be readable in one place and changeable without touching
 // layout.
 //
-// THE THRESHOLDS ARE THE DESIGN'S, stated in its own legend: alerts >= 6, deadline <= 30
-// days, question waiting. They are CONFIG rather than literals because they will get
-// argued with — six is a judgement about how big a triage backlog has to be before it is
-// a problem, not a fact — and losing that argument should not cost a deploy.
+// THE REQUIRES-ACTION RULE: a client is asking for something if a grant is pending our
+// review (ANY waiting card), a deadline is inside DEADLINE_DAYS, or a question is waiting.
+// The deadline window is CONFIG (env), since it will get argued with. The alert side is no
+// longer a threshold — one waiting card is enough; ALERTS_THRESHOLD survives only as the
+// backlog size at which the card's count reads as hot (visual only).
 
 // Read a positive integer from the environment, falling back to the design's value.
 //
@@ -23,7 +24,10 @@ function threshold(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
-// Cards awaiting review before a client counts as backlogged.
+// Backlog size at which a client's alert count reads as HOT — a purely visual emphasis on
+// the action card (see alertsHot in portfolio-browser), NOT the requires-action gate. A
+// single waiting card already puts a client in the action group (see actionReason); this is
+// only "this one is piling up." Kept as config since six is a judgement that gets argued with.
 export const ALERTS_THRESHOLD = threshold("PORTFOLIO_ALERTS_THRESHOLD", 6);
 // Days to the nearest deadline before the clock counts as running.
 export const DEADLINE_DAYS = threshold("PORTFOLIO_DEADLINE_DAYS", 30);
@@ -55,10 +59,17 @@ export interface PortfolioRollup {
 
 // Which reason, if any, puts this client in the requires-action group. Null means the
 // client is quiet and belongs in the index below.
+//
+// "Requires action" means there is something for US to do: a grant pending our review in
+// the console (ANY waiting card — alerts >= 1), a running deadline, or a client question.
+// It formerly gated the alert side on alerts >= ALERTS_THRESHOLD (6), which is a BACKLOG
+// rule, not an action rule — so a client with 1–5 grants still pending our review read as
+// "no action," which is exactly wrong. One waiting card is enough now; ALERTS_THRESHOLD is
+// only the hot-emphasis threshold on the card, never the split.
 export function actionReason(r: PortfolioRollup): ActionReason | null {
   if (r.questions > 0) return "question";
   if (r.deadlineDays !== null && r.deadlineDays <= DEADLINE_DAYS) return "deadline";
-  if (r.alerts >= ALERTS_THRESHOLD) return "alerts";
+  if (r.alerts >= 1) return "alerts";
   return null;
 }
 
