@@ -43,10 +43,14 @@ interface DocCandidate {
 const POSITIVE = /\b(nofo|notice of funding|full announcement|funding opportunity|solicitation|foa)\b/i;
 const NEGATIVE = /application guide|how to apply|checklist|worksheet|pappg|sf-?424|user guide|terms and conditions/i;
 
-function getExt(nameOrUrl: string): string {
-  const m = nameOrUrl.toLowerCase().match(/\.([a-z0-9]+)(?:\?|#|$)/g);
-  if (!m) return "";
-  return m[m.length - 1].replace(/[^a-z0-9]/g, "");
+// Read the file extension from the PATH only. A URL's ?query/#fragment can carry a later
+// dotted token (e.g. `nofo.pdf?redirect=foo.html`) that would otherwise win as the
+// "extension" and route a real PDF to the wrong parser -- now that docLinksFromHtml preserves
+// query strings, strip the query/fragment before reading the extension. EXPORTED for testing.
+export function getExt(nameOrUrl: string): string {
+  const path = nameOrUrl.toLowerCase().split(/[?#]/, 1)[0];
+  const m = path.match(/\.([a-z0-9]+)$/);
+  return m ? m[1] : "";
 }
 
 // Structured attachments + per-competition instruction files.

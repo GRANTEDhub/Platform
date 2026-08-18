@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { classifyText, docLinksFromHtml } from "./nofo";
+import { classifyText, docLinksFromHtml, getExt } from "./nofo";
 
 // Behaviour lock for the NOFO validator (classifyText) and the agency-page link
 // extractor (docLinksFromHtml). These are the two levers that decide whether a real
@@ -94,5 +94,24 @@ describe("docLinksFromHtml", () => {
 
   it("does not match a non-pdf/docx extension (.pdfx)", () => {
     expect(docLinksFromHtml('<a href="/foo.pdfx">x</a> <a href="/bar.zip">y</a>', base)).toEqual([]);
+  });
+});
+
+describe("getExt", () => {
+  it("reads the extension from a plain filename or path", () => {
+    expect(getExt("NOFO.pdf")).toBe("pdf");
+    expect(getExt("https://agency.gov/files/rfa.docx")).toBe("docx");
+  });
+
+  it("ignores a ?query/#fragment carrying a later dotted token (the real PDF wins)", () => {
+    // Regression: docLinksFromHtml now preserves the query, so getExt must not let a decoy
+    // token in the query (redirect=foo.html) beat the actual path extension.
+    expect(getExt("https://agency.gov/dl/nofo.pdf?redirect=foo.html")).toBe("pdf");
+    expect(getExt("nofo.pdf?token=abc123")).toBe("pdf");
+    expect(getExt("solicitation.docx#page=3")).toBe("docx");
+  });
+
+  it("returns empty string when the path has no extension", () => {
+    expect(getExt("https://agency.gov/funding/program")).toBe("");
   });
 });
