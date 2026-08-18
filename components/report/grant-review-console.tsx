@@ -1,9 +1,11 @@
 import Link from "next/link";
-import { ArrowLeft, Check, ExternalLink } from "lucide-react";
+import { ArrowLeft, Check, ExternalLink, Puzzle } from "lucide-react";
 import { BRAND, INK, RATING } from "@/lib/brand";
 import { sanitizeRichText } from "@/lib/sanitize/html";
 import { RationaleHoverPopover } from "@/components/report/rationale-hover";
+import { EmphasizedTitle } from "@/components/report/emphasized-title";
 import { collapseDuplicatedBlock, previewHtml } from "@/lib/grants/description";
+import { splitTrailingParenthetical } from "@/lib/report/title";
 import type { FitFactorView, ReviewFactor } from "@/lib/report/fit-factors";
 import type { EligibilityVerdict } from "@/lib/intellengine/eligibility";
 import { ALLOWABLE_USES_FALLBACK, type AllowableUses } from "@/lib/grants/allowable-uses";
@@ -85,7 +87,10 @@ export function GrantReviewConsole({
   // "Match surfaced Jul 28 · 9 more awaiting review" — assembled by the caller, which
   // owns both facts. Null when neither is known.
   queueLine: React.ReactNode | null;
-  tags: string[];
+  // The role tag (Prime / Partner) is styled as the navy pill; focus-area tags are the light
+  // neutral chip. Carried as an explicit flag rather than "tags[0] is the role" — proposed_role
+  // is nullable, and an index rule painted a focus area as the role when it was absent.
+  tags: { label: string; role: boolean }[];
   agencyLine: string | null;
   title: string;
   // The programme narrative, parsed from the NOFO. Not a one-liner: what the funder is
@@ -224,7 +229,7 @@ function OverviewCard({
   eligibility,
   allowableUses,
 }: {
-  tags: string[];
+  tags: { label: string; role: boolean }[];
   agencyLine: string | null;
   title: string;
   summary: string | null;
@@ -235,106 +240,137 @@ function OverviewCard({
   return (
     <section className={`shrink-0 ${CARD} px-5 pb-[15px] pt-4`}>
       <div className="flex flex-wrap items-center gap-2">
+        {/* The role tag (Prime / Partner) is the navy pill; focus-area tags are the light
+            neutral chip. Keyed on the role flag, NOT index — proposed_role is nullable, so an
+            index rule painted a focus area navy when the role was absent. Conformed off the
+            mock's teal category pill: teal is STAGE.approved and means one pipeline stage,
+            never a decorative category colour. */}
         {tags.map((t) => (
           <span
-            key={t}
-            className="rounded-sharp bg-brand-navy/[0.06] px-2 py-[3px] text-[10.5px] font-semibold capitalize text-ink-muted"
+            key={t.label}
+            className={
+              t.role
+                ? "rounded-full bg-brand-navy px-[11px] py-1 text-[10.5px] font-bold tracking-[0.02em] text-white"
+                : "rounded-full bg-brand-navy/[0.06] px-[11px] py-1 text-[10.5px] font-semibold capitalize text-brand-navy"
+            }
           >
-            {t}
+            {t.label}
           </span>
         ))}
-        {agencyLine && <span className="ml-auto text-[11.5px] text-ink-muted">{agencyLine}</span>}
+        {agencyLine && <span className="ml-auto text-[11.5px] text-ink-subtle">{agencyLine}</span>}
       </div>
 
-      {/* Two lines at 22px is the budget. Three pushes the meta row down and the
-          rationale card's factor block is what gets clipped — see its note. */}
-      <h1 className="mt-[9px] font-serif text-[22px] font-bold leading-[1.25] tracking-[-0.01em] text-brand-navy [text-wrap:pretty]">
-        {title}
-      </h1>
+      {/* Two lines at 22px is the budget. Three pushes the meta row down and the fit-factors
+          block is what gets clipped — see its note. The distinctive word is italic-orange
+          (titleParts) and a trailing acronym like "(SDS)" is de-emphasised. */}
+      <GrantTitle title={title} />
 
       <ProgrammeSummary raw={summary} />
 
       <AllowableUsesBlock value={allowableUses} />
 
-      {meta.length > 0 && (
-        <div className="mt-[13px] flex flex-wrap items-start gap-y-3 border-t border-hairline-strong pt-3">
-          {meta.map((m) => (
-            // pr-4 and a 2-line clamp, because period_of_performance is free text and can
-            // run long ("Up to 5 years (expected start 9/30/2026, end 9/29/2031)"). Without
-            // the gutter a wrapped value ran straight into the next cell's figure, so
-            // "Awards expected 91" read as part of the term.
-            // The cell keeps the SAME flex sizing whatever its tone — the tint goes on an
-            // inner wrapper instead. Painting this div meant the fill inherited flex-1 and
-            // ran the full width of the cell's basis, so a short date sat in a red band
-            // stretching to the next column and read as a broken layout rather than a flag.
-            <div key={m.label} className="min-w-[110px] flex-1 pr-4">
-              {m.tone === "danger" ? (
-                // inline-block so it hugs the two lines it contains. Filled rather than
-                // outlined: an outline at this size reads as a focus ring, and the cell has
-                // to win against four neighbours at the same weight.
-                <span
-                  className="inline-block rounded-sharp px-2 py-1"
-                  style={{ backgroundColor: BRAND.reject }}
-                >
-                  {/* white/90, not the /55–/72 the ink surfaces use for an eyebrow: on this
-                      fill those land at 3.6–3.9:1 and this is 10px bold uppercase, the
-                      worst case for it. /90 is 4.72:1. Case and tracking carry the
-                      hierarchy here, not opacity. */}
-                  <span className={`block ${EYEBROW} !text-white/90`}>{m.label}</span>
-                  <span className="mt-[3px] block text-[14px] font-semibold tabular-nums text-white">
-                    {m.value}
-                  </span>
-                </span>
-              ) : (
-                <>
-                  <p className={EYEBROW}>{m.label}</p>
-                  <p
-                    className="mt-[5px] line-clamp-2 text-[14px] font-semibold tabular-nums text-brand-navy"
-                    title={m.value}
-                  >
-                    {m.value}
-                  </p>
-                </>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+      <MetaTiles meta={meta} />
 
-      {/* ELIGIBILITY FOLDS IN HERE rather than getting a card of its own. It is a
-          property of the grant-for-this-client, read once on the way to a decision — a
-          separate box gave it the same weight as the decision itself. */}
-      <div className="mt-[13px] border-t border-hairline-strong pt-3">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <p className={EYEBROW}>Eligibility</p>
-          <EligibilityChip verdict={eligibility} />
-          {eligibility.matchedType && (
-            <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-muted" title={eligibility.matchedType}>
-              as {eligibility.matchedType.replace(/\.$/, "").toLowerCase()}
-            </span>
-          )}
-          {eligibility.eligibleTypes.length > 1 && (
-            <span
-              className="ml-auto shrink-0 text-[11.5px] font-semibold text-ink-muted"
-              title={eligibility.eligibleTypes.join(" · ")}
+      <EligibilityCallout eligibility={eligibility} />
+    </section>
+  );
+}
+
+// Grant title — the distinctive word italic-orange, a trailing acronym de-emphasised (grey).
+function GrantTitle({ title }: { title: string }) {
+  const { head, tail } = splitTrailingParenthetical(title);
+  return (
+    <h1 className="mt-[9px] font-serif text-[22px] font-bold leading-[1.22] tracking-[-0.01em] text-brand-navy [text-wrap:pretty]">
+      <EmphasizedTitle text={head} />
+      {tail && <span className="font-normal text-ink-subtle"> {tail}</span>}
+    </h1>
+  );
+}
+
+// The facts strip as bordered tiles. Deadline is the accent tile (navy, orange value, a faint
+// orange bloom), placed LAST — the one time-critical fact. It keeps the locked danger
+// treatment: an overdue deadline (tone="danger") fills red and wins over the navy accent,
+// because that is the single fact that invalidates the whole page. period_of_performance can
+// run long, so values clamp to two lines with the full text on hover.
+function MetaTiles({ meta }: { meta: ReviewMeta[] }) {
+  if (meta.length === 0) return null;
+  const isDeadline = (m: ReviewMeta) => m.label.trim().toLowerCase() === "deadline";
+  const ordered = [...meta.filter((m) => !isDeadline(m)), ...meta.filter(isDeadline)];
+  return (
+    <div className="mt-[11px] grid grid-cols-2 gap-1.5 border-t border-hairline-strong pt-[10px] sm:grid-cols-3 lg:grid-cols-5">
+      {ordered.map((m) => {
+        const overdue = m.tone === "danger";
+        const accent = isDeadline(m) && !overdue;
+        return (
+          <div
+            key={m.label}
+            className={`relative overflow-hidden rounded-sharp border px-[12px] py-[8px] ${
+              overdue || accent ? "border-transparent" : "border-edge bg-brand-cream"
+            }`}
+            style={overdue ? { backgroundColor: BRAND.reject } : accent ? { backgroundColor: BRAND.navy } : undefined}
+          >
+            {accent && (
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute -right-5 -top-6 h-[70px] w-[70px] rounded-full"
+                style={{ background: `radial-gradient(circle, ${BRAND.orangeGlow}, transparent 70%)` }}
+              />
+            )}
+            {/* white/90 on the red/navy fills, not the /55–/72 the ink surfaces use: at 10px
+                bold uppercase those land near 3.6:1, /90 clears AA. */}
+            <p className={`relative ${EYEBROW} ${overdue ? "!text-white/90" : accent ? "!text-white/60" : ""}`}>
+              {m.label}
+            </p>
+            <p
+              className={`relative mt-1 line-clamp-2 font-serif text-[15px] font-bold tabular-nums ${
+                overdue ? "text-white" : accent ? "" : "text-brand-navy"
+              }`}
+              style={accent ? { color: BRAND.orange } : undefined}
+              title={m.value}
             >
-              All {eligibility.eligibleTypes.length} entity types
-            </span>
-          )}
-        </div>
-        {/* The limits worth checking, verbatim from the NOFO. Never paraphrased: an
-            eligibility exclusion restated in our own words is a legal claim we did not
-            make. Absent when the extraction found none. */}
-        {(eligibility.excluded || eligibility.reasons.length > 0) && (
-          <p className="mt-2 line-clamp-2 text-[12px] leading-[1.5] text-ink-muted">
-            <strong className="font-semibold" style={{ color: BRAND.orangeDeep }}>
-              Limits to check:{" "}
-            </strong>
-            {eligibility.excluded ?? eligibility.reasons[0]}
-          </p>
+              {m.value}
+            </p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Eligibility, folded into the grant box as a neutral-tinted callout (conformed off the mock's
+// teal box — teal is STAGE.approved and must not read as decoration here). The chip is already
+// neutral, not green (a keyword match against NOFO prose does not establish more than that).
+// "Limits to check:" is verbatim from the NOFO — never paraphrased, since an exclusion restated
+// in our words is a legal claim we did not make.
+function EligibilityCallout({ eligibility }: { eligibility: EligibilityVerdict }) {
+  const hasLimits = eligibility.excluded || eligibility.reasons.length > 0;
+  return (
+    <div className="mt-[10px] rounded-sharp border border-edge bg-brand-cream/60 px-4 py-[9px]">
+      <div className="flex flex-wrap items-center gap-2.5">
+        <EligibilityChip verdict={eligibility} />
+        {eligibility.matchedType && (
+          <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-muted" title={eligibility.matchedType}>
+            as {eligibility.matchedType.replace(/\.$/, "").toLowerCase()}
+          </span>
+        )}
+        {eligibility.eligibleTypes.length > 1 && (
+          <span
+            className="ml-auto shrink-0 text-[11.5px] font-semibold text-ink-subtle"
+            title={eligibility.eligibleTypes.join(" · ")}
+          >
+            All {eligibility.eligibleTypes.length} entity types
+          </span>
         )}
       </div>
-    </section>
+      {hasLimits && (
+        <p className="mt-2 line-clamp-2 text-[12px] leading-[1.5] text-ink-muted">
+          <strong className="font-semibold" style={{ color: BRAND.orangeDeep }}>
+            Limits to check:{" "}
+          </strong>
+          {eligibility.excluded ?? eligibility.reasons[0]}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -349,10 +385,10 @@ function ProgrammeSummary({ raw }: { raw: string | null }) {
   if (!raw?.trim()) return null;
   const clean = sanitizeRichText(collapseDuplicatedBlock(raw));
   if (!clean.trim()) return null;
-  const { html } = previewHtml(clean, 80);
+  const { html } = previewHtml(clean, 58);
   return (
     <div
-      className="mt-2.5 space-y-2 text-[13px] leading-[1.6] text-ink-muted [text-wrap:pretty] [&_li]:ml-4 [&_li]:list-disc [&_strong]:font-semibold [&_strong]:text-brand-navy"
+      className="mt-2 space-y-2 text-[13px] leading-[1.55] text-ink-muted [text-wrap:pretty] [&_li]:ml-4 [&_li]:list-disc [&_strong]:font-semibold [&_strong]:text-brand-navy"
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );
@@ -382,21 +418,28 @@ function AllowableUsesBlock({ value }: { value: AllowableUses | null }) {
 
   return (
     <div className="mt-[13px] border-t border-hairline-strong pt-3">
-      <h2 className="text-[11px] font-semibold uppercase tracking-[0.07em] text-ink-muted">Allowable uses of funds</h2>
+      {/* orange rule + orangeDeep label, matching the mock. The check icons are navy, not the
+          mock's teal (STAGE.approved) — a "you may spend on this" tick is not a pipeline stage. */}
+      <div className="flex items-center gap-3">
+        <span aria-hidden="true" className="h-[3px] w-9 shrink-0 bg-brand-orange" />
+        <h2 className="text-[10px] font-bold uppercase tracking-[0.12em]" style={{ color: BRAND.orangeDeep }}>
+          Allowable uses of funds
+        </h2>
+      </div>
       {value.items.length === 0 ? (
         <p className="mt-2 text-[13px] leading-[1.6] text-ink-muted">{ALLOWABLE_USES_FALLBACK}</p>
       ) : (
-        <ul className="mt-2 space-y-[5px]">
+        <ul className="mt-[9px] space-y-[5px]">
           {value.items.map((item) => (
             <li
               key={item.line}
-              className="flex gap-2 text-[13px] leading-[1.55] text-ink-muted [text-wrap:pretty]"
+              className="flex items-start gap-2.5 text-[13px] leading-[1.45] text-ink-muted [text-wrap:pretty]"
               // The verbatim NOFO span this line came from. Absent only on rows written
               // before quotes were stored, so the attribute is conditional rather than an
               // empty tooltip.
               title={item.quote || undefined}
             >
-              <span aria-hidden="true" className="mt-[7px] h-[3px] w-[3px] shrink-0 rounded-full bg-brand-orange" />
+              <Check className="mt-[2px] h-3.5 w-3.5 shrink-0 text-brand-navy" aria-hidden="true" />
               <span className="min-w-0">{item.line}</span>
             </li>
           ))}
@@ -435,181 +478,134 @@ function RationaleCard({
   const hasProse = rationale.lead || rationale.blocking || rationale.mitigation;
   return (
     <section className={`flex min-h-0 flex-1 flex-col overflow-hidden ${CARD}`}>
-      <div className="flex shrink-0 items-center gap-2.5 px-5 pb-[11px] pt-[13px]">
-        <h2 className="font-serif text-[16px] font-bold text-brand-navy">Match rationale</h2>
-        <span className="ml-auto text-[11px] text-ink-muted">Why this grant fits</span>
+      <div className="flex shrink-0 items-center gap-3 px-5 pb-3 pt-[14px]">
+        {/* Icon tile conformed off the mock's teal circle — teal is STAGE.approved, not chrome. */}
+        <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-brand-navy/[0.06]">
+          <Puzzle className="h-4 w-4 text-brand-navy" aria-hidden="true" />
+        </span>
+        <h2 className="font-serif text-[17px] font-bold text-brand-navy">Fit factors</h2>
+        <span className="ml-auto rounded-full bg-brand-navy/[0.06] px-3 py-1 text-[11px] font-semibold text-brand-navy">
+          Why this grant fits
+        </span>
       </div>
 
-      {hasProse && (
-        <div className="shrink-0 px-5 pb-[13px]">
-          <p className="text-[13px] leading-[1.65] text-ink-muted [text-wrap:pretty]">
+      {/* THE FLEXIBLE, SCROLLABLE MIDDLE — rationale on the left, the factor table on the right.
+          overflow-y-auto is the safety valve, and STILL LOAD-BEARING: this screen may not scroll
+          the PAGE, but a sparse record can push the table past its budget. The unscored branch and
+          any insufficient_data row keep their reason on the hover pop-out (portal, no layout cost)
+          + native title + sr-only, rather than the old always-inline paragraph — the mock's compact
+          table has no room for inline reasons, and the primary rationale is right here on the left.
+          THE PAGE'S ONE ARGUMENT LIVES HERE: the bold blocking sentence in the prose, and — in
+          the table — the weak factor's orange bar standing out against the navy strong bars. Do
+          not un-bold the sentence. */}
+      <div className="flex min-h-0 flex-1 gap-5 overflow-y-auto px-5 pb-2">
+        {hasProse && (
+          <p className="min-w-0 flex-[1.3] text-[13px] leading-[1.65] text-ink-muted [text-wrap:pretty]">
             {rationale.lead && <>{rationale.lead} </>}
-            {/* The blocking sentence, in bold, in navy. It is the engine's own rationale
-                string for the weakest factor — not a rewrite of it, so the page cannot
-                assert a cap the score does not actually rest on. */}
+            {/* The blocking sentence, in bold, in navy — the engine's own rationale string for
+                the weakest factor, not a rewrite, so the page cannot assert a cap the score does
+                not actually rest on. */}
             {rationale.blocking && (
               <strong className="font-semibold text-brand-navy">{rationale.blocking} </strong>
             )}
             {rationale.mitigation}
           </p>
-        </div>
-      )}
-
-      {/* THE ONLY FLEXIBLE CHILD, so this is what clips if anything above it grows. Row
-          padding is 4px and the footnote is pinned — check the six rows still fit before
-          shipping any change to the card above.
-
-          overflow-y-auto BECAUSE ROWS CAN STILL GROW FROM THE INSIDE. The hover pop-out is an
-          overlay and never participates in layout — but the UNASSESSED-factor branch renders its
-          full rationale INLINE, in normal flow, and enforceFactorDataFloors can mark up to three
-          factors insufficient_data at once on a sparse client record, so the six-row budget is
-          genuinely exceedable. The parent <section> is a fixed-height overflow-hidden box, so
-          without a scrollbar here those inline rows (or the pinned footnote) clip with no way to
-          recover them. Scrolling is the recovery. The styled hover pop-out is NOT clipped by this
-          container -- RationaleHoverPopover renders in a portal on document.body, above every
-          overflow ancestor -- and the native `title` on each hover row remains the no-JS fallback. */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pb-3.5">
-        <p className={`mb-[3px] border-t border-hairline-strong pt-[11px] ${EYEBROW} tracking-[0.13em]`}>
-          Fit factors
-        </p>
-        {factors.unscored ? (
-          // Per-factor sub-scores shipped 2026-07-27 (migration 0038) with no backfill by
-          // design, and `factor_scores` is in the scorer tool's required set — so a null
-          // can only mean the card was matched before that date.
-          //
-          // NEITHER OF THE OTHER PATHS FIXES IT: "Refresh matches" skips already-attempted
-          // pairs (lib/clients/match-queue.ts) and check-grant returns early when a card
-          // already exists. `scoreFactors` is the one control that does, and the copy that
-          // used to sit here — "it stays that way unless this pair is scored again" — now
-          // lives inside it, next to the button that does the scoring. When the caller
-          // passes nothing (no staff control on this surface) the plain statement stands.
-          scoreFactors ?? (
-            <p className="pt-2 text-[12.5px] leading-[1.5] text-ink-muted">
-              No per-factor breakdown — this card was matched before factor scoring shipped
-              (27 Jul).
-            </p>
-          )
-        ) : (
-          factors.factors.map((f, i) => <FactorRow key={f.key} factor={f} last={i === factors.factors.length - 1} />)
         )}
-        <p className="mt-auto pt-[11px] text-[11px] text-ink-muted">{footnote}</p>
+        {hasProse && <span aria-hidden="true" className="w-px shrink-0 self-stretch bg-brand-navy/[0.08]" />}
+
+        {/* The table is WIDER than the rationale — Design's mock puts the factor grid at
+            1.65fr against the prose's 1.3fr, so the bars have room to read. */}
+        <div className="min-w-0 flex-[1.65]">
+          {factors.unscored ? (
+            // Per-factor sub-scores shipped 2026-07-27 (migration 0038) with no backfill by
+            // design; a null can only mean the card was matched before that date. scoreFactors is
+            // the one control that re-scores (staff-only); when the caller passes nothing, the
+            // plain statement stands.
+            scoreFactors ?? (
+              <p className="text-[12.5px] leading-[1.5] text-ink-muted">
+                No per-factor breakdown — this card was matched before factor scoring shipped (27 Jul).
+              </p>
+            )
+          ) : (
+            <>
+              {/* Header aligned to the row columns below: name 0.65fr, score 1fr. */}
+              <div className="mb-2 flex items-center">
+                <p className={`flex-[0.65] pl-2 ${EYEBROW} tracking-[0.12em]`}>Factor</p>
+                <p className={`flex-1 ${EYEBROW} tracking-[0.12em]`}>Score</p>
+              </div>
+              {factors.factors.map((f, i) => (
+                <FactorRow key={f.key} factor={f} zebra={i % 2 === 1} />
+              ))}
+            </>
+          )}
+        </div>
       </div>
+
+      {/* Pinned, full-width footnote — the machine-scored / six-factors context, kept from the
+          old layout so the redesign does not quietly drop it. */}
+      <p className="shrink-0 border-t border-hairline-strong px-5 py-[9px] text-[11px] text-ink-subtle">{footnote}</p>
     </section>
   );
 }
 
-// The rating word sits UNDER the bar, not beside it. Beside, the name and the bar pin to
-// opposite edges and a gap opens down the middle of the list that the eye reads as a
-// column of nothing.
-// One factor row, and the reason behind it.
+// One factor row — the name in a left cell, then a FULL-WIDTH 3-segment bar that spans the score
+// column with the rating word pinned to its right. The bar segments are flex-1 so they fill the
+// column rather than hugging the edge.
 //
-// THE RATIONALE IS A HOVER POP-OUT (restored, per Shannon), matching the sibling
-// match-score.tsx. An ASSESSED row reveals its reason in a styled hover/focus pop-out and ALSO
-// carries a native `title`: the pop-out (RationaleHoverPopover) now renders in a portal so the
-// card's fixed-height overflow no longer clips it, and the `title` remains the no-JS / assistive-
-// tech fallback. Known cost of hover: limited reveal on touch — accepted here
-// because the primary rationale is always visible above in RationaleCard and the sr-only span
-// still carries the full text to assistive tech. This was previously a <details>/<summary>
-// disclosure; hover was chosen back over it deliberately, so keep the two factor surfaces on the
-// one hover pattern rather than reintroducing a second mechanism here.
+// HUE ENCODES THE RATING, by Design's direction (2026-08-18): a bar filled ONE of three reads
+// weak and its filled segment is orange; a bar filled two or three reads adequate/strong and its
+// filled segments are navy ("blue"). An unscored row (zero filled) is all empty segments. The
+// rating word takes the same colour. Rows carry a plain alternating grey zebra and NOTHING more —
+// the earlier orange capping-row tint is gone; the weak-factor emphasis now lives in the orange
+// bar itself, and the bold blocking sentence states it in prose beside the table.
 //
-// AND WHEN THERE IS NO RATIONALE, THE ROW SAYS SO. `rationale` is required in the scorer's
-// tool schema, so a null should be rare — but silence is exactly what cost two debugging
-// rounds, so absence is now stated rather than rendered as a control that does nothing.
-function FactorRow({ factor, last }: { factor: ReviewFactor; last: boolean }) {
-  // An unassessed row already prints its reason in full (see below), so revealing it on hover
-  // would hide text that is deliberately always visible.
-  const inline = factor.filled === 0 && !!factor.rationale;
-  const hover = !!factor.rationale && !inline;
-  const rowStyle = factor.lead
-    ? { backgroundColor: "rgba(228,118,31,0.07)", margin: "0 -20px", padding: "4px 20px" }
-    : undefined;
-
-  const content = (
-    <>
-      <span className="min-w-0 flex-1">
-        <span className={`block text-[13px] text-brand-navy ${factor.lead ? "font-semibold" : ""}`}>
-          {factor.label}
-          {/* NAMES THE CREAM HIGHLIGHT. Exactly one row lights, and it is the factor
-              capping the score — the same one the rationale paragraph above bolds. Without
-              a label the tint reads as a rendering glitch on a random row, which is how it
-              was reported. */}
-          {factor.lead && (
-            <span
-              className="ml-2 align-[1px] text-[9px] font-bold uppercase tracking-[0.1em]"
-              style={{ color: BRAND.orangeDeep }}
-            >
-              caps the score
-            </span>
-          )}
-        </span>
-        {/* THE REASON, VISIBLE, on an unassessed row only. "Not assessed" with the
-            explanation hidden behind a control is unactionable — and the explanation is
-            almost always a CLIENT-RECORD GAP, not a scorer failure. enforceFactorDataFloors
-            writes exactly this sentence when the fields a factor depends on are blank
-            ("No annual budget or match/cost-share capacity on file."), so the row can point
-            at what to go fill in rather than just reporting a hole. */}
-        {inline && (
-          <span className="mt-[3px] block text-[11px] leading-[1.4] text-ink-muted [text-wrap:pretty]">
-            {factor.rationale}
-          </span>
-        )}
-        {!factor.rationale && (
-          <span className="mt-[3px] block text-[10.5px] italic leading-[1.4] text-ink-faint">
-            No rationale recorded for this factor.
-          </span>
-        )}
-      </span>
-      <div className="shrink-0 text-right">
-        <span className="flex gap-[3px]" aria-hidden="true">
-          {[0, 1, 2].map((i) => (
-            <span
-              key={i}
-              className="h-2.5 w-11 rounded-sharp"
-              style={{
-                backgroundColor:
-                  i < factor.filled ? (factor.lead ? BRAND.orange : RATING.filled) : RATING.empty,
-              }}
-            />
-          ))}
-        </span>
-        <p
-          className="mt-1 text-[10.5px] font-semibold tracking-[0.03em]"
-          style={{ color: factor.lead ? BRAND.orangeDeep : factor.filled === 3 ? INK.DEFAULT : INK.muted }}
-        >
-          {factor.word}
-        </p>
-      </div>
-    </>
-  );
-
-  const srOnly = (
-    <span className="sr-only">
-      {factor.label}: {factor.word}
-      {factor.rationale ? `. ${factor.rationale}` : ". No rationale recorded."}
-    </span>
-  );
-
-  // HOVER-TO-REVEAL (restored, per Shannon): the rationale rides a hover/focus pop-out over the
-  // row, matching match-score.tsx. The overlay is portal-rendered and does NOT participate in
-  // layout, so the six-row budget holds and no ancestor's flow grows. A native `title` on the row
-  // is the no-JS fallback -- the portal means the styled pop-out is no longer clipped by the card's
-  // fixed-height overflow. (The inline-full unassessed row and the no-rationale row are unchanged
-  // and never get a pop-out.)
+// THE REASON RIDES THE HOVER POP-OUT for every scored row that has a rationale: a styled
+// hover/focus pop-out (RationaleHoverPopover, portal-rendered so the card's fixed-height
+// overflow can't clip it) plus a native `title` (no-JS / touch fallback) and an sr-only span.
+// The compact table has no room for an always-inline reason, and the primary rationale sits
+// right beside it in the left column, so a row points to its reason on hover instead.
+function FactorRow({ factor, zebra }: { factor: ReviewFactor; zebra: boolean }) {
+  const hover = !!factor.rationale;
+  // Weak (one of three) → orange; two or three → navy. Zero filled has no bar colour to pick.
+  const weak = factor.filled === 1;
+  const barColor = weak ? BRAND.orange : BRAND.navy;
+  const wordColor = weak ? BRAND.orangeDeep : factor.filled >= 2 ? BRAND.navy : INK.muted;
   return (
     <div
       title={hover ? factor.rationale ?? undefined : undefined}
-      // Focusable ONLY when it has a rationale to reveal, so Tab+focus surfaces the pop-out (via
-      // focusin on this row) for keyboard/motor users -- the reachability the old <details> gave
-      // for free. Rows with no pop-out stay out of the tab order.
+      // Focusable only when it has a rationale to reveal, so Tab+focus surfaces the pop-out for
+      // keyboard/motor users; rows with no pop-out stay out of the tab order.
       tabIndex={hover ? 0 : undefined}
-      className={`flex items-start justify-between gap-3.5 rounded-sharp py-1 outline-none focus-visible:ring-1 focus-visible:ring-brand-navy/40 ${
+      className={`relative flex items-center rounded-sharp py-[9px] outline-none focus-visible:ring-1 focus-visible:ring-brand-navy/40 ${
         hover ? "cursor-help" : ""
-      } ${last ? "" : "border-b border-brand-navy/[0.05]"}`}
-      style={rowStyle}
+      }`}
+      style={zebra ? { backgroundColor: "rgba(11,30,58,0.04)" } : undefined}
     >
-      {content}
-      {srOnly}
+      <span className="flex-[0.65] min-w-0 pr-3.5 pl-2 text-[12.5px] text-brand-navy [text-wrap:pretty]">
+        {factor.label}
+      </span>
+      {/* Score column (1fr): the segmented bar fills it, the word pins right. */}
+      <span className="flex flex-1 items-center gap-2.5 pr-2">
+        <span className="flex flex-1 gap-[3px]" aria-hidden="true">
+          {[0, 1, 2].map((i) => (
+            <span
+              key={i}
+              className="h-[7px] flex-1 rounded-sharp"
+              style={{ backgroundColor: i < factor.filled ? barColor : RATING.empty }}
+            />
+          ))}
+        </span>
+        <span
+          className="shrink-0 whitespace-nowrap text-[10.5px] font-bold tracking-[0.02em]"
+          style={{ color: wordColor }}
+        >
+          {factor.word}
+        </span>
+      </span>
+      <span className="sr-only">
+        {factor.label}: {factor.word}
+        {factor.rationale ? `. ${factor.rationale}` : ". No rationale recorded."}
+      </span>
       {hover && factor.rationale && <RationaleHoverPopover rationale={factor.rationale} />}
     </div>
   );

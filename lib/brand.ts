@@ -275,17 +275,21 @@ export const STAGE_ON_INK: Record<"triage" | "client" | "approved" | "pursuit" |
 // ── Rating segments ─────────────────────────────────────────────────────────
 // The three-segment bars on the grant-review fit factors.
 //
-// RATING IS CARRIED BY HOW MANY SEGMENTS ARE FILLED, NOT BY HUE. The previous build ran
-// green / gold / red side by side, which is close to worst-case for red-green colour
-// blindness — the three ratings were distinguishable only by the one channel a red-green
-// viewer cannot use. Counting filled segments works for everyone, and the word underneath
-// says it in text as well.
+// RATING IS CARRIED BY HOW MANY SEGMENTS ARE FILLED, NOT BY HUE ALONE. The previous build ran
+// green / gold / red side by side, which is close to worst-case for red-green colour blindness —
+// the three ratings were distinguishable only by the one channel a red-green viewer cannot use.
+// Counting filled segments works for everyone, and the word underneath says it in text as well.
+// These neutral `filled`/`empty` tints are the default for a rating bar (e.g. match-score.tsx).
 //
-// Exactly ONE row on a screen is allowed to light orange: the single worst factor, which
-// is the thing the reviewer is being pointed at. Spreading it to every weak factor is how
-// a highlight stops being a highlight.
+// EXCEPTION — the grant review console's Fit-factors bars (2026-08-18, Design's direction):
+// there the filled segments are hued — orange for a weak (one-of-three) bar, navy for a two/three
+// bar. That does NOT reintroduce the green/gold/red problem: hue is REDUNDANT there (the segment
+// count and the "Weak"/"Strong" word already carry the rating), and orange vs navy differ in
+// LUMINANCE, not just the red-green channel — they stay apart in grayscale, unlike green vs red.
+// So it is safe for a red-green viewer. Keep hue redundant with count wherever a rating bar is
+// hued; never let hue become the only channel.
 export const RATING = {
-  filled: "#8F8B82", // a filled segment on a neutral row
+  filled: "#8F8B82", // a filled segment on a neutral (non-hued) row
   empty: "#E0DCD5",  // an unfilled segment
 } as const;
 

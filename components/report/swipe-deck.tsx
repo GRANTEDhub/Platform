@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, useDragControls } from "motion/react";
@@ -9,6 +9,7 @@ import { BRAND } from "@/lib/brand";
 import { ScoreRing, Tag } from "./primitives";
 import { ConceptProposalReveal } from "./concept-proposal-reveal";
 import { AlertDecisionTransition } from "./alert-decision-transition";
+import { EmphasizedTitle } from "@/components/report/emphasized-title";
 import type { ReportItem } from "@/lib/report/shape";
 
 // Grant Alerts (browse) for the client's brand-new, not-yet-triaged matches — the gate
@@ -501,30 +502,6 @@ function CardFace({
 // floating circles below it. All deck state (browse, decide, the #12 transition) is owned by
 // SwipeDeck and passed in; this tree is presentation + the local Pass-reason step only.
 
-// Small stopword set + the emphasis rule: italic-orange the single most DISTINCTIVE word in
-// the title (longest content word, skipping short words and stopwords), falling back to the
-// last word. A deterministic stand-in for "most relevant" — no LLM at render — that reproduces
-// Design's emphasis on the mock ("Scholarships for Disadvantaged Students" → "Disadvantaged").
-const TITLE_STOPWORDS = new Set([
-  "for", "of", "the", "and", "to", "in", "a", "an", "on", "with", "from", "by", "or", "at", "as", "its", "your",
-]);
-function titleParts(title: string): { text: string; em: boolean }[] {
-  const words = title.trim().split(/\s+/).filter(Boolean);
-  if (words.length <= 1) return words.map((text) => ({ text, em: false }));
-  let idx = -1;
-  let best = 0;
-  words.forEach((w, i) => {
-    const clean = w.replace(/[^A-Za-z-]/g, "");
-    if (clean.length < 6 || TITLE_STOPWORDS.has(clean.toLowerCase())) return;
-    if (clean.length > best) {
-      best = clean.length;
-      idx = i;
-    }
-  });
-  if (idx === -1) idx = words.length - 1; // nothing qualified → the last word
-  return words.map((text, i) => ({ text, em: i === idx }));
-}
-
 function AlertDeck({
   current,
   index,
@@ -675,7 +652,6 @@ function AlertCard({
   clientName?: string;
   detailHref: string;
 }) {
-  const parts = titleParts(item.title);
   // "Sep 4 · 32d" for a future deadline; never a raw negative countdown. A past deadline
   // reads "closed", a same-day one "today" (still winnable — federal cutoffs carry a time we
   // don't store, mirroring isOverdue in report/shape.ts).
@@ -717,12 +693,7 @@ function AlertCard({
           {meta && <span className="text-[11.5px] text-ink-subtle">{meta}</span>}
         </div>
         <h1 className="mt-3 font-serif text-[25px] font-bold leading-[1.2] tracking-[-.01em] text-brand-navy [text-wrap:pretty]">
-          {parts.map((p, i) => (
-            <Fragment key={i}>
-              {i > 0 && " "}
-              {p.em ? <em className="italic text-brand-orange">{p.text}</em> : p.text}
-            </Fragment>
-          ))}
+          <EmphasizedTitle text={item.title} />
         </h1>
         {item.funder && <p className="mt-[7px] text-[12.5px] text-ink-subtle">{item.funder}</p>}
       </div>

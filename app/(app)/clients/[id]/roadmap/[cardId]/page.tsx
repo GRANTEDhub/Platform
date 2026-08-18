@@ -291,7 +291,10 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
             </>
           ) : null
         }
-        tags={[card.proposed_role, ...(g.focus_areas ?? []).slice(0, 1)].filter((t): t is string => !!t)}
+        tags={[
+          ...(card.proposed_role ? [{ label: card.proposed_role, role: true }] : []),
+          ...(g.focus_areas ?? []).slice(0, 1).filter((l): l is string => !!l).map((label) => ({ label, role: false })),
+        ]}
         agencyLine={
           [g.funder, (g.assistance_listings ?? [])[0] && `CFDA ${(g.assistance_listings ?? [])[0].number}`]
             .filter(Boolean)
