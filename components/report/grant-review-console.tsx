@@ -495,8 +495,9 @@ function RationaleCard({
           any insufficient_data row keep their reason on the hover pop-out (portal, no layout cost)
           + native title + sr-only, rather than the old always-inline paragraph — the mock's compact
           table has no room for inline reasons, and the primary rationale is right here on the left.
-          THE PAGE'S ONE ARGUMENT LIVES HERE: the bold blocking sentence and the single orange
-          capping row. Do not un-bold it or spread the orange to a second factor. */}
+          THE PAGE'S ONE ARGUMENT LIVES HERE: the bold blocking sentence in the prose, and — in
+          the table — the weak factor's orange bar standing out against the navy strong bars. Do
+          not un-bold the sentence. */}
       <div className="flex min-h-0 flex-1 gap-5 overflow-y-auto px-5 pb-2">
         {hasProse && (
           <p className="min-w-0 flex-[1.3] text-[13px] leading-[1.65] text-ink-muted [text-wrap:pretty]">
@@ -547,14 +548,16 @@ function RationaleCard({
   );
 }
 
-// One factor row — Design's mock exactly: the name in a left cell, then a FULL-WIDTH 3-segment
-// bar that spans the score column with the rating word pinned to its right. The bar segments are
-// flex-1 so they fill the column rather than hugging the edge (the earlier build's miss). Odd
-// rows carry a faint zebra tint; the single capping factor lights orange — bg, first bar segment,
-// and the "Weak" word in orangeDeep — the page's one argument, the same factor the rationale
-// bolds. No text label on it: the mock carries the argument with colour alone, and the bold
-// blocking sentence states it in prose beside the table. Flex (not grid) so RationaleHoverPopover
-// stays a trailing sibling exactly as before.
+// One factor row — the name in a left cell, then a FULL-WIDTH 3-segment bar that spans the score
+// column with the rating word pinned to its right. The bar segments are flex-1 so they fill the
+// column rather than hugging the edge.
+//
+// HUE ENCODES THE RATING, by Design's direction (2026-08-18): a bar filled ONE of three reads
+// weak and its filled segment is orange; a bar filled two or three reads adequate/strong and its
+// filled segments are navy ("blue"). An unscored row (zero filled) is all empty segments. The
+// rating word takes the same colour. Rows carry a plain alternating grey zebra and NOTHING more —
+// the earlier orange capping-row tint is gone; the weak-factor emphasis now lives in the orange
+// bar itself, and the bold blocking sentence states it in prose beside the table.
 //
 // THE REASON RIDES THE HOVER POP-OUT for every scored row that has a rationale: a styled
 // hover/focus pop-out (RationaleHoverPopover, portal-rendered so the card's fixed-height
@@ -563,7 +566,10 @@ function RationaleCard({
 // right beside it in the left column, so a row points to its reason on hover instead.
 function FactorRow({ factor, zebra }: { factor: ReviewFactor; zebra: boolean }) {
   const hover = !!factor.rationale;
-  const lead = factor.lead;
+  // Weak (one of three) → orange; two or three → navy. Zero filled has no bar colour to pick.
+  const weak = factor.filled === 1;
+  const barColor = weak ? BRAND.orange : BRAND.navy;
+  const wordColor = weak ? BRAND.orangeDeep : factor.filled >= 2 ? BRAND.navy : INK.muted;
   return (
     <div
       title={hover ? factor.rationale ?? undefined : undefined}
@@ -573,17 +579,9 @@ function FactorRow({ factor, zebra }: { factor: ReviewFactor; zebra: boolean }) 
       className={`relative flex items-center rounded-sharp py-[9px] outline-none focus-visible:ring-1 focus-visible:ring-brand-navy/40 ${
         hover ? "cursor-help" : ""
       }`}
-      style={
-        lead
-          ? { backgroundColor: "rgba(228,118,31,0.09)" }
-          : zebra
-            ? { backgroundColor: "rgba(11,30,58,0.035)" }
-            : undefined
-      }
+      style={zebra ? { backgroundColor: "rgba(11,30,58,0.04)" } : undefined}
     >
-      <span
-        className={`flex-[0.65] min-w-0 pr-3.5 pl-2 text-[12.5px] text-brand-navy [text-wrap:pretty] ${lead ? "font-semibold" : ""}`}
-      >
+      <span className="flex-[0.65] min-w-0 pr-3.5 pl-2 text-[12.5px] text-brand-navy [text-wrap:pretty]">
         {factor.label}
       </span>
       {/* Score column (1fr): the segmented bar fills it, the word pins right. */}
@@ -593,13 +591,13 @@ function FactorRow({ factor, zebra }: { factor: ReviewFactor; zebra: boolean }) 
             <span
               key={i}
               className="h-[7px] flex-1 rounded-sharp"
-              style={{ backgroundColor: i < factor.filled ? (lead ? BRAND.orange : RATING.filled) : RATING.empty }}
+              style={{ backgroundColor: i < factor.filled ? barColor : RATING.empty }}
             />
           ))}
         </span>
         <span
           className="shrink-0 whitespace-nowrap text-[10.5px] font-bold tracking-[0.02em]"
-          style={{ color: lead ? BRAND.orangeDeep : factor.filled === 3 ? INK.DEFAULT : INK.muted }}
+          style={{ color: wordColor }}
         >
           {factor.word}
         </span>
