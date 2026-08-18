@@ -244,7 +244,12 @@ export async function constructClientProfile(input: ClientProfileInput): Promise
   const anthropic = getAnthropicClient();
   const response = await anthropic.messages.create({
     model: MODEL,
-    max_tokens: 3000,
+    // Document-heavy clients (rich intake + uploaded docs) overflowed 3000 and threw the
+    // "truncated at max_tokens" error below -- ~8 of 28 on the backfill. Raised to 8000, the
+    // same ceiling the matcher uses (engine.ts). max_tokens is a CAP, not a target, so a
+    // light client still generates (and is billed for) only what its profile needs; only the
+    // previously-truncating ones use the headroom.
+    max_tokens: 8000,
     temperature: 0,
     system: CLIENT_PROFILE_SYSTEM_PROMPT,
     tools: [CLIENT_PROFILE_TOOL],
