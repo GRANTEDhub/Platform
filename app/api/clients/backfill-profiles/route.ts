@@ -7,9 +7,10 @@ export const maxDuration = 300;
 
 // Stage 3 one-time backfill: populate clients.client_profile for existing records
 // created before Stage 2's auto-populate (or whose refine failed). Admin-only,
-// browser-openable, batched by an offset cursor; drive it by opening next_url
-// until done:true. Idempotent -- already-profiled clients are skipped unless
-// ?force=1 (which re-refines everyone, e.g. after a refiner/schema change).
+// browser-openable, TIME-BUDGETED and resumed by an offset cursor; drive it by
+// opening next_url until done:true. Idempotent -- already-profiled clients are
+// skipped unless ?force=1 (which re-refines everyone, e.g. after a refiner/schema
+// change or to refresh stale-dated profiles).
 //
 // The target set is the FULL client list (stable, ordered by id) and we skip
 // already-profiled rows INSIDE the loop -- NOT a `where client_profile is null`
@@ -19,7 +20,15 @@ export const maxDuration = 300;
 // Read path: refreshClientProfileById is null-safe (a failed refine is caught,
 // leaves the row null, retryable on re-run). One temp-0 Sonnet call per refined
 // record. Nothing matcher-facing.
-const BATCH = 10;
+//
+// Wall-clock budget: stop claiming new clients well under maxDuration (300s) so the
+// last in-flight distillation still finishes inside the function's lifetime. Each
+// force=1 refine is one LLM call (tens of seconds), so a FIXED batch of 10 blew the
+// 300s cap on a roster of document-heavy clients (504 FUNCTION_INVOCATION_TIMEOUT).
+// Self-pacing by time -- the same pattern as the matching drain -- makes each request
+// complete regardless of client weight, and `processed` (not a batch size) drives the
+// cursor so a request always makes progress and never over-claims into a timeout.
+const BUDGET_MS = 220_000;
 
 export async function GET(req: NextRequest) {
   const supabase = createClient();
@@ -46,13 +55,22 @@ export async function GET(req: NextRequest) {
     .order("id", { ascending: true });
   const targets = (rows ?? []) as { id: string; client_profile: unknown }[];
   const total = targets.length;
-  const slice = targets.slice(offset, offset + BATCH);
 
+  const startedAt = Date.now();
   const updated: string[] = [];
   const skipped: string[] = []; // already had a profile (only when !force)
   const errors: { id: string; error: string }[] = [];
 
-  for (const row of slice) {
+  // Walk from the cursor, refining until the wall-clock budget is spent. Skips (already-
+  // profiled rows when !force) are near-instant, so a run flies through them and spends the
+  // budget on actual refines. `processed` -- not a fixed batch size -- drives the next cursor,
+  // so a request always makes progress (one refine is far under the budget) and stops before
+  // claiming a client it can't finish in time. Always does at least one row (the processed>0
+  // guard), so it can never stall.
+  let processed = 0;
+  for (const row of targets.slice(offset)) {
+    if (processed > 0 && Date.now() - startedAt > BUDGET_MS) break;
+    processed++;
     if (!force && row.client_profile != null) {
       skipped.push(row.id);
       continue;
@@ -66,11 +84,11 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const nextOffset = offset + slice.length;
+  const nextOffset = offset + processed;
   const done = nextOffset >= total;
   return NextResponse.json({
     candidates_total: total,
-    batch: { offset, size: slice.length },
+    batch: { offset, size: processed },
     counts: { updated: updated.length, skipped: skipped.length, errored: errors.length },
     updated,
     skipped,
