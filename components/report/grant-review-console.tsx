@@ -1,11 +1,11 @@
-import { Fragment } from "react";
 import Link from "next/link";
 import { ArrowLeft, Check, ExternalLink, Puzzle } from "lucide-react";
 import { BRAND, INK, RATING } from "@/lib/brand";
 import { sanitizeRichText } from "@/lib/sanitize/html";
 import { RationaleHoverPopover } from "@/components/report/rationale-hover";
+import { EmphasizedTitle } from "@/components/report/emphasized-title";
 import { collapseDuplicatedBlock, previewHtml } from "@/lib/grants/description";
-import { titleParts, splitTrailingParenthetical } from "@/lib/report/title";
+import { splitTrailingParenthetical } from "@/lib/report/title";
 import type { FitFactorView, ReviewFactor } from "@/lib/report/fit-factors";
 import type { EligibilityVerdict } from "@/lib/intellengine/eligibility";
 import { ALLOWABLE_USES_FALLBACK, type AllowableUses } from "@/lib/grants/allowable-uses";
@@ -87,7 +87,10 @@ export function GrantReviewConsole({
   // "Match surfaced Jul 28 · 9 more awaiting review" — assembled by the caller, which
   // owns both facts. Null when neither is known.
   queueLine: React.ReactNode | null;
-  tags: string[];
+  // The role tag (Prime / Partner) is styled as the navy pill; focus-area tags are the light
+  // neutral chip. Carried as an explicit flag rather than "tags[0] is the role" — proposed_role
+  // is nullable, and an index rule painted a focus area as the role when it was absent.
+  tags: { label: string; role: boolean }[];
   agencyLine: string | null;
   title: string;
   // The programme narrative, parsed from the NOFO. Not a one-liner: what the funder is
@@ -226,7 +229,7 @@ function OverviewCard({
   eligibility,
   allowableUses,
 }: {
-  tags: string[];
+  tags: { label: string; role: boolean }[];
   agencyLine: string | null;
   title: string;
   summary: string | null;
@@ -237,19 +240,21 @@ function OverviewCard({
   return (
     <section className={`shrink-0 ${CARD} px-5 pb-[15px] pt-4`}>
       <div className="flex flex-wrap items-center gap-2">
-        {/* tags[0] is the role (Prime / Partner) — the navy pill; the rest (focus area) are
-            the light neutral chip. Conformed off the mock's teal category pill: teal is
-            STAGE.approved and means one pipeline stage, never a decorative category colour. */}
-        {tags.map((t, i) => (
+        {/* The role tag (Prime / Partner) is the navy pill; focus-area tags are the light
+            neutral chip. Keyed on the role flag, NOT index — proposed_role is nullable, so an
+            index rule painted a focus area navy when the role was absent. Conformed off the
+            mock's teal category pill: teal is STAGE.approved and means one pipeline stage,
+            never a decorative category colour. */}
+        {tags.map((t) => (
           <span
-            key={t}
+            key={t.label}
             className={
-              i === 0
+              t.role
                 ? "rounded-full bg-brand-navy px-[11px] py-1 text-[10.5px] font-bold tracking-[0.02em] text-white"
                 : "rounded-full bg-brand-navy/[0.06] px-[11px] py-1 text-[10.5px] font-semibold capitalize text-brand-navy"
             }
           >
-            {t}
+            {t.label}
           </span>
         ))}
         {agencyLine && <span className="ml-auto text-[11.5px] text-ink-subtle">{agencyLine}</span>}
@@ -274,15 +279,9 @@ function OverviewCard({
 // Grant title — the distinctive word italic-orange, a trailing acronym de-emphasised (grey).
 function GrantTitle({ title }: { title: string }) {
   const { head, tail } = splitTrailingParenthetical(title);
-  const parts = titleParts(head);
   return (
     <h1 className="mt-[9px] font-serif text-[22px] font-bold leading-[1.22] tracking-[-0.01em] text-brand-navy [text-wrap:pretty]">
-      {parts.map((p, i) => (
-        <Fragment key={i}>
-          {i > 0 && " "}
-          {p.em ? <em className="italic text-brand-orange">{p.text}</em> : p.text}
-        </Fragment>
-      ))}
+      <EmphasizedTitle text={head} />
       {tail && <span className="font-normal text-ink-subtle"> {tail}</span>}
     </h1>
   );
@@ -500,7 +499,7 @@ function RationaleCard({
           capping row. Do not un-bold it or spread the orange to a second factor. */}
       <div className="flex min-h-0 flex-1 gap-5 overflow-y-auto px-5 pb-2">
         {hasProse && (
-          <p className="min-w-0 flex-[1.3] text-[13px] leading-[1.6] text-ink-muted [text-wrap:pretty]">
+          <p className="min-w-0 flex-[1.3] text-[13px] leading-[1.65] text-ink-muted [text-wrap:pretty]">
             {rationale.lead && <>{rationale.lead} </>}
             {/* The blocking sentence, in bold, in navy — the engine's own rationale string for
                 the weakest factor, not a rewrite, so the page cannot assert a cap the score does
@@ -513,7 +512,9 @@ function RationaleCard({
         )}
         {hasProse && <span aria-hidden="true" className="w-px shrink-0 self-stretch bg-brand-navy/[0.08]" />}
 
-        <div className="min-w-0 flex-1">
+        {/* The table is WIDER than the rationale — Design's mock puts the factor grid at
+            1.65fr against the prose's 1.3fr, so the bars have room to read. */}
+        <div className="min-w-0 flex-[1.65]">
           {factors.unscored ? (
             // Per-factor sub-scores shipped 2026-07-27 (migration 0038) with no backfill by
             // design; a null can only mean the card was matched before that date. scoreFactors is
@@ -526,9 +527,10 @@ function RationaleCard({
             )
           ) : (
             <>
-              <div className="mb-1 flex items-center px-2">
-                <p className={`flex-1 ${EYEBROW} tracking-[0.12em]`}>Factor</p>
-                <p className={`${EYEBROW} tracking-[0.12em]`}>Score</p>
+              {/* Header aligned to the row columns below: name 0.65fr, score 1fr. */}
+              <div className="mb-2 flex items-center">
+                <p className={`flex-[0.65] pl-2 ${EYEBROW} tracking-[0.12em]`}>Factor</p>
+                <p className={`flex-1 ${EYEBROW} tracking-[0.12em]`}>Score</p>
               </div>
               {factors.factors.map((f, i) => (
                 <FactorRow key={f.key} factor={f} zebra={i % 2 === 1} />
@@ -545,17 +547,20 @@ function RationaleCard({
   );
 }
 
-// One factor row, as a compact table row: name on the left, the 3-segment bar + rating word
-// on the right. Even rows carry a faint zebra tint; the single capping factor lights orange —
-// the page's one argument, the same factor the rationale bolds. Flex (not grid) so
-// RationaleHoverPopover stays a trailing sibling exactly as before.
+// One factor row — Design's mock exactly: the name in a left cell, then a FULL-WIDTH 3-segment
+// bar that spans the score column with the rating word pinned to its right. The bar segments are
+// flex-1 so they fill the column rather than hugging the edge (the earlier build's miss). Odd
+// rows carry a faint zebra tint; the single capping factor lights orange — bg, first bar segment,
+// and the "Weak" word in orangeDeep — the page's one argument, the same factor the rationale
+// bolds. No text label on it: the mock carries the argument with colour alone, and the bold
+// blocking sentence states it in prose beside the table. Flex (not grid) so RationaleHoverPopover
+// stays a trailing sibling exactly as before.
 //
 // THE REASON RIDES THE HOVER POP-OUT for every scored row that has a rationale: a styled
 // hover/focus pop-out (RationaleHoverPopover, portal-rendered so the card's fixed-height
 // overflow can't clip it) plus a native `title` (no-JS / touch fallback) and an sr-only span.
-// The compact table has no room for the old always-inline paragraph an insufficient_data row
-// used to print, and the primary rationale sits right beside it in the left column, so such a
-// row now points to its reason on hover instead. A row with no rationale at all says so.
+// The compact table has no room for an always-inline reason, and the primary rationale sits
+// right beside it in the left column, so a row points to its reason on hover instead.
 function FactorRow({ factor, zebra }: { factor: ReviewFactor; zebra: boolean }) {
   const hover = !!factor.rationale;
   const lead = factor.lead;
@@ -565,7 +570,7 @@ function FactorRow({ factor, zebra }: { factor: ReviewFactor; zebra: boolean }) 
       // Focusable only when it has a rationale to reveal, so Tab+focus surfaces the pop-out for
       // keyboard/motor users; rows with no pop-out stay out of the tab order.
       tabIndex={hover ? 0 : undefined}
-      className={`relative flex items-center justify-between gap-3 rounded-sharp px-2 py-[7px] outline-none focus-visible:ring-1 focus-visible:ring-brand-navy/40 ${
+      className={`relative flex items-center rounded-sharp py-[9px] outline-none focus-visible:ring-1 focus-visible:ring-brand-navy/40 ${
         hover ? "cursor-help" : ""
       }`}
       style={
@@ -576,29 +581,24 @@ function FactorRow({ factor, zebra }: { factor: ReviewFactor; zebra: boolean }) 
             : undefined
       }
     >
-      <span className={`min-w-0 flex-1 text-[12.5px] text-brand-navy [text-wrap:pretty] ${lead ? "font-semibold" : ""}`}>
+      <span
+        className={`flex-[0.65] min-w-0 pr-3.5 pl-2 text-[12.5px] text-brand-navy [text-wrap:pretty] ${lead ? "font-semibold" : ""}`}
+      >
         {factor.label}
-        {/* NAMES THE HIGHLIGHT. Exactly one row lights, the factor capping the score — the same
-            one the rationale bolds. Without the label the tint reads as a glitch on a random row. */}
-        {lead && (
-          <span className="ml-1.5 text-[9px] font-bold uppercase tracking-[0.1em]" style={{ color: BRAND.orangeDeep }}>
-            caps the score
-          </span>
-        )}
-        {!factor.rationale && <span className="ml-1.5 text-[10px] italic text-ink-faint">no reason recorded</span>}
       </span>
-      <span className="flex shrink-0 items-center gap-2.5">
-        <span className="flex gap-[3px]" aria-hidden="true">
+      {/* Score column (1fr): the segmented bar fills it, the word pins right. */}
+      <span className="flex flex-1 items-center gap-2.5 pr-2">
+        <span className="flex flex-1 gap-[3px]" aria-hidden="true">
           {[0, 1, 2].map((i) => (
             <span
               key={i}
-              className="h-[7px] w-[18px] rounded-[2px]"
+              className="h-[7px] flex-1 rounded-sharp"
               style={{ backgroundColor: i < factor.filled ? (lead ? BRAND.orange : RATING.filled) : RATING.empty }}
             />
           ))}
         </span>
         <span
-          className="w-[46px] shrink-0 text-right text-[10.5px] font-bold tracking-[0.02em]"
+          className="shrink-0 whitespace-nowrap text-[10.5px] font-bold tracking-[0.02em]"
           style={{ color: lead ? BRAND.orangeDeep : factor.filled === 3 ? INK.DEFAULT : INK.muted }}
         >
           {factor.word}
