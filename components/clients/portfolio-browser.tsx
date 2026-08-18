@@ -60,7 +60,7 @@ export type PortfolioRow = {
   emptyPipeline: boolean;
 };
 
-type Filter = "all" | "action" | "quiet";
+type Filter = "action" | "all";
 
 const BAR_ORDER: PipelineStageKey[] = ["triage", "client", "approved", "pursuit", "passed"];
 
@@ -94,7 +94,8 @@ export function PortfolioBrowser({
   // the server render and the hydrated one.
   today: string;
 }) {
-  const [filter, setFilter] = useState<Filter>("all");
+  // Default landing is the action tier — the whole point of the page is "who needs me".
+  const [filter, setFilter] = useState<Filter>("action");
 
   const { action, quiet } = useMemo(() => {
     // Alphabetical within each tier. Not most-urgent-first: the split has already done
@@ -113,8 +114,9 @@ export function PortfolioBrowser({
   const questionsWaiting = rows.reduce((n, r) => n + r.questions, 0);
   const emptyCount = quiet.filter((r) => r.emptyPipeline).length;
 
-  const showAction = filter !== "quiet";
-  const showQuiet = filter !== "action";
+  // Two views now: "action" shows only the action tier; "all" adds the quiet index beneath it.
+  const showAction = true;
+  const showQuiet = filter === "all";
 
   return (
     <div className="flex min-h-full flex-col bg-ground">
@@ -134,9 +136,6 @@ export function PortfolioBrowser({
 
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             <div className="flex items-center gap-[2px] rounded-[9px] bg-white/[0.08] p-[3px]">
-              <Tab active={filter === "all"} onClick={() => setFilter("all")}>
-                All {rows.length}
-              </Tab>
               <Tab active={filter === "action"} onClick={() => setFilter("action")}>
                 Requires action
                 {action.length > 0 && (
@@ -145,8 +144,8 @@ export function PortfolioBrowser({
                   </span>
                 )}
               </Tab>
-              <Tab active={filter === "quiet"} onClick={() => setFilter("quiet")}>
-                No action
+              <Tab active={filter === "all"} onClick={() => setFilter("all")}>
+                All {rows.length}
               </Tab>
             </div>
 
@@ -256,7 +255,7 @@ export function PortfolioBrowser({
                         explains itself rather than requiring you to infer the thresholds
                         from which cards happen to be up here. */}
                     <div className="flex flex-wrap items-center gap-3.5 text-[11.5px] text-ink-muted">
-                      <Key color={STAGE.triage.color}>Alerts ≥ {ALERTS_THRESHOLD}</Key>
+                      <Key color={STAGE.triage.color}>Awaiting review</Key>
                       <Key color={STAGE.client.color}>Deadline ≤ {DEADLINE_DAYS}d</Key>
                       <Key color={STAGE.approved.color}>Question waiting</Key>
                     </div>
@@ -264,7 +263,7 @@ export function PortfolioBrowser({
 
                   {action.length === 0 ? (
                     <p className="rounded-sharp border border-edge bg-white/40 px-4 py-3 text-[12.5px] text-ink-muted">
-                      Nothing needs you right now — every client is inside their alert and deadline thresholds.
+                      Nothing needs you right now — no client has a grant awaiting review or a deadline inside the window.
                     </p>
                   ) : (
                     <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:auto-rows-[214px] xl:grid-cols-4">
@@ -280,7 +279,7 @@ export function PortfolioBrowser({
                           <p className="font-serif text-[15px] font-bold text-ink-muted">And that&rsquo;s all</p>
                           <p className="text-center text-[11.5px] leading-[1.5] text-ink-muted">
                             {quiet.length > 0
-                              ? `The other ${quiet.length} are indexed below and can wait for the sweep`
+                              ? `The other ${quiet.length} are settled — see them under All`
                               : "Everyone else is settled"}
                           </p>
                         </div>
