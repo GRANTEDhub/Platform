@@ -9,6 +9,7 @@ import { BRAND } from "@/lib/brand";
 import { ScoreRing, Tag } from "./primitives";
 import { ConceptProposalReveal } from "./concept-proposal-reveal";
 import { AlertDecisionTransition } from "./alert-decision-transition";
+import { titleParts } from "@/lib/report/title";
 import type { ReportItem } from "@/lib/report/shape";
 
 // Grant Alerts (browse) for the client's brand-new, not-yet-triaged matches — the gate
@@ -500,30 +501,6 @@ function CardFace({
 // A one-glance, no-scroll card over the road photo + navy scrim, with Pass/Interested as
 // floating circles below it. All deck state (browse, decide, the #12 transition) is owned by
 // SwipeDeck and passed in; this tree is presentation + the local Pass-reason step only.
-
-// Small stopword set + the emphasis rule: italic-orange the single most DISTINCTIVE word in
-// the title (longest content word, skipping short words and stopwords), falling back to the
-// last word. A deterministic stand-in for "most relevant" — no LLM at render — that reproduces
-// Design's emphasis on the mock ("Scholarships for Disadvantaged Students" → "Disadvantaged").
-const TITLE_STOPWORDS = new Set([
-  "for", "of", "the", "and", "to", "in", "a", "an", "on", "with", "from", "by", "or", "at", "as", "its", "your",
-]);
-function titleParts(title: string): { text: string; em: boolean }[] {
-  const words = title.trim().split(/\s+/).filter(Boolean);
-  if (words.length <= 1) return words.map((text) => ({ text, em: false }));
-  let idx = -1;
-  let best = 0;
-  words.forEach((w, i) => {
-    const clean = w.replace(/[^A-Za-z-]/g, "");
-    if (clean.length < 6 || TITLE_STOPWORDS.has(clean.toLowerCase())) return;
-    if (clean.length > best) {
-      best = clean.length;
-      idx = i;
-    }
-  });
-  if (idx === -1) idx = words.length - 1; // nothing qualified → the last word
-  return words.map((text, i) => ({ text, em: i === idx }));
-}
 
 function AlertDeck({
   current,
