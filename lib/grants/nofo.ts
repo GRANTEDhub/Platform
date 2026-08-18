@@ -43,10 +43,14 @@ interface DocCandidate {
 const POSITIVE = /\b(nofo|notice of funding|full announcement|funding opportunity|solicitation|foa)\b/i;
 const NEGATIVE = /application guide|how to apply|checklist|worksheet|pappg|sf-?424|user guide|terms and conditions/i;
 
-function getExt(nameOrUrl: string): string {
-  const m = nameOrUrl.toLowerCase().match(/\.([a-z0-9]+)(?:\?|#|$)/g);
-  if (!m) return "";
-  return m[m.length - 1].replace(/[^a-z0-9]/g, "");
+// Read the file extension from the PATH only. A URL's ?query/#fragment can carry a later
+// dotted token (e.g. `nofo.pdf?redirect=foo.html`) that would otherwise win as the
+// "extension" and route a real PDF to the wrong parser -- now that docLinksFromHtml preserves
+// query strings, strip the query/fragment before reading the extension. EXPORTED for testing.
+export function getExt(nameOrUrl: string): string {
+  const path = nameOrUrl.toLowerCase().split(/[?#]/, 1)[0];
+  const m = path.match(/\.([a-z0-9]+)$/);
+  return m ? m[1] : "";
 }
 
 // Structured attachments + per-competition instruction files.
@@ -140,7 +144,11 @@ type DocClass = "nofo" | "stub" | "reject";
 // Conservative classifier: only "nofo" is trusted. "stub" is a pointer to
 // follow (SAMHSA's instruction doc says "see full text at ..."). Everything
 // else is rejected so we never deepen with boilerplate.
-function classifyText(text: string): DocClass {
+//
+// EXPORTED for unit testing (nofo.test.ts) -- a pure function of text, so the
+// precision/recall boundary can be pinned against real-NOFO and boilerplate
+// fixtures rather than only end-to-end (which needs live fetches + an LLM).
+export function classifyText(text: string): DocClass {
   const t = text.replace(/\s+/g, " ").trim();
   if (
     t.length < 4000 &&
@@ -159,7 +167,19 @@ function classifyText(text: string): DocClass {
   }
   if (NEGATIVE.test(t) && !POSITIVE.test(t)) return "reject";
   const hasEligibility = /eligib/i.test(t);
-  const hasCriteria = /(review criteria|evaluation criteria|scoring|selection criteria|merit review|\bpoints\b)/i.test(t);
+  // Review/selection section vocabulary. Broadened beyond the original five terms to the
+  // standard federal NOFO section headings a real solicitation actually uses -- "Evaluation
+  // Factors for Award", "Application Review Information" (the 2 CFR 200 / Grants.gov section-E
+  // heading), "rating/award criteria", "peer/merit review" (NSF/NIH) -- because solicitations
+  // phrased that way were being rejected, dropped to summary depth, and left un-scorable above
+  // a 2 (the profile ceiling). Precision is still held by the guards ABOVE this line (the
+  // application-guide head-check and the NEGATIVE-without-POSITIVE reject) plus the length +
+  // eligibility AND-gate here, so this widens recall without letting boilerplate through.
+  // Locked against real-NOFO and boilerplate fixtures in nofo.test.ts.
+  const hasCriteria =
+    /(review criteria|evaluation criteria|evaluation factors?|selection criteria|award criteria|rating factors?|application review information|review and selection|merit review|peer review|how applications (?:will be|are) reviewed|scoring|\bpoints\b)/i.test(
+      t,
+    );
   if (t.length > 3000 && hasEligibility && hasCriteria) return "nofo";
   return "reject";
 }
@@ -181,13 +201,20 @@ async function fetchRawHtml(url: string): Promise<string | null> {
   }
 }
 
-function docLinksFromHtml(html: string, base: string): string[] {
+// Pull .pdf/.docx links out of an agency page's HTML. EXPORTED for unit testing.
+// Captures the WHOLE href, then keeps it only when its PATH ends in .pdf/.docx
+// (ignoring any ?query or #fragment) -- so a signed/parametrised link like
+// `nofo.pdf?token=…` is recognised AND kept intact, where the old extension-anchored
+// regex both missed some delimiters and truncated the query off the URL it fetched.
+export function docLinksFromHtml(html: string, base: string): string[] {
   const urls: string[] = [];
-  const re = /href=["']([^"']+\.(?:pdf|docx))(?:["'?#])/gi;
+  const re = /href=["']([^"']+)["']/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(html)) !== null) {
+    const href = m[1];
+    if (!/\.(?:pdf|docx)(?:[?#]|$)/i.test(href)) continue; // path (not .pdfx) ends in pdf/docx
     try {
-      urls.push(new URL(m[1], base).toString());
+      urls.push(new URL(href, base).toString());
     } catch {
       /* ignore malformed href */
     }
