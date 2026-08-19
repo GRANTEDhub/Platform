@@ -158,11 +158,10 @@ export default async function PortalGrantDetail({
   // Composed from what the engine already wrote, never generated here — identical
   // derivation to the staff page so the same card reads the same way on both sides.
   const why = (card.why_this_org ?? []).filter(Boolean);
+  const calibrated = wasCalibrated(card.reasoning_context?.fit_score_derivation);
   const rationale = {
     lead: firstSentences(why[0] ?? card.concept_synopsis, 2),
-    blocking: blockingReason(factors, card.fit_score, {
-      calibrated: wasCalibrated(card.reasoning_context?.fit_score_derivation),
-    }),
+    blocking: blockingReason(factors, card.fit_score, { calibrated }),
     mitigation: firstSentences(card.reasoning_context?.consortium_rationale, 2),
   };
 
@@ -259,11 +258,16 @@ export default async function PortalGrantDetail({
         fitScore={card.fit_score}
         verdict={FIT_BAND[card.fit_score].label}
         consequence={
-          factors.lead
-            ? `Worth addressing ${factors.lead.label.toLowerCase()} before you commit.`
-            : card.fit_score === 3
-              ? "No blocking factor on this one."
-              : null
+          // When calibration drove the score, the Fit-factors sentence already states that as
+          // the reason; a factor-based next-step here would point at a second, different cause
+          // on the same screen. Defer to the one explanation.
+          calibrated
+            ? null
+            : factors.lead
+              ? `Worth addressing ${factors.lead.label.toLowerCase()} before you commit.`
+              : card.fit_score === 3
+                ? "No blocking factor on this one."
+                : null
         }
         // No "your feedback tunes future scoring" line: that control is staff-only here, so
         // promising it would describe something the client cannot do.

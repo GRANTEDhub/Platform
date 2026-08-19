@@ -190,11 +190,10 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   // otherwise imply the lead is the only problem, which is the one way this layout can
   // mislead.
   const why = (card.why_this_org ?? []).filter(Boolean);
+  const calibrated = wasCalibrated(card.reasoning_context?.fit_score_derivation);
   const rationale = {
     lead: firstSentences(why[0] ?? card.concept_synopsis, 2),
-    blocking: blockingReason(factors, card.fit_score, {
-      calibrated: wasCalibrated(card.reasoning_context?.fit_score_derivation),
-    }),
+    blocking: blockingReason(factors, card.fit_score, { calibrated }),
     mitigation: firstSentences(card.reasoning_context?.consortium_rationale, 2),
   };
 
@@ -320,11 +319,15 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         // What the score MEANS for the next step, derived from the lit factor rather than
         // from three canned sentences keyed off the number.
         consequence={
-          factors.lead
-            ? `Pursue only once ${factors.lead.label.toLowerCase()} is addressed.`
-            : card.fit_score === 3
-              ? "No blocking factor — this one is ready to go out."
-              : null
+          // Calibration-driven score: the Fit-factors sentence carries the reason; a factor-based
+          // next-step here would name a second, different cause on the same screen. Defer to it.
+          calibrated
+            ? null
+            : factors.lead
+              ? `Pursue only once ${factors.lead.label.toLowerCase()} is addressed.`
+              : card.fit_score === 3
+                ? "No blocking factor — this one is ready to go out."
+                : null
         }
         scoreFootnote={`Machine-scored${
           surfacedAt ? ` ${format(parseISO(surfacedAt), "MMM d")}` : ""
