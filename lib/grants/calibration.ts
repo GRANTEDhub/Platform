@@ -26,7 +26,15 @@ import type { MatchResult } from "@/lib/grants/engine";
 
 const K = 5; // shrinkage: half-influence at K relevant passes; a single pass is negligible
 const MAX_DELTA = 1; // hard cap — calibration never moves the score more than one point
-const BARE_PASS = -0.5; // a pass with no corrected_score is a soft negative signal
+// Each relevant pass is a UNIT negative signal. A pass is the thing the product actually
+// collects (the Disagree/Pass control posts no corrected_score — by design, see
+// score-feedback.tsx), so a pass must count as a full -1: with per-pass magnitude of 1,
+// `|s·w| = n/(n+K)` crosses 0.5 at n=K, giving the spec exactly — a single pass (up to K-1)
+// moves nothing, ~K consistent passes move one point. A graded correction, if one is ever
+// submitted, is clamped to the SAME [-1,0] band so it can't outrun a pass or fire on a single
+// harsh row. (BARE_PASS was -0.5, which never crossed the round() threshold — bare passes,
+// i.e. all real feedback, could never move a score. That was the whole feature being inert.)
+const BARE_PASS = -1; // a pass with no corrected_score is a full unit negative signal
 
 export interface CalibrationRow {
   agree: boolean;
@@ -75,11 +83,12 @@ export function applyCalibration(
   const n = relevant.length;
   if (n === 0) return match; // cold-start / no relevant feedback → identity
 
-  // Each pass is a negative signal: an explicit corrected_score gives the signed correction
-  // (clamped to <= 0 — a pass is never an argument to raise), a bare pass a soft -0.5.
+  // Each pass is a negative signal clamped to the [-1, 0] band: an explicit corrected_score
+  // gives the signed correction (clamped to <= 0 — a pass is never an argument to raise — and
+  // floored at -1 so one harsh row can't move the score on its own), a bare pass a full -1.
   const contributions = relevant.map((r) =>
     r.corrected_score != null && r.engine_score != null
-      ? Math.min(0, r.corrected_score - r.engine_score)
+      ? Math.max(-1, Math.min(0, r.corrected_score - r.engine_score))
       : BARE_PASS,
   );
   const s = contributions.reduce((a, b) => a + b, 0) / n; // mean signal, <= 0

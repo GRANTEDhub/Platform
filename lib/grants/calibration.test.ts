@@ -26,6 +26,12 @@ const pass = (over: Partial<CalibrationRow> = {}): CalibrationRow => ({
   ...over,
 });
 
+// A BARE pass -- no corrected_score. This is the ONLY shape the product actually produces:
+// the Disagree/Pass control (score-feedback.tsx, DecisionBar) posts a reason, never a score.
+// So this path, not `pass()`, is what real calibration runs on.
+const barePass = (over: Partial<CalibrationRow> = {}): CalibrationRow =>
+  pass({ corrected_score: null, engine_score: null, ...over });
+
 const FOCUS = ["health"];
 
 describe("applyCalibration — identity on empty (cold-start guarantee)", () => {
@@ -81,6 +87,43 @@ describe("applyCalibration — ±1 cap and the ~5-signal threshold", () => {
   it("clamps at zero — never negative", () => {
     const many = Array.from({ length: 100 }, () => pass({ engine_score: 1, corrected_score: 0 }));
     expect(applyCalibration(mk({ fit_score: 1 }), many, FOCUS).fit_score).toBe(0);
+  });
+
+  it("a single harsh correction (3→0) still moves nothing — magnitude is clamped per pass", () => {
+    // The un-clamped version moved the score on one row (s=-3, w=1/6, round(0.5)=1). Per-pass
+    // clamping to [-1,0] makes a harsh correction count the same as any other single pass.
+    expect(applyCalibration(mk(), [pass({ corrected_score: 0 })], FOCUS).fit_score).toBe(3);
+  });
+});
+
+// The bare-pass path is the one that matters: it is 100% of real feedback. If this regresses,
+// the feature is silently inert against everything the product collects (the shipped bug this
+// PR's BARE_PASS=-1 fix corrects).
+describe("applyCalibration — bare passes (the shape real feedback actually takes)", () => {
+  it("a single bare pass moves nothing", () => {
+    expect(applyCalibration(mk(), [barePass()], FOCUS).fit_score).toBe(3);
+  });
+
+  it("four bare passes still move nothing (below threshold)", () => {
+    const rows = Array.from({ length: 4 }, () => barePass());
+    expect(applyCalibration(mk(), rows, FOCUS).fit_score).toBe(3);
+  });
+
+  it("about five bare passes move the score down exactly one point", () => {
+    const rows = Array.from({ length: 5 }, () => barePass());
+    expect(applyCalibration(mk(), rows, FOCUS).fit_score).toBe(2);
+  });
+
+  it("bare passes never move more than one point, and floor at zero", () => {
+    const many = Array.from({ length: 100 }, () => barePass());
+    expect(applyCalibration(mk({ fit_score: 3 }), many, FOCUS).fit_score).toBe(2);
+    expect(applyCalibration(mk({ fit_score: 1 }), many, FOCUS).fit_score).toBe(0);
+  });
+
+  it("bare passes are relevance-scoped exactly like graded passes (no cross-category bleed)", () => {
+    const m = mk();
+    const rows = Array.from({ length: 8 }, () => barePass({ focusAreas: ["housing"] }));
+    expect(applyCalibration(m, rows, FOCUS)).toBe(m); // wrong focus → untouched (same reference)
   });
 });
 
