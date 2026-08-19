@@ -1,0 +1,153 @@
+import type { createServiceClient } from "@/lib/supabase/server";
+import type { MatchResult } from "@/lib/grants/engine";
+
+// ── Feedback → scoring calibration consumer (MATCH_CALIBRATION_ENABLED) ──────────────────
+// Reads a client's past match_feedback and applies a BOUNDED, DOWNWARD-ONLY nudge to the
+// engine's fit_score for NEAR-IDENTICAL grants (same seat family + overlapping focus area).
+// It is the automated replacement for the manual "staffer hand-writes matching_rules" bridge.
+//
+// It never rewrites the engine. It runs post-model in scoreGrantClientPair (the one seam
+// between score-computed and card-written) and produces a new MatchResult; engine.ts is
+// untouched. See CLAUDE.md for the locked design.
+//
+// SAFETY INVARIANTS — all locked in calibration.test.ts:
+//  1. Identity on empty. No relevant feedback → the engine score is returned UNCHANGED. This is
+//     the cold-start guarantee, and it holds independent of the flag (a launched client with no
+//     feedback yet scores exactly as today).
+//  2. Per-client only. loadClientFeedback filters on client_id. The scoring path runs
+//     service-role, so RLS is BYPASSED — this predicate, not RLS, is the isolation boundary.
+//  3. Bounded. At most a ONE-POINT move, downward only, and only once ~K consistent passes
+//     accrue: a single pass (and, with K=5, up to four) moves the integer score by nothing.
+//
+// LAUNCH CONSERVATISM (deliberate, widen later): relevance is the TIGHTEST scope (seat family
+// AND focus overlap); the nudge is downward-only (a pass is never an argument to RAISE a score,
+// and downward-only can never break the engine's seat ceiling); agreements do not offset. Each
+// re-score applies the nudge to the FRESH engine score, so it never compounds across cycles.
+
+const K = 5; // shrinkage: half-influence at K relevant passes; a single pass is negligible
+const MAX_DELTA = 1; // hard cap — calibration never moves the score more than one point
+const BARE_PASS = -0.5; // a pass with no corrected_score is a soft negative signal
+
+export interface CalibrationRow {
+  agree: boolean;
+  corrected_score: number | null;
+  engine_score: number | null;
+  engine_seat_ref: string | null;
+  focusAreas: string[];
+}
+
+// Cross-grant-comparable seat archetype. A raw seat_ref (P0 / S1_2 / NONE) is grant-specific, but
+// its FAMILY — prime / supporting / none — is comparable across grants, which is what "same seat
+// archetype" means for relevance.
+export function seatFamily(seatRef: string | null | undefined): "prime" | "supporting" | "none" {
+  const s = (seatRef ?? "").trim().toUpperCase();
+  if (s.startsWith("P")) return "prime";
+  if (s.startsWith("S")) return "supporting";
+  return "none";
+}
+
+function overlaps(a: string[], b: string[]): boolean {
+  if (!a?.length || !b?.length) return false;
+  const set = new Set(a.map((x) => x.trim().toLowerCase()).filter(Boolean));
+  return b.some((x) => set.has(x.trim().toLowerCase()));
+}
+
+// PURE — the whole adjustment, testable without a DB or the flag.
+export function applyCalibration(
+  match: MatchResult,
+  feedback: CalibrationRow[],
+  grantFocusAreas: string[],
+): MatchResult {
+  // Never calibrate a hard-gated match: suppression / disqualification is structural, not a
+  // scoring judgement that feedback may touch.
+  if (match.suppressed || match.disqualified) return match;
+
+  const family = seatFamily(match.seat_ref);
+  // TIGHTEST relevance (launch default): a client's past PASS counts only when it shares this
+  // grant's seat family AND an overlapping focus area — so a bad match on one category can never
+  // tug an unrelated one. Agreements are excluded; only passes are a calibration signal.
+  const relevant = feedback.filter(
+    (r) =>
+      r.agree === false &&
+      seatFamily(r.engine_seat_ref) === family &&
+      overlaps(r.focusAreas, grantFocusAreas),
+  );
+  const n = relevant.length;
+  if (n === 0) return match; // cold-start / no relevant feedback → identity
+
+  // Each pass is a negative signal: an explicit corrected_score gives the signed correction
+  // (clamped to <= 0 — a pass is never an argument to raise), a bare pass a soft -0.5.
+  const contributions = relevant.map((r) =>
+    r.corrected_score != null && r.engine_score != null
+      ? Math.min(0, r.corrected_score - r.engine_score)
+      : BARE_PASS,
+  );
+  const s = contributions.reduce((a, b) => a + b, 0) / n; // mean signal, <= 0
+  const w = n / (n + K); // confidence: 0 at n=0, grows with the corpus
+  const capped = Math.max(s * w, -MAX_DELTA); // <= 0, floored at -1
+  // Magnitude-symmetric rounding so |delta| >= 0.5 moves exactly one point; downward only.
+  const deltaInt = -Math.round(Math.abs(capped));
+  if (deltaInt === 0) return match; // below the threshold to move an integer score → identity
+
+  const engineScore = match.fit_score;
+  const calibrated = Math.max(0, engineScore + deltaInt) as 0 | 1 | 2 | 3;
+  if (calibrated === engineScore) return match;
+
+  // Explainable: record THAT calibration moved the score and WHY, in the reasoning the card
+  // renders — never a silent adjustment.
+  const note = `Calibration: lowered ${engineScore}→${calibrated} from ${n} prior pass${
+    n === 1 ? "" : "es"
+  } on same-seat, same-focus grants (confidence ${w.toFixed(2)}).`;
+  const rc = match.reasoning_context;
+  return {
+    ...match,
+    fit_score: calibrated,
+    reasoning_context: rc
+      ? { ...rc, fit_score_derivation: `${rc.fit_score_derivation ?? ""}\n${note}`.trim() }
+      : rc,
+  };
+}
+
+// The DB read — the ONLY per-client-scoped query, and the isolation boundary (client_id
+// predicate, since the scoring path is service-role / RLS-bypassed). Locked in the test.
+export async function loadClientFeedback(
+  db: ReturnType<typeof createServiceClient>,
+  clientId: string,
+): Promise<CalibrationRow[]> {
+  const { data, error } = await db
+    .from("match_feedback")
+    .select("agree, corrected_score, engine_score, engine_seat_ref, grants(focus_areas)")
+    .eq("client_id", clientId);
+  if (error || !data) return [];
+  type Row = {
+    agree: boolean;
+    corrected_score: number | null;
+    engine_score: number | null;
+    engine_seat_ref: string | null;
+    grants: { focus_areas: string[] | null } | { focus_areas: string[] | null }[] | null;
+  };
+  return (data as Row[]).map((r) => {
+    const g = Array.isArray(r.grants) ? r.grants[0] : r.grants;
+    return {
+      agree: r.agree,
+      corrected_score: r.corrected_score,
+      engine_score: r.engine_score,
+      engine_seat_ref: r.engine_seat_ref,
+      focusAreas: g?.focus_areas ?? [],
+    };
+  });
+}
+
+// The orchestrator the scorer's hot path calls (scoreGrantClientPair). Flag-gated: OFF → the
+// engine score is returned untouched with NO DB read, byte-identical to pre-calibration; ON →
+// per-client feedback loaded and a bounded nudge applied (still identity when there's none).
+export async function calibrateMatch(
+  db: ReturnType<typeof createServiceClient>,
+  match: MatchResult,
+  clientId: string,
+  grantFocusAreas: string[],
+): Promise<MatchResult> {
+  if (process.env.MATCH_CALIBRATION_ENABLED !== "true") return match;
+  const feedback = await loadClientFeedback(db, clientId);
+  return applyCalibration(match, feedback, grantFocusAreas);
+}
