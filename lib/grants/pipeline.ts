@@ -20,6 +20,7 @@ import type { Client, Grant, IdealApplicantProfile } from "@/types/database";
 import { resolveNofoText, mergeDeepShred } from "@/lib/grants/nofo";
 import { formatStoredUSASpending } from "@/lib/grants/usaspending";
 import { NON_LEAD_OR_FILTER } from "@/lib/leads/stage";
+import { calibrateMatch } from "@/lib/grants/calibration";
 
 type DB = ReturnType<typeof createServiceClient>;
 
@@ -304,7 +305,8 @@ export async function scoreGrantClientPair(grantRow: Grant, client: Client, db: 
     const usaSpendingContext = client.federal_history_verified
       ? undefined
       : formatStoredUSASpending(client.usaspending_summary);
-    const match = await matchGrantToClient(grantRow, client, usaSpendingContext);
+    let match = await matchGrantToClient(grantRow, client, usaSpendingContext);
+    match = await calibrateMatch(db, match, client.id, grantRow.focus_areas ?? []);
     const qualifies =
       !match.suppressed && !match.disqualified && match.fit_score >= 2;
     const outcome = match.disqualified
