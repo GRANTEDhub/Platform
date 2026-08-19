@@ -36,12 +36,29 @@ const MAX_DELTA = 1; // hard cap — calibration never moves the score more than
 // i.e. all real feedback, could never move a score. That was the whole feature being inert.)
 const BARE_PASS = -1; // a pass with no corrected_score is a full unit negative signal
 
+// The derivation note calibration appends, and the marker BOTH the writer (below) and the
+// readers (the report surfaces, via wasCalibrated) key off — ONE string, so a rendered "why"
+// can never disagree with what calibration actually wrote.
+export const CALIBRATION_NOTE_MARKER = "Calibration: lowered";
+
+// Did calibration move this card's score? Reads the engine's own derivation note. The report
+// surfaces use it to explain a calibration-driven drop instead of misattributing it to a factor.
+export function wasCalibrated(derivation: string | null | undefined): boolean {
+  return (derivation ?? "").includes(CALIBRATION_NOTE_MARKER);
+}
+
 export interface CalibrationRow {
   agree: boolean;
   corrected_score: number | null;
   engine_score: number | null;
   engine_seat_ref: string | null;
   focusAreas: string[];
+  // The referenced review card's decision. A GENUINE PASS (`passed`) is the only downward
+  // signal we trust: the Disagree/score-QA control is direction-neutral ("what did it get
+  // wrong?"), so a bare `agree=false` row can mean "too high" OR "too low", but a card that
+  // was actually PASSED is unambiguously "we didn't want this". null for attempt-referenced
+  // rows (suppressed-match / false-negative flags), which are never a downward signal.
+  decision: string | null;
 }
 
 // Cross-grant-comparable seat archetype. A raw seat_ref (P0 / S1_2 / NONE) is grant-specific, but
@@ -73,10 +90,15 @@ export function applyCalibration(
   const family = seatFamily(match.seat_ref);
   // TIGHTEST relevance (launch default): a client's past PASS counts only when it shares this
   // grant's seat family AND an overlapping focus area — so a bad match on one category can never
-  // tug an unrelated one. Agreements are excluded; only passes are a calibration signal.
+  // tug an unrelated one. A signal is a GENUINE PASS: the card was actually `passed`
+  // (`decision === "passed"`), not merely score-QA-disagreed-with — the Disagree control is
+  // direction-neutral, so a bare `agree=false` alone can't tell "too high" from "too low", but a
+  // passed card is unambiguously downward. Agreements are excluded (`agree === false`); only
+  // passes are a calibration signal.
   const relevant = feedback.filter(
     (r) =>
       r.agree === false &&
+      r.decision === "passed" &&
       seatFamily(r.engine_seat_ref) === family &&
       overlaps(r.focusAreas, grantFocusAreas),
   );
@@ -104,7 +126,7 @@ export function applyCalibration(
 
   // Explainable: record THAT calibration moved the score and WHY, in the reasoning the card
   // renders — never a silent adjustment.
-  const note = `Calibration: lowered ${engineScore}→${calibrated} from ${n} prior pass${
+  const note = `${CALIBRATION_NOTE_MARKER} ${engineScore}→${calibrated} from ${n} prior pass${
     n === 1 ? "" : "es"
   } on same-seat, same-focus grants (confidence ${w.toFixed(2)}).`;
   const rc = match.reasoning_context;
@@ -125,7 +147,7 @@ export async function loadClientFeedback(
 ): Promise<CalibrationRow[]> {
   const { data, error } = await db
     .from("match_feedback")
-    .select("agree, corrected_score, engine_score, engine_seat_ref, grants(focus_areas)")
+    .select("agree, corrected_score, engine_score, engine_seat_ref, grants(focus_areas), review_cards(decision)")
     .eq("client_id", clientId);
   if (error || !data) return [];
   type Row = {
@@ -134,15 +156,18 @@ export async function loadClientFeedback(
     engine_score: number | null;
     engine_seat_ref: string | null;
     grants: { focus_areas: string[] | null } | { focus_areas: string[] | null }[] | null;
+    review_cards: { decision: string | null } | { decision: string | null }[] | null;
   };
   return (data as Row[]).map((r) => {
     const g = Array.isArray(r.grants) ? r.grants[0] : r.grants;
+    const c = Array.isArray(r.review_cards) ? r.review_cards[0] : r.review_cards;
     return {
       agree: r.agree,
       corrected_score: r.corrected_score,
       engine_score: r.engine_score,
       engine_seat_ref: r.engine_seat_ref,
       focusAreas: g?.focus_areas ?? [],
+      decision: c?.decision ?? null,
     };
   });
 }

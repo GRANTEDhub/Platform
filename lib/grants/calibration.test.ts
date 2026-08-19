@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applyCalibration, loadClientFeedback, seatFamily, type CalibrationRow } from "./calibration";
+import { applyCalibration, loadClientFeedback, seatFamily, wasCalibrated, type CalibrationRow } from "./calibration";
 import type { MatchResult } from "@/lib/grants/engine";
 
 // Locks the calibration consumer's safety invariants. These are load-bearing: the consumer runs
@@ -16,13 +16,15 @@ const mk = (over: Partial<MatchResult> = {}): MatchResult =>
     ...over,
   }) as MatchResult;
 
-// A relevant pass: same seat family (prime) + overlapping focus ("health"), corrected 3 -> 2.
+// A relevant pass: a GENUINELY PASSED card (decision "passed"), same seat family (prime) +
+// overlapping focus ("health"), corrected 3 -> 2.
 const pass = (over: Partial<CalibrationRow> = {}): CalibrationRow => ({
   agree: false,
   corrected_score: 2,
   engine_score: 3,
   engine_seat_ref: "P1",
   focusAreas: ["health"],
+  decision: "passed",
   ...over,
 });
 
@@ -58,6 +60,18 @@ describe("applyCalibration — identity on empty (cold-start guarantee)", () => 
     const rows = Array.from({ length: 20 }, () => pass());
     expect(applyCalibration(mk({ suppressed: true }), rows, FOCUS).fit_score).toBe(3);
     expect(applyCalibration(mk({ disqualified: true }), rows, FOCUS).fit_score).toBe(3);
+  });
+
+  it("ignores direction-neutral disagreements on cards that were NOT passed (polarity guard)", () => {
+    const m = mk();
+    // Same seat + focus, plenty of them, but the cards are still pending — a bare 'Disagree'
+    // could mean "too low", so it must never nudge the score down. Only a genuine PASS counts.
+    const pending = Array.from({ length: 20 }, () => pass({ decision: "pending" }));
+    expect(applyCalibration(m, pending, FOCUS)).toBe(m);
+    const approved = Array.from({ length: 20 }, () => pass({ decision: "approved" }));
+    expect(applyCalibration(m, approved, FOCUS)).toBe(m);
+    const attemptFlag = Array.from({ length: 20 }, () => pass({ decision: null }));
+    expect(applyCalibration(m, attemptFlag, FOCUS)).toBe(m); // suppressed-match false-negative flags
   });
 });
 
@@ -138,6 +152,17 @@ describe("applyCalibration — explainability", () => {
   });
 });
 
+describe("wasCalibrated — the marker the report surfaces read is the one the note writes", () => {
+  it("is true for a real calibration note and false otherwise", () => {
+    // The exact note applyCalibration produced when it moved a score (asserted above).
+    const moved = applyCalibration(mk(), Array.from({ length: 5 }, () => pass()), FOCUS);
+    expect(wasCalibrated(moved.reasoning_context?.fit_score_derivation)).toBe(true);
+    expect(wasCalibrated("engine reasoning")).toBe(false);
+    expect(wasCalibrated(null)).toBe(false);
+    expect(wasCalibrated(undefined)).toBe(false);
+  });
+});
+
 describe("seatFamily", () => {
   it("maps raw seat_refs to cross-grant families", () => {
     expect(seatFamily("P0")).toBe("prime");
@@ -176,6 +201,7 @@ describe("loadClientFeedback — per-client isolation (load-bearing, not RLS)", 
     engine_score: 3,
     engine_seat_ref: "P0",
     grants: { focus_areas: [focus] },
+    review_cards: { decision: "passed" },
   });
 
   it("returns only the requested client's rows and filters on client_id", async () => {
@@ -188,6 +214,7 @@ describe("loadClientFeedback — per-client isolation (load-bearing, not RLS)", 
     const rows = await loadClientFeedback(db, "A");
     expect(rows).toHaveLength(2); // only A's two rows
     expect(rows.map((r) => r.focusAreas.flat())).toEqual([["health"], ["workforce"]]);
+    expect(rows.every((r) => r.decision === "passed")).toBe(true); // decision embed maps through
     expect(eqCalls).toContainEqual(["client_id", "A"]); // the isolation predicate was applied
     // And prove the fake would have leaked B if the predicate were missing:
     expect([...eqCalls].some(([c]) => c === "client_id")).toBe(true);

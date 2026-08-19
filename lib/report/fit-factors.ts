@@ -1,4 +1,5 @@
 import type { FactorRating, FactorScores } from "@/types/database";
+import { FIT_BAND } from "@/lib/report/shape";
 
 // The six fit factors as the grant-review screen reads them.
 //
@@ -98,4 +99,28 @@ export function viewFitFactors(scores: FactorScores | null): FitFactorView {
     weakCount: scored.filter((f) => f.rating === "weak" || f.rating === "insufficient_data").length,
     unscored: scored.length === 0,
   };
+}
+
+// The bold "why this score" sentence both the client portal and the staff roadmap card put
+// beside the factor table. Shared so the two surfaces can't drift (they independently built
+// the same string before).
+//
+// CALIBRATION OVERRIDES THE FACTOR CAP. A calibration-lowered score reflects past feedback on
+// similar grants, NOT a per-factor cap, so the "Capped on <factor>" sentence would be a false
+// attribution — or, on an all-strong card, no reason at all where the score visibly dropped.
+// When calibration fired we state that instead; the factor table still shows any weak row
+// honestly on its own.
+export function blockingReason(
+  view: FitFactorView,
+  fitScore: 1 | 2 | 3,
+  opts: { calibrated: boolean },
+): string | null {
+  if (opts.calibrated) {
+    return "Adjusted below the machine score based on past feedback on similar grants.";
+  }
+  if (!view.lead?.rationale) return null;
+  const others = Math.max(0, view.weakCount - (view.lead ? 1 : 0));
+  return `Capped at ${FIT_BAND[fitScore].label.toLowerCase()} on ${view.lead.label.toLowerCase()} — ${
+    view.lead.rationale
+  }${others > 0 ? ` (${others} other factor${others === 1 ? "" : "s"} also scored short.)` : ""}`;
 }
