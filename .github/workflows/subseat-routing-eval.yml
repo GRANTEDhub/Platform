@@ -47,7 +47,8 @@ jobs:
     environment: subseat-eval
     # Generous outer cap. The eval batches all scoring by flag phase with capped concurrency, so a
     # default run is a few minutes; this ceiling just bounds a badly rate-limited run. (The eval's
-    # own beforeAll timeout is 30 min, comfortably inside this.)
+    # own beforeAll timeout scales with runs/concurrency — floored at 10 min, capped at 55 min — so
+    # it stays just inside this cap even in the worst case.)
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
