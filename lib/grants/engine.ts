@@ -508,22 +508,35 @@ Return a JSON object with this exact schema:
 }`;
 
 const SUBSEAT_ROUTING_ADDENDUM = `
-SUPPORTING-SEAT ROUTING (overrides "first gate failure = disqualify" for the SUB case):
-A client that is not an eligible PRIME entity type for this grant (e.g. a nonprofit on a
-government-only program) is NOT disqualified on that basis alone. BEFORE setting
-disqualified=true or seat_ref=NONE, check the enumerated SUPPORTING seats in the ideal profile.
-If the client genuinely performs a specific listed supporting seat's function (you can name the
-S{i}_{j} id AND the function it performs), map the client to that seat:
+SUPPORTING-SEAT ROUTING (narrow override of "first gate failure = disqualify", for the SUB case ONLY):
+This changes ONE thing: it stops a client being DISQUALIFIED solely because it is not an eligible
+PRIME entity type, when it genuinely occupies a listed SUPPORTING seat. It overrides nothing else --
+it does NOT touch suppression and does NOT override the role rules below.
+
+DEFER FIRST -- if ANY of these hold, do NOT apply this routing; follow the existing rule instead:
+  - The grant is SUPPRESSED for any reason (a Phase-0 suppression pre-filter, subaward-prohibited
+    collapse, award size, etc.). A suppressed match STAYS suppressed: never set suppressed=false
+    here, and never route a suppressed grant to a sub seat.
+  - subaward_prohibited = true. There is no sub/co-applicant structure; follow the SUBAWARD
+    PROHIBITION collapse rule (Facilitator only).
+  - The client is a for-profit or a federal agency. Follow the HARD ROLE RULES (for-profit ->
+    Facilitator/Named Collaborator ONLY; federal agency -> Named Collaborator ONLY). This routing
+    is only for entity types that CAN be a subrecipient/co-applicant (e.g. nonprofits).
+
+OTHERWISE, before setting disqualified=true or seat_ref=NONE, check the enumerated SUPPORTING seats
+in the ideal profile. If the client genuinely performs a specific listed supporting seat's function
+(you can name the S{i}_{j} id AND the function it performs), map the client to that seat:
   - seat_ref = that S{i}_{j}
   - proposed_role = "Sub" (or "Co-Applicant" if the NOFO allows co-applicants)
   - fit_score = 2 (supporting-seat floor; the seat ceiling caps a supporting seat at 2)
-  - disqualified = false, suppressed = false
+  - disqualified = false   (leave suppressed EXACTLY as the rules above set it -- do not change it)
   - recommended_prime = the eligible prime entity TYPE the client would sub under (name a
     specific eligible organization ONLY if one is genuinely obvious; otherwise the type), and add
     a before_you_approve item "prime applicant needed -- client subs under <prime type>".
 Only set disqualified / seat_ref=NONE when the client occupies NEITHER a prime archetype NOR any
 listed supporting seat (genuine topical adjacency with no seat, per NO-SEAT-IS-0). Prime-entity
-ineligibility ALONE, with a genuine supporting seat available, is a SUB routing, never a kill.
+ineligibility ALONE -- for a sub-capable entity type, on a sub-permitting, non-suppressed grant,
+with a genuine supporting seat available -- is a SUB routing, never a kill.
 This does NOT lower the bar: "genuine supporting seat" means the client performs that seat's
 specific named function, not generic "delivery" help or topical adjacency.`;
 

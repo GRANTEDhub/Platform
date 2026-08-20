@@ -21,9 +21,14 @@ import type { Client, Grant } from "@/types/database";
 //     fit_score 2, proposed_role Sub/Co-Applicant, not disqualified/suppressed), OFF must NOT
 //     (proving the addendum, not luck, did it), and every ON run must AGREE (stability, not one
 //     lucky pass).
-//   HIT set — ON must be INDISTINGUISHABLE from OFF on the deciding fields (seat family,
-//     fit_score band, disqualified) — the zero-regression bar. Guards against the flood failure
-//     mode (the addendum must not start surfacing sub-fits for orgs that should stay out).
+//   HIT set — ON must be INDISTINGUISHABLE from OFF on the deciding fields (seat family, EXACT
+//     fit_score, disqualified, suppressed, role) — the zero-regression bar. Guards against the
+//     flood failure mode (surfacing sub-fits for orgs that should stay out) AND against a silent
+//     suppression flip that hides an already-good match.
+//   CARVE-OUT set — a single DEFER-FIRST trigger (for-profit org_type, subaward_prohibited=true,
+//     or an authoritative suppress rule) applied to the MISS base (PTF / Smart Reentry, the case
+//     ON most wants to route to Sub). The addendum must DEFER: ON must NEVER route it to a Sub
+//     seat, and a suppressed match must STAY suppressed. Proves the carve-outs actually fire.
 //
 // KNOWN LIMITATION (documented, not hidden): the miss set is Pathway-to-Freedom-concentrated —
 // PTF is the only clean client-side example (Harbor House self-suppresses via its capital-only
@@ -34,21 +39,60 @@ const RUN = process.env.RUN_SUBSEAT_EVAL === "1" && !!process.env.ANTHROPIC_API_
 const RUNS = Math.max(1, Number(process.env.SUBSEAT_EVAL_RUNS ?? 3));
 const FLAG = "MATCH_SUBSEAT_ROUTING_ENABLED";
 
-type Band = "miss" | "hit";
+type Band = "miss" | "hit" | "carveout";
 interface Fixture {
   label: string;
   client: string; // ilike against clients.name
   grantLike: string; // ilike against grants.title
   band: Band;
+  // CARVE-OUT only: apply the ONE DEFER-FIRST trigger to a confirmed-real base pair, in place,
+  // after load and before scoring. Isolates the carve-out — everything else stays identical to a
+  // case the addendum WOULD route to Sub, so a pass proves the DEFER-FIRST block (not the data) did it.
+  mutate?: (rows: { client: Client; grant: Grant }) => void;
+  expectSuppressed?: boolean; // carve-out: also assert ON stays suppressed (never un-suppressed)
 }
 
-// Miss = should START surfacing as a sub. Hit = must NOT change (correct today).
+// Miss = should START surfacing as a sub. Hit = must NOT change (correct today). Carve-out = a
+// DEFER-FIRST trigger applied to the miss base (PTF / Smart Reentry, the case ON most wants to
+// route to Sub) — the addendum must DEFER and NOT route it to Sub.
 const FIXTURES: Fixture[] = [
   { label: "PTF / Smart Reentry (gov-only; PTF fills the reentry-provider sub-seat)", client: "Pathway to Freedom", grantLike: "%smart reentry%", band: "miss" },
   { label: "PTF / Public Safety & Mental Health (gov-only sub)", client: "Pathway to Freedom", grantLike: "%public safety and mental health%", band: "miss" },
   { label: "PTF / SC Reentry Education (broad eligibility — genuine match, must stay)", client: "Pathway to Freedom", grantLike: "%improving reentry education%", band: "hit" },
   { label: "Arisa / Water Infrastructure Workforce (correct zero — wrong sector)", client: "Arisa Health", grantLike: "%water infrastructure workforce%", band: "hit" },
   { label: "Arisa / Rural Housing Preservation (correct zero — no housing program)", client: "Arisa Health", grantLike: "%rural housing preservation%", band: "hit" },
+  // ── DEFER-FIRST carve-outs (all on the PTF / Smart Reentry base) ────────────────────────────
+  {
+    label: "CARVE-OUT for-profit: PTF re-typed for-profit — HARD ROLE RULE (Facilitator only) wins, never Sub",
+    client: "Pathway to Freedom",
+    grantLike: "%smart reentry%",
+    band: "carveout",
+    mutate: ({ client }) => {
+      client.org_type = "For-Profit / Commercial";
+    },
+  },
+  {
+    label: "CARVE-OUT subaward-prohibited: same grant flagged subaward_prohibited — Facilitator collapse wins, never Sub",
+    client: "Pathway to Freedom",
+    grantLike: "%smart reentry%",
+    band: "carveout",
+    mutate: ({ grant }) => {
+      grant.subaward_prohibited = true;
+    },
+  },
+  {
+    // Suppression is model-produced on this branch (no code path sets suppressed inside
+    // matchGrantToClient — every hard-no is the model's), so the deterministic trigger is an
+    // AUTHORITATIVE self-suppress matching rule, the same shape Harbor House uses in prod.
+    label: "CARVE-OUT suppressed: an authoritative suppress rule on the client — stays suppressed, never Sub",
+    client: "Pathway to Freedom",
+    grantLike: "%smart reentry%",
+    band: "carveout",
+    expectSuppressed: true,
+    mutate: ({ client }) => {
+      client.matching_rules = `${client.matching_rules ?? ""}\nSUPPRESS: this organization is pausing ALL reentry-services pursuits this cycle. Do not surface any reentry grant — set suppressed=true and do not score.`.trim();
+    },
+  },
 ];
 
 interface Read {
@@ -129,21 +173,36 @@ describe.skipIf(!RUN)("subseat-routing eval (model-in-the-loop)", () => {
     expect(grant, `grant not found (or no profile): ${fx.grantLike}`).toBeTruthy();
     if (!client || !grant) return;
 
+    // Carve-out: apply the single DEFER-FIRST trigger in place before either OFF or ON scores it,
+    // so both sides see the same mutated base and the only variable is the flag.
+    if (fx.mutate) fx.mutate({ client, grant });
+
     const off = await scoreN(grant, client, false);
     const on = await scoreN(grant, client, true);
-    // Surfaced to the console (helps read the report even on a pass).
-    console.log(`[${fx.band}] ${fx.label}\n  OFF: ${off.map((r) => `${r.seat_ref}/${r.fit}/${r.role}${r.disq ? "/DISQ" : ""}`).join(" | ")}\n  ON : ${on.map((r) => `${r.seat_ref}/${r.fit}/${r.role}${r.disq ? "/DISQ" : ""}`).join(" | ")}`);
+    // Surfaced to the console (helps read the report even on a pass). supp is shown because a
+    // suppression flip is a HIT/carve-out regression that the seat/fit/role columns alone hide.
+    const fmt = (r: Read) => `${r.seat_ref}/${r.fit}/${r.role}${r.disq ? "/DISQ" : ""}${r.supp ? "/SUPP" : ""}`;
+    console.log(`[${fx.band}] ${fx.label}\n  OFF: ${off.map(fmt).join(" | ")}\n  ON : ${on.map(fmt).join(" | ")}`);
 
     if (fx.band === "miss") {
       // ON surfaces the sub on EVERY run (stability); NO OFF run surfaces it (proves the addendum,
       // not model variance, is the cause — .some, not .every, or a flaky baseline would pass).
       expect(on.every(isSubSurfaced), "ON should surface a supporting seat on every run").toBe(true);
       expect(off.some(isSubSurfaced), "NO OFF run should surface it (proves the addendum caused it)").toBe(false);
+    } else if (fx.band === "carveout") {
+      // DEFER-FIRST: the addendum must NOT route this to a supporting Sub seat on ANY run — the
+      // for-profit / subaward-prohibited / suppressed triggers all take precedence over the routing.
+      expect(on.some(isSubSurfaced), "carve-out: ON must NEVER route this to a supporting Sub seat").toBe(false);
+      if (fx.expectSuppressed) {
+        // And a suppressed match must STAY suppressed — the addendum may never un-suppress.
+        expect(on.every((r) => r.supp), "carve-out: a suppressed match must stay suppressed under the addendum").toBe(true);
+      }
     } else {
-      // HIT: zero regression. ON must match OFF on the EXACT deciding fields (score + role, not a
-      // qualifying band — a prime 3→2 same-family regression must not slip through), on every run,
+      // HIT: zero regression. ON must match OFF on the EXACT deciding fields (score + role +
+      // suppressed, not a qualifying band — a prime 3→2 same-family regression, OR a false→true
+      // suppression flip that silently hides a good match, must not slip through), on every run,
       // and must NOT start surfacing a sub for an org that should stay out (the flood guard).
-      const key = (r: Read) => `${r.seatFam}|${r.fit}|${r.disq}|${r.role}`;
+      const key = (r: Read) => `${r.seatFam}|${r.fit}|${r.disq}|${r.supp}|${r.role}`;
       const offKeys = new Set(off.map(key));
       expect(offKeys.size, "OFF should itself be stable for a hit fixture").toBe(1);
       expect(on.every((r) => offKeys.has(key(r))), "ON must not change a correct result").toBe(true);
