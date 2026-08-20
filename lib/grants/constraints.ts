@@ -81,6 +81,15 @@ export function validateConstraint(raw: unknown): ConstraintValidation {
       error: `role_ceiling value must be one of: ${ROLE_CEILING_VALUES.join(", ")} (got "${value}")`,
     };
   }
+  // do_not_surface_for matches via topicTerms (comma-split, >= 3 chars). A value whose every term
+  // is under 3 chars (e.g. "AI", "EV") tokenizes to nothing and would suppress nothing — a silently
+  // dead gate, the same failure the role_ceiling enum check guards against. Reject it at save time.
+  if (c.type === "do_not_surface_for" && topicTerms(value).length === 0) {
+    return {
+      ok: false,
+      error: `do_not_surface_for: every term in "${value}" is under 3 characters and could never match — use a longer contraindicated topic term`,
+    };
+  }
   const scope = typeof c.scope === "string" && c.scope.trim() ? c.scope.trim() : undefined;
   const constraint: HardConstraint = {
     type: c.type,
@@ -160,6 +169,24 @@ function scopeMatches(scope: string, haystack: string): boolean {
   return tokens.some((t) => h.includes(t));
 }
 
+// A do_not_surface_for value is a COMMA-separated list of contraindicated topics, each a PHRASE.
+// It must NOT reuse scopeMatches: that whitespace-OR tokenizer is fine for a low-stakes scoped
+// role_ceiling (which also always flags for review), but full SUPPRESSION on a stray generic word
+// is a silent over-drop. "crisis intervention services" is ONE phrase that must appear intact, not
+// three tokens where "services" matches nearly every grant. Split on commas only; each term
+// (>= 3 chars, so a dead all-short value is caught at validate time) matches as a substring; OR
+// across terms so "crisis, forensic" still fires on a crisis grant OR a forensic grant.
+function topicTerms(value: string): string[] {
+  return norm(value)
+    .split(",")
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 3);
+}
+function topicMatches(value: string, haystack: string): boolean {
+  const h = norm(haystack);
+  return topicTerms(value).some((term) => h.includes(term));
+}
+
 // Minimal shape the clamp mutates -- engine's MatchResult is structurally
 // compatible. Kept local so this module imports no engine types (no cycle).
 export interface ClampableMatch {
@@ -230,7 +257,7 @@ export function applyHardConstraints(
       // client exiting a service line). Best-effort token match on the grant haystack, same
       // heuristic as a scoped role_ceiling — so it ALWAYS records a reason and stays overridable
       // (the manual-add path surfaces a suppressed match with an override), never a silent drop.
-      if (scopeMatches(c.value, haystack)) {
+      if (topicMatches(c.value, haystack)) {
         result.suppressed = true;
         result.suppress_reason = `Do-not-surface for ${client.name} (${c.value}): ${c.note}`;
         result.before_you_approve.unshift(

@@ -67,6 +67,29 @@ describe("do_not_surface_for — deterministic contraindication suppress", () =>
     const m = applyHardConstraints(mk(), client([]), grant({ title: "Crisis Stabilization Initiative" }));
     expect(m.suppressed).toBe(false);
   });
+
+  it("matches a MULTI-WORD term only as a phrase — a generic word in it can't over-suppress", () => {
+    // The term is one phrase ("crisis intervention services"), NOT three OR'd tokens. A grant that
+    // merely contains "services" must not be suppressed (the over-broad failure of whitespace-OR).
+    const phrase: HardConstraint = {
+      type: "do_not_surface_for",
+      value: "crisis intervention services",
+      action: "suppress",
+      note: "Exiting this line.",
+    };
+    const unrelated = applyHardConstraints(
+      mk(),
+      client([phrase]),
+      grant({ title: "Rural Transit Services Expansion", focus_areas: ["services"] }),
+    );
+    expect(unrelated.suppressed).toBe(false); // "services" alone does not fire the phrase
+    const real = applyHardConstraints(
+      mk(),
+      client([phrase]),
+      grant({ title: "Crisis Intervention Services Demonstration" }),
+    );
+    expect(real.suppressed).toBe(true); // the full phrase present → fires
+  });
 });
 
 describe("do_not_surface_for — validation", () => {
@@ -84,5 +107,15 @@ describe("do_not_surface_for — validation", () => {
   it("rejects a do_not_surface_for missing its value or note (fails closed)", () => {
     expect(validateConstraint({ type: "do_not_surface_for", value: "", note: "x" }).ok).toBe(false);
     expect(validateConstraint({ type: "do_not_surface_for", value: "crisis", note: "" }).ok).toBe(false);
+  });
+
+  it("rejects a value whose every term is under 3 chars (a silently dead gate)", () => {
+    // "AI"/"EV" tokenize to nothing under topicTerms → would suppress nothing. Fail at save time,
+    // the same discipline the role_ceiling enum check applies.
+    const dead = validateConstraint({ type: "do_not_surface_for", value: "AI, EV", note: "x" });
+    expect(dead.ok).toBe(false);
+    if (!dead.ok) expect(dead.error).toContain("under 3 characters");
+    // A mixed value with at least one usable term still validates.
+    expect(validateConstraint({ type: "do_not_surface_for", value: "AI, forensic", note: "x" }).ok).toBe(true);
   });
 });

@@ -102,7 +102,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       recommended_prime: existing.recommended_prime ?? null,
       why_this_org: existing.why_this_org ?? [],
       concept_synopsis: existing.concept_synopsis ?? null,
-      before_you_approve: existing.before_you_approve ?? [],
+      // Staff-only, same reason as the fresh-score branch: a persisted card's before_you_approve
+      // can carry entity_screen / role_ceiling constraint notes (staff-authored client text).
+      before_you_approve: canPersist ? existing.before_you_approve ?? [] : [],
       rationale: rationaleFrom(existing.reasoning_context),
       inferred_fields: [],
       disqualified: false,
@@ -169,14 +171,22 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   const cardFields = cardFieldsFromMatch(match);
-  const beforeApprove = [...(cardFields.before_you_approve ?? [])];
   // Grant not fully shredded yet -> the read may be thin; say so rather than present
-  // it as settled (IntellEngine's "surface inferred-vs-confirmed" discipline).
-  if (grant.status !== "complete") {
-    beforeApprove.unshift(
-      `This grant is still processing (status: ${grant.status}) — the fit read may be incomplete; re-check once it has finished ingesting.`,
-    );
-  }
+  // it as settled (IntellEngine's "surface inferred-vs-confirmed" discipline). This note is
+  // client-safe (it's about the grant, not the client).
+  const processingNote =
+    grant.status !== "complete"
+      ? [
+          `This grant is still processing (status: ${grant.status}) — the fit read may be incomplete; re-check once it has finished ingesting.`,
+        ]
+      : [];
+  // before_you_approve carries STAFF-authored constraint notes (do_not_surface_for / entity_screen /
+  // role_ceiling), and those embed a client's own `note` text — e.g. a service line the client is
+  // quietly exiting. It is staff pre-send review guidance and MUST NOT reach a client actor (a
+  // portal member self-checking their own org). A client gets only the benign processing note.
+  const beforeApprove = canPersist
+    ? [...processingNote, ...(cardFields.before_you_approve ?? [])]
+    : processingNote;
 
   const verdict: Verdict = match.disqualified || match.suppressed || match.fit_score === 0
     ? "no"
@@ -216,7 +226,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     // client means "we never write from here", two different facts.
     reportOnly: !canPersist,
     verdict,
-    reason: match.disqualified ? match.disqualify_reason ?? null : match.suppressed ? match.suppress_reason ?? null : null,
+    // suppress_reason on a do_not_surface_for match embeds the client's staff-authored
+    // contraindication note (confidential — their exited service line, phrased for internal eyes).
+    // Staff see it verbatim; a client actor gets a generic client-safe line instead of our internal
+    // strategy about them. disqualify_reason is model-produced eligibility prose (already shown to
+    // clients via the portal), so it stays as-is for both.
+    reason: match.disqualified
+      ? match.disqualify_reason ?? null
+      : match.suppressed
+        ? canPersist
+          ? match.suppress_reason ?? null
+          : "This grant isn't a fit for your organization right now."
+        : null,
     rationale: rationaleFrom(match.reasoning_context),
     fit_score: match.fit_score,
     seat_ref: match.seat_ref ?? null,
