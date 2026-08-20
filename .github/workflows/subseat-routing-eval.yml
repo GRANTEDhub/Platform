@@ -24,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       runs:
-        description: "Runs per fixture per flag state (stability sampling; higher = slower + more Anthropic spend). Per-fixture timeout scales with this; the whole job is capped at 60 min, so keep runs ≤ ~6 for a full 8-fixture pass."
+        description: "Runs per fixture per flag state (stability sampling; higher = slower + more Anthropic spend). Per-fixture timeout scales with this; the whole job is capped at 60 min, so keep runs ≤ ~6 for a full 7-fixture pass."
         required: false
         default: "3"
 
@@ -42,7 +42,7 @@ jobs:
     # dispatch ref or an attacker-authored workflow that doesn't declare this environment.
     environment: subseat-eval
     # Fixed outer cap; GitHub expressions can't do arithmetic on `runs`, so this is a static
-    # ceiling sized to cover runs ≤ ~6 (8 fixtures × 2 × runs sequential Anthropic calls).
+    # ceiling sized to cover runs ≤ ~6 (7 fixtures × 2 × runs sequential Anthropic calls).
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
