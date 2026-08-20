@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       runs:
-        description: "Runs per fixture per flag state (stability sampling; higher = slower + more Anthropic spend)"
+        description: "Runs per fixture per flag state (stability sampling; higher = slower + more Anthropic spend). The eval scales its per-fixture timeout with this, so raising it is safe."
         required: false
         default: "3"
 
@@ -36,6 +36,24 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      # Fail LOUD if a secret is unset/misnamed. Without this, an empty ANTHROPIC_API_KEY
+      # trips the eval's own RUN gate (skipIf), every fixture is skipped, and vitest still
+      # exits 0 — a green check that verified nothing. The whole point of this job is to be
+      # a trustworthy flip gate, so a silent skip must be a hard failure instead.
+      - name: Verify required secrets are present
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          missing=0
+          for v in ANTHROPIC_API_KEY NEXT_PUBLIC_SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+            if [ -z "${!v}" ]; then
+              echo "::error::$v is empty or unset — add it under Settings → Secrets and variables → Actions. The eval would otherwise silently skip and report a false green."
+              missing=1
+            fi
+          done
+          [ "$missing" = 0 ]
       - name: Run subseat-routing eval
         env:
           RUN_SUBSEAT_EVAL: "1"
