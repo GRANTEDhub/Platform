@@ -79,25 +79,34 @@ interface Fixture {
   expectSuppressed?: boolean; // carve-out: also assert ON stays suppressed (never un-suppressed)
 }
 
-// Miss = should START surfacing as a sub. Hit = must NOT change (correct today). Carve-out = a
-// DEFER-FIRST trigger applied to the miss base (PTF / Smart Reentry, the case ON most wants to
-// route to Sub) — the addendum must DEFER and NOT route it to Sub.
+// Miss = a prime-INELIGIBLE specialist that genuinely fills a listed SUPPORTING seat and SHOULD start
+// surfacing as a sub under the flag. Hit = must NOT change (correct today). Carve-out = a DEFER-FIRST
+// trigger applied to a would-route base (PTF / Smart Reentry) — the addendum must DEFER, not route to Sub.
 // Grant ids are pinned to real, profiled prod rows (Platform, gpqrzvnhxjsqerfczhqt), confirmed
 // to carry an ideal_applicant_profile — the occupancy step is meaningless without one.
-const G_SMART_REENTRY = "652cab62-5180-43e5-8ac8-9340af696ac4"; // BJA FY2026 Smart Reentry Demonstration
+const G_SMART_REENTRY = "652cab62-5180-43e5-8ac8-9340af696ac4"; // BJA FY2026 Smart Reentry Demonstration (carve-out base)
 const G_REENTRY_ED = "4335a5d5-611c-4258-b70f-52e8b494fe30"; // BJA FY2026 Second Chance Act Improving Reentry Education
 const G_WATER_WORKFORCE = "43827e63-a945-4004-b56c-578013cd0ad2"; // Innovative Water Infrastructure Workforce Development
+const G_FIRST_RESPONDERS_CARA = "e14b2acd-e780-4b05-a183-254228c788a5"; // First Responders–CARA (gov-only prime, subawards allowed)
 
 const FIXTURES: Fixture[] = [
-  { label: "PTF / Smart Reentry (gov-only; PTF fills the enumerated reentry-provider sub-seat S0_7)", client: "Pathway to Freedom", grantId: G_SMART_REENTRY, band: "miss" },
-  // PSMHI (293c7a5e-8f27-4037-809e-247e76518989) was demoted from the miss set (2026-08-20): its profile is a crisis /
-  // behavioral-health cross-system consortium; its "reentry" seats are supervision / treatment-
-  // compliance / correctional-health functions, NOT PTF's peer-support + navigation core. PTF's fit
-  // there is marginal, so a DISQ is DEFENSIBLE — it is not a clean miss, and keeping it as one would
-  // risk tuning the addendum to force a wrong route (the over-credit failure). Smart Reentry (S0_7 is
-  // a "community-based reentry nonprofit with lived-experience staff" seat — PTF verbatim) is the one
-  // clean, unambiguous gov-only miss, so it is the canonical single-fixture read. Over-credit is still
-  // guarded by the Arisa correct-zero hit + the three DEFER-FIRST carve-outs.
+  // Canonical MISS. Arisa (behavioral-health nonprofit) is prime-INELIGIBLE on this gov-only NOFO
+  // (states / local govs / tribes), but genuinely fills seat S0_1 — "community-based organization with
+  // 2+ years of overdose-prevention / SUD services as direct service co-implementer" — matching Arisa's
+  // OWN listed capability (residential SUD at Arisa Recovery at Mills + law-enforcement crisis co-
+  // responder). Gov-only prime + subawards allowed + NO compliance confounder ⇒ the clean test of
+  // positive routing. can_prime=true org-wide is deliberate: it verifies the model routes to SUB on
+  // NOFO eligibility despite general prime capacity. (Arisa carries a mild supplanting caution post-CMHC-
+  // exit; CARA funds NEW first-responder work, so watch the captured reasoning to tell a supplanting
+  // hesitation apart from a no-prime-routing DISQ.)
+  { label: "Arisa / First Responders-CARA (gov-only; Arisa fills the SUD direct-service sub-seat S0_1)", client: "Arisa Health", grantId: G_FIRST_RESPONDERS_CARA, band: "miss" },
+  // DROPPED as a miss (2026-08-20): PTF / Smart Reentry (652cab62). PTF fills S0_7 functionally, but the
+  // model declines on GENUINE grounds — faith-based (Establishment Clause) + all-male program on a federal
+  // civil-rights grant — so a DISQ is defensible, not a routing miss; and OFF was unstable (NONE/0 vs
+  // NONE/1). Its base is still exercised by the three DEFER-FIRST carve-outs below. PSMHI (293c7a5e) was
+  // likewise demoted as marginal (crisis/behavioral-health consortium; its "reentry" seats are supervision
+  // / treatment-compliance, not a peer-support core). Over-credit stays guarded by the Arisa correct-zero
+  // hit + the three carve-outs.
   { label: "PTF / SC Reentry Education (broad eligibility — genuine match, must stay)", client: "Pathway to Freedom", grantId: G_REENTRY_ED, band: "hit" },
   { label: "Arisa / Water Infrastructure Workforce (correct zero — wrong sector)", client: "Arisa Health", grantId: G_WATER_WORKFORCE, band: "hit" },
   // NOTE: the second Arisa "correct zero" (Rural Housing Preservation, f6e9bd59-b02b-415d-a03b-37da22314927)
