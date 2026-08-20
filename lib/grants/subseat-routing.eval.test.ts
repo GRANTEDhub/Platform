@@ -154,21 +154,28 @@ describe.skipIf(!RUN)("subseat-routing eval (model-in-the-loop)", () => {
     // during collection, so a top-level createServiceClient() would fire (and throw on missing
     // Supabase env) even in a skipped/sandbox run.
     const db = createServiceClient();
-    const { data: client } = await db
+    const { data: client, error: clientErr } = await db
       .from("clients")
       .select("*")
       .ilike("name", fx.client)
       .limit(1)
       .maybeSingle<Client>();
-    const { data: grant } = await db
+    const { data: grant, error: grantErr } = await db
       .from("grants")
       .select("*")
       .ilike("title", fx.grantLike)
       .not("ideal_applicant_profile", "is", null)
-      .order("created_at", { ascending: false })
+      // ingested_at, NOT created_at: `grants` has no created_at column, and ordering by a
+      // non-existent column makes PostgREST 400 -> data null for EVERY row, which the
+      // discarded error disguised as a bland "grant not found" (all 8 fixtures failed
+      // identically regardless of title). Surface both query errors below so a future
+      // schema drift can never again masquerade as a not-found.
+      .order("ingested_at", { ascending: false })
       .limit(1)
       .maybeSingle<Grant>();
 
+    expect(clientErr, `client query errored: ${clientErr?.message}`).toBeFalsy();
+    expect(grantErr, `grant query errored: ${grantErr?.message}`).toBeFalsy();
     expect(client, `client not found: ${fx.client}`).toBeTruthy();
     expect(grant, `grant not found (or no profile): ${fx.grantLike}`).toBeTruthy();
     if (!client || !grant) return;
