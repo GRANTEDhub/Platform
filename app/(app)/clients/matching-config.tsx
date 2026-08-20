@@ -22,6 +22,10 @@ const CONSTRAINT_TYPES: {
   effect: string;
   valueLabel: string;
   valuePlaceholder: string;
+  // Per-type override for the shared Note field's placeholder. Defaults to the
+  // "shown to the reviewer and the model" copy; do_not_surface_for overrides it
+  // because its note is deliberately kept OUT of the model prompt (confidential).
+  notePlaceholder?: string;
 }[] = [
   {
     value: "ineligible_funder",
@@ -59,6 +63,8 @@ const CONSTRAINT_TYPES: {
       "Suppresses any grant whose text matches these topic terms (e.g. a service line the client is exiting). Recorded with a reason and overridable via manual add — not a silent drop.",
     valueLabel: "Contraindicated topic term(s)",
     valuePlaceholder: "e.g. crisis, forensic",
+    notePlaceholder:
+      "Why this constraint exists — shown to the reviewer only; kept out of the model prompt so confidential client detail never reaches a client-facing surface.",
   },
 ];
 
@@ -197,7 +203,10 @@ export function MatchingConfig({
                 <Input
                   value={r.note}
                   onChange={(e) => update(i, { note: e.target.value })}
-                  placeholder="Why this constraint exists — shown to the reviewer and the model."
+                  placeholder={
+                    meta.notePlaceholder ??
+                    "Why this constraint exists — shown to the reviewer and the model."
+                  }
                 />
               </div>
 

@@ -162,7 +162,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   let match;
   try {
     match = await matchGrantToClient(grant, client, usaSpendingContext);
-    match = await enrichMatchWithProfile(grant, client, match);
+    // Only enrich a match that will actually surface. enrichMatchWithProfile re-generates
+    // why_this_org/concept_synopsis from the client profile; run unconditionally it would
+    // overwrite the source-scrub applyHardConstraints performs on a suppressed
+    // (do_not_surface_for) match — re-populating positive-fit narrative for the exact grant the
+    // suppression exists to hide, which the route then returns un-gated. Mirror pipeline.ts's
+    // `qualifies` gate: never enrich a suppressed or disqualified match.
+    if (!match.suppressed && !match.disqualified) {
+      match = await enrichMatchWithProfile(grant, client, match);
+    }
   } catch (err) {
     return NextResponse.json(
       { error: `Scoring failed: ${err instanceof Error ? err.message : String(err)}` },
