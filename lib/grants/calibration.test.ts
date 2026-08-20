@@ -17,7 +17,10 @@ const mk = (over: Partial<MatchResult> = {}): MatchResult =>
   }) as MatchResult;
 
 // A relevant pass: a GENUINELY PASSED card (decision "passed"), same seat family (prime) +
-// overlapping focus ("health"), corrected 3 -> 2.
+// overlapping focus ("health"), corrected 3 -> 2. Each call mints a UNIQUE reviewCardId so a
+// batch of passes counts as distinct cards — otherwise dedupeByTarget would collapse them and
+// the threshold tests would be measuring 1 signal, not N.
+let seq = 0;
 const pass = (over: Partial<CalibrationRow> = {}): CalibrationRow => ({
   agree: false,
   corrected_score: 2,
@@ -25,6 +28,10 @@ const pass = (over: Partial<CalibrationRow> = {}): CalibrationRow => ({
   engine_seat_ref: "P1",
   focusAreas: ["health"],
   decision: "passed",
+  reviewCardId: `card-${seq++}`,
+  matchAttemptId: null,
+  grantDeadline: null, // not expired by default
+  feedbackCreatedAt: null,
   ...over,
 });
 
@@ -141,6 +148,55 @@ describe("applyCalibration — bare passes (the shape real feedback actually tak
   });
 });
 
+// Corpus hygiene: the raw feedback corpus double-counts (reject-decision + score-Disagree +
+// double-submit all write a row against ONE card), which silently halves the ~K threshold.
+describe("applyCalibration — dedup by card (one passed card is one signal)", () => {
+  it("collapses many rows for the SAME card to a single signal", () => {
+    // 20 rows, all the same card id → 1 signal → below threshold → no move.
+    const dupes = Array.from({ length: 20 }, () => pass({ reviewCardId: "card-X" }));
+    expect(applyCalibration(mk(), dupes, FOCUS).fit_score).toBe(3);
+  });
+
+  it("five distinct cards each duplicated still move exactly one point (not more)", () => {
+    // 5 cards × 2 rows each = 10 rows but 5 signals → −1, not the −? a raw count of 10 implies.
+    const rows = [0, 1, 2, 3, 4].flatMap((i) => [
+      pass({ reviewCardId: `dup-${i}` }),
+      pass({ reviewCardId: `dup-${i}` }),
+    ]);
+    expect(applyCalibration(mk({ fit_score: 3 }), rows, FOCUS).fit_score).toBe(2);
+  });
+
+  it("dedups attempt-referenced rows by matchAttemptId when there is no card", () => {
+    const dupes = Array.from({ length: 20 }, () =>
+      pass({ reviewCardId: null, matchAttemptId: "att-1" }),
+    );
+    expect(applyCalibration(mk(), dupes, FOCUS).fit_score).toBe(3); // 1 signal
+  });
+});
+
+// A pass filed after the grant's deadline is a timing/cleanup pass, not a fit judgement.
+describe("applyCalibration — expired-pass exclusion", () => {
+  it("excludes passes filed after the grant deadline, however many", () => {
+    const m = mk();
+    const expired = Array.from({ length: 20 }, () =>
+      pass({ grantDeadline: "2026-01-01", feedbackCreatedAt: "2026-06-01T00:00:00Z" }),
+    );
+    expect(applyCalibration(m, expired, FOCUS)).toBe(m); // all expired → identity
+  });
+
+  it("keeps passes filed before the deadline (they still count)", () => {
+    const live = Array.from({ length: 5 }, () =>
+      pass({ grantDeadline: "2026-12-31", feedbackCreatedAt: "2026-06-01T00:00:00Z" }),
+    );
+    expect(applyCalibration(mk(), live, FOCUS).fit_score).toBe(2); // ~5 live passes → −1
+  });
+
+  it("keeps a pass when either date is missing (not provably expired)", () => {
+    const rows = Array.from({ length: 5 }, () => pass({ grantDeadline: null, feedbackCreatedAt: null }));
+    expect(applyCalibration(mk(), rows, FOCUS).fit_score).toBe(2);
+  });
+});
+
 describe("applyCalibration — explainability", () => {
   it("annotates the reasoning when (and only when) it moved the score", () => {
     const moved = applyCalibration(mk(), Array.from({ length: 5 }, () => pass()), FOCUS);
@@ -200,7 +256,10 @@ describe("loadClientFeedback — per-client isolation (load-bearing, not RLS)", 
     corrected_score: 2,
     engine_score: 3,
     engine_seat_ref: "P0",
-    grants: { focus_areas: [focus] },
+    review_card_id: `rc-${clientId}-${focus}`,
+    match_attempt_id: null,
+    created_at: "2026-06-01T00:00:00Z",
+    grants: { focus_areas: [focus], submission_deadline: "2026-12-31" },
     review_cards: { decision: "passed" },
   });
 
@@ -215,6 +274,9 @@ describe("loadClientFeedback — per-client isolation (load-bearing, not RLS)", 
     expect(rows).toHaveLength(2); // only A's two rows
     expect(rows.map((r) => r.focusAreas.flat())).toEqual([["health"], ["workforce"]]);
     expect(rows.every((r) => r.decision === "passed")).toBe(true); // decision embed maps through
+    // The new hygiene fields map through too (dedup identity + expired dates).
+    expect(rows.map((r) => r.reviewCardId)).toEqual(["rc-A-health", "rc-A-workforce"]);
+    expect(rows.every((r) => r.grantDeadline === "2026-12-31" && r.feedbackCreatedAt)).toBe(true);
     expect(eqCalls).toContainEqual(["client_id", "A"]); // the isolation predicate was applied
     // And prove the fake would have leaked B if the predicate were missing:
     expect([...eqCalls].some(([c]) => c === "client_id")).toBe(true);

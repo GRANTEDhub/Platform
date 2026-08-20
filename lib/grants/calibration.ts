@@ -18,6 +18,9 @@ import type { MatchResult } from "@/lib/grants/engine";
 //     service-role, so RLS is BYPASSED — this predicate, not RLS, is the isolation boundary.
 //  3. Bounded. At most a ONE-POINT move, downward only, and only once ~K consistent passes
 //     accrue: a single pass (and, with K=5, up to four) moves the integer score by nothing.
+//  4. Clean corpus. n counts DISTINCT passed cards, not rows (dedupeByTarget) — the raw corpus
+//     double-counts, which would halve the ~K threshold — and a pass filed AFTER the grant's
+//     deadline is excluded as a timing/cleanup pass, not a fit signal (isExpiredWhenPassed).
 //
 // LAUNCH CONSERVATISM (deliberate, widen later): relevance is the TIGHTEST scope (seat family
 // AND focus overlap); the nudge is downward-only (a pass is never an argument to RAISE a score,
@@ -59,6 +62,19 @@ export interface CalibrationRow {
   // was actually PASSED is unambiguously "we didn't want this". null for attempt-referenced
   // rows (suppressed-match / false-negative flags), which are never a downward signal.
   decision: string | null;
+  // Row identity, for DEDUP. One passed card is ONE signal, however many feedback rows it
+  // carries: the reject-decision path and the score-Disagree control BOTH write a row against
+  // the same card (and a double-submit writes two), so the raw corpus double-counts. n must
+  // count distinct cards/attempts, not rows, or the ~K-signal threshold silently halves.
+  reviewCardId: string | null;
+  matchAttemptId: string | null;
+  // Expired-pass exclusion. A pass filed AFTER the grant's deadline is a timing/cleanup pass,
+  // not a quality judgement ("we'd have loved it but ran out of time"), so it is not a signal
+  // about match fit. Excluded when grantDeadline < feedbackCreatedAt. Both nullable; when
+  // either is absent the row is kept (we can't prove it was expired). Deliberately conservative
+  // (drops downward signals, never adds them) — errs toward NOT suppressing future matches.
+  grantDeadline: string | null;
+  feedbackCreatedAt: string | null;
 }
 
 // Cross-grant-comparable seat archetype. A raw seat_ref (P0 / S1_2 / NONE) is grant-specific, but
@@ -75,6 +91,30 @@ function overlaps(a: string[], b: string[]): boolean {
   if (!a?.length || !b?.length) return false;
   const set = new Set(a.map((x) => x.trim().toLowerCase()).filter(Boolean));
   return b.some((x) => set.has(x.trim().toLowerCase()));
+}
+
+// A pass filed after the grant's deadline is a timing/cleanup pass, not a fit judgement — see
+// CalibrationRow.grantDeadline. Missing either date → not provably expired → keep the row.
+function isExpiredWhenPassed(r: CalibrationRow): boolean {
+  if (!r.grantDeadline || !r.feedbackCreatedAt) return false;
+  const deadline = new Date(r.grantDeadline).getTime();
+  const filed = new Date(r.feedbackCreatedAt).getTime();
+  if (Number.isNaN(deadline) || Number.isNaN(filed)) return false;
+  return filed > deadline;
+}
+
+// Collapse rows that reference the SAME card (or the same attempt) to one signal, so a card that
+// carries a reject-decision row + a score-Disagree row + a double-submit counts once. Rows with
+// no identity (neither id) can't be deduped and are each kept.
+function dedupeByTarget(rows: CalibrationRow[]): CalibrationRow[] {
+  const seen = new Set<string>();
+  return rows.filter((r) => {
+    const key = r.reviewCardId ?? r.matchAttemptId;
+    if (!key) return true;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 // PURE — the whole adjustment, testable without a DB or the flag.
@@ -99,16 +139,20 @@ export function applyCalibration(
     (r) =>
       r.agree === false &&
       r.decision === "passed" &&
+      !isExpiredWhenPassed(r) &&
       seatFamily(r.engine_seat_ref) === family &&
       overlaps(r.focusAreas, grantFocusAreas),
   );
-  const n = relevant.length;
+  // Dedup to distinct cards/attempts: one passed card is one signal no matter how many rows it
+  // carries (reject-decision + score-Disagree + any double-submit all reference the same card).
+  const deduped = dedupeByTarget(relevant);
+  const n = deduped.length;
   if (n === 0) return match; // cold-start / no relevant feedback → identity
 
   // Each pass is a negative signal clamped to the [-1, 0] band: an explicit corrected_score
   // gives the signed correction (clamped to <= 0 — a pass is never an argument to raise — and
   // floored at -1 so one harsh row can't move the score on its own), a bare pass a full -1.
-  const contributions = relevant.map((r) =>
+  const contributions = deduped.map((r) =>
     r.corrected_score != null && r.engine_score != null
       ? Math.max(-1, Math.min(0, r.corrected_score - r.engine_score))
       : BARE_PASS,
@@ -147,7 +191,9 @@ export async function loadClientFeedback(
 ): Promise<CalibrationRow[]> {
   const { data, error } = await db
     .from("match_feedback")
-    .select("agree, corrected_score, engine_score, engine_seat_ref, grants(focus_areas), review_cards(decision)")
+    .select(
+      "agree, corrected_score, engine_score, engine_seat_ref, review_card_id, match_attempt_id, created_at, grants(focus_areas, submission_deadline), review_cards(decision)",
+    )
     .eq("client_id", clientId);
   if (error || !data) return [];
   type Row = {
@@ -155,7 +201,13 @@ export async function loadClientFeedback(
     corrected_score: number | null;
     engine_score: number | null;
     engine_seat_ref: string | null;
-    grants: { focus_areas: string[] | null } | { focus_areas: string[] | null }[] | null;
+    review_card_id: string | null;
+    match_attempt_id: string | null;
+    created_at: string | null;
+    grants:
+      | { focus_areas: string[] | null; submission_deadline: string | null }
+      | { focus_areas: string[] | null; submission_deadline: string | null }[]
+      | null;
     review_cards: { decision: string | null } | { decision: string | null }[] | null;
   };
   return (data as Row[]).map((r) => {
@@ -168,6 +220,10 @@ export async function loadClientFeedback(
       engine_seat_ref: r.engine_seat_ref,
       focusAreas: g?.focus_areas ?? [],
       decision: c?.decision ?? null,
+      reviewCardId: r.review_card_id,
+      matchAttemptId: r.match_attempt_id,
+      grantDeadline: g?.submission_deadline ?? null,
+      feedbackCreatedAt: r.created_at,
     };
   });
 }
