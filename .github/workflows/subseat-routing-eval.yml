@@ -24,9 +24,13 @@ on:
   workflow_dispatch:
     inputs:
       runs:
-        description: "Runs per fixture per flag state (stability sampling; higher = slower + more Anthropic spend). Per-fixture timeout scales with this; the whole job is capped at 60 min, so keep runs ≤ ~6 for a full 7-fixture pass."
+        description: "Runs per fixture per flag state (stability sampling). Calls run concurrently (see 'concurrency'), so raising this grows cost more than wall-clock."
         required: false
         default: "3"
+      concurrency:
+        description: "Max concurrent scoring calls per flag phase (SUBSEAT_EVAL_CONCURRENCY). Higher = faster but more Anthropic load; lower it if you see 429 rate limits."
+        required: false
+        default: "6"
 
 # Never let two eval runs race on the same paid/prod-reading job.
 concurrency:
@@ -41,8 +45,9 @@ jobs:
     # platform level — so the RLS-bypassing service-role key can't be read by an arbitrary
     # dispatch ref or an attacker-authored workflow that doesn't declare this environment.
     environment: subseat-eval
-    # Fixed outer cap; GitHub expressions can't do arithmetic on `runs`, so this is a static
-    # ceiling sized to cover runs ≤ ~6 (7 fixtures × 2 × runs sequential Anthropic calls).
+    # Generous outer cap. The eval batches all scoring by flag phase with capped concurrency, so a
+    # default run is a few minutes; this ceiling just bounds a badly rate-limited run. (The eval's
+    # own beforeAll timeout is 30 min, comfortably inside this.)
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -78,6 +83,7 @@ jobs:
         env:
           RUN_SUBSEAT_EVAL: "1"
           SUBSEAT_EVAL_RUNS: ${{ inputs.runs }}
+          SUBSEAT_EVAL_CONCURRENCY: ${{ inputs.concurrency }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

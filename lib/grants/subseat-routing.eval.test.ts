@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import { createServiceClient } from "@/lib/supabase/server";
 import { matchGrantToClient } from "@/lib/grants/engine";
 import { formatStoredUSASpending } from "@/lib/grants/usaspending";
@@ -37,7 +37,26 @@ import type { Client, Grant } from "@/types/database";
 
 const RUN = process.env.RUN_SUBSEAT_EVAL === "1" && !!process.env.ANTHROPIC_API_KEY;
 const RUNS = Math.max(1, Number(process.env.SUBSEAT_EVAL_RUNS ?? 3));
+// Max concurrent scoring calls within a single flag phase. Batching by flag (below) lets every
+// (fixture × run) call in a phase run at once; this caps the fan-out so a burst doesn't trip
+// Anthropic rate limits. Lower it if you see 429s; raise it if your tier allows.
+const CONCURRENCY = Math.max(1, Number(process.env.SUBSEAT_EVAL_CONCURRENCY ?? 6));
 const FLAG = "MATCH_SUBSEAT_ROUTING_ENABLED";
+
+// Concurrency-capped map: at most `cap` promises from `fn` are in flight at once. Order preserved.
+async function mapCapped<T, R>(items: T[], cap: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(cap, items.length) }, worker));
+  return out;
+}
 
 type Band = "miss" | "hit" | "carveout";
 interface Fixture {
@@ -131,18 +150,29 @@ function read(m: {
   };
 }
 
-async function scoreN(grant: Grant, client: Client, on: boolean): Promise<Read[]> {
+// A loaded, mutation-applied fixture ready to score.
+interface Prepared {
+  fx: Fixture;
+  grant: Grant;
+  client: Client;
+  ctx: string | undefined;
+}
+
+// Score EVERY prepared fixture RUNS times under ONE flag state. The flag is a process-global env
+// var, so we set it once for the whole phase and fire all (fixture × run) calls concurrently
+// (capped) — no per-call toggle, so nothing races on the global. Each phase is fully awaited
+// before the caller flips the flag, so OFF and ON never overlap. Returns reads grouped per fixture.
+async function scorePhase(prepared: Prepared[], on: boolean): Promise<Map<Fixture, Read[]>> {
   const prev = process.env[FLAG];
   process.env[FLAG] = on ? "true" : "";
   try {
-    const ctx = client.federal_history_verified
-      ? undefined
-      : formatStoredUSASpending(client.usaspending_summary);
-    const out: Read[] = [];
-    for (let i = 0; i < RUNS; i++) {
-      out.push(read(await matchGrantToClient(grant, client, ctx)));
-    }
-    return out;
+    const tasks = prepared.flatMap((p) => Array.from({ length: RUNS }, () => p));
+    const reads = await mapCapped(tasks, CONCURRENCY, async (p) =>
+      read(await matchGrantToClient(p.grant, p.client, p.ctx)),
+    );
+    const byFixture = new Map<Fixture, Read[]>();
+    prepared.forEach((p, i) => byFixture.set(p.fx, reads.slice(i * RUNS, i * RUNS + RUNS)));
+    return byFixture;
   } finally {
     if (prev === undefined) delete process.env[FLAG];
     else process.env[FLAG] = prev;
@@ -159,44 +189,73 @@ const isSubSurfaced = (r: Read) =>
   /sub|co-applicant/i.test(r.role ?? "");
 
 describe.skipIf(!RUN)("subseat-routing eval (model-in-the-loop)", () => {
-  it.each(FIXTURES)("$label", async (fx) => {
-    // Created inside the test, not at suite top: describe.skipIf still runs the suite callback
-    // during collection, so a top-level createServiceClient() would fire (and throw on missing
-    // Supabase env) even in a skipped/sandbox run.
+  // All model calls happen ONCE, here, batched by flag with capped concurrency — not per test.
+  // The it() cases below are then pure synchronous assertions over the collected reads, so a slow
+  // model call can never trip a per-test timeout (the old failure mode: 6 sequential calls > 180s).
+  const RESULTS = new Map<Fixture, { off: Read[]; on: Read[] }>();
+
+  beforeAll(async () => {
+    // Created here, not at module top: describe.skipIf still runs this callback's file during
+    // collection, so a top-level createServiceClient() would fire (and throw on missing Supabase
+    // env) even in a skipped/sandbox run. Guarded by skipIf(!RUN), beforeAll only runs for real.
     const db = createServiceClient();
-    const { data: client, error: clientErr } = await db
-      .from("clients")
-      .select("*")
-      .ilike("name", fx.client)
-      .limit(1)
-      .maybeSingle<Client>();
-    // Pinned by id (unique) so there is no ordering to get wrong — an earlier `.order("created_at")`
-    // hit a non-existent column, 400'd, and the discarded error masqueraded as "grant not found" for
-    // all 8 fixtures. The profile filter stays as a guard (a fixture grant losing its profile should
-    // fail loudly). grantErr is asserted below so a future schema drift can't hide as a not-found.
-    const { data: grant, error: grantErr } = await db
-      .from("grants")
-      .select("*")
-      .eq("id", fx.grantId)
-      .not("ideal_applicant_profile", "is", null)
-      .maybeSingle<Grant>();
 
-    expect(clientErr, `client query errored: ${clientErr?.message}`).toBeFalsy();
-    expect(grantErr, `grant query errored: ${grantErr?.message}`).toBeFalsy();
-    expect(client, `client not found: ${fx.client}`).toBeTruthy();
-    expect(grant, `grant not found (or no profile): ${fx.grantId}`).toBeTruthy();
-    if (!client || !grant) return;
+    // Load + mutate every fixture once (cheap sequential reads), before any scoring.
+    const prepared: Prepared[] = [];
+    for (const fx of FIXTURES) {
+      const { data: client, error: clientErr } = await db
+        .from("clients")
+        .select("*")
+        .ilike("name", fx.client)
+        .limit(1)
+        .maybeSingle<Client>();
+      // Pinned by id (unique) so there is no ordering to get wrong — an earlier `.order("created_at")`
+      // hit a non-existent column, 400'd, and the discarded error masqueraded as "grant not found".
+      // The profile filter stays as a guard; grantErr is asserted so a schema drift can't hide as one.
+      const { data: grant, error: grantErr } = await db
+        .from("grants")
+        .select("*")
+        .eq("id", fx.grantId)
+        .not("ideal_applicant_profile", "is", null)
+        .maybeSingle<Grant>();
 
-    // Carve-out: apply the single DEFER-FIRST trigger in place before either OFF or ON scores it,
-    // so both sides see the same mutated base and the only variable is the flag.
-    if (fx.mutate) fx.mutate({ client, grant });
+      expect(clientErr, `client query errored: ${clientErr?.message}`).toBeFalsy();
+      expect(grantErr, `grant query errored: ${grantErr?.message}`).toBeFalsy();
+      expect(client, `client not found: ${fx.client}`).toBeTruthy();
+      expect(grant, `grant not found (or no profile): ${fx.grantId}`).toBeTruthy();
+      if (!client || !grant) throw new Error(`fixture setup failed: ${fx.label}`);
 
-    const off = await scoreN(grant, client, false);
-    const on = await scoreN(grant, client, true);
-    // Surfaced to the console (helps read the report even on a pass). supp is shown because a
-    // suppression flip is a HIT/carve-out regression that the seat/fit/role columns alone hide.
+      // Carve-out: apply the single DEFER-FIRST trigger in place ONCE, so both the OFF and ON
+      // phases score the same mutated base and the only variable is the flag.
+      if (fx.mutate) fx.mutate({ client, grant });
+      const ctx = client.federal_history_verified
+        ? undefined
+        : formatStoredUSASpending(client.usaspending_summary);
+      prepared.push({ fx, grant, client, ctx });
+    }
+
+    // Two flag phases, each fully awaited before the next — OFF and ON never overlap on the global.
+    const off = await scorePhase(prepared, false);
+    const on = await scorePhase(prepared, true);
+
+    // Surface each fixture's rows (helps read the report even on a pass). supp is shown because a
+    // suppression flip is a HIT/carve-out regression the seat/fit/role columns alone hide.
     const fmt = (r: Read) => `${r.seat_ref}/${r.fit}/${r.role}${r.disq ? "/DISQ" : ""}${r.supp ? "/SUPP" : ""}`;
-    console.log(`[${fx.band}] ${fx.label}\n  OFF: ${off.map(fmt).join(" | ")}\n  ON : ${on.map(fmt).join(" | ")}`);
+    for (const p of prepared) {
+      const o = off.get(p.fx)!;
+      const n = on.get(p.fx)!;
+      RESULTS.set(p.fx, { off: o, on: n });
+      console.log(`[${p.fx.band}] ${p.fx.label}\n  OFF: ${o.map(fmt).join(" | ")}\n  ON : ${n.map(fmt).join(" | ")}`);
+    }
+    // Generous ceiling for all scoring: with concurrency this is a few minutes, but throttling can
+    // stretch it. Well under the workflow's 60-min job cap.
+  }, 30 * 60_000);
+
+  it.each(FIXTURES)("$label", (fx) => {
+    const res = RESULTS.get(fx);
+    expect(res, `no scoring result recorded for ${fx.label}`).toBeTruthy();
+    if (!res) return;
+    const { off, on } = res;
 
     if (fx.band === "miss") {
       // ON surfaces the sub on EVERY run (stability); NO OFF run surfaces it (proves the addendum,
@@ -222,8 +281,5 @@ describe.skipIf(!RUN)("subseat-routing eval (model-in-the-loop)", () => {
       expect(on.every((r) => offKeys.has(key(r))), "ON must not change a correct result").toBe(true);
       expect(on.some(isSubSurfaced) && !off.some(isSubSurfaced), "ON must not newly surface a sub here").toBe(false);
     }
-    // Each fixture makes 2*RUNS sequential real Anthropic calls (OFF then ON). Scale the
-    // per-fixture timeout with RUNS so raising SUBSEAT_EVAL_RUNS can't fail on a Vitest
-    // timeout instead of the routing assertions. At the default RUNS=3 this is 180_000 (unchanged).
-  }, Math.max(180_000, 60_000 * RUNS));
+  });
 });
