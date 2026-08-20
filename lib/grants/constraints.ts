@@ -184,7 +184,15 @@ function topicTerms(value: string): string[] {
 }
 function topicMatches(value: string, haystack: string): boolean {
   const h = norm(haystack);
-  return topicTerms(value).some((term) => h.includes(term));
+  // Word-boundary at the LEADING edge, not a raw substring: full suppression must not fire on a
+  // mid-word collision ("art" inside "department"/"start"/"smart"). A leading \b still catches
+  // trailing morphology ("forensic" → "forensically", "art" → "arts") while excluding the accidental
+  // interior hits. (scopeMatches — the lower-stakes role_ceiling path that always ALSO flags — keeps
+  // its substring heuristic; only this silent full-suppress path needs the tighter guard.)
+  return topicTerms(value).some((term) => {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`\\b${escaped}`).test(h);
+  });
 }
 
 // Minimal shape the clamp mutates -- engine's MatchResult is structurally
@@ -259,7 +267,13 @@ export function applyHardConstraints(
       // (the manual-add path surfaces a suppressed match with an override), never a silent drop.
       if (topicMatches(c.value, haystack)) {
         result.suppressed = true;
-        result.suppress_reason = `Do-not-surface for ${client.name} (${c.value}): ${c.note}`;
+        // Preserve any prior reason — a Phase-0 structural suppression the model set, or an earlier
+        // matching constraint — rather than clobbering it. match_attempts.suppress_reason is the sole
+        // audit record; last-write-wins would erase a real structural disqualifier from the trail.
+        const reason = `Do-not-surface for ${client.name} (${c.value}): ${c.note}`;
+        result.suppress_reason = result.suppress_reason
+          ? `${result.suppress_reason} | ${reason}`
+          : reason;
         result.before_you_approve.unshift(
           `SUPPRESSED — contraindicated for ${client.name} (matched "${c.value}"): ${c.note} ` +
             `Override via manual add if this has changed.`,

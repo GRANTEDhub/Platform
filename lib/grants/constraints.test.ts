@@ -90,6 +90,35 @@ describe("do_not_surface_for — deterministic contraindication suppress", () =>
     );
     expect(real.suppressed).toBe(true); // the full phrase present → fires
   });
+
+  it("matches on a word boundary — a short term does not fire inside an unrelated word", () => {
+    const artExit: HardConstraint = {
+      type: "do_not_surface_for",
+      value: "art",
+      action: "suppress",
+      note: "Exiting arts programming.",
+    };
+    // "art" is a substring of "Department"/"Partnership" but not at a word boundary → no suppress.
+    const collision = applyHardConstraints(
+      mk(),
+      client([artExit]),
+      grant({ title: "Rural Broadband Partnership, Department of Commerce" }),
+    );
+    expect(collision.suppressed).toBe(false);
+    // A real arts grant fires — leading \b also catches the "arts" morphological variant.
+    const real = applyHardConstraints(mk(), client([artExit]), grant({ title: "Arts Education Access Program" }));
+    expect(real.suppressed).toBe(true);
+  });
+
+  it("preserves a prior suppress_reason instead of clobbering it (audit trail)", () => {
+    // Model set a Phase-0 structural suppression before the clamp ran; the contraindication must
+    // append, not erase it — match_attempts.suppress_reason is the sole audit record.
+    const m = mk({ suppressed: true, suppress_reason: "National single-award TTA competition." });
+    const out = applyHardConstraints(m, client([contraindication]), grant({ title: "Crisis Stabilization Initiative" }));
+    expect(out.suppressed).toBe(true);
+    expect(out.suppress_reason).toContain("National single-award TTA");
+    expect(out.suppress_reason).toContain("Do-not-surface");
+  });
 });
 
 describe("do_not_surface_for — validation", () => {

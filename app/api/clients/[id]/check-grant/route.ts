@@ -238,7 +238,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           ? match.suppress_reason ?? null
           : "This grant isn't a fit for your organization right now."
         : null,
-    rationale: rationaleFrom(match.reasoning_context),
+    // Third leak channel, same class as reason/before_you_approve: the contraindication note is
+    // injected into the model prompt (formatConstraintsForPrompt), so the model can echo it into
+    // eligibility_analysis/fit_score_derivation — the two fields rationaleFrom surfaces. Gate it for
+    // a client actor on a suppressed match. Staff, and any non-suppressed client read (a normal
+    // "why it doesn't fit"), still get the full rationale.
+    rationale: !canPersist && match.suppressed ? null : rationaleFrom(match.reasoning_context),
     fit_score: match.fit_score,
     seat_ref: match.seat_ref ?? null,
     proposed_role: match.proposed_role ?? null,
