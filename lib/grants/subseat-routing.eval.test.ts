@@ -135,13 +135,15 @@ describe.skipIf(!RUN)("subseat-routing eval (model-in-the-loop)", () => {
     console.log(`[${fx.band}] ${fx.label}\n  OFF: ${off.map((r) => `${r.seat_ref}/${r.fit}/${r.role}${r.disq ? "/DISQ" : ""}`).join(" | ")}\n  ON : ${on.map((r) => `${r.seat_ref}/${r.fit}/${r.role}${r.disq ? "/DISQ" : ""}`).join(" | ")}`);
 
     if (fx.band === "miss") {
-      // ON surfaces the sub on EVERY run (stability), OFF does not (the addendum is the cause).
+      // ON surfaces the sub on EVERY run (stability); NO OFF run surfaces it (proves the addendum,
+      // not model variance, is the cause — .some, not .every, or a flaky baseline would pass).
       expect(on.every(isSubSurfaced), "ON should surface a supporting seat on every run").toBe(true);
-      expect(off.every(isSubSurfaced), "OFF should NOT surface it (proves the addendum caused it)").toBe(false);
+      expect(off.some(isSubSurfaced), "NO OFF run should surface it (proves the addendum caused it)").toBe(false);
     } else {
-      // HIT: zero regression. ON must match OFF on the deciding fields, on every run, and must
-      // NOT start surfacing a sub for an org that should stay out (the flood guard).
-      const key = (r: Read) => `${r.seatFam}|${r.fit >= 2}|${r.disq}`;
+      // HIT: zero regression. ON must match OFF on the EXACT deciding fields (score + role, not a
+      // qualifying band — a prime 3→2 same-family regression must not slip through), on every run,
+      // and must NOT start surfacing a sub for an org that should stay out (the flood guard).
+      const key = (r: Read) => `${r.seatFam}|${r.fit}|${r.disq}|${r.role}`;
       const offKeys = new Set(off.map(key));
       expect(offKeys.size, "OFF should itself be stable for a hit fixture").toBe(1);
       expect(on.every((r) => offKeys.has(key(r))), "ON must not change a correct result").toBe(true);
