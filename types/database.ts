@@ -19,15 +19,18 @@ export interface Profile {
 //   role_ceiling       -> post-model clamp: cap the role (and score)
 //   ineligible_partner -> post-model clamp: block the structured prime + force a flag
 //   entity_screen      -> guaranteed before_you_approve flag (content-dependent; not a silent exclude)
+//   do_not_surface_for -> post-model SUPPRESS when the grant matches a contraindicated topic
+//                         (e.g. a client exiting a service line); recorded reason, overridable
 export type ConstraintType =
   | "ineligible_funder"
   | "role_ceiling"
   | "ineligible_partner"
-  | "entity_screen";
-export type ConstraintAction = "exclude" | "cap_role" | "flag";
+  | "entity_screen"
+  | "do_not_surface_for";
+export type ConstraintAction = "exclude" | "cap_role" | "flag" | "suppress";
 export interface HardConstraint {
   type: ConstraintType;
-  value: string; // funder name | ceiling role | partner org | screen subject
+  value: string; // funder name | ceiling role | partner org | screen subject | contraindicated topic
   scope?: string; // optional: only applies to grants matching this (heuristic match)
   action: ConstraintAction;
   note: string; // human-readable; also injected into the prompt so model + code agree

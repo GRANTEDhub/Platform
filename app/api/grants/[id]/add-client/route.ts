@@ -233,9 +233,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   // Allowed: create the card. Identical shape to an engine card (shared
   // cardFieldsFromMatch) + card_type defaults to 'client'. Profile-grounded
-  // narrative enrichment first -- self-gates on surfacing + profile presence and
-  // cannot change the seat/score (see enrichMatchWithProfile); best-effort.
-  match = await enrichMatchWithProfile(grant, client, match);
+  // narrative enrichment first -- best-effort, and cannot change the seat/score
+  // (see enrichMatchWithProfile).
+  //
+  // Only enrich a match that surfaced clean. On a FORCED override the gates above
+  // fall through with match.suppressed / match.disqualified still true; enriching
+  // then re-generates positive why_this_org/concept_synopsis that overwrite the
+  // source-scrub (do_not_surface_for) and directly contradict the override warning
+  // this route just wrote ("the engine did not recommend this match"). A forced card
+  // carries the scrubbed state + that warning, not fabricated fit narrative. Mirror
+  // pipeline.ts's `qualifies` gate (enrich's own self-gate misses fit_score>=2 suppressed).
+  if (!match.suppressed && !match.disqualified) {
+    match = await enrichMatchWithProfile(grant, client, match);
+  }
   const cardFields = cardFieldsFromMatch(match);
   const beforeApprove = [...(cardFields.before_you_approve ?? [])];
   let overrideReason: string | null = null;
