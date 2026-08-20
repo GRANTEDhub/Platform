@@ -7,8 +7,16 @@ name: Subseat Routing Eval
 # service role), so it only runs when a human clicks "Run workflow".
 #
 # The button appears under Actions → "Subseat Routing Eval" only once this file
-# is on the default branch (main). Required repo Actions secrets:
-#   ANTHROPIC_API_KEY, NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+# is on the default branch (main).
+#
+# SECRETS ARE ENVIRONMENT-SCOPED, NOT REPO-SCOPED. Add the three secrets to a protected
+# GitHub Environment named "subseat-eval" (Settings → Environments), NOT under repo-level
+# Actions secrets. SUPABASE_SERVICE_ROLE_KEY bypasses RLS (full prod DB), and a repo-level
+# secret is readable by ANY workflow run on ANY branch — a push-access collaborator could
+# add their own workflow to exfiltrate it. Restrict the environment to the `main` branch
+# (deployment-branch policy) and optionally require a reviewer; then only a job that
+# declares `environment: subseat-eval` (this one) can read them, gated by that policy.
+# Environment secrets: ANTHROPIC_API_KEY, NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
 # The eval toggles MATCH_SUBSEAT_ROUTING_ENABLED itself (OFF then ON per fixture),
 # so that flag is deliberately NOT set here.
 
@@ -16,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       runs:
-        description: "Runs per fixture per flag state (stability sampling; higher = slower + more Anthropic spend). The eval scales its per-fixture timeout with this, so raising it is safe."
+        description: "Runs per fixture per flag state (stability sampling; higher = slower + more Anthropic spend). Per-fixture timeout scales with this; the whole job is capped at 60 min, so keep runs ≤ ~6 for a full 8-fixture pass."
         required: false
         default: "3"
 
@@ -28,7 +36,14 @@ concurrency:
 jobs:
   eval:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Environment-scoped secrets (see header): GitHub injects this environment's secrets
+    # only into a job that declares it, and enforces the environment's branch policy at the
+    # platform level — so the RLS-bypassing service-role key can't be read by an arbitrary
+    # dispatch ref or an attacker-authored workflow that doesn't declare this environment.
+    environment: subseat-eval
+    # Fixed outer cap; GitHub expressions can't do arithmetic on `runs`, so this is a static
+    # ceiling sized to cover runs ≤ ~6 (8 fixtures × 2 × runs sequential Anthropic calls).
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -49,7 +64,7 @@ jobs:
           missing=0
           for v in ANTHROPIC_API_KEY NEXT_PUBLIC_SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
             if [ -z "${!v}" ]; then
-              echo "::error::$v is empty or unset — add it under Settings → Secrets and variables → Actions. The eval would otherwise silently skip and report a false green."
+              echo "::error::$v is empty or unset — add it to the 'subseat-eval' GitHub Environment (Settings → Environments). The eval would otherwise silently skip and report a false green."
               missing=1
             fi
           done
