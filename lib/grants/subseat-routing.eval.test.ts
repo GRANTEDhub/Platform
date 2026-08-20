@@ -43,7 +43,7 @@ type Band = "miss" | "hit" | "carveout";
 interface Fixture {
   label: string;
   client: string; // ilike against clients.name
-  grantLike: string; // ilike against grants.title
+  grantId: string; // pinned to grants.id (stable; NOFO titles can re-normalize on re-ingest)
   band: Band;
   // CARVE-OUT only: apply the ONE DEFER-FIRST trigger to a confirmed-real base pair, in place,
   // after load and before scoring. Isolates the carve-out — everything else stays identical to a
@@ -55,17 +55,27 @@ interface Fixture {
 // Miss = should START surfacing as a sub. Hit = must NOT change (correct today). Carve-out = a
 // DEFER-FIRST trigger applied to the miss base (PTF / Smart Reentry, the case ON most wants to
 // route to Sub) — the addendum must DEFER and NOT route it to Sub.
+// Grant ids are pinned to real, profiled prod rows (Platform, gpqrzvnhxjsqerfczhqt), confirmed
+// to carry an ideal_applicant_profile — the occupancy step is meaningless without one.
+const G_SMART_REENTRY = "652cab62-5180-43e5-8ac8-9340af696ac4"; // BJA FY2026 Smart Reentry Demonstration
+const G_PSMHI = "293c7a5e-8f27-4037-809e-247e76518989"; // BJA FY2026 Public Safety and Mental Health Initiative
+const G_REENTRY_ED = "4335a5d5-611c-4258-b70f-52e8b494fe30"; // BJA FY2026 Second Chance Act Improving Reentry Education
+const G_WATER_WORKFORCE = "43827e63-a945-4004-b56c-578013cd0ad2"; // Innovative Water Infrastructure Workforce Development
+
 const FIXTURES: Fixture[] = [
-  { label: "PTF / Smart Reentry (gov-only; PTF fills the reentry-provider sub-seat)", client: "Pathway to Freedom", grantLike: "%smart reentry%", band: "miss" },
-  { label: "PTF / Public Safety & Mental Health (gov-only sub)", client: "Pathway to Freedom", grantLike: "%public safety and mental health%", band: "miss" },
-  { label: "PTF / SC Reentry Education (broad eligibility — genuine match, must stay)", client: "Pathway to Freedom", grantLike: "%improving reentry education%", band: "hit" },
-  { label: "Arisa / Water Infrastructure Workforce (correct zero — wrong sector)", client: "Arisa Health", grantLike: "%water infrastructure workforce%", band: "hit" },
-  { label: "Arisa / Rural Housing Preservation (correct zero — no housing program)", client: "Arisa Health", grantLike: "%rural housing preservation%", band: "hit" },
+  { label: "PTF / Smart Reentry (gov-only; PTF fills the reentry-provider sub-seat)", client: "Pathway to Freedom", grantId: G_SMART_REENTRY, band: "miss" },
+  { label: "PTF / Public Safety & Mental Health (gov-only sub)", client: "Pathway to Freedom", grantId: G_PSMHI, band: "miss" },
+  { label: "PTF / SC Reentry Education (broad eligibility — genuine match, must stay)", client: "Pathway to Freedom", grantId: G_REENTRY_ED, band: "hit" },
+  { label: "Arisa / Water Infrastructure Workforce (correct zero — wrong sector)", client: "Arisa Health", grantId: G_WATER_WORKFORCE, band: "hit" },
+  // NOTE: the second Arisa "correct zero" (Rural Housing Preservation, f6e9bd59-b02b-415d-a03b-37da22314927)
+  // is intentionally omitted — that grant has NO ideal_applicant_profile in prod, so it can't run through
+  // the occupancy step and is not a valid fixture. Arisa's zero-regression coverage rests on the Water
+  // Infrastructure hit above; re-add a second profiled "correct zero" for Arisa when one exists.
   // ── DEFER-FIRST carve-outs (all on the PTF / Smart Reentry base) ────────────────────────────
   {
     label: "CARVE-OUT for-profit: PTF re-typed for-profit — HARD ROLE RULE (Facilitator only) wins, never Sub",
     client: "Pathway to Freedom",
-    grantLike: "%smart reentry%",
+    grantId: G_SMART_REENTRY,
     band: "carveout",
     mutate: ({ client }) => {
       client.org_type = "For-Profit / Commercial";
@@ -74,7 +84,7 @@ const FIXTURES: Fixture[] = [
   {
     label: "CARVE-OUT subaward-prohibited: same grant flagged subaward_prohibited — Facilitator collapse wins, never Sub",
     client: "Pathway to Freedom",
-    grantLike: "%smart reentry%",
+    grantId: G_SMART_REENTRY,
     band: "carveout",
     mutate: ({ grant }) => {
       grant.subaward_prohibited = true;
@@ -86,7 +96,7 @@ const FIXTURES: Fixture[] = [
     // AUTHORITATIVE self-suppress matching rule, the same shape Harbor House uses in prod.
     label: "CARVE-OUT suppressed: an authoritative suppress rule on the client — stays suppressed, never Sub",
     client: "Pathway to Freedom",
-    grantLike: "%smart reentry%",
+    grantId: G_SMART_REENTRY,
     band: "carveout",
     expectSuppressed: true,
     mutate: ({ client }) => {
@@ -160,24 +170,21 @@ describe.skipIf(!RUN)("subseat-routing eval (model-in-the-loop)", () => {
       .ilike("name", fx.client)
       .limit(1)
       .maybeSingle<Client>();
+    // Pinned by id (unique) so there is no ordering to get wrong — an earlier `.order("created_at")`
+    // hit a non-existent column, 400'd, and the discarded error masqueraded as "grant not found" for
+    // all 8 fixtures. The profile filter stays as a guard (a fixture grant losing its profile should
+    // fail loudly). grantErr is asserted below so a future schema drift can't hide as a not-found.
     const { data: grant, error: grantErr } = await db
       .from("grants")
       .select("*")
-      .ilike("title", fx.grantLike)
+      .eq("id", fx.grantId)
       .not("ideal_applicant_profile", "is", null)
-      // ingested_at, NOT created_at: `grants` has no created_at column, and ordering by a
-      // non-existent column makes PostgREST 400 -> data null for EVERY row, which the
-      // discarded error disguised as a bland "grant not found" (all 8 fixtures failed
-      // identically regardless of title). Surface both query errors below so a future
-      // schema drift can never again masquerade as a not-found.
-      .order("ingested_at", { ascending: false })
-      .limit(1)
       .maybeSingle<Grant>();
 
     expect(clientErr, `client query errored: ${clientErr?.message}`).toBeFalsy();
     expect(grantErr, `grant query errored: ${grantErr?.message}`).toBeFalsy();
     expect(client, `client not found: ${fx.client}`).toBeTruthy();
-    expect(grant, `grant not found (or no profile): ${fx.grantLike}`).toBeTruthy();
+    expect(grant, `grant not found (or no profile): ${fx.grantId}`).toBeTruthy();
     if (!client || !grant) return;
 
     // Carve-out: apply the single DEFER-FIRST trigger in place before either OFF or ON scores it,
