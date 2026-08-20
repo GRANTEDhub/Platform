@@ -36,11 +36,19 @@ import type { Client, Grant } from "@/types/database";
 // case appears in the roster, add it here.
 
 const RUN = process.env.RUN_SUBSEAT_EVAL === "1" && !!process.env.ANTHROPIC_API_KEY;
-const RUNS = Math.max(1, Number(process.env.SUBSEAT_EVAL_RUNS ?? 3));
+// Positive-integer env knob with a fallback. A non-numeric input (e.g. a typo'd workflow_dispatch
+// value) would otherwise become NaN and silently propagate — NaN clears Math.max, and Array.from's
+// length coercion turns it into ZERO workers, so scoring is skipped and the run dies several frames
+// away on an undefined deref. Number.isFinite falls back to the default instead.
+const intEnv = (raw: string | undefined, def: number) => {
+  const n = Number(raw);
+  return Math.max(1, Number.isFinite(n) ? Math.floor(n) : def);
+};
+const RUNS = intEnv(process.env.SUBSEAT_EVAL_RUNS, 3);
 // Max concurrent scoring calls within a single flag phase. Batching by flag (below) lets every
 // (fixture × run) call in a phase run at once; this caps the fan-out so a burst doesn't trip
 // Anthropic rate limits. Lower it if you see 429s; raise it if your tier allows.
-const CONCURRENCY = Math.max(1, Number(process.env.SUBSEAT_EVAL_CONCURRENCY ?? 6));
+const CONCURRENCY = intEnv(process.env.SUBSEAT_EVAL_CONCURRENCY, 6);
 const FLAG = "MATCH_SUBSEAT_ROUTING_ENABLED";
 
 // Concurrency-capped map: at most `cap` promises from `fn` are in flight at once. Order preserved.
@@ -77,13 +85,12 @@ interface Fixture {
 // Grant ids are pinned to real, profiled prod rows (Platform, gpqrzvnhxjsqerfczhqt), confirmed
 // to carry an ideal_applicant_profile — the occupancy step is meaningless without one.
 const G_SMART_REENTRY = "652cab62-5180-43e5-8ac8-9340af696ac4"; // BJA FY2026 Smart Reentry Demonstration
-const G_PSMHI = "293c7a5e-8f27-4037-809e-247e76518989"; // BJA FY2026 Public Safety and Mental Health Initiative
 const G_REENTRY_ED = "4335a5d5-611c-4258-b70f-52e8b494fe30"; // BJA FY2026 Second Chance Act Improving Reentry Education
 const G_WATER_WORKFORCE = "43827e63-a945-4004-b56c-578013cd0ad2"; // Innovative Water Infrastructure Workforce Development
 
 const FIXTURES: Fixture[] = [
   { label: "PTF / Smart Reentry (gov-only; PTF fills the enumerated reentry-provider sub-seat S0_7)", client: "Pathway to Freedom", grantId: G_SMART_REENTRY, band: "miss" },
-  // PSMHI (G_PSMHI, 293c7a5e) was demoted from the miss set (2026-08-20): its profile is a crisis /
+  // PSMHI (293c7a5e-8f27-4037-809e-247e76518989) was demoted from the miss set (2026-08-20): its profile is a crisis /
   // behavioral-health cross-system consortium; its "reentry" seats are supervision / treatment-
   // compliance / correctional-health functions, NOT PTF's peer-support + navigation core. PTF's fit
   // there is marginal, so a DISQ is DEFENSIBLE — it is not a clean miss, and keeping it as one would
