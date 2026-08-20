@@ -82,8 +82,15 @@ const G_REENTRY_ED = "4335a5d5-611c-4258-b70f-52e8b494fe30"; // BJA FY2026 Secon
 const G_WATER_WORKFORCE = "43827e63-a945-4004-b56c-578013cd0ad2"; // Innovative Water Infrastructure Workforce Development
 
 const FIXTURES: Fixture[] = [
-  { label: "PTF / Smart Reentry (gov-only; PTF fills the reentry-provider sub-seat)", client: "Pathway to Freedom", grantId: G_SMART_REENTRY, band: "miss" },
-  { label: "PTF / Public Safety & Mental Health (gov-only sub)", client: "Pathway to Freedom", grantId: G_PSMHI, band: "miss" },
+  { label: "PTF / Smart Reentry (gov-only; PTF fills the enumerated reentry-provider sub-seat S0_7)", client: "Pathway to Freedom", grantId: G_SMART_REENTRY, band: "miss" },
+  // PSMHI (G_PSMHI, 293c7a5e) was demoted from the miss set (2026-08-20): its profile is a crisis /
+  // behavioral-health cross-system consortium; its "reentry" seats are supervision / treatment-
+  // compliance / correctional-health functions, NOT PTF's peer-support + navigation core. PTF's fit
+  // there is marginal, so a DISQ is DEFENSIBLE — it is not a clean miss, and keeping it as one would
+  // risk tuning the addendum to force a wrong route (the over-credit failure). Smart Reentry (S0_7 is
+  // a "community-based reentry nonprofit with lived-experience staff" seat — PTF verbatim) is the one
+  // clean, unambiguous gov-only miss, so it is the canonical single-fixture read. Over-credit is still
+  // guarded by the Arisa correct-zero hit + the three DEFER-FIRST carve-outs.
   { label: "PTF / SC Reentry Education (broad eligibility — genuine match, must stay)", client: "Pathway to Freedom", grantId: G_REENTRY_ED, band: "hit" },
   { label: "Arisa / Water Infrastructure Workforce (correct zero — wrong sector)", client: "Arisa Health", grantId: G_WATER_WORKFORCE, band: "hit" },
   // NOTE: the second Arisa "correct zero" (Rural Housing Preservation, f6e9bd59-b02b-415d-a03b-37da22314927)
@@ -131,6 +138,12 @@ interface Read {
   role: string | null;
   disq: boolean;
   supp: boolean;
+  // Captured for diagnosis (not asserted): WHY the model landed here. For a miss that failed to
+  // route, these distinguish "never saw the supporting seat" (reposition the addendum before the
+  // disqualify gate) from "saw it and disqualified on prime-ineligibility anyway" (strengthen wording).
+  disqReason: string | null;
+  suppressReason: string | null;
+  reasoning: string | null;
 }
 
 function read(m: {
@@ -139,6 +152,9 @@ function read(m: {
   proposed_role?: string | null;
   disqualified?: boolean;
   suppressed?: boolean;
+  disqualify_reason?: string | null;
+  suppress_reason?: string | null;
+  reasoning_context?: { fit_score_derivation?: string | null } | null;
 }): Read {
   return {
     seatFam: seatFamily(m.seat_ref),
@@ -147,6 +163,9 @@ function read(m: {
     role: m.proposed_role ?? null,
     disq: !!m.disqualified,
     supp: !!m.suppressed,
+    disqReason: m.disqualify_reason ?? null,
+    suppressReason: m.suppress_reason ?? null,
+    reasoning: m.reasoning_context?.fit_score_derivation ?? null,
   };
 }
 
@@ -187,6 +206,14 @@ const isSubSurfaced = (r: Read) =>
   !r.disq &&
   !r.supp &&
   /sub|co-applicant/i.test(r.role ?? "");
+
+// beforeAll runs ALL scoring, so its timeout must cover the worst-case wall-clock, not one fixture.
+// Scale it with the batch size / concurrency (waves × a generous ~60s/call budget), floored at 10 min
+// and capped just under the workflow's 60-min job cap — so a slow, low-concurrency (429-throttled) run
+// is reported as a Vitest timeout rather than being killed by the runner, keeping the inner and outer
+// ceilings consistent (the earlier fixed 30-min value could trip below the 60-min job cap).
+const SCORING_WAVES = Math.ceil((FIXTURES.length * RUNS * 2) / CONCURRENCY);
+const BEFORE_ALL_TIMEOUT_MS = Math.min(55 * 60_000, Math.max(10 * 60_000, SCORING_WAVES * 60_000));
 
 describe.skipIf(!RUN)("subseat-routing eval (model-in-the-loop)", () => {
   // All model calls happen ONCE, here, batched by flag with capped concurrency — not per test.
@@ -241,15 +268,32 @@ describe.skipIf(!RUN)("subseat-routing eval (model-in-the-loop)", () => {
     // Surface each fixture's rows (helps read the report even on a pass). supp is shown because a
     // suppression flip is a HIT/carve-out regression the seat/fit/role columns alone hide.
     const fmt = (r: Read) => `${r.seat_ref}/${r.fit}/${r.role}${r.disq ? "/DISQ" : ""}${r.supp ? "/SUPP" : ""}`;
+    // The diagnostic payload: WHY each run landed where it did. For a miss that failed to route, the
+    // ON reasons distinguish "never saw the sub-seat" (reposition the addendum before the disqualify
+    // gate) from "saw it, disqualified on prime-ineligibility anyway" (strengthen the wording).
+    const why = (r: Read) =>
+      [
+        r.disqReason && `disq="${r.disqReason}"`,
+        r.suppressReason && `supp="${r.suppressReason}"`,
+        r.reasoning && `derivation="${r.reasoning}"`,
+      ]
+        .filter(Boolean)
+        .join(" | ") || "(no reason given)";
     for (const p of prepared) {
       const o = off.get(p.fx)!;
       const n = on.get(p.fx)!;
       RESULTS.set(p.fx, { off: o, on: n });
-      console.log(`[${p.fx.band}] ${p.fx.label}\n  OFF: ${o.map(fmt).join(" | ")}\n  ON : ${n.map(fmt).join(" | ")}`);
+      console.log(
+        [
+          `[${p.fx.band}] ${p.fx.label}`,
+          `  OFF: ${o.map(fmt).join(" | ")}`,
+          `  ON : ${n.map(fmt).join(" | ")}`,
+          `  why OFF[0]: ${why(o[0])}`,
+          ...n.map((r, i) => `  why ON[${i}]: ${why(r)}`),
+        ].join("\n"),
+      );
     }
-    // Generous ceiling for all scoring: with concurrency this is a few minutes, but throttling can
-    // stretch it. Well under the workflow's 60-min job cap.
-  }, 30 * 60_000);
+  }, BEFORE_ALL_TIMEOUT_MS);
 
   it.each(FIXTURES)("$label", (fx) => {
     const res = RESULTS.get(fx);
