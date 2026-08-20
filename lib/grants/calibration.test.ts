@@ -259,7 +259,7 @@ describe("loadClientFeedback — per-client isolation (load-bearing, not RLS)", 
     review_card_id: `rc-${clientId}-${focus}`,
     match_attempt_id: null,
     created_at: "2026-06-01T00:00:00Z",
-    grants: { focus_areas: [focus], submission_deadline: "2026-12-31" },
+    grants: { focus_areas: [focus], deadline: "2026-12-31" },
     review_cards: { decision: "passed" },
   });
 

@@ -192,7 +192,7 @@ export async function loadClientFeedback(
   const { data, error } = await db
     .from("match_feedback")
     .select(
-      "agree, corrected_score, engine_score, engine_seat_ref, review_card_id, match_attempt_id, created_at, grants(focus_areas, submission_deadline), review_cards(decision)",
+      "agree, corrected_score, engine_score, engine_seat_ref, review_card_id, match_attempt_id, created_at, grants(focus_areas, deadline), review_cards(decision)",
     )
     .eq("client_id", clientId);
   if (error || !data) return [];
@@ -205,8 +205,8 @@ export async function loadClientFeedback(
     match_attempt_id: string | null;
     created_at: string | null;
     grants:
-      | { focus_areas: string[] | null; submission_deadline: string | null }
-      | { focus_areas: string[] | null; submission_deadline: string | null }[]
+      | { focus_areas: string[] | null; deadline: string | null }
+      | { focus_areas: string[] | null; deadline: string | null }[]
       | null;
     review_cards: { decision: string | null } | { decision: string | null }[] | null;
   };
@@ -222,7 +222,7 @@ export async function loadClientFeedback(
       decision: c?.decision ?? null,
       reviewCardId: r.review_card_id,
       matchAttemptId: r.match_attempt_id,
-      grantDeadline: g?.submission_deadline ?? null,
+      grantDeadline: g?.deadline ?? null, // parsed ISO date, NOT the free-text submission_deadline
       feedbackCreatedAt: r.created_at,
     };
   });
