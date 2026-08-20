@@ -1,0 +1,66 @@
+name: Subseat Routing Eval
+
+# Manual-only. This runs the model-in-the-loop supporting-seat routing eval
+# (lib/grants/subseat-routing.eval.test.ts) — the gate that must pass before
+# MATCH_SUBSEAT_ROUTING_ENABLED is flipped on. It is NOT part of CI: it makes
+# real (paid) Anthropic calls and reads production grant/client rows (read-only,
+# service role), so it only runs when a human clicks "Run workflow".
+#
+# The button appears under Actions → "Subseat Routing Eval" only once this file
+# is on the default branch (main). Required repo Actions secrets:
+#   ANTHROPIC_API_KEY, NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+# The eval toggles MATCH_SUBSEAT_ROUTING_ENABLED itself (OFF then ON per fixture),
+# so that flag is deliberately NOT set here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Runs per fixture per flag state (stability sampling; higher = slower + more Anthropic spend). The eval scales its per-fixture timeout with this, so raising it is safe."
+        required: false
+        default: "3"
+
+# Never let two eval runs race on the same paid/prod-reading job.
+concurrency:
+  group: subseat-routing-eval
+  cancel-in-progress: false
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # Fail LOUD if a secret is unset/misnamed. Without this, an empty ANTHROPIC_API_KEY
+      # trips the eval's own RUN gate (skipIf), every fixture is skipped, and vitest still
+      # exits 0 — a green check that verified nothing. The whole point of this job is to be
+      # a trustworthy flip gate, so a silent skip must be a hard failure instead.
+      - name: Verify required secrets are present
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          missing=0
+          for v in ANTHROPIC_API_KEY NEXT_PUBLIC_SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+            if [ -z "${!v}" ]; then
+              echo "::error::$v is empty or unset — add it under Settings → Secrets and variables → Actions. The eval would otherwise silently skip and report a false green."
+              missing=1
+            fi
+          done
+          [ "$missing" = 0 ]
+      - name: Run subseat-routing eval
+        env:
+          RUN_SUBSEAT_EVAL: "1"
+          SUBSEAT_EVAL_RUNS: ${{ inputs.runs }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        # The per-fixture OFF/ON rows the eval console.logs are captured in this
+        # step's log, so the report is readable in the browser alongside pass/fail.
+        run: npx vitest run lib/grants/subseat-routing.eval.test.ts

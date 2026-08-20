@@ -208,5 +208,8 @@ describe.skipIf(!RUN)("subseat-routing eval (model-in-the-loop)", () => {
       expect(on.every((r) => offKeys.has(key(r))), "ON must not change a correct result").toBe(true);
       expect(on.some(isSubSurfaced) && !off.some(isSubSurfaced), "ON must not newly surface a sub here").toBe(false);
     }
-  }, 180_000);
+    // Each fixture makes 2*RUNS sequential real Anthropic calls (OFF then ON). Scale the
+    // per-fixture timeout with RUNS so raising SUBSEAT_EVAL_RUNS can't fail on a Vitest
+    // timeout instead of the routing assertions. At the default RUNS=3 this is 180_000 (unchanged).
+  }, Math.max(180_000, 60_000 * RUNS));
 });
