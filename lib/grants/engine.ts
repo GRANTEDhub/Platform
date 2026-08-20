@@ -507,6 +507,26 @@ Return a JSON object with this exact schema:
   "disqualify_reason": string | null
 }`;
 
+const SUBSEAT_ROUTING_ADDENDUM = `
+SUPPORTING-SEAT ROUTING (overrides "first gate failure = disqualify" for the SUB case):
+A client that is not an eligible PRIME entity type for this grant (e.g. a nonprofit on a
+government-only program) is NOT disqualified on that basis alone. BEFORE setting
+disqualified=true or seat_ref=NONE, check the enumerated SUPPORTING seats in the ideal profile.
+If the client genuinely performs a specific listed supporting seat's function (you can name the
+S{i}_{j} id AND the function it performs), map the client to that seat:
+  - seat_ref = that S{i}_{j}
+  - proposed_role = "Sub" (or "Co-Applicant" if the NOFO allows co-applicants)
+  - fit_score = 2 (supporting-seat floor; the seat ceiling caps a supporting seat at 2)
+  - disqualified = false, suppressed = false
+  - recommended_prime = the eligible prime entity TYPE the client would sub under (name a
+    specific eligible organization ONLY if one is genuinely obvious; otherwise the type), and add
+    a before_you_approve item "prime applicant needed -- client subs under <prime type>".
+Only set disqualified / seat_ref=NONE when the client occupies NEITHER a prime archetype NOR any
+listed supporting seat (genuine topical adjacency with no seat, per NO-SEAT-IS-0). Prime-entity
+ineligibility ALONE, with a genuine supporting seat available, is a SUB routing, never a kill.
+This does NOT lower the bar: "genuine supporting seat" means the client performs that seat's
+specific named function, not generic "delivery" help or topical adjacency.`;
+
 export async function extractGrantData(rawText: string): Promise<ExtractedGrant> {
   const client = getAnthropicClient();
 
@@ -801,7 +821,9 @@ ${formatConstraintsForPrompt(client)}`;
     // flip run to run. Stability is the prerequisite for calibration; the
     // rubric boundary itself is tuned separately.
     temperature: 0,
-    system: MATCHING_SYSTEM_PROMPT,
+    system:
+      MATCHING_SYSTEM_PROMPT +
+      (process.env.MATCH_SUBSEAT_ROUTING_ENABLED === "true" ? `\n\n${SUBSEAT_ROUTING_ADDENDUM}` : ""),
     tools: [
       {
         name: "submit_match",
