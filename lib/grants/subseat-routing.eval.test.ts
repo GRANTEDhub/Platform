@@ -26,23 +26,27 @@ import type { Client, Grant } from "@/types/database";
 //     flood failure mode (surfacing sub-fits for orgs that should stay out) AND against a silent
 //     suppression flip that hides an already-good match.
 //   CARVE-OUT set — a single DEFER-FIRST trigger (for-profit org_type, subaward_prohibited=true,
-//     or an authoritative suppress rule) applied to the MISS base (PTF / Smart Reentry, the case
-//     ON most wants to route to Sub). The addendum must DEFER: ON must NEVER route it to a Sub
-//     seat, and a suppressed match must STAY suppressed. Proves the carve-outs actually fire.
+//     or an authoritative suppress rule) applied to a would-route base (PTF / Smart Reentry, a case
+//     ON would otherwise want to route to Sub). The addendum must DEFER: ON must NEVER route it to a
+//     Sub seat, and a suppressed match must STAY suppressed. Proves the carve-outs actually fire.
 //
-// KNOWN LIMITATION (documented, not hidden): the miss set is Pathway-to-Freedom-concentrated —
-// PTF is the only clean client-side example (Harbor House self-suppresses via its capital-only
-// matching rule; NW Arkansas Land Trust is not a client). If a second clean non-PTF sub-only
-// case appears in the roster, add it here.
+// COVERAGE NOTE (documented, not hidden): the sole clean MISS today is Arisa Health / First
+// Responders-CARA — a gov-only, subaward-allowed grant whose S0_1 SUD direct-service seat Arisa
+// genuinely fills, with no compliance confounder. PTF / Smart Reentry was demoted from the miss set
+// (its faith-based/all-male profile gives the model a defensible reason to decline, so it tested
+// compliance judgment, not routing) and is retained only as the carve-out base. Add a second clean
+// non-Arisa sub-only case when one appears in the roster.
 
 const RUN = process.env.RUN_SUBSEAT_EVAL === "1" && !!process.env.ANTHROPIC_API_KEY;
-// Positive-integer env knob with a fallback. A non-numeric input (e.g. a typo'd workflow_dispatch
-// value) would otherwise become NaN and silently propagate — NaN clears Math.max, and Array.from's
-// length coercion turns it into ZERO workers, so scoring is skipped and the run dies several frames
-// away on an undefined deref. Number.isFinite falls back to the default instead.
+// Positive-integer env knob with a fallback. A bad input (a typo'd workflow_dispatch value) would
+// otherwise become NaN and silently propagate — NaN clears Math.max, and Array.from's length
+// coercion turns it into ZERO workers, so scoring is skipped and the run dies several frames away on
+// an undefined deref. Blank/whitespace is treated as absent too: Number("") === 0 is finite and would
+// slip past a bare isFinite check, silently yielding 1 (a CLEARED "Run workflow" field submits "" —
+// GitHub only applies the YAML default when the key is omitted, not when it is present-but-blank).
 const intEnv = (raw: string | undefined, def: number) => {
-  const n = Number(raw);
-  return Math.max(1, Number.isFinite(n) ? Math.floor(n) : def);
+  const n = raw?.trim() ? Number(raw) : NaN;
+  return Math.max(1, Number.isFinite(n) && n > 0 ? Math.floor(n) : def);
 };
 const RUNS = intEnv(process.env.SUBSEAT_EVAL_RUNS, 3);
 // Max concurrent scoring calls within a single flag phase. Batching by flag (below) lets every
