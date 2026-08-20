@@ -1,0 +1,48 @@
+name: Subseat Routing Eval
+
+# Manual-only. This runs the model-in-the-loop supporting-seat routing eval
+# (lib/grants/subseat-routing.eval.test.ts) — the gate that must pass before
+# MATCH_SUBSEAT_ROUTING_ENABLED is flipped on. It is NOT part of CI: it makes
+# real (paid) Anthropic calls and reads production grant/client rows (read-only,
+# service role), so it only runs when a human clicks "Run workflow".
+#
+# The button appears under Actions → "Subseat Routing Eval" only once this file
+# is on the default branch (main). Required repo Actions secrets:
+#   ANTHROPIC_API_KEY, NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+# The eval toggles MATCH_SUBSEAT_ROUTING_ENABLED itself (OFF then ON per fixture),
+# so that flag is deliberately NOT set here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Runs per fixture per flag state (stability sampling; higher = slower + more Anthropic spend)"
+        required: false
+        default: "3"
+
+# Never let two eval runs race on the same paid/prod-reading job.
+concurrency:
+  group: subseat-routing-eval
+  cancel-in-progress: false
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Run subseat-routing eval
+        env:
+          RUN_SUBSEAT_EVAL: "1"
+          SUBSEAT_EVAL_RUNS: ${{ inputs.runs }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        # The per-fixture OFF/ON rows the eval console.logs are captured in this
+        # step's log, so the report is readable in the browser alongside pass/fail.
+        run: npx vitest run lib/grants/subseat-routing.eval.test.ts
