@@ -208,6 +208,18 @@ export interface ClampableMatch {
   // never a silent drop, per this module's doctrine.
   suppressed: boolean;
   suppress_reason: string | null;
+  // Model-produced fit-narrative. Optional here (a bare ClampableMatch may omit them; the engine's
+  // MatchResult always carries them) so the do_not_surface_for scrub can NEUTRALIZE them at the
+  // source — see the scrub in applyHardConstraints. A suppressed match must not carry positive
+  // "why this fits" reasoning to ANY consumer (check-grant, a force-added card, the portal detail
+  // page), because (a) it contradicts the suppression and (b) the confidential note was in-prompt,
+  // so the model may have echoed it into these free-text fields.
+  why_this_org?: string[] | null;
+  concept_synopsis?: string | null;
+  // `unknown` (not a Record) so the engine's concrete MatchResult interfaces stay assignable to
+  // this param without an index-signature clash; the clamp only ASSIGNS these, never reads them.
+  reasoning_context?: unknown;
+  factor_scores?: unknown;
 }
 
 // POST-MODEL clamp. Mirrors the seat-ceiling clamp: code overrides the model's
@@ -278,6 +290,19 @@ export function applyHardConstraints(
           `SUPPRESSED — contraindicated for ${client.name} (matched "${c.value}"): ${c.note} ` +
             `Override via manual add if this has changed.`,
         );
+        // SCRUB the model's fit-narrative AT THE SOURCE. The model scored this as a fit not
+        // knowing code would suppress it, so why_this_org / concept_synopsis / reasoning_context /
+        // factor_scores carry positive "why this fits" prose — contradictory, and a possible echo
+        // of the confidential note (it was in-prompt). Clearing them here cleans the match for
+        // EVERY consumer at once: check-grant (both branches), a force-added override card, and
+        // the portal grant-detail page that renders reasoning_context/factor_scores. Staff keep
+        // the real reason (suppress_reason + the before_you_approve line above).
+        result.why_this_org = [];
+        result.concept_synopsis = null;
+        result.factor_scores = null;
+        result.reasoning_context = {
+          fit_score_derivation: "Suppressed: contraindicated for this client (see before_you_approve).",
+        };
       }
     }
     // ineligible_funder is enforced pre-model (funderExclusionReason); no clamp.
@@ -292,6 +317,16 @@ export function formatConstraintsForPrompt(client: Pick<Client, "hard_constraint
   const cons = getClientConstraints(client);
   if (cons.length === 0) return "None";
   return cons
-    .map((c) => `- [${c.type}${c.scope ? ` · ${c.scope}` : ""}] ${c.note} (enforced in code: ${c.action})`)
+    .map((c) => {
+      if (c.type === "do_not_surface_for") {
+        // Do NOT emit the confidential staff `note` into the model prompt — the model can echo or
+        // paraphrase it into its free-text output (reasoning/why_this_org), which reaches the
+        // client. Code suppresses this deterministically post-model, so the model only needs the
+        // topic + a directive, never the strategy behind it. (The scrub above is the backstop; this
+        // keeps the confidential text out of the model's mouth in the first place.)
+        return `- [do_not_surface_for · ${c.value}] Treat "${c.value}" as a standing contraindication for this client — do NOT present it as a fit. (enforced in code: suppress)`;
+      }
+      return `- [${c.type}${c.scope ? ` · ${c.scope}` : ""}] ${c.note} (enforced in code: ${c.action})`;
+    })
     .join("\n");
 }

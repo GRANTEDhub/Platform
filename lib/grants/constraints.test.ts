@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { applyHardConstraints, validateConstraint, deriveConstraintAction, type ClampableMatch } from "./constraints";
+import {
+  applyHardConstraints,
+  validateConstraint,
+  deriveConstraintAction,
+  formatConstraintsForPrompt,
+  type ClampableMatch,
+} from "./constraints";
 import type { Client, Grant, HardConstraint } from "@/types/database";
 
 // The do_not_surface_for gate is the FIRST code-set suppression in the engine — every other
@@ -13,6 +19,12 @@ const mk = (over: Partial<ClampableMatch> = {}): ClampableMatch => ({
   before_you_approve: [],
   suppressed: false,
   suppress_reason: null,
+  // Positive model fit-narrative — the do_not_surface_for scrub must neutralize all of these on
+  // suppress, and must leave them untouched otherwise.
+  why_this_org: ["strong programmatic overlap"],
+  concept_synopsis: "A concept for pursuing this grant.",
+  reasoning_context: { fit_score_derivation: "seated as prime", why_this_org: "genuine fit" },
+  factor_scores: { seat_role: { rating: "strong", rationale: "fits the seat" } },
   ...over,
 });
 
@@ -61,6 +73,32 @@ describe("do_not_surface_for — deterministic contraindication suppress", () =>
     expect(m.suppress_reason).toBeNull();
     expect(m.before_you_approve).toHaveLength(0);
     expect(m.fit_score).toBe(3); // untouched
+    // Narrative preserved when the gate does NOT fire — the scrub is suppress-only.
+    expect(m.why_this_org).toEqual(["strong programmatic overlap"]);
+    expect(m.concept_synopsis).toBe("A concept for pursuing this grant.");
+    expect(m.factor_scores).not.toBeNull();
+  });
+
+  it("SCRUBS the model's fit-narrative at the source on suppress (every consumer is clean)", () => {
+    // The durable confidentiality fix: a suppressed do_not_surface_for match must carry NO
+    // positive reasoning to any consumer (check-grant, a force-added card, the portal detail page),
+    // because the model produced it unaware of the code suppression and may have echoed the
+    // in-prompt confidential note into it.
+    const m = applyHardConstraints(mk(), client([contraindication]), grant({ title: "Crisis Stabilization Initiative" }));
+    expect(m.suppressed).toBe(true);
+    expect(m.why_this_org).toEqual([]);
+    expect(m.concept_synopsis).toBeNull();
+    expect(m.factor_scores).toBeNull();
+    // reasoning_context is replaced with a staff-only marker — no positive fit prose, no note echo.
+    expect(m.reasoning_context).toEqual({
+      fit_score_derivation: "Suppressed: contraindicated for this client (see before_you_approve).",
+    });
+    // The confidential note text must not survive in any narrative field the client can reach.
+    expect(JSON.stringify({ why: m.why_this_org, concept: m.concept_synopsis, rc: m.reasoning_context, fs: m.factor_scores }))
+      .not.toContain("6/30/26");
+    // Staff still get the real reason.
+    expect(m.suppress_reason).toContain("crisis");
+    expect(m.before_you_approve[0]).toContain("SUPPRESSED");
   });
 
   it("does not touch suppression when the client has no constraints", () => {
@@ -136,6 +174,22 @@ describe("do_not_surface_for — validation", () => {
   it("rejects a do_not_surface_for missing its value or note (fails closed)", () => {
     expect(validateConstraint({ type: "do_not_surface_for", value: "", note: "x" }).ok).toBe(false);
     expect(validateConstraint({ type: "do_not_surface_for", value: "crisis", note: "" }).ok).toBe(false);
+  });
+
+  it("keeps the confidential note OUT of the model prompt for do_not_surface_for", () => {
+    // The note is staff-confidential; the model can echo it. It must not be injected into the
+    // prompt — only the topic value + a neutral directive. Other constraint types still emit the
+    // note (they are staff-review guidance, not injected into a client-reachable narrative).
+    const prompt = formatConstraintsForPrompt(client([contraindication]));
+    expect(prompt).not.toContain("6/30/26"); // the confidential note text
+    expect(prompt).not.toContain("Exiting");
+    expect(prompt).toContain("crisis, forensic"); // the topic value is fine
+    expect(prompt.toLowerCase()).toContain("contraindication");
+    // A non-confidential type still carries its note through.
+    const withScreen = formatConstraintsForPrompt(
+      client([{ type: "entity_screen", value: "all-male", action: "flag", note: "Confirm gender-inclusive." }]),
+    );
+    expect(withScreen).toContain("Confirm gender-inclusive.");
   });
 
   it("rejects a value whose every term is under 3 chars (a silently dead gate)", () => {
