@@ -19,6 +19,7 @@ const VALID_TYPES: ConstraintType[] = [
   "role_ceiling",
   "ineligible_partner",
   "entity_screen",
+  "do_not_surface_for",
 ];
 
 // The ONLY valid role_ceiling values. A ceiling set to anything else ranks 99 in
@@ -41,6 +42,7 @@ const ACTION_BY_TYPE: Record<ConstraintType, ConstraintAction> = {
   role_ceiling: "cap_role", // post-model clamp
   ineligible_partner: "flag", // nulls recommended_prime + reviewer flag
   entity_screen: "flag", // reviewer flag only
+  do_not_surface_for: "suppress", // post-model suppress on a contraindicated-topic match
 };
 
 export function deriveConstraintAction(type: ConstraintType): ConstraintAction {
@@ -165,6 +167,12 @@ export interface ClampableMatch {
   recommended_prime: string | null;
   fit_score: 0 | 1 | 2 | 3;
   before_you_approve: string[];
+  // do_not_surface_for sets these. This is the FIRST code-set suppression — every other hard "no"
+  // in the engine today is model-produced. A suppressed match does not card (pipeline's qualifies
+  // gate), but the reason is recorded on the attempt and surfaced (with override) on manual-add —
+  // never a silent drop, per this module's doctrine.
+  suppressed: boolean;
+  suppress_reason: string | null;
 }
 
 // POST-MODEL clamp. Mirrors the seat-ceiling clamp: code overrides the model's
@@ -217,6 +225,19 @@ export function applyHardConstraints(
       result.before_you_approve.unshift(
         `ENTITY SCREEN (${c.value}): ${c.note} Confirm this grant does not conflict before approving.`,
       );
+    } else if (c.type === "do_not_surface_for") {
+      // Deterministic SUPPRESS when the grant's text matches a contraindicated topic (e.g. a
+      // client exiting a service line). Best-effort token match on the grant haystack, same
+      // heuristic as a scoped role_ceiling — so it ALWAYS records a reason and stays overridable
+      // (the manual-add path surfaces a suppressed match with an override), never a silent drop.
+      if (scopeMatches(c.value, haystack)) {
+        result.suppressed = true;
+        result.suppress_reason = `Do-not-surface for ${client.name} (${c.value}): ${c.note}`;
+        result.before_you_approve.unshift(
+          `SUPPRESSED — contraindicated for ${client.name} (matched "${c.value}"): ${c.note} ` +
+            `Override via manual add if this has changed.`,
+        );
+      }
     }
     // ineligible_funder is enforced pre-model (funderExclusionReason); no clamp.
   }

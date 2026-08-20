@@ -52,6 +52,14 @@ const CONSTRAINT_TYPES: {
     valueLabel: "Screen subject / label",
     valuePlaceholder: "e.g. 501(c)(4) lobbying limit",
   },
+  {
+    value: "do_not_surface_for",
+    label: "Do not surface for (topic)",
+    effect:
+      "Suppresses any grant whose text matches these topic terms (e.g. a service line the client is exiting). Recorded with a reason and overridable via manual add — not a silent drop.",
+    valueLabel: "Contraindicated topic term(s)",
+    valuePlaceholder: "e.g. crisis, forensic",
+  },
 ];
 
 // Must match ROLE_CEILING_VALUES in lib/grants/constraints.ts.
