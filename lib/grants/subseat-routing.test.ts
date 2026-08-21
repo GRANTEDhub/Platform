@@ -121,7 +121,7 @@ describe("isRoutingCandidate — the DEFER-FIRST guards (identity unless ALL pas
 describe("applySeatJudgment — the code-side mutation (given a faked judgment)", () => {
   it("routes a genuine seat: seat/role/fit(=2)/disqualified/prime/flag/reasoning all set", () => {
     const m = mkMatch();
-    applySeatJudgment(m, mkClient(), fills());
+    applySeatJudgment(m, mkClient(), mkGrant(), fills());
     expect(m.seat_ref).toBe("S0_0");
     expect(m.proposed_role).toBe("Sub");
     expect(m.fit_score).toBe(2); // supporting-seat floor / ceiling
@@ -134,20 +134,20 @@ describe("applySeatJudgment — the code-side mutation (given a faked judgment)"
 
   it("prepends the prime-gap flag, preserving existing before_you_approve items", () => {
     const m = mkMatch({ before_you_approve: ["existing flag"] });
-    applySeatJudgment(m, mkClient(), fills());
+    applySeatJudgment(m, mkClient(), mkGrant(), fills());
     expect(m.before_you_approve[0]).toContain("Prime applicant needed");
     expect(m.before_you_approve).toContain("existing flag");
   });
 
   it("never touches `suppressed`", () => {
     const supp = mkMatch({ suppressed: true });
-    applySeatJudgment(supp, mkClient(), fills());
+    applySeatJudgment(supp, mkClient(), mkGrant(), fills());
     expect(supp.suppressed).toBe(true); // routing must never flip suppression, in either direction
   });
 
   it("defers to a legitimate client rule → identity (never overrides a real client decline)", () => {
     const m = mkMatch();
-    applySeatJudgment(m, mkClient(), fills({ defers_to_client_rule: true }));
+    applySeatJudgment(m, mkClient(), mkGrant(), fills({ defers_to_client_rule: true }));
     expect(m.seat_ref).toBe("NONE");
     expect(m.disqualified).toBe(true);
     expect(m.fit_score).toBe(0);
@@ -155,16 +155,30 @@ describe("applySeatJudgment — the code-side mutation (given a faked judgment)"
 
   it("does not route when the judgment says the seat is not filled → identity", () => {
     const m = mkMatch();
-    applySeatJudgment(m, mkClient(), fills({ fills: false }));
+    applySeatJudgment(m, mkClient(), mkGrant(), fills({ fills: false }));
     expect(m.seat_ref).toBe("NONE");
     expect(m.disqualified).toBe(true);
   });
 
   it("does not route without a named seat id → identity", () => {
     const m = mkMatch();
-    applySeatJudgment(m, mkClient(), fills({ seat_ref: null }));
+    applySeatJudgment(m, mkClient(), mkGrant(), fills({ seat_ref: null }));
     expect(m.seat_ref).toBe("NONE");
-    applySeatJudgment(m, mkClient(), fills({ seat_ref: "NONE" }));
+    applySeatJudgment(m, mkClient(), mkGrant(), fills({ seat_ref: "NONE" }));
     expect(m.seat_ref).toBe("NONE");
+  });
+
+  it("does not route a PRIME seat id → identity (the model must name a real SUPPORTING seat)", () => {
+    const m = mkMatch();
+    applySeatJudgment(m, mkClient(), mkGrant(), fills({ seat_ref: "P0" }));
+    expect(m.seat_ref).toBe("NONE"); // P0 is a prime seat, not a partner seat → not a sub routing
+    expect(m.disqualified).toBe(true);
+  });
+
+  it("does not route a hallucinated / non-existent seat id → identity", () => {
+    const m = mkMatch();
+    applySeatJudgment(m, mkClient(), mkGrant(), fills({ seat_ref: "S9_9" }));
+    expect(m.seat_ref).toBe("NONE"); // not in this grant's menu → bail
+    expect(m.disqualified).toBe(true);
   });
 });

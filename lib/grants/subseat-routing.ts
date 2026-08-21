@@ -157,8 +157,13 @@ async function judgeSupportingSeat(client: Client, grant: Grant): Promise<SeatJu
 // a genuine seat with a named id, and NEVER over a legitimate client-rule decline. Supporting-seat
 // floor: partner seat (code ceiling caps it at 2), the missing prime is a FLAG not a disqualifier,
 // and `suppressed` is left EXACTLY as prior code set it.
-export function applySeatJudgment(result: MatchResult, client: Client, j: SeatJudgment): void {
+export function applySeatJudgment(result: MatchResult, client: Client, grant: Grant, j: SeatJudgment): void {
   if (!j.fills || j.defers_to_client_rule || !j.seat_ref || j.seat_ref === "NONE") return;
+  // Validate the seat against THIS grant's menu: the model must have named a real SUPPORTING (partner)
+  // seat. A prime id (P{i}), or a hallucinated / non-existent id, is not a sub routing — bail to
+  // identity. The supporting-seat floor and the "sub, fit 2" mutation only make sense for a partner seat.
+  const { seats } = buildSeatMenu(grant.ideal_applicant_profile ?? null);
+  if (seats.get(j.seat_ref) !== "partner") return;
   result.seat_ref = j.seat_ref;
   result.proposed_role = "Sub";
   result.fit_score = 2;
@@ -188,5 +193,5 @@ export async function routeSupportingSeat(
 ): Promise<void> {
   if (!isRoutingCandidate(result, client, grant)) return;
   const j = await judgeSupportingSeat(client, grant);
-  applySeatJudgment(result, client, j);
+  applySeatJudgment(result, client, grant, j);
 }
