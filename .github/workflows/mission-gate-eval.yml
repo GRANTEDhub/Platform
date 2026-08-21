@@ -1,0 +1,82 @@
+name: Mission Gate Eval
+
+# Manual-only. Runs the model-in-the-loop mission-gate eval (lib/grants/mission-gate.eval.test.ts) —
+# the FLIP gate that should pass before MATCH_MISSION_GATE_ENABLED is turned on in prod. (The MERGE
+# gate — deterministic plumbing + the sub-routing interaction — lives in mission-gate.test.ts and runs
+# in normal CI.) This job is NOT part of CI: it makes real (paid) Anthropic calls and reads production
+# grant/client rows (read-only, service role), so it only runs when a human clicks "Run workflow".
+#
+# The button appears under Actions → "Mission Gate Eval" only once this file is on the default branch.
+#
+# SECRETS ARE ENVIRONMENT-SCOPED, NOT REPO-SCOPED. This reuses the SAME protected GitHub Environment as
+# the subseat eval — "subseat-eval" — because it needs the identical three secrets (ANTHROPIC_API_KEY,
+# NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) under the identical branch policy. Reusing it
+# avoids re-adding the RLS-bypassing service-role key to a second environment. If you ever want the two
+# evals isolated, create a "mission-gate-eval" environment with the same three secrets and point
+# `environment:` below at it. The eval toggles MATCH_MISSION_GATE_ENABLED (and MATCH_SUBSEAT_ROUTING_
+# ENABLED for its intersection band) itself, so neither flag is set here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Runs per fixture per flag state (stability sampling). Calls run concurrently (see 'concurrency'), so raising this grows cost more than wall-clock."
+        required: false
+        default: "3"
+      concurrency:
+        description: "Max concurrent scoring calls per flag phase (MISSION_EVAL_CONCURRENCY). Higher = faster but more Anthropic load; lower it if you see 429 rate limits."
+        required: false
+        default: "6"
+
+# Never let two eval runs race on the same paid/prod-reading job.
+concurrency:
+  group: mission-gate-eval
+  cancel-in-progress: false
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    # Environment-scoped secrets (see header). GitHub injects this environment's secrets only into a
+    # job that declares it, and enforces the environment's branch policy at the platform level.
+    environment: subseat-eval
+    # Generous outer cap; the eval's own beforeAll timeout scales with runs/concurrency (floored 10 min,
+    # capped 55 min) so it reports a Vitest timeout rather than being killed by the runner.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # 22, not 20: createServiceClient() pulls in @supabase/realtime-js, which throws at
+          # construction on Node 20 without a global WebSocket. Node exposes WebSocket unflagged from
+          # 22.4. Isolated to the eval job — ci.yml stays on 20.
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Fail LOUD if a secret is unset/misnamed. Without this, an empty ANTHROPIC_API_KEY trips the
+      # eval's own RUN gate (skipIf), every fixture is skipped, and vitest still exits 0 — a green check
+      # that verified nothing. The point of this job is to be a trustworthy flip gate.
+      - name: Verify required secrets are present
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          missing=0
+          for v in ANTHROPIC_API_KEY NEXT_PUBLIC_SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+            if [ -z "${!v}" ]; then
+              echo "::error::$v is empty or unset — add it to the 'subseat-eval' GitHub Environment (Settings → Environments). The eval would otherwise silently skip and report a false green."
+              missing=1
+            fi
+          done
+          [ "$missing" = 0 ]
+      - name: Run mission-gate eval
+        env:
+          RUN_MISSION_GATE_EVAL: "1"
+          MISSION_EVAL_RUNS: ${{ inputs.runs }}
+          MISSION_EVAL_CONCURRENCY: ${{ inputs.concurrency }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        # The per-fixture OFF/ON rows + firing rates the eval console.logs are captured in this step's
+        # log, so the report is readable in the browser alongside pass/fail.
+        run: npx vitest run lib/grants/mission-gate.eval.test.ts

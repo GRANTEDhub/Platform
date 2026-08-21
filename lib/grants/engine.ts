@@ -12,6 +12,7 @@ import {
 import { formatSamForMatcher } from "@/lib/sam/expiry";
 import { formatClientProfileForEnrichment } from "@/lib/clients/profile";
 import { routeSupportingSeat } from "@/lib/grants/subseat-routing";
+import { applyMissionGate } from "@/lib/grants/mission-gate";
 import type { Client, Grant, IdealApplicantProfile, FactorScores } from "@/types/database";
 
 export interface ExtractedGrant {
@@ -954,6 +955,14 @@ ${formatConstraintsForPrompt(client)}`;
     result.draft_outreach_email,
     client.primary_contact_name,
   );
+
+  // Mission gate (must run BEFORE routeSupportingSeat). Flag-gated on MATCH_MISSION_GATE_ENABLED;
+  // identity when OFF or when the strict three-signal bar is not met -- no mutation, no model call, no
+  // DB read, so OFF is byte-identical to today. Suppresses a CONFIDENT mission no-fit (model
+  // disqualified + NONE seat + a Gate-4 purpose reason). Ordering is load-bearing: it sets
+  // suppressed=true, and routeSupportingSeat's isRoutingCandidate bails on suppressed (and never
+  // un-suppresses), so a confident mission-disqualify can never be resurrected into a Sub seat.
+  applyMissionGate(result);
 
   // Code-side supporting-seat routing (supersedes the deleted prompt addendum, which the model
   // would not reliably obey). Flag-gated on MATCH_SUBSEAT_ROUTING_ENABLED and identity when OFF or
