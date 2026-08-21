@@ -7,8 +7,16 @@ name: Subseat Routing Eval
 # service role), so it only runs when a human clicks "Run workflow".
 #
 # The button appears under Actions → "Subseat Routing Eval" only once this file
-# is on the default branch (main). Required repo Actions secrets:
-#   ANTHROPIC_API_KEY, NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+# is on the default branch (main).
+#
+# SECRETS ARE ENVIRONMENT-SCOPED, NOT REPO-SCOPED. Add the three secrets to a protected
+# GitHub Environment named "subseat-eval" (Settings → Environments), NOT under repo-level
+# Actions secrets. SUPABASE_SERVICE_ROLE_KEY bypasses RLS (full prod DB), and a repo-level
+# secret is readable by ANY workflow run on ANY branch — a push-access collaborator could
+# add their own workflow to exfiltrate it. Restrict the environment to the `main` branch
+# (deployment-branch policy) and optionally require a reviewer; then only a job that
+# declares `environment: subseat-eval` (this one) can read them, gated by that policy.
+# Environment secrets: ANTHROPIC_API_KEY, NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
 # The eval toggles MATCH_SUBSEAT_ROUTING_ENABLED itself (OFF then ON per fixture),
 # so that flag is deliberately NOT set here.
 
@@ -16,9 +24,13 @@ on:
   workflow_dispatch:
     inputs:
       runs:
-        description: "Runs per fixture per flag state (stability sampling; higher = slower + more Anthropic spend). The eval scales its per-fixture timeout with this, so raising it is safe."
+        description: "Runs per fixture per flag state (stability sampling). Calls run concurrently (see 'concurrency'), so raising this grows cost more than wall-clock."
         required: false
         default: "3"
+      concurrency:
+        description: "Max concurrent scoring calls per flag phase (SUBSEAT_EVAL_CONCURRENCY). Higher = faster but more Anthropic load; lower it if you see 429 rate limits."
+        required: false
+        default: "6"
 
 # Never let two eval runs race on the same paid/prod-reading job.
 concurrency:
@@ -28,12 +40,26 @@ concurrency:
 jobs:
   eval:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Environment-scoped secrets (see header): GitHub injects this environment's secrets
+    # only into a job that declares it, and enforces the environment's branch policy at the
+    # platform level — so the RLS-bypassing service-role key can't be read by an arbitrary
+    # dispatch ref or an attacker-authored workflow that doesn't declare this environment.
+    environment: subseat-eval
+    # Generous outer cap. The eval batches all scoring by flag phase with capped concurrency, so a
+    # default run is a few minutes; this ceiling just bounds a badly rate-limited run. (The eval's
+    # own beforeAll timeout scales with runs/concurrency — floored at 10 min, capped at 55 min — so
+    # it stays just inside this cap even in the worst case.)
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # 22, not 20: createServiceClient() pulls in @supabase/realtime-js, which throws
+          # at construction ("Node.js 20 detected without native WebSocket support") when
+          # there is no global WebSocket. Node exposes WebSocket unflagged from 22.4; Node 20
+          # never does. This is isolated to the eval job — ci.yml stays on 20 — so it needs no
+          # app-code change to server.ts and no `ws` dependency.
+          node-version: 22
           cache: npm
       - run: npm ci
       # Fail LOUD if a secret is unset/misnamed. Without this, an empty ANTHROPIC_API_KEY
@@ -49,7 +75,7 @@ jobs:
           missing=0
           for v in ANTHROPIC_API_KEY NEXT_PUBLIC_SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
             if [ -z "${!v}" ]; then
-              echo "::error::$v is empty or unset — add it under Settings → Secrets and variables → Actions. The eval would otherwise silently skip and report a false green."
+              echo "::error::$v is empty or unset — add it to the 'subseat-eval' GitHub Environment (Settings → Environments). The eval would otherwise silently skip and report a false green."
               missing=1
             fi
           done
@@ -58,6 +84,7 @@ jobs:
         env:
           RUN_SUBSEAT_EVAL: "1"
           SUBSEAT_EVAL_RUNS: ${{ inputs.runs }}
+          SUBSEAT_EVAL_CONCURRENCY: ${{ inputs.concurrency }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
