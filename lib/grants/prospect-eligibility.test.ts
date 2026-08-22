@@ -44,6 +44,13 @@ describe("grantGeoRestriction — conservative: a Set only on a clear specific-s
       expect(grantGeoRestriction(g), String(g)).toBeNull();
     }
   });
+  it("a real state restriction WINS over national-sounding language (no 'national' substring short-circuit)", () => {
+    // Regression: NATIONAL_MARKERS `.includes("national")` matched "nationally"/"international" and
+    // returned null before the state scan, dropping a real MI/WI restriction.
+    expect(grantGeoRestriction("A nationally competitive program limited to Michigan and Wisconsin")).toEqual(new Set(["MI", "WI"]));
+    expect(grantGeoRestriction("Restricted to organizations in Michigan or Wisconsin")).toEqual(new Set(["MI", "WI"]));
+    expect(grantGeoRestriction("An international development program")).toBeNull();
+  });
 });
 
 describe("normalizeState", () => {
@@ -69,6 +76,17 @@ describe("classifyOrgType — coarse, fails open (null) when unclassifiable", ()
     expect(classifyOrgType(null)).toBeNull();
     expect(classifyOrgType("")).toBeNull();
     expect(classifyOrgType("some vague thing")).toBeNull();
+  });
+  it("does NOT substring-misclassify a nonprofit via unanchored branches (transitional/hospitality/tribute)", () => {
+    // Regression: `\btransit` matched "transitional", `\bhospital` matched "hospitality", `\btrib`
+    // matched "tribute" -> a nonprofit was wrongly typed transit/hospital/tribal and dropped.
+    expect(classifyOrgType("Nonprofit providing transitional housing services")).toBe("nonprofit");
+    expect(classifyOrgType("Hospitality-focused nonprofit foundation")).toBe("nonprofit");
+    expect(classifyOrgType("Tribute Foundation (a 501(c)(3) nonprofit)")).toBe("nonprofit");
+    // Genuine matches still classify.
+    expect(classifyOrgType("Regional public transit authority")).toBe("transit_agency");
+    expect(classifyOrgType("Community hospital")).toBe("hospital");
+    expect(classifyOrgType("Cherokee Tribal Government")).toBe("tribal");
   });
 });
 

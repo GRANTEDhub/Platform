@@ -78,30 +78,23 @@ export function normalizeState(raw: string | null | undefined): string | null {
   return code ?? null;
 }
 
-// A grant's geographic restriction as a Set of eligible state codes -- or null when the program reads
-// as NATIONAL / unrestricted or when no specific states can be detected. Deliberately CONSERVATIVE:
-// it returns a restriction only when it finds specific state names AND no dominant national marker, so
-// an ambiguous or national grant fails OPEN (no drop). Reads the STRUCTURED geographic_eligibility
-// field; a restriction that lives only in NOFO prose the shred didn't lift here is a documented miss.
-const NATIONAL_MARKERS = [
-  "nationwide","national","all states","all 50 states","any state","no geographic",
-  "no state restriction","unrestricted","u.s.-wide","us-wide","united states and",
-];
+// A grant's geographic restriction as a Set of eligible state codes -- or null when no specific states
+// can be detected (national / unrestricted / ambiguous all fail OPEN, no drop). Reads the STRUCTURED
+// geographic_eligibility field; a restriction that lives only in NOFO prose the shred didn't lift here
+// is a documented miss.
 export function grantGeoRestriction(geoText: string | null | undefined): Set<string> | null {
   const t = (geoText ?? "").toLowerCase().trim();
   if (!t) return null;
-  // A bare "united states" with no state narrowing is national. (Longer phrases that ALSO name
-  // specific states fall through to the scan below.)
-  if (t === "united states" || t === "u.s." || t === "usa" || t === "us") return null;
-  if (NATIONAL_MARKERS.some((m) => t.includes(m))) return null;
 
-  // Match FULL state names only. A 2-letter-code scan against lowercased prose is unsafe: codes like
-  // IN / OR / ME / OK / HI / OH / AL / PA / MA / DE collide with ordinary English words ("in", "or",
-  // "me"...), fabricating bogus state restrictions on almost any national grant ("organizations IN the
-  // United States" -> a spurious Indiana lock). Full state names don't collide, and the field is prose,
-  // so names are how a real restriction reads ("Michigan and Wisconsin"). If an abbreviations-only
-  // restriction ("MI, WI") ever needs catching, add an UPPERCASE-anchored code scan on the ORIGINAL
-  // (un-lowercased) text -- not this one. (STATE_CODES still backs normalizeState's controlled field.)
+  // Scan for specific FULL state names, and let a real state restriction WIN over national-sounding
+  // language: "a nationally competitive program limited to Michigan and Wisconsin" is restricted to
+  // MI/WI, so a "national"/"nationwide" word must not short-circuit it. If no specific state is named,
+  // the grant is unrestricted for our purposes -> null (that subsumes every "nationwide"/"all states"
+  // marker, so no separate marker list is needed, and no substring like "national" inside "nationally"
+  // can mislead). FULL NAMES only -- a 2-letter-code scan against lowercased prose collides with
+  // ordinary English words (in->IN, or->OR, me->ME...); an abbreviations-only restriction ("MI, WI")
+  // would need an UPPERCASE-anchored scan on the ORIGINAL text, not this one. (STATE_CODES still backs
+  // normalizeState's controlled field.)
   const found = new Set<string>();
   for (const [name, code] of Object.entries(STATE_NAME_TO_CODE)) {
     if (new RegExp(`\\b${name}\\b`).test(t)) found.add(code);
@@ -117,18 +110,23 @@ export function grantGeoRestriction(geoText: string | null | undefined): Set<str
 export function classifyOrgType(orgType: string | null | undefined): EntityType | null {
   const t = (orgType ?? "").toLowerCase();
   if (!t.trim()) return null;
-  if (/\btrib|native american|indian tribe/.test(t)) return "tribal";
+  // EVERY alternation branch must be bounded on BOTH sides where a bare prefix would collide with a
+  // longer word: `\btransit` matches "transitional", `\bhospital` matches "hospitality", `\btrib`
+  // matches "tribute"/"tribunal" -- and because these branches return BEFORE the nonprofit fallback, a
+  // misclassification would DROP a genuinely eligible nonprofit. (`|` binds looser than `\b`, so an
+  // anchor on only the first branch does not carry to the rest.)
+  if (/\btrib(?:e|es|al)\b|native american|indian tribe/.test(t)) return "tribal";
   if (/\bcounty\b/.test(t)) return "county";
-  if (/\bcity|municipal|township|town of\b/.test(t)) return "city";
-  if (/\bschool district|independent school|local education agency|\bk-12\b/.test(t)) return "school_district";
-  if (/\btransit|transportation authority\b/.test(t)) return "transit_agency";
-  if (/\bhospital|health system|medical center\b/.test(t)) return "hospital";
-  if (/\bcollege|universit|higher education|institution of higher|\bihe\b/.test(t)) return "higher_education";
+  if (/\bcity\b|\bmunicipal(?:ity)?\b|\btownship\b|\btown of\b/.test(t)) return "city";
+  if (/\bschool district\b|independent school|local education agency|\bk-12\b/.test(t)) return "school_district";
+  if (/\btransit\b|transit authorit|transit agenc|transportation authorit/.test(t)) return "transit_agency";
+  if (/\bhospitals?\b|health system|medical center/.test(t)) return "hospital";
+  if (/\bcolleges?\b|universit|higher education|institution of higher|\bihe\b/.test(t)) return "higher_education";
   if (/\bplanning (and|&) development district|council of governments|regional (authority|development)|special district|port authority|workforce development board|\bwdb\b/.test(t))
     return "special_district";
   if (/\bstate (government|agency|department|of )|state-level|state government-affiliated/.test(t))
     return "state_government";
-  if (/\bnonprofit|non-profit|501\s*\(?c\)?|\bngo\b|charit|foundation|ministr|church|faith-based|\bassociation\b|coalition|council\b/.test(t))
+  if (/\bnonprofit\b|non-profit|501\s*\(?c\)?|\bngo\b|charit|foundation|ministr|church|faith-based|\bassociation\b|coalition|\bcouncil\b/.test(t))
     return "nonprofit";
   return null;
 }
