@@ -48,6 +48,7 @@ import {
   directoryOrgType,
 } from "@/lib/grants/eo-directory";
 import { deriveTargetEntityTypes, entityTypeLabel } from "@/lib/grants/entity-types";
+import { prospectEligibilityDrop } from "@/lib/grants/prospect-eligibility";
 import { findTypedDirectoryOrgs } from "@/lib/grants/directories";
 import { createServiceClient } from "@/lib/supabase/server";
 import type { Grant, Client } from "@/types/database";
@@ -409,6 +410,11 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
   // parallel section is pure independent per-item work -- each task mints its own
   // fresh prospect row + one card and shares no mutable state. `carded` is summed
   // from returned values, never mutated across tasks.
+  // Names sourced from USASpending past-awardees (eligible-by-construction) -- the eligibility gate
+  // below TRUSTS these on entity type and only fails them on unconfirmed geo for a geo-restricted
+  // grant. Built from the awardee bucket, matched by the same normalized name used everywhere else.
+  const awardeeNames = new Set(awardeeCandidates.map((c) => normalizeOrgName(c.name)));
+
   const BATCH_SIZE = 5;
   let carded = 0;
   for (let i = 0; i < grounded.length; i += BATCH_SIZE) {
@@ -418,6 +424,21 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
         try {
           const match = await matchGrantToClient(grant, prospectAsClient(c));
           if (match.suppressed || match.disqualified || match.fit_score < 2) return 0;
+
+          // Prospect eligibility backstop (flag-gated; OFF is byte-identical to today). The scorer
+          // flags-not-kills on unknown entity/geo -- right for a client whose data you verify, wrong
+          // for minting a prospect card off inference -- so a null-org_type / blank-location candidate
+          // can card on a grant it is entity- or geo-ineligible for (e.g. a WA conservancy on a
+          // Michigan/Wisconsin-restricted grant). This deterministic post-score check drops those,
+          // trusting awardee entity eligibility by construction but still failing unconfirmed geo on a
+          // geo-restricted grant. Reuses the already-computed targetTypes -- no extra model call.
+          if (process.env.PROSPECT_ELIGIBILITY_GATE_ENABLED === "true") {
+            const drop = prospectEligibilityDrop(c, grant, targetTypes, awardeeNames.has(normalizeOrgName(c.name)));
+            if (drop) {
+              console.log(`Prospect eligibility gate dropped ${c.name}: ${drop}`);
+              return 0;
+            }
+          }
 
           const { data: prospect, error: pErr } = await db
             .from("prospects")
