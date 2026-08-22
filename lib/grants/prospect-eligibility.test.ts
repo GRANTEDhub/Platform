@@ -34,6 +34,16 @@ describe("grantGeoRestriction — conservative: a Set only on a clear specific-s
       expect(grantGeoRestriction(g), String(g)).toBeNull();
     }
   });
+  it("does NOT fabricate a restriction from English words that collide with 2-letter codes (in/or/me/ok...)", () => {
+    // Regression: a lowercased 2-letter-code scan matched "in" (IN), "or" (OR), etc. -> bogus locks.
+    for (const g of [
+      "Open to any organization operating in the country",
+      "Applicants must be a state agency or a local government",
+      "Contact me for more information about eligible areas",
+    ]) {
+      expect(grantGeoRestriction(g), String(g)).toBeNull();
+    }
+  });
 });
 
 describe("normalizeState", () => {

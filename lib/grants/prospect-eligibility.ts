@@ -95,14 +95,16 @@ export function grantGeoRestriction(geoText: string | null | undefined): Set<str
   if (t === "united states" || t === "u.s." || t === "usa" || t === "us") return null;
   if (NATIONAL_MARKERS.some((m) => t.includes(m))) return null;
 
+  // Match FULL state names only. A 2-letter-code scan against lowercased prose is unsafe: codes like
+  // IN / OR / ME / OK / HI / OH / AL / PA / MA / DE collide with ordinary English words ("in", "or",
+  // "me"...), fabricating bogus state restrictions on almost any national grant ("organizations IN the
+  // United States" -> a spurious Indiana lock). Full state names don't collide, and the field is prose,
+  // so names are how a real restriction reads ("Michigan and Wisconsin"). If an abbreviations-only
+  // restriction ("MI, WI") ever needs catching, add an UPPERCASE-anchored code scan on the ORIGINAL
+  // (un-lowercased) text -- not this one. (STATE_CODES still backs normalizeState's controlled field.)
   const found = new Set<string>();
-  // Full state names first (multi-word before their substrings can mislead).
   for (const [name, code] of Object.entries(STATE_NAME_TO_CODE)) {
     if (new RegExp(`\\b${name}\\b`).test(t)) found.add(code);
-  }
-  // Then 2-letter codes as standalone tokens (avoid matching inside words).
-  for (const code of STATE_CODES) {
-    if (new RegExp(`\\b${code.toLowerCase()}\\b`).test(t)) found.add(code);
   }
   return found.size > 0 ? found : null;
 }
