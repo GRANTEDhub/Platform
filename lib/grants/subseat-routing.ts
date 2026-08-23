@@ -69,6 +69,15 @@ export interface SeatJudgment {
   seat_function: string | null; // the named function the client performs in that seat
   prime_type: string | null; // eligible prime entity TYPE the client would sub under
   defers_to_client_rule: boolean; // a client matching rule legitimately declines this pursuit
+  // Sub-routing may ONLY reverse a prime-ENTITY-ineligibility disqualification. This flag is the
+  // judge's reading of the FIRST-pass disqualify reason: true ONLY when prime-entity-ineligibility is
+  // the SOLE barrier. Any OTHER contributing reason (geography, a capital-only / supplanting client
+  // rule, a mission/purpose mismatch, past-performance, etc.) — alone or in addition to prime-
+  // ineligibility (Harbor House's dual disqualification) — makes it false, and the routing defers.
+  // A model judgment, not a regex over the reason string: the whole bug class this guards (the #409
+  // misfiring regex, the #408 reason-blindness) exists because free-text reasons don't classify
+  // cleanly with regex, so the check reads the reason IN CONTEXT rather than pattern-matching it.
+  disqualification_is_prime_ineligibility_only: boolean;
   rationale: string;
 }
 
@@ -81,6 +90,12 @@ Rules:
 - A missing or unnamed prime is NOT a reason to answer false. Supporting seats exist independently of whether a specific prime has been identified. Do not require a named prime.
 - recommended prime: give the eligible prime entity TYPE the client would sub under (e.g. "county government", "state agency"); name a specific organization only if one is genuinely obvious.
 - DEFER TO CLIENT RULES: if the client's authoritative matching rules or known constraints give a genuine strategic reason to AVOID this pursuit (e.g. a supplanting / fund-replacement restriction, a "do not fund existing staff/roles" rule, an explicit self-suppression), set defers_to_client_rule = true. This is respected absolutely: a legitimate client rule declining the grant is correct and must not be overridden, even when the seat is genuinely filled. When in doubt about whether a rule applies, prefer defers_to_client_rule = true.
+- SOLE-BARRIER CHECK (disqualification_is_prime_ineligibility_only): you are shown the FIRST-pass DISQUALIFY REASON that removed this client. Sub-routing is allowed to reverse ONE thing only — a disqualification whose SOLE barrier is that the client is the wrong ENTITY TYPE to be the PRIME/direct applicant (e.g. "nonprofit excluded, government-only NOFO"). Set disqualification_is_prime_ineligibility_only = true ONLY when prime-entity-ineligibility is the ONLY reason the client was removed. Set it FALSE whenever ANY other reason contributes — even if prime-ineligibility is ALSO present:
+  · geography / service-area restriction ("does not serve the eligible region"),
+  · a client matching rule or known constraint (e.g. capital-only, supplanting, program-type restriction — note this typically ALSO sets defers_to_client_rule),
+  · a mission / purpose / programmatic mismatch (the client does not do this kind of work),
+  · past-performance, capacity, award-size, or any other substantive barrier.
+  A DUAL disqualification (prime-ineligibility PLUS any of the above) is FALSE — routing must not resurrect a client that a second, independent barrier also removed. If the reason is empty, vague, or you are unsure whether a non-prime barrier is present, set it FALSE (fail safe: do not route).
 - Return the answer via the submit_seat_judgment tool exactly once.`;
 
 function clientContextForJudge(client: Client): string {
@@ -102,7 +117,11 @@ function clientContextForJudge(client: Client): string {
   return lines.filter(Boolean).join("\n");
 }
 
-async function judgeSupportingSeat(client: Client, grant: Grant): Promise<SeatJudgment> {
+async function judgeSupportingSeat(
+  client: Client,
+  grant: Grant,
+  disqualifyReason: string | null | undefined,
+): Promise<SeatJudgment> {
   const anthropic = getAnthropicClient();
   const { menu } = buildSeatMenu(grant.ideal_applicant_profile ?? null);
   const response = await anthropic.messages.create({
@@ -122,9 +141,18 @@ async function judgeSupportingSeat(client: Client, grant: Grant): Promise<SeatJu
             seat_function: { type: ["string", "null"] },
             prime_type: { type: ["string", "null"] },
             defers_to_client_rule: { type: "boolean" },
+            disqualification_is_prime_ineligibility_only: { type: "boolean" },
             rationale: { type: "string" },
           },
-          required: ["fills", "seat_ref", "seat_function", "prime_type", "defers_to_client_rule", "rationale"],
+          required: [
+            "fills",
+            "seat_ref",
+            "seat_function",
+            "prime_type",
+            "defers_to_client_rule",
+            "disqualification_is_prime_ineligibility_only",
+            "rationale",
+          ],
         },
       },
     ],
@@ -132,20 +160,27 @@ async function judgeSupportingSeat(client: Client, grant: Grant): Promise<SeatJu
     messages: [
       {
         role: "user",
-        content: `GRANT: ${grant.title}\n\nSUPPORTING SEAT MENU (choose only from these S{i}_{j} ids):\n${menu}\n\nCLIENT:\n${clientContextForJudge(client)}`,
+        content:
+          `GRANT: ${grant.title}\n\n` +
+          `FIRST-PASS DISQUALIFY REASON (for the sole-barrier check — was prime-entity-ineligibility the ONLY reason?):\n` +
+          `${disqualifyReason?.trim() || "(none recorded)"}\n\n` +
+          `SUPPORTING SEAT MENU (choose only from these S{i}_{j} ids):\n${menu}\n\n` +
+          `CLIENT:\n${clientContextForJudge(client)}`,
       },
     ],
   });
 
   const toolUse = response.content.find((b) => b.type === "tool_use");
   if (!toolUse || toolUse.type !== "tool_use") {
-    // Fail SAFE: a missing judgment must not route. Treat as "does not fill".
+    // Fail SAFE: a missing judgment must not route. Treat as "does not fill" AND not a clean
+    // prime-ineligibility (either alone blocks the route in applySeatJudgment).
     return {
       fills: false,
       seat_ref: null,
       seat_function: null,
       prime_type: null,
       defers_to_client_rule: false,
+      disqualification_is_prime_ineligibility_only: false,
       rationale: "scoped seat judgment returned no structured output",
     };
   }
@@ -159,6 +194,13 @@ async function judgeSupportingSeat(client: Client, grant: Grant): Promise<SeatJu
 // and `suppressed` is left EXACTLY as prior code set it.
 export function applySeatJudgment(result: MatchResult, client: Client, grant: Grant, j: SeatJudgment): void {
   if (!j.fills || j.defers_to_client_rule || !j.seat_ref || j.seat_ref === "NONE") return;
+  // SOLE-BARRIER GATE (the #408 disqualify-reason-blind fix): sub-routing may reverse ONLY a
+  // prime-ENTITY-ineligibility disqualification. If any other barrier contributed (geography, a
+  // capital-only / supplanting client rule, a mission mismatch, …) — even alongside prime-
+  // ineligibility (a DUAL disqualification like Harbor House) — the judge sets this false and we do
+  // NOT route: a second, independent barrier must not be resurrected into a Sub seat. Fail-safe: the
+  // no-structured-output fallback returns false here, so a missing judgment never routes.
+  if (!j.disqualification_is_prime_ineligibility_only) return;
   // Validate the seat against THIS grant's menu: the model must have named a real SUPPORTING (partner)
   // seat. A prime id (P{i}), or a hallucinated / non-existent id, is not a sub routing — bail to
   // identity. The supporting-seat floor and the "sub, fit 2" mutation only make sense for a partner seat.
@@ -201,7 +243,7 @@ export async function routeSupportingSeat(
   // greppable: a swallowed failure that silently stops sub-routing on a live client is the real risk
   // (it would undo the fix with no signal), so the failure must be VISIBLE, never silent.
   try {
-    const j = await judgeSupportingSeat(client, grant);
+    const j = await judgeSupportingSeat(client, grant, result.disqualify_reason);
     applySeatJudgment(result, client, grant, j);
   } catch (err) {
     console.error(
