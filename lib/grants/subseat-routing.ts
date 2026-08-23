@@ -192,6 +192,22 @@ export async function routeSupportingSeat(
   grant: Grant,
 ): Promise<void> {
   if (!isRoutingCandidate(result, client, grant)) return;
-  const j = await judgeSupportingSeat(client, grant);
-  applySeatJudgment(result, client, grant, j);
+  // Resilience: the scoped second model call is the ONLY thing here that can throw (rate limit,
+  // network, API 5xx). On failure, FALL BACK to the pre-sub-routing result -- because we only mutate
+  // `result` inside applySeatJudgment, catching before it runs leaves `result` EXACTLY as the first
+  // (full) pass computed it: this one pair simply is not sub-routed, identical to flag-OFF for it, and
+  // harmless. NEVER rethrow -- without this, the error propagates out of matchGrantToClient and
+  // scoreGrantClientPair discards the entire already-valid match as outcome='error'. Log LOUD and
+  // greppable: a swallowed failure that silently stops sub-routing on a live client is the real risk
+  // (it would undo the fix with no signal), so the failure must be VISIBLE, never silent.
+  try {
+    const j = await judgeSupportingSeat(client, grant);
+    applySeatJudgment(result, client, grant, j);
+  } catch (err) {
+    console.error(
+      `[routeSupportingSeat] scoped seat judgment FAILED for client ${client.name} on grant ${grant.id}; ` +
+        `falling back to the un-routed result (this pair is not sub-routed): ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
