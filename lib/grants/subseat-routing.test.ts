@@ -67,6 +67,7 @@ const fills = (over: Partial<SeatJudgment> = {}): SeatJudgment => ({
   seat_function: "direct service co-implementer",
   prime_type: "county government",
   defers_to_client_rule: false,
+  disqualification_is_prime_ineligibility_only: true, // clean prime-ineligible-only → routable
   rationale: "genuine functional match",
   ...over,
 });
@@ -180,6 +181,59 @@ describe("applySeatJudgment — the code-side mutation (given a faked judgment)"
     applySeatJudgment(m, mkClient(), mkGrant(), fills({ seat_ref: "S9_9" }));
     expect(m.seat_ref).toBe("NONE"); // not in this grant's menu → bail
     expect(m.disqualified).toBe(true);
+  });
+});
+
+describe("applySeatJudgment — the SOLE-BARRIER gate (#408 disqualify-reason-blind fix)", () => {
+  // These fake the judgment, so they prove the CODE defers correctly given the flag the scoped prompt
+  // is designed to set. Whether the judge actually returns false for a DUAL disqualification (Harbor
+  // House) is the scoped-prompt's quality — the human-review gate, same as the plumbing-vs-judgment
+  // caveat at the top of this file. What is proven here: a false flag can NEVER route, in every shape.
+
+  it("clean prime-ineligibility ONLY (a specialist on a government-only NOFO) → routes to Sub", () => {
+    // The intended win: prime-entity-ineligibility is the sole barrier, so the sub-capable specialist
+    // is routed to its genuine supporting seat.
+    const m = mkMatch({ disqualify_reason: "Nonprofit excluded — government-only NOFO (prime must be a unit of government)." });
+    applySeatJudgment(m, mkClient(), mkGrant(), fills({ disqualification_is_prime_ineligibility_only: true }));
+    expect(m.seat_ref).toBe("S0_0");
+    expect(m.proposed_role).toBe("Sub");
+    expect(m.fit_score).toBe(2);
+    expect(m.disqualified).toBe(false);
+  });
+
+  it("LANDMINE — Harbor House DUAL disqualification (prime-ineligible + capital-only client rule) → does NOT route", () => {
+    // The concrete case Approach A would misfire on: a code classifier sees the prime-ineligibility
+    // phrase and routes; the judge reads BOTH barriers and sets the flag false. A second, independent
+    // barrier (the client's own capital-only matching rule) must not be resurrected into a Sub seat.
+    const m = mkMatch({
+      disqualify_reason:
+        "Dual disqualification: (1) nonprofit excluded, government-only NOFO; (2) matching rule prohibits program-only grants without a capital component.",
+    });
+    applySeatJudgment(m, mkClient(), mkGrant(), fills({ disqualification_is_prime_ineligibility_only: false }));
+    expect(m.seat_ref).toBe("NONE"); // identity — un-routed
+    expect(m.disqualified).toBe(true);
+    expect(m.fit_score).toBe(0);
+    expect(m.proposed_role).toBe("Not Recommended");
+  });
+
+  it("geo-disqualified org (the reason-blindness bug) → does NOT route, even with a genuinely filled seat", () => {
+    // Reason-blindness was routing on a geography kill. The seat is genuinely filled (fills=true, real
+    // S0_0), but the barrier is geographic, so the flag is false and the gate holds.
+    const m = mkMatch({ disqualify_reason: "Client service area does not serve the eligible region (grant restricted to the Lake Superior Basin)." });
+    applySeatJudgment(m, mkClient(), mkGrant(), fills({ fills: true, seat_ref: "S0_0", disqualification_is_prime_ineligibility_only: false }));
+    expect(m.seat_ref).toBe("NONE");
+    expect(m.disqualified).toBe(true);
+    expect(m.fit_score).toBe(0);
+  });
+
+  it("the sole-barrier gate composes with (does not replace) the other guards", () => {
+    // A true flag still cannot route past the pre-existing guards — fills=false wins, defers wins.
+    const a = mkMatch();
+    applySeatJudgment(a, mkClient(), mkGrant(), fills({ disqualification_is_prime_ineligibility_only: true, fills: false }));
+    expect(a.seat_ref).toBe("NONE");
+    const b = mkMatch();
+    applySeatJudgment(b, mkClient(), mkGrant(), fills({ disqualification_is_prime_ineligibility_only: true, defers_to_client_rule: true }));
+    expect(b.seat_ref).toBe("NONE");
   });
 });
 
