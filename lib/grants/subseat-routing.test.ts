@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { isRoutingCandidate, applySeatJudgment, type SeatJudgment } from "./subseat-routing";
+import { isRoutingCandidate, applySeatJudgment, routeSupportingSeat, type SeatJudgment } from "./subseat-routing";
 import type { MatchResult } from "./engine";
 import type { Client, Grant } from "@/types/database";
 
@@ -180,5 +180,32 @@ describe("applySeatJudgment — the code-side mutation (given a faked judgment)"
     applySeatJudgment(m, mkClient(), mkGrant(), fills({ seat_ref: "S9_9" }));
     expect(m.seat_ref).toBe("NONE"); // not in this grant's menu → bail
     expect(m.disqualified).toBe(true);
+  });
+});
+
+describe("routeSupportingSeat — resilience: a thrown scoped call falls back, never throws or mutates", () => {
+  afterEach(() => {
+    delete process.env[FLAG];
+  });
+
+  it("scoped-call failure → falls back to the un-routed result (never throws; result unchanged)", async () => {
+    process.env[FLAG] = "true";
+    // Force the scoped second call to throw WITHOUT a real API call: getAnthropicClient() throws on a
+    // missing key, so judgeSupportingSeat throws -- exercising the exact rate-limit/network/5xx path.
+    const savedKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    try {
+      const m = mkMatch(); // disqualified / NONE -> a genuine routing candidate (isRoutingCandidate=true)
+      await expect(routeSupportingSeat(m, mkClient(), mkGrant())).resolves.toBeUndefined(); // never throws
+      // Fell back to the pre-routing result -- UNCHANGED, this pair simply is not sub-routed.
+      expect(m.seat_ref).toBe("NONE");
+      expect(m.disqualified).toBe(true);
+      expect(m.fit_score).toBe(0);
+      expect(m.proposed_role).toBe("Not Recommended");
+      expect(m.suppressed).toBe(false); // suppression untouched, as always
+    } finally {
+      if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
+      else delete process.env.ANTHROPIC_API_KEY;
+    }
   });
 });
