@@ -2,64 +2,79 @@ import { describe, it, expect } from "vitest";
 import {
   prospectEligibilityDrop,
   classifyOrgType,
-  grantGeoRestriction,
-  normalizeState,
+  circularLocationInference,
   type EligibilityCandidate,
+  type MatchSignals,
 } from "./prospect-eligibility";
 import type { EntityType } from "./entity-types";
 
-// Deterministic tests for the prospect eligibility backstop. Fixtures are SHAPED like the real
-// carded prospects the diagnosis pulled (Great Peninsula = WA org, blank location, on a Lake-Superior
-// MI/WI grant; Legal Aid of Arkansas = eligible AR nonprofit; a county on a nonprofit-only grant).
-// The gate is a pure function, so these prove the plumbing directly; the flag-OFF path is identity
-// because discover.ts only calls this when PROSPECT_ELIGIBILITY_GATE_ENABLED is on.
+// Deterministic tests for the reworked prospect eligibility backstop. The geo axis is now
+// CIRCULAR-INFERENCE detection over the scorer's own match.inferred_fields (not a field re-parse), and
+// the entity axis exempts a genuinely sub-routed prospect (#414). The gate is a pure function, so these
+// prove the plumbing directly; the flag-OFF path is identity because discover.ts only calls this when
+// PROSPECT_ELIGIBILITY_GATE_ENABLED is on. Geo fixtures are the three REAL diagnosed rows: Great
+// Peninsula (WA conservancy, location back-filled from the program -> drop), Western NY Land Conservancy
+// and Diversity Center of Oklahoma (location grounded in the org's OWN name -> keep).
 
-const grant = (geo: string | null) => ({ geographic_eligibility: geo });
 const cand = (over: Partial<EligibilityCandidate> = {}): EligibilityCandidate => ({
   name: "Test Org",
   org_type: null,
-  location_state: null,
-  operates_in_arkansas: false,
+  ...over,
+});
+const mkMatch = (over: Partial<MatchSignals> = {}): MatchSignals => ({
+  inferred_fields: [],
+  seat_ref: "P0",
+  proposed_role: "Prime",
   ...over,
 });
 const NONPROFIT: EntityType[] = ["nonprofit"];
 
-describe("grantGeoRestriction — conservative: a Set only on a clear specific-state restriction", () => {
-  it("names specific states -> restriction Set", () => {
-    expect(grantGeoRestriction("Lake Superior Basin of Michigan and Wisconsin")).toEqual(new Set(["MI", "WI"]));
-    expect(grantGeoRestriction("Arkansas only")).toEqual(new Set(["AR"]));
-  });
-  it("national / unrestricted / blank -> null (fails open, no drop)", () => {
-    for (const g of ["United States", "Nationwide competitive program", "All states and territories", "", null, "No geographic restriction"]) {
-      expect(grantGeoRestriction(g), String(g)).toBeNull();
-    }
-  });
-  it("does NOT fabricate a restriction from English words that collide with 2-letter codes (in/or/me/ok...)", () => {
-    // Regression: a lowercased 2-letter-code scan matched "in" (IN), "or" (OR), etc. -> bogus locks.
-    for (const g of [
-      "Open to any organization operating in the country",
-      "Applicants must be a state agency or a local government",
-      "Contact me for more information about eligible areas",
-    ]) {
-      expect(grantGeoRestriction(g), String(g)).toBeNull();
-    }
-  });
-  it("a real state restriction WINS over national-sounding language (no 'national' substring short-circuit)", () => {
-    // Regression: NATIONAL_MARKERS `.includes("national")` matched "nationally"/"international" and
-    // returned null before the state scan, dropping a real MI/WI restriction.
-    expect(grantGeoRestriction("A nationally competitive program limited to Michigan and Wisconsin")).toEqual(new Set(["MI", "WI"]));
-    expect(grantGeoRestriction("Restricted to organizations in Michigan or Wisconsin")).toEqual(new Set(["MI", "WI"]));
-    expect(grantGeoRestriction("An international development program")).toBeNull();
-  });
-});
+// The three real inferred_fields, phrased as the scorer emits them.
+const GREAT_PENINSULA_FIELDS = [
+  "Location / service area inferred as the Upper Great Lakes region based on the program name and prior awards under this program.",
+];
+const WESTERN_NY_FIELDS = ["Service area inferred from the organization's name (Western New York Land Conservancy)."];
+const DIVERSITY_CENTER_FIELDS = ["Location inferred as Oklahoma based on the organization name 'Diversity Center of Oklahoma'."];
 
-describe("normalizeState", () => {
-  it("codes, names, blanks", () => {
-    expect(normalizeState("AR")).toBe("AR");
-    expect(normalizeState("Arkansas")).toBe("AR");
-    expect(normalizeState("washington")).toBe("WA");
-    expect(normalizeState(null)).toBeNull();
-    expect(normalizeState("Zzz")).toBeNull();
+describe("circularLocationInference — drop when location is grounded in the GRANT, keep when in the ORG's name", () => {
+  it("Great Peninsula: location back-filled from the program / prior awards -> CIRCULAR (true)", () => {
+    expect(circularLocationInference(GREAT_PENINSULA_FIELDS)).toBe(true);
+  });
+  it("Western NY / Diversity Center: location grounded in the org's OWN name -> NOT circular (false)", () => {
+    expect(circularLocationInference(WESTERN_NY_FIELDS)).toBe(false);
+    expect(circularLocationInference(DIVERSITY_CENTER_FIELDS)).toBe(false);
+  });
+  it("other grant-grounded phrasings -> circular", () => {
+    for (const f of [
+      "Service area inferred as the eligible region of the grant.",
+      "Location assumed to be in-region based on prior awards under this program.",
+      "Operates in the program's target geography (inferred, no independent signal).",
+    ]) {
+      expect(circularLocationInference([f]), f).toBe(true);
+    }
+  });
+  it("no location inference, or a non-geographic inference -> keep (false)", () => {
+    expect(circularLocationInference(null)).toBe(false);
+    expect(circularLocationInference([])).toBe(false);
+    expect(circularLocationInference(["Annual budget inferred from staff size."])).toBe(false); // not a location field
+    expect(circularLocationInference(["Org type inferred as nonprofit from the 501(c)(3) status."])).toBe(false);
+  });
+  it("AMBIGUOUS (grant AND org-name basis both present) -> keep (fails open, conservative)", () => {
+    expect(
+      circularLocationInference([
+        "Location inferred from the program name, though the organization name also suggests the region.",
+      ]),
+    ).toBe(false);
+  });
+  it("normalizes a CURLY apostrophe so an org-name override still fires (no false drop)", () => {
+    // Review edge case (#417): LLM output uses U+2019, but the possessive patterns match only ASCII.
+    // Here a circular phrase AND an org-name override (with a curly apostrophe) are both present -- the
+    // override must register, so the string KEEPS. Without the normalization it would wrongly drop.
+    expect(
+      circularLocationInference([
+        "Location inferred from prior awards under this program, but ultimately from the organization’s name.",
+      ]),
+    ).toBe(false);
   });
 });
 
@@ -78,91 +93,92 @@ describe("classifyOrgType — coarse, fails open (null) when unclassifiable", ()
     expect(classifyOrgType("some vague thing")).toBeNull();
   });
   it("does NOT substring-misclassify a nonprofit via unanchored branches (transitional/hospitality/tribute)", () => {
-    // Regression: `\btransit` matched "transitional", `\bhospital` matched "hospitality", `\btrib`
-    // matched "tribute" -> a nonprofit was wrongly typed transit/hospital/tribal and dropped.
     expect(classifyOrgType("Nonprofit providing transitional housing services")).toBe("nonprofit");
     expect(classifyOrgType("Hospitality-focused nonprofit foundation")).toBe("nonprofit");
     expect(classifyOrgType("Tribute Foundation (a 501(c)(3) nonprofit)")).toBe("nonprofit");
-    // Genuine matches still classify.
     expect(classifyOrgType("Regional public transit authority")).toBe("transit_agency");
     expect(classifyOrgType("Community hospital")).toBe("hospital");
     expect(classifyOrgType("Cherokee Tribal Government")).toBe("tribal");
   });
 });
 
-describe("prospectEligibilityDrop — GEO", () => {
-  it("Great Peninsula shape: blank location, non-AR, on a MI/WI-restricted grant -> DROP", () => {
+describe("prospectEligibilityDrop — GEO (circular inference)", () => {
+  it("Great Peninsula shape: circular location inference -> DROP", () => {
     const r = prospectEligibilityDrop(
-      cand({ name: "Great Peninsula Conservancy", org_type: null, location_state: null, operates_in_arkansas: false }),
-      grant("Lake Superior Basin of Michigan and Wisconsin"),
+      cand({ name: "Great Peninsula Conservancy", org_type: null }),
       NONPROFIT,
-      /* isAwardee */ true, // even as an awardee, geo is not trusted on a geo-locked grant
+      /* isAwardee */ true, // geo is not trusted even for an awardee
+      mkMatch({ inferred_fields: GREAT_PENINSULA_FIELDS, seat_ref: "NONE", proposed_role: "Not Recommended" }),
     );
     expect(r).toMatch(/^geo:/);
   });
-  it("known out-of-region state -> DROP", () => {
-    expect(prospectEligibilityDrop(cand({ location_state: "WA" }), grant("Michigan and Wisconsin"), [], false)).toMatch(/^geo:/);
+  it("Western NY / Diversity Center shape: org-name-grounded location -> KEEP", () => {
+    expect(
+      prospectEligibilityDrop(cand({ name: "Western New York Land Conservancy" }), NONPROFIT, false, mkMatch({ inferred_fields: WESTERN_NY_FIELDS })),
+    ).toBeNull();
+    expect(
+      prospectEligibilityDrop(cand({ name: "Diversity Center of Oklahoma Inc" }), NONPROFIT, true, mkMatch({ inferred_fields: DIVERSITY_CENTER_FIELDS })),
+    ).toBeNull();
   });
-  it("known AR org on a grant that excludes AR -> DROP", () => {
-    expect(prospectEligibilityDrop(cand({ operates_in_arkansas: true, location_state: "AR" }), grant("Michigan and Wisconsin"), [], false)).toMatch(/^geo:/);
-  });
-  it("in-region org -> keep", () => {
-    expect(prospectEligibilityDrop(cand({ location_state: "MI" }), grant("Michigan and Wisconsin"), [], false)).toBeNull();
-  });
-  it("national grant -> geo never drops, even with unknown region", () => {
-    expect(prospectEligibilityDrop(cand({ location_state: null }), grant("United States"), [], false)).toBeNull();
+  it("no location inference -> geo never drops", () => {
+    expect(prospectEligibilityDrop(cand(), NONPROFIT, false, mkMatch({ inferred_fields: [] }))).toBeNull();
   });
 });
 
-describe("prospectEligibilityDrop — ENTITY (with the awardee carve-out)", () => {
-  it("wrong coarse type on a nonprofit-only grant, NOT an awardee -> DROP", () => {
-    const r = prospectEligibilityDrop(cand({ org_type: "County Government" }), grant("United States"), NONPROFIT, false);
+describe("prospectEligibilityDrop — ENTITY (awardee carve-out + the #414 sub-routed exemption)", () => {
+  it("wrong coarse type on a nonprofit-only grant, NOT an awardee, prime-seated -> DROP", () => {
+    const r = prospectEligibilityDrop(cand({ org_type: "County Government" }), NONPROFIT, false, mkMatch());
     expect(r).toMatch(/^entity:/);
   });
   it("AWARDEE with a wrong coarse type -> KEEP (entity trusted by construction)", () => {
-    // The carve-out: an awardee won this program, so we do not second-guess its entity eligibility.
-    expect(prospectEligibilityDrop(cand({ org_type: "County Government" }), grant("United States"), NONPROFIT, true)).toBeNull();
+    expect(prospectEligibilityDrop(cand({ org_type: "County Government" }), NONPROFIT, true, mkMatch())).toBeNull();
   });
-  it("matching coarse type -> keep", () => {
-    expect(prospectEligibilityDrop(cand({ org_type: "501(c)(3) nonprofit" }), grant("United States"), NONPROFIT, false)).toBeNull();
+  it("#414 — a SUB-ROUTED prospect (supporting seat) is NOT dropped against prime-only types", () => {
+    // The coupling: discovery scores through matchGrantToClient, which sub-routes. A prospect routed to
+    // a supporting seat is eligible AS A SUB; measuring it against the PRIME types would wrongly drop it.
+    const bySeat = prospectEligibilityDrop(
+      cand({ org_type: "Community-based reentry nonprofit" }),
+      ["county", "state_government"], // gov-only PRIME types
+      false,
+      mkMatch({ seat_ref: "S0_7", proposed_role: "Sub" }),
+    );
+    expect(bySeat).toBeNull();
+    // Role-based detection too (defensive: either signal exempts).
+    const byRole = prospectEligibilityDrop(
+      cand({ org_type: "County Government" }),
+      NONPROFIT,
+      false,
+      mkMatch({ seat_ref: "NONE", proposed_role: "Co-Applicant" }),
+    );
+    expect(byRole).toBeNull();
   });
-  it("empty target-type set -> entity fails open (no drop)", () => {
-    expect(prospectEligibilityDrop(cand({ org_type: "County Government" }), grant("United States"), [], false)).toBeNull();
+  it("a PRIME-seated prospect with a matching type -> keep; empty target set -> keep", () => {
+    expect(prospectEligibilityDrop(cand({ org_type: "501(c)(3) nonprofit" }), NONPROFIT, false, mkMatch())).toBeNull();
+    expect(prospectEligibilityDrop(cand({ org_type: "County Government" }), [], false, mkMatch())).toBeNull();
   });
 });
 
-describe("prospectEligibilityDrop — the false-negative guard + the documented KNOWN LIMIT", () => {
-  it("Legal-Aid-of-Arkansas shape: eligible AR nonprofit on a national grant -> KEEP", () => {
+describe("prospectEligibilityDrop — false-negative guard + the documented KNOWN LIMIT", () => {
+  it("Legal-Aid-of-Arkansas shape: eligible AR nonprofit, no circular geo -> KEEP", () => {
     expect(
       prospectEligibilityDrop(
-        cand({ name: "Legal Aid of Arkansas", org_type: "Nonprofit / Legal Aid Organization", location_state: "AR", operates_in_arkansas: true }),
-        grant("United States"),
+        cand({ name: "Legal Aid of Arkansas", org_type: "Nonprofit / Legal Aid Organization" }),
         NONPROFIT,
         false,
+        mkMatch({ inferred_fields: [] }),
       ),
     ).toBeNull();
   });
-  it("CJI shape: state-affiliated institute on a states/local/tribal grant -> KEEP", () => {
+  it("KNOWN LIMIT: null org_type + no location inference on a nationally-eligible grant is NOT caught", () => {
+    // The "Diversity Center on a faith-based Houses-of-Worship grant" case: nothing structural to check
+    // and no circular location inference. Below the gate's resolution; the scorer's "inferred — confirm"
+    // human flag covers it. Asserted to PASS, on purpose.
     expect(
       prospectEligibilityDrop(
-        cand({ name: "Criminal Justice Institute", org_type: "State government-affiliated institute", location_state: "AR", operates_in_arkansas: true }),
-        grant("United States"),
-        ["state_government", "county", "city", "tribal"],
-        false,
-      ),
-    ).toBeNull();
-  });
-  it("KNOWN LIMIT: null org_type on a nationally-eligible grant is NOT caught (below the gate's resolution)", () => {
-    // This is the "Diversity Center of Oklahoma on a faith-based Houses-of-Worship grant" case: org_type
-    // is null (nothing structural to check), the grant is nationally eligible (no geo restriction), and
-    // "faith-based vs generic nonprofit" is finer than the coarse entity types. The scorer already flags
-    // it "inferred -- confirm"; the human review flag covers it. Asserted to PASS, on purpose.
-    expect(
-      prospectEligibilityDrop(
-        cand({ name: "Diversity Center of Oklahoma Inc", org_type: null, location_state: null, operates_in_arkansas: false }),
-        grant("United States"),
+        cand({ name: "Diversity Center of Oklahoma Inc", org_type: null }),
         NONPROFIT,
         true,
+        mkMatch({ inferred_fields: DIVERSITY_CENTER_FIELDS }),
       ),
     ).toBeNull();
   });
