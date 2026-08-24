@@ -56,6 +56,13 @@
 //       anti-leak backstop for when the prompt still wavers, and it robustifies against the run-to-run
 //       occupancy/seat variation that feeds the classifier different caveats each pass — the decision
 //       anchors on org identity + a quotable function/population caveat, not the (unstable) seat.
+// ROUND 2 (eval run 2: MAT fixed, Faulkner 2/3→1/3, but the (a) sub-capability clause over-reached and
+// under-flagged Arisa×Family-SUD 2/3 — a REAL generic-over-specific case it had flagged 3/3 in round 1).
+// Two carve-backs: a DISTINCT POPULATION / PROGRAM AREA is NEVER a "sub-capability" — a technique/
+// modality/credential is (buprenorphine), but "justice-involved population inferred, not a confirmed
+// program area" is a genuine nexus trigger even for a confirmed SUD provider; and structural entailment
+// is spelled out for a county's jail/detention FACILITY ("jurisdiction not confirmed" = documentation,
+// not a nexus gap) to settle the Faulkner flicker.
 //
 // ACTION is DEMOTE-WITHIN-2 + a lead flag, NOT suppress (deliberately conservative for launch, widen
 // later — same discipline as calibration). Unlike the circular-inference geo drop (circular geo is
@@ -148,10 +155,15 @@ NOT A TRIGGER — EXECUTION CAVEATS (these are entailed_by_identity, ALWAYS, no 
   - licensure / certification / accreditation not yet documented (the CREDENTIAL for work the org does);
   - key-personnel / staffing / bandwidth / capacity;
   - award size;
-  - a SUB-CAPABILITY WITHIN A CONFIRMED FUNCTION — a specific clinical sub-task, modality, or technical capability inside a function the org confirms (e.g. buprenorphine-prescribing or a named tracking technology for a confirmed SUD/behavioral-health provider; a specific investigative technique for a confirmed law-enforcement agency). The FUNCTION is confirmed; the sub-capability is execution, NOT nexus.
-CRITICAL: the words "inferred", "assumed", "unconfirmed", "unverified", "not documented" appear on BOTH execution and nexus caveats. They do NOT decide it. What decides it is WHAT is unconfirmed: an EXECUTION ATTRIBUTE (history, paperwork, credential, capacity, a sub-capability) → entailed; the QUALIFYING FUNCTION or POPULATION ITSELF → inferred. If the org's confirmed identity performs the broad function and only a record/credential/sub-capability is unconfirmed, it is entailed — full stop.
+  - a SUB-CAPABILITY WITHIN A CONFIRMED FUNCTION — a specific TECHNIQUE, MODALITY, CREDENTIAL, or technical capability inside a function the org confirms (e.g. buprenorphine-prescribing or a named tracking technology for a confirmed SUD/behavioral-health provider; a specific investigative technique for a confirmed law-enforcement agency). The FUNCTION is confirmed; the sub-capability is execution, NOT nexus.
+A SUB-CAPABILITY IS A TECHNIQUE / MODALITY / CREDENTIAL — NEVER A DISTINCT POPULATION OR PROGRAM AREA. Serving a distinct qualifying POPULATION the grant gates on (justice-involved people, a dementia caseload, a homeless population) is NOT a sub-capability. If the org's service to that specific population is INFERRED from a broader service model and "not confirmed as a current program area" / "not confirmed as a current service area", that IS a genuine NEXUS trigger, not execution — even for an org whose broader function (e.g. SUD/behavioral-health treatment) is confirmed. Concretely: a behavioral-health SUD provider whose "capacity to serve JUSTICE-INVOLVED populations is inferred from its SUD service model, not confirmed as a current program area" → inferred_from_adjacency (the POPULATION is the gap); but buprenorphine-prescribing for that same confirmed SUD provider → entailed (a modality, not a population). Do not collapse a population/program-area gap into "a sub-capability of a confirmed function".
+CRITICAL: the words "inferred", "assumed", "unconfirmed", "unverified", "not documented" appear on BOTH execution and nexus caveats. They do NOT decide it. What decides it is WHAT is unconfirmed: an EXECUTION ATTRIBUTE (history, paperwork, credential, capacity, a technique/modality) → entailed; the QUALIFYING FUNCTION, SETTING, or POPULATION ITSELF → inferred. If the org's confirmed identity performs the broad function AND serves the qualifying population, and only a record/credential/technique is unconfirmed, it is entailed — full stop.
 
-STRUCTURAL ENTAILMENT (heavy default): when the qualifying function is one the org's ENTITY TYPE structurally or typically performs, treat it as entailed_by_identity EVEN IF a caveat says the specific instance is "assumed" or "not explicitly confirmed". A county government is assumed to operate a jail/detention facility because counties structurally do; a sheriff's office does law enforcement; a school district runs schools; a health agency delivers clinical care. An entity-type-typical function that is merely undocumented is a documentation gap, NOT a nexus gap. Do NOT flag these.
+STRUCTURAL ENTAILMENT (heavy default): when the qualifying function, SETTING, or facility is one the org's ENTITY TYPE structurally or typically operates, treat it as entailed_by_identity EVEN IF a caveat says the specific instance is "assumed", "not explicitly confirmed", or "jurisdiction not confirmed". This is a DOCUMENTATION gap, never a nexus gap — do NOT flag it. Canonical entailed cases (flag NONE of these):
+  - a COUNTY GOVERNMENT "assumed to operate or have jurisdiction over a jail / detention / confinement facility — not explicitly confirmed" → entailed. Operating and having jurisdiction over detention/confinement facilities is a core, structural county-government function; an unconfirmed instance is documentation, not a missing nexus.
+  - a SHERIFF'S OFFICE / county law-enforcement agency and policing, patrol, investigations → entailed.
+  - a SCHOOL DISTRICT and running schools; a HEALTH AGENCY and delivering clinical care → entailed.
+Distinguish this from a distinct POPULATION or a specialized PROGRAM the entity type does NOT structurally perform (a community college and in-facility correctional EDUCATION; a behavioral-health nonprofit and a justice-involved POPULATION) — those remain nexus triggers when inferred. The structural default covers entity-type-typical FUNCTIONS/FACILITIES, not every topical adjacency.
 
 PROCEDURE:
 1. Name the qualifying dimension.
