@@ -92,7 +92,11 @@ const ORG_GROUNDED_BASIS =
 export function circularLocationInference(inferredFields: string[] | null | undefined): boolean {
   for (const raw of inferredFields ?? []) {
     if (!raw) continue;
-    const t = raw.toLowerCase();
+    // Normalize Unicode curly apostrophes (U+2018/U+2019) to ASCII so the possessive patterns below
+    // (which only match U+0027) fire on free-form LLM output like "organization’s name". Without this,
+    // a curly-apostrophe ORG_GROUNDED basis fails to match and, in an ambiguous string, the gate would
+    // wrongly DROP a legitimate prospect — the worse error direction.
+    const t = raw.toLowerCase().replace(/[‘’]/g, "'");
     if (!LOCATION_FIELD.test(t)) continue; // not a location inference → irrelevant to geo
     if (CIRCULAR_BASIS.test(t) && !ORG_GROUNDED_BASIS.test(t)) return true; // clear circular → drop
   }

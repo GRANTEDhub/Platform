@@ -66,6 +66,16 @@ describe("circularLocationInference — drop when location is grounded in the GR
       ]),
     ).toBe(false);
   });
+  it("normalizes a CURLY apostrophe so an org-name override still fires (no false drop)", () => {
+    // Review edge case (#417): LLM output uses U+2019, but the possessive patterns match only ASCII.
+    // Here a circular phrase AND an org-name override (with a curly apostrophe) are both present -- the
+    // override must register, so the string KEEPS. Without the normalization it would wrongly drop.
+    expect(
+      circularLocationInference([
+        "Location inferred from prior awards under this program, but ultimately from the organization’s name.",
+      ]),
+    ).toBe(false);
+  });
 });
 
 describe("classifyOrgType — coarse, fails open (null) when unclassifiable", () => {
