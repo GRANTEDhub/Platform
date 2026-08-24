@@ -98,19 +98,29 @@ Rules:
   A DUAL disqualification (prime-ineligibility PLUS any of the above) is FALSE — routing must not resurrect a client that a second, independent barrier also removed. If the reason is empty, vague, or you are unsure whether a non-prime barrier is present, set it FALSE (fail safe: do not route).
 - Return the answer via the submit_seat_judgment tool exactly once.`;
 
-function clientContextForJudge(client: Client): string {
-  const profile = (client.client_profile ?? null) as Record<string, unknown> | null;
-  const pick = (key: string): string => {
-    const v = profile?.[key];
-    if (v == null) return "";
-    return typeof v === "string" ? v : JSON.stringify(v);
-  };
+// PROFILE-FREE OCCUPANCY (locked invariant, #138→#140). This scoped call flips seat_ref / fit_score —
+// it is an OCCUPANCY decision — so it must run on the SAME raw client fields the main scorer feeds its
+// occupancy pass (engine.ts clientContext: org type, location, service area, funding needs, and the
+// authoritative rules/constraints), NEVER on client_profile. The distilled profile (Mission /
+// core_capabilities / supporting_roles) is narrative-enrichment ONLY; feeding it here made this
+// occupancy re-check decide on a RICHER, distilled substrate than the main pass — exactly the
+// itemized-seat-matching drift the #138→#140 split isolated (a distilled profile pushed the scorer into
+// strict seat-matching that buried integrative-fit orgs). Raw fields are sufficient BY CONSTRUCTION: the
+// authoritative occupancy decision already runs on them, and this judge answers a narrower version of
+// the same question. matching_rules / known_constraints STAY — the DEFER-TO-CLIENT-RULES check needs
+// them, and they are raw client fields, not the profile. Exported so a unit test can lock the invariant
+// (the profile must never appear in this context), the same discipline as the main scorer's
+// profileInvariant guard.
+export function clientContextForJudge(client: Client): string {
+  const location = [client.location_city, client.location_county, client.location_state].filter(Boolean).join(", ");
+  const serviceArea = (client.service_area ?? []).filter(Boolean).join(", ");
+  const fundingNeeds = (client.primary_funding_needs ?? []).filter(Boolean).join(", ");
   const lines = [
     `Client: ${client.name}`,
     `Entity type: ${client.org_type ?? "unknown"}`,
-    profile ? `Mission: ${pick("mission")}` : "",
-    profile ? `Core capabilities: ${pick("core_capabilities")}` : "",
-    profile ? `Supporting roles it can play: ${pick("supporting_roles")}` : "",
+    location ? `Location: ${location}` : "",
+    serviceArea ? `Service area: ${serviceArea}` : "",
+    fundingNeeds ? `Primary funding needs: ${fundingNeeds}` : "",
     `Authoritative matching rules (defer to these): ${client.matching_rules ?? "none"}`,
     `Known constraints (defer to these): ${client.known_constraints ?? "none"}`,
   ];
