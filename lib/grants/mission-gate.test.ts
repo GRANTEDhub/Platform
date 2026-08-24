@@ -83,8 +83,21 @@ describe("isMissionBasedReason — signal 3 (fails toward NOT suppressing)", () 
       "Does not deliver programming inside the target jurisdiction.",
       "The org does not serve this geographic location.",
       "Service area does not serve the eligible HUC watershed.",
+      "Does not operate in the client's service area.", // 'service area' is geography, not mission
     ]) {
       expect(isMissionBasedReason(r), r).toBe(false);
+    }
+  });
+
+  it("bare 'area' as a TOPIC ('program area') stays MISSION — the geography guard must not swallow it", () => {
+    // Regression guard (review nit on #415): the geography exclusion deliberately omits bare `area`
+    // because "program area" / "focus area" are Gate-4 topic vocabulary. These must still read as
+    // mission and suppress, not escape the gate on the incidental word "area".
+    for (const r of [
+      "The client does not serve this program area.",
+      "Does not operate in this focus area at all.",
+    ]) {
+      expect(isMissionBasedReason(r), r).toBe(true);
     }
   });
 

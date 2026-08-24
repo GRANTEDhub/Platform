@@ -64,7 +64,11 @@ export function isMissionBasedReason(reason: string | null | undefined): boolean
     // whenever a geography noun appears anywhere later in the clause (up to the next period), so it errs
     // toward NOT-suppressing (the gate's design bias) exactly when geography is in play. Reason text is
     // already lowercased, so the tokens are lowercase.
-    /\b(does|do)\s+not\b[^.]{0,60}\b(perform|provide|operate|deliver|serve|offer|engage)\b(?![^.]*\b(regions?|areas?|states?|jurisdictions?|count(y|ies)|locations?|geograph\w*|territor\w*|watershed|huc|service\s+area|catchment)\b)/,
+    // NB: bare `area` is deliberately NOT a geography token — "program area" / "focus area" are Gate-4
+    // TOPIC vocabulary (the `outside|beyond … program area` branch below treats it as mission), so
+    // excluding it would let "does not serve this program area" escape the gate. Geography "area" is
+    // caught by the qualified `service area` and by `geograph\w*` ("geographic area/location").
+    /\b(does|do)\s+not\b[^.]{0,60}\b(perform|provide|operate|deliver|serve|offer|engage)\b(?![^.]*\b(regions?|states?|jurisdictions?|count(y|ies)|locations?|geograph\w*|territor\w*|watershed|huc|service\s+area|catchment)\b)/,
     // Unambiguous mission phrases (no geography object possible) — kept unguarded so a mixed
     // "does not perform this kind of work ... in the region" still reads as mission via this branch.
     /\b(does|do)\s+not\b[^.]{0,60}\b(run this|do this|these activities|this kind of work|this type of work)/,
