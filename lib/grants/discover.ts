@@ -428,12 +428,14 @@ async function runDiscovery(grantId: string, db: DB): Promise<DiscoverResult> {
           // Prospect eligibility backstop (flag-gated; OFF is byte-identical to today). The scorer
           // flags-not-kills on unknown entity/geo -- right for a client whose data you verify, wrong
           // for minting a prospect card off inference -- so a null-org_type / blank-location candidate
-          // can card on a grant it is entity- or geo-ineligible for (e.g. a WA conservancy on a
-          // Michigan/Wisconsin-restricted grant). This deterministic post-score check drops those,
-          // trusting awardee entity eligibility by construction but still failing unconfirmed geo on a
-          // geo-restricted grant. Reuses the already-computed targetTypes -- no extra model call.
+          // can card on a grant it is entity- or geo-ineligible for (e.g. a WA conservancy carded on a
+          // Michigan/Wisconsin grant because the scorer back-filled its location FROM the grant). This
+          // deterministic post-score check drops those: geo via the scorer's own circular-inference
+          // admission (match.inferred_fields), entity vs. the grant's prime types -- trusting awardee
+          // entity by construction, and EXEMPTING a sub-routed prospect from the prime-type check
+          // (#414). Reuses the already-computed targetTypes + the match -- no extra model call.
           if (process.env.PROSPECT_ELIGIBILITY_GATE_ENABLED === "true") {
-            const drop = prospectEligibilityDrop(c, grant, targetTypes, awardeeNames.has(normalizeOrgName(c.name)));
+            const drop = prospectEligibilityDrop(c, targetTypes, awardeeNames.has(normalizeOrgName(c.name)), match);
             if (drop) {
               console.log(`Prospect eligibility gate dropped ${c.name}: ${drop}`);
               return 0;

@@ -5,104 +5,101 @@
 // the eligibility logic is NOT skipped. But a discovered prospect arrives with org_type and location
 // often NULL (web/awardee candidates carry thin data), and the scorer is designed to FLAG-not-KILL on
 // unknown eligibility (right for a client whose data you will verify, wrong for MINTING a prospect
-// card). So on missing entity/geo data the scorer INFERS eligible ("prior award implies...") and
-// Gate 2 / Gate 3 never fire -- e.g. a Washington land conservancy carded fit 3 on a grant restricted
-// to the Lake Superior Basin of Michigan and Wisconsin.
+// card). So on missing data the scorer INFERS eligible and Gate 2 / Gate 3 never fire -- e.g. a
+// Washington land conservancy carded fit 3 on a grant restricted to the Lake Superior Basin of
+// Michigan and Wisconsin.
 //
 // This is a POST-SCORE, PRE-CARD backstop (deterministic, no model call) that drops a scored prospect
-// whose eligibility cannot be confirmed on the two structural axes:
-//   ENTITY  -- the candidate's coarse org type is known AND not among the grant's eligible PRIME types
-//              (reuses deriveTargetEntityTypes, which today only gates the directory SOURCES).
-//   GEO     -- the grant is restricted to specific states AND the candidate's region is either known-
-//              and-outside, or UNCONFIRMED (blank) on that restricted grant.
+// on two structural axes:
 //
-// AWARDEE CARVE-OUT (deliberate, per the design decision): a USASpending past-awardee is eligible BY
-// CONSTRUCTION (it won this program), so we TRUST it on ENTITY and skip the entity check -- exactly
-// the same "authoritative source" trust the URL-hallucination guard already gives awardees. But we
-// still FAIL an awardee on unconfirmed GEO for a geo-restricted grant: winning the general program is
-// not winning its geo-locked variant (the Lake-Superior case). Trusting entity while failing on
-// unconfirmed geo catches the geography error without killing legitimate awardee prospects -- and
-// prospecting's whole value is surfacing orgs you don't already have, so the false-negative cost of
-// over-dropping is worse than an occasional geo-slip.
+//   GEO (rework) -- CIRCULAR-INFERENCE detection, not a field re-parse. The earlier version re-parsed
+//     the grant's geographic_eligibility text into a state Set and compared the candidate's location.
+//     That was the WRONG mechanism: the scorer's own Gate 3 already drops a KNOWN out-of-region org
+//     (its match is disqualified before this gate runs), and the free-text parse was a bug farm (2-letter
+//     collisions, "District of Columbia" boilerplate, "West Virginia" compounds, exclusion inversion).
+//     The real failure mode is narrower: the scorer had NO location signal and back-filled one FROM THE
+//     GRANT ("service area inferred as the Upper Great Lakes region based on the program / prior awards
+//     under this program") -- a tautology, so Gate 3 passed on a fabricated location and the card minted.
+//     We drop exactly that: a location inferred_field whose stated basis is the GRANT (program name /
+//     prior awards / eligible region). A location inferred from the ORG'S OWN NAME ("Western New York
+//     Land Conservancy" -> NY; "Diversity Center of Oklahoma" -> OK) is legitimate grounding and is KEPT.
+//     Reads the scorer's OWN admission (match.inferred_fields), so it is grounded in how the score was
+//     actually reached, not a second independent guess about the grant's geography.
 //
-// FAIL-OPEN is the default direction everywhere the data is ambiguous: an empty target-type set
-// (deriveTargetEntityTypes degraded), an unclassifiable org_type, or a grant with no detectable geo
-// restriction all yield NO drop -- byte-identical to today for those. The gate only ever drops on a
-// CONFIRMED mismatch or an unconfirmed region on a clearly-restricted grant.
+//   ENTITY -- the candidate's coarse org type is known AND not among the grant's eligible PRIME types
+//     (reuses deriveTargetEntityTypes). SKIPPED for a genuine SUB (see the #414 coupling below).
+//
+// AWARDEE CARVE-OUT (unchanged in intent): a USASpending past-awardee is eligible BY CONSTRUCTION on
+// ENTITY (it won this program) so the entity check is skipped for it -- but GEO still applies (winning
+// the general program is not winning its geo-locked variant). In practice awardees carry a KNOWN
+// location_state, so they have no inferred location field and the circular-inference drop never fires
+// on them anyway; the geo check applies to all sources uniformly.
+//
+// #414 COUPLING (explicit): discovery scores through matchGrantToClient, which now runs supporting-seat
+// routing (MATCH_SUBSEAT_ROUTING_ENABLED, ON in prod). So a discovered prospect can come back routed to
+// a SUPPORTING seat (seat_ref S*, role Sub / Co-Applicant) -- eligible AS A SUB. deriveTargetEntityTypes
+// returns PRIME types only, so measuring a genuine Sub against them would WRONGLY drop it and undo the
+// sub-routing win. The entity check therefore EXEMPTS a sub-routed prospect.
+//
+// FAIL-OPEN everywhere data is ambiguous: no location inference (or an org-grounded one), an empty
+// target-type set, or an unclassifiable org_type all yield NO drop -- byte-identical to today for those.
+// Over-dropping is the worse error for prospecting (its whole value is surfacing orgs you don't already
+// have), so the gate drops only on a CLEAR circular inference or a CONFIRMED entity mismatch.
 //
 // KNOWN LIMIT (documented, not hidden): a NULL org_type on a nationally-eligible grant is below this
-// gate's resolution -- there is nothing structural to check -- so a generic nonprofit inferred into a
-// faith-based-only category (the "diversity center on a Houses-of-Worship grant" case) is NOT caught
-// here. That distinction is finer than the coarse entity types AND (when the org is an awardee) is
-// trusted by the carve-out; catching it would mean dropping the awardee entity-trust or a fragile
-// name heuristic, both rejected. The scorer already marks these "inferred -- confirm," so the human
-// review flag covers them. See prospect-eligibility.test.ts (the null-org_type case is asserted to
-// pass, on purpose).
+// gate's resolution -- nothing structural to check, no location inference to catch -- so a generic
+// nonprofit inferred into a faith-based-only category (the "diversity center on a Houses-of-Worship
+// grant" case) is NOT caught here. The scorer already marks these "inferred -- confirm"; the human
+// review flag covers them. Asserted to pass, on purpose, in prospect-eligibility.test.ts.
 
-import type { Grant } from "@/types/database";
 import type { EntityType } from "@/lib/grants/entity-types";
+import { seatFamily } from "@/lib/grants/calibration";
 
 // The candidate fields the gate reads (a subset of discover.ts's Candidate). Exported so discover.ts
 // can pass its Candidate straight through structurally.
 export interface EligibilityCandidate {
   name: string;
   org_type?: string | null;
-  location_state?: string | null;
-  operates_in_arkansas?: boolean;
 }
 
-// ── US state normalization (for the geo check) ────────────────────────────────────────────────
-const STATE_CODES = new Set([
-  "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME",
-  "MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA",
-  "RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC",
-]);
-const STATE_NAME_TO_CODE: Record<string, string> = {
-  alabama:"AL",alaska:"AK",arizona:"AZ",arkansas:"AR",california:"CA",colorado:"CO",connecticut:"CT",
-  delaware:"DE",florida:"FL",georgia:"GA",hawaii:"HI",idaho:"ID",illinois:"IL",indiana:"IN",iowa:"IA",
-  kansas:"KS",kentucky:"KY",louisiana:"LA",maine:"ME",maryland:"MD",massachusetts:"MA",michigan:"MI",
-  minnesota:"MN",mississippi:"MS",missouri:"MO",montana:"MT",nebraska:"NE",nevada:"NV",
-  "new hampshire":"NH","new jersey":"NJ","new mexico":"NM","new york":"NY","north carolina":"NC",
-  "north dakota":"ND",ohio:"OH",oklahoma:"OK",oregon:"OR",pennsylvania:"PA","rhode island":"RI",
-  "south carolina":"SC","south dakota":"SD",tennessee:"TN",texas:"TX",utah:"UT",vermont:"VT",
-  virginia:"VA",washington:"WA","west virginia":"WV",wisconsin:"WI",wyoming:"WY","district of columbia":"DC",
-};
-
-// Normalize a candidate's location_state ("AR" | "Arkansas" | null) to a 2-letter code, or null.
-export function normalizeState(raw: string | null | undefined): string | null {
-  const s = (raw ?? "").trim();
-  if (!s) return null;
-  const up = s.toUpperCase();
-  if (STATE_CODES.has(up)) return up;
-  const code = STATE_NAME_TO_CODE[s.toLowerCase()];
-  return code ?? null;
+// The scorer signals the gate reads off the MatchResult (a subset, so a test can build one directly and
+// discover.ts can pass its match straight through structurally). inferred_fields is the scorer's OWN
+// list of which fields it had to infer and on what basis; seat_ref / proposed_role carry the (possibly
+// sub-routed) seat.
+export interface MatchSignals {
+  inferred_fields?: string[] | null;
+  seat_ref?: string | null;
+  proposed_role?: string | null;
 }
 
-// A grant's geographic restriction as a Set of eligible state codes -- or null when no specific states
-// can be detected (national / unrestricted / ambiguous all fail OPEN, no drop). Reads the STRUCTURED
-// geographic_eligibility field; a restriction that lives only in NOFO prose the shred didn't lift here
-// is a documented miss.
-export function grantGeoRestriction(geoText: string | null | undefined): Set<string> | null {
-  const t = (geoText ?? "").toLowerCase().trim();
-  if (!t) return null;
+// ── Circular-location detection (the GEO axis) ────────────────────────────────────────────────
+// A location/service-area inferred_field whose stated basis is the GRANT itself is CIRCULAR: the scorer
+// had no independent signal of where the org operates and back-filled it from the grant, so "in the
+// eligible region" is a tautology. One grounded in the ORG'S OWN NAME/identity is legitimate. Only a
+// field that is ABOUT location counts; a non-geographic inference (e.g. an inferred budget) is ignored.
+const LOCATION_FIELD = /\b(location|service\s*area|geograph|operat\w*\s+in|based\s+in|headquarter|jurisdiction)\b/;
+const CIRCULAR_BASIS =
+  /\b(program\s+name|program'?s\b|prior\s+award|past\s+award|under\s+this\s+(program|grant|nofo)|this\s+program'?s?\b|eligible\s+(region|area|state|geograph)|grant'?s?\s+(region|area|geograph|eligib)|awardees?\s+(of|under)\s+this)\b/;
+// ORG-grounded must reference the ORGANIZATION's name specifically -- NOT a bare "... name", because
+// the circular basis "based on the PROGRAM name" also contains the word "name"; a generic name-catch
+// would swallow the circular case and never drop it.
+const ORG_GROUNDED_BASIS =
+  /\b(organization'?s?\s+name|org\s+name|its\s+(own\s+)?name|the\s+(org|organization|firm|entity|nonprofit)'?s?\s+name|name\s+of\s+the\s+(org|organization|nonprofit|firm|entity)|name\s+(suggests|indicates|implies|contains)|self-identif)/;
 
-  // Scan for specific FULL state names, and let a real state restriction WIN over national-sounding
-  // language: "a nationally competitive program limited to Michigan and Wisconsin" is restricted to
-  // MI/WI, so a "national"/"nationwide" word must not short-circuit it. If no specific state is named,
-  // the grant is unrestricted for our purposes -> null (that subsumes every "nationwide"/"all states"
-  // marker, so no separate marker list is needed, and no substring like "national" inside "nationally"
-  // can mislead). FULL NAMES only -- a 2-letter-code scan against lowercased prose collides with
-  // ordinary English words (in->IN, or->OR, me->ME...); an abbreviations-only restriction ("MI, WI")
-  // would need an UPPERCASE-anchored scan on the ORIGINAL text, not this one. (STATE_CODES still backs
-  // normalizeState's controlled field.)
-  const found = new Set<string>();
-  for (const [name, code] of Object.entries(STATE_NAME_TO_CODE)) {
-    if (new RegExp(`\\b${name}\\b`).test(t)) found.add(code);
+// True when the prospect's location was CIRCULARLY inferred from the grant (region unconfirmed). Errs
+// toward KEEPING: fires only on a clear grant-grounded basis with no org-name grounding present.
+// Exported for deterministic unit testing.
+export function circularLocationInference(inferredFields: string[] | null | undefined): boolean {
+  for (const raw of inferredFields ?? []) {
+    if (!raw) continue;
+    const t = raw.toLowerCase();
+    if (!LOCATION_FIELD.test(t)) continue; // not a location inference → irrelevant to geo
+    if (CIRCULAR_BASIS.test(t) && !ORG_GROUNDED_BASIS.test(t)) return true; // clear circular → drop
   }
-  return found.size > 0 ? found : null;
+  return false; // no location inference, org-grounded, or ambiguous → keep (fail open)
 }
 
-// ── Coarse org-type classification (for the entity check) ─────────────────────────────────────
+// ── Coarse org-type classification (the ENTITY axis) ─────────────────────────────────────────
 // Map a candidate's FREE-TEXT org_type to a coarse EntityType, or null when it cannot be classified
 // (in which case the entity check fails OPEN -- no drop). Keyword-based and deterministic; mirrors
 // the coarseness of deriveTargetEntityTypes (which is what we compare against). Order matters: more
@@ -132,37 +129,26 @@ export function classifyOrgType(orgType: string | null | undefined): EntityType 
 }
 
 // The gate. Returns a short drop-reason string when the scored prospect should NOT be carded, or null
-// to card it. Pure and deterministic (no DB, no model call), so discover.ts can wrap it in the flag
-// and unit tests can exercise every branch with constructed fixtures. `targetTypes` is the already-
-// computed deriveTargetEntityTypes(grant); `isAwardee` is whether this candidate came from the
-// USASpending past-awardee source (eligible-by-construction -> entity trusted).
+// to card it. Pure and deterministic (no DB, no model call). `targetTypes` is the already-computed
+// deriveTargetEntityTypes(grant); `isAwardee` is whether this candidate came from the USASpending
+// past-awardee source (eligible-by-construction -> entity trusted); `match` carries the scorer's own
+// inferred_fields + (possibly sub-routed) seat.
 export function prospectEligibilityDrop(
   candidate: EligibilityCandidate,
-  grant: Pick<Grant, "geographic_eligibility">,
   targetTypes: EntityType[],
   isAwardee: boolean,
+  match: MatchSignals,
 ): string | null {
-  // GEO check first -- applies to ALL sources, awardees included (the carve-out trusts entity, not geo).
-  const restrict = grantGeoRestriction(grant.geographic_eligibility);
-  if (restrict) {
-    const st = normalizeState(candidate.location_state);
-    if (st) {
-      if (!restrict.has(st)) {
-        return `geo: ${st} outside grant restriction [${[...restrict].join("/")}]`;
-      }
-    } else if (candidate.operates_in_arkansas === true) {
-      // Known-AR org, but the grant excludes AR.
-      if (!restrict.has("AR")) return `geo: Arkansas org, grant restricted to [${[...restrict].join("/")}]`;
-    } else {
-      // Region entirely unconfirmed on a geo-restricted grant -> cannot confirm eligibility. This is
-      // the awardee-inclusive leg: winning the general program is not winning its geo-locked variant.
-      return `geo: region unconfirmed on grant restricted to [${[...restrict].join("/")}]`;
-    }
+  // GEO -- circular-inference drop, applied to ALL sources (geo is never trusted-by-construction).
+  if (circularLocationInference(match.inferred_fields)) {
+    return "geo: location circularly inferred from the grant (region unconfirmed)";
   }
 
-  // ENTITY check -- SKIPPED for awardees (trusted by construction). Fails open on an empty target set
-  // or an unclassifiable org_type.
-  if (!isAwardee && targetTypes.length > 0) {
+  // ENTITY -- SKIPPED for awardees (trusted by construction) AND for a genuine SUB (the #414 coupling:
+  // a prospect the scorer routed to a supporting seat is eligible as a sub, not measured against
+  // prime-only types). Fails open on an empty target set or an unclassifiable org_type.
+  const subRouted = seatFamily(match.seat_ref) === "supporting" || /sub|co-applicant/i.test(match.proposed_role ?? "");
+  if (!isAwardee && !subRouted && targetTypes.length > 0) {
     const t = classifyOrgType(candidate.org_type);
     if (t && !targetTypes.includes(t)) {
       return `entity: ${t} not among eligible prime types [${targetTypes.join(",")}]`;
