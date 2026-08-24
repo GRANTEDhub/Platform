@@ -77,14 +77,22 @@ export interface MatchSignals {
 // had no independent signal of where the org operates and back-filled it from the grant, so "in the
 // eligible region" is a tautology. One grounded in the ORG'S OWN NAME/identity is legitimate. Only a
 // field that is ABOUT location counts; a non-geographic inference (e.g. an inferred budget) is ignored.
-const LOCATION_FIELD = /\b(location|service\s*area|geograph|operat\w*\s+in|based\s+in|headquarter|jurisdiction)\b/;
+// NB: no bare "operates in ..." branch -- it matches non-geographic activity ("operates in the reentry
+// space"), which would wrongly treat an ORG-TYPE inference as a location one. Prefix stems carry \w* so
+// the real words match (a trailing \b after "geograph" never fires -- "geographic" continues).
+const LOCATION_FIELD = /\blocation\b|\bservice\s*area\b|\bgeograph\w*|\bbased\s+in\b|\bheadquarter\w*|\bjurisdiction\b/;
 const CIRCULAR_BASIS =
-  /\b(program\s+name|program'?s\b|prior\s+award|past\s+award|under\s+this\s+(program|grant|nofo)|this\s+program'?s?\b|eligible\s+(region|area|state|geograph)|grant'?s?\s+(region|area|geograph|eligib)|awardees?\s+(of|under)\s+this)\b/;
+  /\b(program\s+name|program'?s\b|prior\s+award|past\s+award|under\s+this\s+(program|grant|nofo)|this\s+program'?s?\b|eligible\s+(region|area|state|geograph\w*)|grant'?s?\s+(region|area|geograph\w*|eligib\w*)|awardees?\s+(of|under)\s+this)\b/;
 // ORG-grounded must reference the ORGANIZATION's name specifically -- NOT a bare "... name", because
 // the circular basis "based on the PROGRAM name" also contains the word "name"; a generic name-catch
 // would swallow the circular case and never drop it.
+// Every branch must reference the ORGANIZATION's name specifically -- NOT a bare "... name", because
+// the circular basis "based on the PROGRAM name" also contains the word "name", and a bare
+// "name suggests/indicates ..." would wrongly read "the program name; the name suggests X" as
+// org-grounded and KEEP a circular case. The org-anchored branches below already cover the legit forms
+// ("the organization's name suggests ..." matches via `organization'?s?\s+name`).
 const ORG_GROUNDED_BASIS =
-  /\b(organization'?s?\s+name|org\s+name|its\s+(own\s+)?name|the\s+(org|organization|firm|entity|nonprofit)'?s?\s+name|name\s+of\s+the\s+(org|organization|nonprofit|firm|entity)|name\s+(suggests|indicates|implies|contains)|self-identif)/;
+  /\b(organization'?s?\s+name|org\s+name|its\s+(own\s+)?name|the\s+(org|organization|firm|entity|nonprofit)'?s?\s+name|name\s+of\s+the\s+(org|organization|nonprofit|firm|entity)|self-identif)/;
 
 // True when the prospect's location was CIRCULARLY inferred from the grant (region unconfirmed). Errs
 // toward KEEPING: fires only on a clear grant-grounded basis with no org-name grounding present.

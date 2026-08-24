@@ -66,6 +66,27 @@ describe("circularLocationInference — drop when location is grounded in the GR
       ]),
     ).toBe(false);
   });
+  it("#417 review 🔴: a non-geographic 'operates in <space>' org-type inference is NOT a location field -> keep", () => {
+    // LOCATION_FIELD no longer has a bare "operates in ..." branch, so an org-TYPE inference that also
+    // carries a circular phrase does not get mis-read as a location inference and wrongly dropped.
+    expect(
+      circularLocationInference([
+        "Org type inferred as nonprofit because it operates in the reentry and social services space, based on prior awards under this program.",
+      ]),
+    ).toBe(false);
+  });
+  it("#417 review 🟡: 'geographic'/'eligibility' (prefix stems) actually fire -> circular drop", () => {
+    // Regression for the dead \b-terminated stems: "geographic eligibility" must register as both a
+    // location field and a circular (grant-grounded) basis.
+    expect(circularLocationInference(["Location inferred from the grant's geographic eligibility criteria."])).toBe(true);
+    expect(circularLocationInference(["Service area inferred from the program's eligible geography."])).toBe(true);
+  });
+  it("#417 review 🟡: a bare 'the name suggests' (not the ORG's name) does NOT count as org-grounded -> circular drop", () => {
+    // "the program name; the name suggests ..." is circular; the bare name-clause must not exempt it.
+    expect(
+      circularLocationInference(["Service area inferred based on the program name; the name suggests it operates in Michigan."]),
+    ).toBe(true);
+  });
   it("normalizes a CURLY apostrophe so an org-name override still fires (no false drop)", () => {
     // Review edge case (#417): LLM output uses U+2019, but the possessive patterns match only ASCII.
     // Here a circular phrase AND an org-name override (with a curly apostrophe) are both present -- the
