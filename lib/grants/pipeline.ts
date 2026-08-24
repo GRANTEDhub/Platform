@@ -21,6 +21,7 @@ import { resolveNofoText, mergeDeepShred } from "@/lib/grants/nofo";
 import { formatStoredUSASpending } from "@/lib/grants/usaspending";
 import { NON_LEAD_OR_FILTER } from "@/lib/leads/stage";
 import { calibrateMatch } from "@/lib/grants/calibration";
+import { evaluateGenericNexus } from "@/lib/grants/generic-nexus";
 
 type DB = ReturnType<typeof createServiceClient>;
 
@@ -348,16 +349,30 @@ export async function scoreGrantClientPair(grantRow: Grant, client: Client, db: 
       // enrichMatchWithProfile), and falls back to the Phase-1 narrative on any
       // failure. Occupancy above is already fixed and profile-free.
       const enriched = await enrichMatchWithProfile(grantRow, client, match);
+      // Generic-over-specific demotion tag (MATCH_GENERIC_NEXUS_GATE_ENABLED). Card-surfacing only:
+      // never changes the seat or score -- it sets a demote sort key (generic_nexus_flagged) + a lead
+      // before_you_approve flag. Reads the FIRST-PASS occupancy caveats on `match` (the admission the
+      // scorer emits), NOT the enriched narrative. Flag OFF (or any guard failing / the scoped call
+      // throwing) -> { flagged:false }: no model call, no note prepended, and generic_nexus_flagged
+      // written false = the column default = byte-identical surface to today.
+      const nexus = await evaluateGenericNexus(match, client, grantRow);
+      if (nexus.flagged && nexus.note) {
+        enriched.before_you_approve = [nexus.note, ...(enriched.before_you_approve ?? [])];
+      }
       const cardFields = cardFieldsFromMatch(enriched);
       if (!existingCard) {
         await db.from("review_cards").insert({
           grant_id: grantId,
           client_id: client.id,
           ...cardFields,
+          generic_nexus_flagged: nexus.flagged,
           decision: "pending",
         });
       } else if (existingCard.decision === "pending") {
-        await db.from("review_cards").update(cardFields).eq("id", existingCard.id);
+        await db
+          .from("review_cards")
+          .update({ ...cardFields, generic_nexus_flagged: nexus.flagged })
+          .eq("id", existingCard.id);
       }
       // else: an admin already decided this card -- leave it untouched.
     } else if (existingCard && existingCard.decision === "pending") {

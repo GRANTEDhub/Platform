@@ -32,6 +32,9 @@ export default async function ReviewPage({
     .from("review_cards")
     .select("*, clients(name, engagement_tier), grants(title, funder, submission_deadline)")
     .order("fit_score", { ascending: false })
+    // Generic-over-specific demote: within a fit tier, an inferred-nexus card (generic_nexus_flagged)
+    // sinks below genuine execution-conditional ones. Inert while every row is false (flag OFF).
+    .order("generic_nexus_flagged", { ascending: true })
     .order("created_at", { ascending: false });
   if (filter !== "all") query = query.eq("decision", filter);
 

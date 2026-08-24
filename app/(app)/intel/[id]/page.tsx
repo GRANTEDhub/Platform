@@ -52,7 +52,11 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
     .from("review_cards")
     .select("*, clients(id, name), prospects(id, name, org_type, source_url)")
     .eq("grant_id", params.id)
-    .order("fit_score", { ascending: false });
+    .order("fit_score", { ascending: false })
+    // Generic-over-specific demote: an inferred-nexus card sinks within its fit tier. Inert while
+    // every row is false (flag OFF). Prospect cards are never flagged today (the classifier hooks the
+    // client-match path only), so they sort exactly as before.
+    .order("generic_nexus_flagged", { ascending: true });
 
   const all = (cards ?? []) as CardRow[];
   const clientCards = all.filter((c) => c.card_type !== "prospect");
