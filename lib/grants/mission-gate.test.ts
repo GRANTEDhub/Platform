@@ -72,6 +72,46 @@ describe("isMissionBasedReason — signal 3 (fails toward NOT suppressing)", () 
     }
   });
 
+  it("#412 — a GEOGRAPHY object after a service verb does NOT read as mission (the live sub-routing hole)", () => {
+    // These previously matched via the bare `serve|operate|deliver|provide` verb branch and wrongly
+    // suppressed a Gate-3 geography no-fit — silently blocking the sub-router for a seat-fillable
+    // specialist. The geography-object guard now drops them. All must be false.
+    for (const r of [
+      "The client does not serve the eligible region.",
+      "Does not operate in any of the eligible states.",
+      "Client does not provide services within that county.",
+      "Does not deliver programming inside the target jurisdiction.",
+      "The org does not serve this geographic location.",
+      "Service area does not serve the eligible HUC watershed.",
+      "Does not operate in the client's service area.", // 'service area' is geography, not mission
+    ]) {
+      expect(isMissionBasedReason(r), r).toBe(false);
+    }
+  });
+
+  it("bare 'area' as a TOPIC ('program area') stays MISSION — the geography guard must not swallow it", () => {
+    // Regression guard (review nit on #415): the geography exclusion deliberately omits bare `area`
+    // because "program area" / "focus area" are Gate-4 topic vocabulary. These must still read as
+    // mission and suppress, not escape the gate on the incidental word "area".
+    for (const r of [
+      "The client does not serve this program area.",
+      "Does not operate in this focus area at all.",
+    ]) {
+      expect(isMissionBasedReason(r), r).toBe(true);
+    }
+  });
+
+  it("a MIXED reason (real mission clause + a geography clause) STILL reads as mission", () => {
+    // The guard errs toward not-suppressing on geography, but a genuine mission no-fit must still fire
+    // via the unguarded phrase branch, so a real mission+geography reason is not lost.
+    for (const r of [
+      "Does not perform this kind of work; also operates outside the eligible region.",
+      "Purpose alignment fails — mission adjacency only — and it serves a different state.",
+    ]) {
+      expect(isMissionBasedReason(r), r).toBe(true);
+    }
+  });
+
   it("empty / null / whitespace reason → false (cannot confirm mission → do not suppress)", () => {
     expect(isMissionBasedReason(null)).toBe(false);
     expect(isMissionBasedReason(undefined)).toBe(false);
@@ -179,5 +219,20 @@ describe("interaction with sub-routing (#408) — ordering is clean, no fight po
     applyMissionGate(m);
     expect(m.suppressed).toBe(false); // the mission-gate does NOT cannibalize the sub-router's population
     expect(isRoutingCandidate(m, client, grant)).toBe(true); // sub-router still gets to route it
+  });
+
+  it("#412 — a GEOGRAPHY-phrased disqualify does NOT suppress → the specialist stays sub-routable (the fix's whole point)", () => {
+    process.env[MISSION_FLAG] = "true";
+    process.env[SUBSEAT_FLAG] = "true";
+    // Prime-ineligible specialist whose reason is a Gate-3 geography no-fit phrased with a service verb.
+    // Before the fix, `serve` tripped the mission classifier → suppressed → sub-router blocked. Now the
+    // geography-object guard keeps the gate identity, so the specialist remains the sub-router's to route.
+    const m = mkMatch({ disqualify_reason: "Prime-ineligible on a gov-only NOFO; the client does not serve the eligible region as a direct applicant." });
+    const client = mkClient();
+    const grant = mkGrant();
+
+    applyMissionGate(m);
+    expect(m.suppressed).toBe(false); // geography reason no longer over-suppresses
+    expect(isRoutingCandidate(m, client, grant)).toBe(true); // latent block on sub-routing removed
   });
 });
