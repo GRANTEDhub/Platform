@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { isRoutingCandidate, applySeatJudgment, routeSupportingSeat, type SeatJudgment } from "./subseat-routing";
+import { isRoutingCandidate, applySeatJudgment, routeSupportingSeat, clientContextForJudge, type SeatJudgment } from "./subseat-routing";
 import type { MatchResult } from "./engine";
 import type { Client, Grant } from "@/types/database";
 
@@ -234,6 +234,65 @@ describe("applySeatJudgment — the SOLE-BARRIER gate (#408 disqualify-reason-bl
     const b = mkMatch();
     applySeatJudgment(b, mkClient(), mkGrant(), fills({ disqualification_is_prime_ineligibility_only: true, defers_to_client_rule: true }));
     expect(b.seat_ref).toBe("NONE");
+  });
+});
+
+describe("clientContextForJudge — PROFILE-FREE occupancy (#413, invariant #138→#140)", () => {
+  // Locks the leak closed: the scoped occupancy judge must see the SAME raw client fields the main
+  // scorer uses (name, org type, location, service area, funding needs, rules/constraints) and NEVER
+  // client_profile (Mission / core_capabilities / supporting_roles). Same discipline as the main
+  // scorer's profileInvariant guard.
+  it("emits the raw scorer substrate and NEVER leaks any client_profile value", () => {
+    const c = {
+      name: "Recovery Org",
+      org_type: "nonprofit",
+      location_city: "Fayetteville",
+      location_county: "Washington",
+      location_state: "AR",
+      service_area: ["Northwest Arkansas"],
+      primary_funding_needs: ["SUD recovery services", "capital"],
+      matching_rules: "Capital-first: do not surface program-only grants.",
+      known_constraints: "Capital-focused only.",
+      // Present, but MUST NOT reach the occupancy judge — narrative enrichment only.
+      client_profile: {
+        mission: "PROFILE_MISSION_SECRET",
+        core_capabilities: "PROFILE_CAPS_SECRET",
+        supporting_roles: "PROFILE_ROLES_SECRET",
+      },
+    } as unknown as Client;
+    const ctx = clientContextForJudge(c);
+
+    // Raw scorer substrate present (mirrors engine.ts clientContext)
+    expect(ctx).toContain("Recovery Org");
+    expect(ctx).toContain("nonprofit");
+    expect(ctx).toContain("Fayetteville, Washington, AR");
+    expect(ctx).toContain("Northwest Arkansas");
+    expect(ctx).toContain("SUD recovery services, capital");
+    expect(ctx).toContain("Capital-first"); // matching_rules kept — the DEFER check needs it
+    expect(ctx).toContain("Capital-focused only"); // known_constraints kept
+
+    // client_profile values NEVER leak into the occupancy judge
+    expect(ctx).not.toContain("PROFILE_MISSION_SECRET");
+    expect(ctx).not.toContain("PROFILE_CAPS_SECRET");
+    expect(ctx).not.toContain("PROFILE_ROLES_SECRET");
+  });
+
+  it("omits empty raw fields cleanly (no dangling labels) and still never touches the profile", () => {
+    const c = {
+      name: "Thin Client",
+      org_type: null,
+      service_area: null,
+      primary_funding_needs: null,
+      matching_rules: null,
+      known_constraints: null,
+      client_profile: { mission: "STILL_SECRET" },
+    } as unknown as Client;
+    const ctx = clientContextForJudge(c);
+    expect(ctx).toContain("Thin Client");
+    expect(ctx).toContain("Entity type: unknown");
+    expect(ctx).not.toContain("Service area:"); // empty → line omitted
+    expect(ctx).not.toContain("Primary funding needs:");
+    expect(ctx).not.toContain("STILL_SECRET");
   });
 });
 
