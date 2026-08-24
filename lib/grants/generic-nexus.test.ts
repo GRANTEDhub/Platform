@@ -39,6 +39,7 @@ const mkGrant = (over: Partial<Grant> = {}): Grant =>
 const inferred = (over: Partial<NexusJudgment> = {}): NexusJudgment => ({
   qualifying_dimension: "in-facility correctional education",
   basis: "inferred_from_adjacency",
+  triggering_caveat: "no confirmed prior programming inside a correctional facility documented in client record",
   rationale:
     "The correctional-education nexus is inferred from applied/workforce mission alignment; no confirmed " +
     "prior programming inside a correctional facility. (Execution caveats — no federal grant history, MOU " +
@@ -48,6 +49,7 @@ const inferred = (over: Partial<NexusJudgment> = {}): NexusJudgment => ({
 const entailed = (over: Partial<NexusJudgment> = {}): NexusJudgment => ({
   qualifying_dimension: "body-worn-camera program",
   basis: "entailed_by_identity",
+  triggering_caveat: null,
   rationale:
     "The county sheriff's office is a confirmed law-enforcement entity; a BWC program is a new instance. " +
     "The caps are execution-only: no DOJ grant history, SAM unknown, match capacity low.",
@@ -114,6 +116,16 @@ describe("nexusFlagFromJudgment — the EXISTENCE TEST (one inferred-nexus cavea
     const f = nexusFlagFromJudgment(inferred({ qualifying_dimension: "  " }));
     expect(f.flagged).toBe(true);
     expect(f.note).toContain("the specific qualifying dimension");
+  });
+
+  it("CONCRETENESS GUARD: inferred basis with NO quoted triggering_caveat → NOT flagged (anti-leak)", () => {
+    // The Arisa×MAT leak: the model returns inferred but cannot cite a caveat that the qualifying
+    // FUNCTION itself is unconfirmed (only execution caveats exist). A flag with no evidence is dropped.
+    expect(nexusFlagFromJudgment(inferred({ triggering_caveat: null })).flagged).toBe(false);
+    expect(nexusFlagFromJudgment(inferred({ triggering_caveat: "" })).flagged).toBe(false);
+    expect(nexusFlagFromJudgment(inferred({ triggering_caveat: "   " })).flagged).toBe(false);
+    // With a real cited caveat it still flags (the guard only drops evidence-free flags).
+    expect(nexusFlagFromJudgment(inferred({ triggering_caveat: "not confirmed as a current program area" })).flagged).toBe(true);
   });
 });
 
