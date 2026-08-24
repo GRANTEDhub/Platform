@@ -75,6 +75,18 @@ describe("circularLocationInference — drop when location is grounded in the GR
       ]),
     ).toBe(false);
   });
+  it("#418 review 🟣: PLURAL circular phrasings fire (the trailing-\\b dead-branch, now closed for fixed words)", () => {
+    // "prior awards" / "eligible states|regions|areas" (plural) were previously missed because the
+    // outer \b couldn't sit before the "s"; each is now the SOLE circular signal in its string.
+    for (const f of [
+      "Service area inferred based on prior awards received.",
+      "Location assumed to fall within one of the eligible states for this opportunity.",
+      "Service area inferred to be within the eligible regions of the program.",
+      "Location inferred from the grant's eligible areas.",
+    ]) {
+      expect(circularLocationInference([f]), f).toBe(true);
+    }
+  });
   it("#417 review 🟡: 'geographic'/'eligibility' (prefix stems) actually fire -> circular drop", () => {
     // Regression for the dead \b-terminated stems: "geographic eligibility" must register as both a
     // location field and a circular (grant-grounded) basis.

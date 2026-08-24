@@ -80,9 +80,13 @@ export interface MatchSignals {
 // NB: no bare "operates in ..." branch -- it matches non-geographic activity ("operates in the reentry
 // space"), which would wrongly treat an ORG-TYPE inference as a location one. Prefix stems carry \w* so
 // the real words match (a trailing \b after "geograph" never fires -- "geographic" continues).
-const LOCATION_FIELD = /\blocation\b|\bservice\s*area\b|\bgeograph\w*|\bbased\s+in\b|\bheadquarter\w*|\bjurisdiction\b/;
+// Fixed-word stems carry `s?` (and prefix stems carry \w*) so the trailing \b lands past the whole
+// word: "location"/"locations", "service area"/"areas", "jurisdiction"/"jurisdictions" all match, and
+// "geograph…" matches "geographic"/"geography". A bare `\b(word)\b` alternation would drop the plurals
+// (the \b can't sit mid-word after the "s") — the exact dead-branch bug this file has fought twice.
+const LOCATION_FIELD = /\blocations?\b|\bservice\s*areas?\b|\bgeograph\w*|\bbased\s+in\b|\bheadquarter\w*|\bjurisdictions?\b/;
 const CIRCULAR_BASIS =
-  /\b(program\s+name|program'?s\b|prior\s+award|past\s+award|under\s+this\s+(program|grant|nofo)|this\s+program'?s?\b|eligible\s+(region|area|state|geograph\w*)|grant'?s?\s+(region|area|geograph\w*|eligib\w*)|awardees?\s+(of|under)\s+this)\b/;
+  /\b(program\s+names?|program'?s\b|prior\s+awards?|past\s+awards?|under\s+this\s+(program|grant|nofo)|this\s+program'?s?\b|eligible\s+(regions?|areas?|states?|geograph\w*)|grant'?s?\s+(regions?|areas?|geograph\w*|eligib\w*)|awardees?\s+(of|under)\s+this)\b/;
 // ORG-grounded must reference the ORGANIZATION's name specifically -- NOT a bare "... name", because
 // the circular basis "based on the PROGRAM name" also contains the word "name"; a generic name-catch
 // would swallow the circular case and never drop it.
