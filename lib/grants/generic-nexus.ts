@@ -32,12 +32,30 @@
 // TWO LOCKED PROPERTIES (see generic-nexus.test.ts):
 //   1. EXISTENCE TEST, not purity test. A row is a MIXTURE — NWACC's ONE nexus caveat sits beside four
 //      execution caveats (MOU, no federal history, SAM, budget). The gate fires if the bundle CONTAINS
-//      an inferred-nexus caveat, regardless of how many execution caveats surround it. The classifier
-//      prompt says exactly this; the demote triggers on basis === "inferred_from_adjacency" alone.
+//      a genuine inferred-nexus caveat, regardless of how many execution caveats surround it. The
+//      demote triggers on basis === "inferred_from_adjacency" alone.
 //   2. ERR TOWARD SURFACING (under-flag, never over-flag). Demoting a genuine county/clinic match off
 //      the surface is the more expensive error, so the middle band (county→jail, SUD→justice-involved)
 //      leans entailed. The prompt instructs an entailed default when genuinely ambiguous, AND the
 //      fail-safe (missing / unparseable / thrown) returns NO flag. Both paths err toward surfacing.
+//
+// EVAL-DRIVEN TIGHTENING (first eval run: FLAG band passed every run; two boundary over-flags fixed).
+// The execution-vs-nexus line was leaking — Arisa×MAT (a clean SUD keep, only past-performance/
+// sub-capability caveats) flagged 1/3, and Faulkner×jail (county assumed to run a jail) flagged 2/3.
+// Three reinforcements, all in service of the two properties above:
+//   (a) EXHAUSTIVE execution non-trigger list in the prompt — past-performance, MOU, SAM, budget,
+//       licensure/credential-pending, key-personnel, AND a sub-capability within a CONFIRMED function
+//       (buprenorphine-prescribing for a confirmed SUD provider). These can NEVER trip the flag, even
+//       worded "inferred/unconfirmed": what is unconfirmed decides it (an execution attribute → entailed;
+//       the qualifying FUNCTION/POPULATION itself → inferred), not the presence of the word.
+//   (b) STRUCTURAL ENTAILMENT default — an entity-type-typical function (county→jail, sheriff→policing)
+//       is entailed even when the instance is "assumed / not explicitly confirmed"; a documentation gap
+//       is not a nexus gap. This is the heavy bias the near-structural middle band needs.
+//   (c) CONCRETENESS GUARD — an inferred verdict must QUOTE the nexus caveat (triggering_caveat); a flag
+//       with no cited evidence is dropped to no-flag (nexusFlagFromJudgment). This is the code-side
+//       anti-leak backstop for when the prompt still wavers, and it robustifies against the run-to-run
+//       occupancy/seat variation that feeds the classifier different caveats each pass — the decision
+//       anchors on org identity + a quotable function/population caveat, not the (unstable) seat.
 //
 // ACTION is DEMOTE-WITHIN-2 + a lead flag, NOT suppress (deliberately conservative for launch, widen
 // later — same discipline as calibration). Unlike the circular-inference geo drop (circular geo is
@@ -68,6 +86,11 @@ export interface NexusJudgment {
   // (e.g. "in-facility correctional education", "justice-involved population", "dementia caseload").
   qualifying_dimension: string;
   basis: "entailed_by_identity" | "inferred_from_adjacency";
+  // CONCRETENESS GUARD: when basis is inferred_from_adjacency, the VERBATIM caveat that states the org
+  // may not perform the qualifying FUNCTION / serve the qualifying POPULATION at all. Empty for
+  // entailed_by_identity. A flag with no cited nexus caveat is not trustworthy (it's the leak that let
+  // an execution caveat trip the flag), so nexusFlagFromJudgment drops a flag whose evidence is blank.
+  triggering_caveat: string | null;
   rationale: string;
 }
 
@@ -96,6 +119,10 @@ export function isNexusCandidate(result: MatchResult): boolean {
 // unit test proves it with a FAKED judgment (no model call), the same discipline as applySeatJudgment.
 export function nexusFlagFromJudgment(j: NexusJudgment): NexusFlag {
   if (j.basis !== "inferred_from_adjacency") return IDENTITY;
+  // CONCRETENESS GUARD (anti-leak): an inferred verdict must cite the actual nexus caveat. A flag with
+  // no quoted evidence is the failure mode where an execution/credential caveat vaguely reads as a
+  // nexus gap — drop it and let the card surface. Errs toward surfacing, like every other fail path.
+  if (!j.triggering_caveat?.trim()) return IDENTITY;
   const dim = j.qualifying_dimension?.trim() || "the specific qualifying dimension";
   return {
     flagged: true,
@@ -105,21 +132,38 @@ export function nexusFlagFromJudgment(j: NexusJudgment): NexusFlag {
   };
 }
 
-const NEXUS_JUDGE_SYSTEM_PROMPT = `You are checking EXACTLY ONE thing: for THIS grant's specific qualifying dimension, do the first-pass caveats show that dimension is ENTAILED by the client's CONFIRMED identity, or INFERRED from thematic adjacency?
+const NEXUS_JUDGE_SYSTEM_PROMPT = `You are checking EXACTLY ONE thing: does the org perform the grant's specific QUALIFYING FUNCTION / serve its QUALIFYING POPULATION at all, or is that inferred only from the org's adjacency to a broader theme?
 
-You are NOT deciding eligibility, seat, score, past performance, or whether the grant should surface. Ignore all of that. Answer only the entailed-vs-inferred question about the ONE dimension the grant gates on.
+You are NOT deciding eligibility, seat, role, score, or whether the grant should surface. Ignore all of that. The client's seat/role (prime or sub) is IRRELEVANT to this question — decide from the org's CONFIRMED IDENTITY and the caveats about the qualifying function/population, never from the seat.
 
-Definitions:
-- QUALIFYING DIMENSION = the specific population, setting, or program type this grant requires (e.g. an in-facility correctional setting, a justice-involved population, a dementia caseload, a body-worn-camera program). Read it from the caveats — they name it.
-- entailed_by_identity = the client's CONFIRMED structural identity already entails performing that kind of work; the caveat is about an EXECUTION artifact for work the org demonstrably does — a signed MOU, past-performance / federal-grant history, SAM registration, budget/cash-flow, a not-yet-named partner, or simply "no prior INSTANCE of this program" for a function the org's type intrinsically performs. Example: a county sheriff's office with "no existing body-worn-camera program" — policing is confirmed; the BWC program is a new instance. A SUD clinic with "no federal grant history" on an opioid-treatment grant — the SUD function is confirmed; the gap is past performance.
-- inferred_from_adjacency = the qualifying dimension is INFERRED from the org's adjacency to a BROADER theme it confirms, and the org may not do that specific work at all. The caveat says the dimension itself is "inferred from mission alignment", "not confirmed as a current program area", "history in that specific context is unverified", "assumed based on [a broad service model]". Example: a community college with an applied/workforce mission but "no confirmed prior programming inside a correctional facility". A behavioral-health nonprofit whose "capacity to serve justice-involved populations specifically is inferred from its SUD service model — not confirmed as a current program area".
+QUALIFYING DIMENSION = the specific population, setting, or program the grant gates on (e.g. an in-facility correctional setting, a justice-involved population, a dementia caseload, a body-worn-camera program). Name it from the caveats.
 
-Rules:
-- EXISTENCE TEST, not a purity test. A caveat bundle is normally a MIXTURE — a single inferred-nexus caveat can sit beside several ordinary execution caveats (MOU, past-performance, SAM, budget). If ANY ONE caveat says the grant's specific qualifying dimension is inferred / assumed / "not confirmed as a current program area" / "history in that specific context is unverified", the basis is inferred_from_adjacency — no matter how many execution caveats surround it. Do NOT average or vote; one genuine inferred-dimension caveat decides it.
-- Execution caveats ALONE never make it inferred. MOU-not-signed, no-federal-history, SAM-expiring, budget-unknown, partner-not-named — for a function the org's confirmed type performs — are entailed_by_identity. These are the legitimate conditional-2s; leave them.
-- BIAS TOWARD entailed_by_identity WHEN GENUINELY AMBIGUOUS. When it is a close call whether the dimension is entailed by the org's confirmed identity or inferred from adjacency — especially near-structural roles (a county government "assumed to operate a detention facility"; a SUD provider whose justice-involved caseload "exists but is unverified") — default to entailed_by_identity. Under-flagging a real match is the CHEAPER error; demoting a genuine county or clinic match off the surface is more expensive than leaving a possibly-generic one up. Only return inferred_from_adjacency when a caveat plainly states the specific dimension is inferred/assumed/unconfirmed-as-current.
-- Decide from the client's CONFIRMED identity (entity type, location, service area, funding needs, authoritative rules) and the first-pass caveats. Do not use any distilled narrative or assumed capability.
-- Return the answer via the submit_nexus_judgment tool exactly once.`;
+THE ONLY TRIGGER (inferred_from_adjacency): a caveat stating the org may not perform the qualifying FUNCTION, or serve the qualifying POPULATION, AT ALL — because that function/population is inferred from the org's adjacency to a BROADER theme it confirms. It reads like "inferred from mission alignment", "not confirmed as a current program area", "history in that specific context is unverified", "assumed based on [a broad service model]", "may not do this specific kind of work". Examples: a community college (applied/workforce mission) with "no confirmed prior programming inside a correctional facility"; a behavioral-health nonprofit whose "capacity to serve justice-involved populations is inferred from its SUD service model — not confirmed as a current program area"; a health agency whose "dementia caseload is inferred from its developmental-disability scope, not confirmed".
+
+NOT A TRIGGER — EXECUTION CAVEATS (these are entailed_by_identity, ALWAYS, no matter how they are worded): the org's confirmed identity performs this kind of work; the caveat is about a deliverable, credential, record, or capacity for that work, NOT about whether it does the work. This list is EXHAUSTIVE of the non-triggers and OVERRIDES any surface wording:
+  - past performance / no federal (or DOJ/BJA) grant history / no prior award;
+  - MOU / partner / letter-of-commitment / subrecipient not yet named or signed;
+  - SAM.gov / UEI / registration lapse or expiry;
+  - budget / cash-flow / match / cost-share / financial-capacity;
+  - licensure / certification / accreditation not yet documented (the CREDENTIAL for work the org does);
+  - key-personnel / staffing / bandwidth / capacity;
+  - award size;
+  - a SUB-CAPABILITY WITHIN A CONFIRMED FUNCTION — a specific clinical sub-task, modality, or technical capability inside a function the org confirms (e.g. buprenorphine-prescribing or a named tracking technology for a confirmed SUD/behavioral-health provider; a specific investigative technique for a confirmed law-enforcement agency). The FUNCTION is confirmed; the sub-capability is execution, NOT nexus.
+CRITICAL: the words "inferred", "assumed", "unconfirmed", "unverified", "not documented" appear on BOTH execution and nexus caveats. They do NOT decide it. What decides it is WHAT is unconfirmed: an EXECUTION ATTRIBUTE (history, paperwork, credential, capacity, a sub-capability) → entailed; the QUALIFYING FUNCTION or POPULATION ITSELF → inferred. If the org's confirmed identity performs the broad function and only a record/credential/sub-capability is unconfirmed, it is entailed — full stop.
+
+STRUCTURAL ENTAILMENT (heavy default): when the qualifying function is one the org's ENTITY TYPE structurally or typically performs, treat it as entailed_by_identity EVEN IF a caveat says the specific instance is "assumed" or "not explicitly confirmed". A county government is assumed to operate a jail/detention facility because counties structurally do; a sheriff's office does law enforcement; a school district runs schools; a health agency delivers clinical care. An entity-type-typical function that is merely undocumented is a documentation gap, NOT a nexus gap. Do NOT flag these.
+
+PROCEDURE:
+1. Name the qualifying dimension.
+2. Walk EACH caveat and label it execution or nexus by the test above.
+3. basis = inferred_from_adjacency ONLY if at least one genuine NEXUS caveat exists AND the qualifying function is not structurally entailed by the org's entity type. If every caveat is execution, or the function is structurally entailed, basis = entailed_by_identity.
+4. If inferred_from_adjacency, put the ONE verbatim nexus caveat you keyed on in triggering_caveat. If you cannot quote a caveat that plainly states the qualifying FUNCTION/POPULATION itself is unconfirmed, the answer is entailed_by_identity and triggering_caveat is empty.
+
+EXISTENCE TEST (applies only after the above): a single genuine nexus caveat decides inferred_from_adjacency even when many execution caveats surround it — do not average or vote it away. But it must be a GENUINE nexus caveat per the trigger definition, not an execution caveat re-read as one.
+
+BIAS TOWARD entailed_by_identity WHEN AMBIGUOUS. Under-flagging a real match is the CHEAPER error; demoting a genuine county or clinic match off the surface costs more than leaving a possibly-generic one up. On any genuine coin-flip, choose entailed_by_identity.
+
+Decide from the client's CONFIRMED identity (entity type, location, service area, funding needs, authoritative rules) and the first-pass caveats. Do not use any distilled narrative or assumed capability. Return the answer via the submit_nexus_judgment tool exactly once.`;
 
 async function judgeNexus(result: MatchResult, grant: Grant, client: Client): Promise<NexusJudgment> {
   const anthropic = getAnthropicClient();
@@ -145,9 +189,14 @@ async function judgeNexus(result: MatchResult, grant: Grant, client: Client): Pr
           properties: {
             qualifying_dimension: { type: "string" },
             basis: { type: "string", enum: ["entailed_by_identity", "inferred_from_adjacency"] },
+            triggering_caveat: {
+              type: ["string", "null"],
+              description:
+                "When basis is inferred_from_adjacency, the ONE verbatim caveat that states the org may not perform the qualifying FUNCTION / serve the qualifying POPULATION at all. Empty/null for entailed_by_identity or when no such caveat can be quoted.",
+            },
             rationale: { type: "string" },
           },
-          required: ["qualifying_dimension", "basis", "rationale"],
+          required: ["qualifying_dimension", "basis", "triggering_caveat", "rationale"],
         },
       },
     ],
@@ -157,8 +206,8 @@ async function judgeNexus(result: MatchResult, grant: Grant, client: Client): Pr
         role: "user",
         content:
           `GRANT: ${grant.title}\n\n` +
-          `SEAT MENU (the client occupies ${result.seat_ref}; use this to understand the grant's target roles):\n${menu}\n\n` +
-          `FIRST-PASS CAVEATS (classify the qualifying dimension named here):\n${caveats}\n\n` +
+          `SEAT MENU (context for the grant's target roles only — the client's seat/role is NOT the question; do not decide from it):\n${menu}\n\n` +
+          `FIRST-PASS CAVEATS (label each execution vs nexus; classify the qualifying dimension named here):\n${caveats}\n\n` +
           `CLIENT (confirmed identity only):\n${clientContextForJudge(client)}`,
       },
     ],
@@ -170,6 +219,7 @@ async function judgeNexus(result: MatchResult, grant: Grant, client: Client): Pr
     return {
       qualifying_dimension: "",
       basis: "entailed_by_identity",
+      triggering_caveat: null,
       rationale: "scoped nexus judgment returned no structured output",
     };
   }
