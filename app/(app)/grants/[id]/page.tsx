@@ -41,7 +41,10 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
     .from("review_cards")
     .select("*, clients(id, name, org_type)")
     .eq("grant_id", params.id)
-    .order("fit_score", { ascending: false });
+    .order("fit_score", { ascending: false })
+    // Generic-over-specific demote: an inferred-nexus card sinks within its fit tier. Inert while
+    // every row is false (flag OFF).
+    .order("generic_nexus_flagged", { ascending: true });
 
   // Client cards only -- prospect cards belong to the Prospects surface.
   const clientCards = ((cards ?? []) as CardWithClient[]).filter(
