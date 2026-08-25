@@ -31,33 +31,41 @@ export async function notifyAccountSetupComplete(): Promise<void> {
     } = await createClient().auth.getUser();
     if (!user) return;
 
+    // NOT .maybeSingle(): user_id is a NON-unique index (0055) -- one auth user can be a member of
+    // several client orgs (a shared consultant email, linked onto each via resolveOrCreateAuthUser).
+    // maybeSingle() errors (PGRST116) on 2+ rows and returns null, which would SILENTLY drop the
+    // notification. Iterate instead and notify per still-onboarding org.
     const admin = createServiceClient();
-    const { data: member } = await admin
+    const { data: members } = await admin
       .from("client_members")
       .select("email, client_id, clients(name, profile_confirmed_at)")
       .eq("user_id", user.id)
-      .maybeSingle<{
-        email: string | null;
-        client_id: string;
-        // PostgREST can return an embedded to-one relation as an object OR a 1-element array,
-        // depending on how the relationship is inferred -- handle both so the org name never drops.
-        clients: ClientEmbed | ClientEmbed[] | null;
-      }>();
-    if (!member?.client_id) return; // not a client member (e.g. staff) -> nothing to notify about
+      .returns<
+        {
+          email: string | null;
+          client_id: string;
+          // PostgREST can return an embedded to-one relation as an object OR a 1-element array,
+          // depending on how the relationship is inferred -- handle both so the org name never drops.
+          clients: ClientEmbed | ClientEmbed[] | null;
+        }[]
+      >();
 
-    const client = Array.isArray(member.clients) ? member.clients[0] : member.clients;
+    for (const member of members ?? []) {
+      if (!member.client_id) continue;
+      const client = Array.isArray(member.clients) ? member.clients[0] : member.clients;
 
-    // FIRST-SETUP ONLY. This runs at password-set, which for a genuine first-timer is BEFORE they
-    // confirm their profile (profile_confirmed_at is null). An already-onboarded client whose staff
-    // resent a setup link (e.g. a password reset) has profile_confirmed_at set -- skip, so a reset
-    // never sends a misleading "New client onboarded" and never nudges a re-run of a done match.
-    if (client?.profile_confirmed_at) return;
+      // FIRST-SETUP ONLY. This runs at password-set, which for a genuine first-timer is BEFORE they
+      // confirm their profile (profile_confirmed_at is null). An org this user already onboarded --
+      // a resent setup link / password reset, or their OTHER org -- has profile_confirmed_at set, so
+      // it's skipped: no misleading "New client onboarded", no nudge to re-run a done match.
+      if (client?.profile_confirmed_at) continue;
 
-    await sendSignupNotificationEmail({
-      clientId: member.client_id,
-      clientName: client?.name ?? "A client",
-      contactEmail: member.email ?? user.email ?? null,
-    });
+      await sendSignupNotificationEmail({
+        clientId: member.client_id,
+        clientName: client?.name ?? "A client",
+        contactEmail: member.email ?? user.email ?? null,
+      });
+    }
   } catch (e) {
     // Never throw: this must not affect the client's account setup or navigation.
     console.error("[signup-notify] failed:", e instanceof Error ? e.message : e);
