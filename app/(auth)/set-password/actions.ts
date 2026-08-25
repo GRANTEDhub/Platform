@@ -15,7 +15,10 @@ import { sendSignupNotificationEmail } from "@/lib/email/send";
 //
 // FAIL-SAFE + ADDITIVE: the whole body is wrapped so a notify failure can never surface to the
 // client or block their redirect (the page calls it fire-and-forget). Gated on canSendEmail() so it
-// only fires in production; the setup link is one-time, so it naturally fires once per client.
+// only fires in production, and on FIRST setup only (see the profile_confirmed_at check) so a resent
+// setup link / password reset for an already-onboarded client does NOT re-notify.
+type ClientEmbed = { name: string | null; profile_confirmed_at: string | null };
+
 export async function notifyAccountSetupComplete(): Promise<void> {
   try {
     if (!canSendEmail().ok) return; // prod + EMAIL_SENDING_ENABLED + key only; previews never notify
@@ -31,14 +34,28 @@ export async function notifyAccountSetupComplete(): Promise<void> {
     const admin = createServiceClient();
     const { data: member } = await admin
       .from("client_members")
-      .select("email, client_id, clients(name)")
+      .select("email, client_id, clients(name, profile_confirmed_at)")
       .eq("user_id", user.id)
-      .maybeSingle<{ email: string | null; client_id: string; clients: { name: string } | null }>();
+      .maybeSingle<{
+        email: string | null;
+        client_id: string;
+        // PostgREST can return an embedded to-one relation as an object OR a 1-element array,
+        // depending on how the relationship is inferred -- handle both so the org name never drops.
+        clients: ClientEmbed | ClientEmbed[] | null;
+      }>();
     if (!member?.client_id) return; // not a client member (e.g. staff) -> nothing to notify about
+
+    const client = Array.isArray(member.clients) ? member.clients[0] : member.clients;
+
+    // FIRST-SETUP ONLY. This runs at password-set, which for a genuine first-timer is BEFORE they
+    // confirm their profile (profile_confirmed_at is null). An already-onboarded client whose staff
+    // resent a setup link (e.g. a password reset) has profile_confirmed_at set -- skip, so a reset
+    // never sends a misleading "New client onboarded" and never nudges a re-run of a done match.
+    if (client?.profile_confirmed_at) return;
 
     await sendSignupNotificationEmail({
       clientId: member.client_id,
-      clientName: member.clients?.name ?? "A client",
+      clientName: client?.name ?? "A client",
       contactEmail: member.email ?? user.email ?? null,
     });
   } catch (e) {
