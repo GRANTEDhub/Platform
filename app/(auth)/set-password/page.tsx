@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { notifyAccountSetupComplete } from "./actions";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { SpinningMark } from "@/components/ui/spinning-mark";
@@ -51,6 +52,10 @@ export default function SetPasswordPage() {
       setError(error.message);
       return;
     }
+    // Tell staff this invited client just finished setup (who signed up → trigger their match run).
+    // Fire-and-forget: best-effort server action, never awaited, so a notify hiccup can't delay or
+    // block the redirect below.
+    notifyAccountSetupComplete().catch(() => {});
     // DO NOT clear the busy state here. router.push below is a server round trip --
     // /portal runs requireClient, then the layout's first-login gate redirects to
     // /welcome, which is force-dynamic -- so several seconds can pass before the
