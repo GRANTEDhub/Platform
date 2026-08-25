@@ -260,11 +260,18 @@ export function PartnersSection({
   c: NarrativeController;
   help?: string;
 }) {
+  // Editing structured partners makes them the source of truth, so clear the LEGACY
+  // free-text `partnerships` in the SAME update (patch writes both keys atomically).
+  // These forms never show a `partnerships` field, so a value loaded from the server
+  // otherwise sits stale in state -- and parseNarrative's self-heal would resurrect a
+  // removed partner from it on save while narrativeToIntakeData kept writing it back
+  // into intake_data (where it still feeds the profile refiner).
   const setPartner = (i: number, patch: Partial<NarrativePartner>) =>
-    c.set("partners", c.n.partners.map((p, idx) => (idx === i ? { ...p, ...patch } : p)));
-  const addPartner = () => c.set("partners", [...c.n.partners, { name: "", role: "" }]);
+    c.patch({ partners: c.n.partners.map((p, idx) => (idx === i ? { ...p, ...patch } : p)), partnerships: "" });
+  const addPartner = () =>
+    c.patch({ partners: [...c.n.partners, { name: "", role: "" }], partnerships: "" });
   const removePartner = (i: number) =>
-    c.set("partners", c.n.partners.filter((_, idx) => idx !== i));
+    c.patch({ partners: c.n.partners.filter((_, idx) => idx !== i), partnerships: "" });
 
   return (
     <div>
@@ -287,7 +294,7 @@ export function PartnersSection({
             <textarea
               className={AREA}
               rows={2}
-              maxLength={1000}
+              maxLength={2000}
               placeholder="What the partnership entails (their role, what they bring)"
               value={p.role}
               onChange={(e) => setPartner(i, { role: e.target.value })}
