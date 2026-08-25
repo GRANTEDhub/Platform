@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { notifyAccountSetupComplete } from "./actions";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { SpinningMark } from "@/components/ui/spinning-mark";
@@ -23,6 +24,11 @@ export default function SetPasswordPage() {
   // navigation. Both show the overlay; only this one is allowed to say "Password set".
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // SYNCHRONOUS re-entry guard. The `loading`/`saved` state checks below don't update until React
+  // re-renders, so a same-tick double submit (an Enter keypress before the overlay paints) can slip
+  // two handlers past them -- which would double the updateUser call AND, now, double-fire the staff
+  // notify email. A ref flips immediately, so the second call returns before either runs.
+  const submitting = useRef(false);
 
   useEffect(() => {
     const supabase = createClient();
@@ -32,8 +38,9 @@ export default function SetPasswordPage() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     // Belt to the overlay's braces: an Enter keypress can re-fire submit in the tick
-    // before the overlay paints, and updateUser twice is a doubled attempt.
-    if (loading || saved) return;
+    // before the overlay paints, and updateUser twice is a doubled attempt. The ref is the
+    // synchronous half of the guard (see submitting above); the state checks are the async half.
+    if (submitting.current || loading || saved) return;
     if (password.length < 8) {
       setError("Use at least 8 characters.");
       return;
@@ -42,15 +49,23 @@ export default function SetPasswordPage() {
       setError("Those passwords don't match.");
       return;
     }
+    // Past validation and committed to the async attempt: flip the ref synchronously so a same-tick
+    // re-fire is blocked (the validation returns above run before this, so they still allow a retry).
+    submitting.current = true;
     setLoading(true);
     setError(null);
     const supabase = createClient();
     const { error } = await supabase.auth.updateUser({ password });
     if (error) {
+      submitting.current = false;
       setLoading(false);
       setError(error.message);
       return;
     }
+    // Tell staff this invited client just finished setup (who signed up → trigger their match run).
+    // Fire-and-forget: best-effort server action, never awaited, so a notify hiccup can't delay or
+    // block the redirect below.
+    notifyAccountSetupComplete().catch(() => {});
     // DO NOT clear the busy state here. router.push below is a server round trip --
     // /portal runs requireClient, then the layout's first-login gate redirects to
     // /welcome, which is force-dynamic -- so several seconds can pass before the

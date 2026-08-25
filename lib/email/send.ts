@@ -11,6 +11,7 @@
 import { Resend } from "resend";
 import { isRecipientAllowed } from "@/lib/email/guard";
 import { sanitizeOutreachEmail } from "@/lib/email/sanitize";
+import { appBaseUrl } from "@/lib/site-url";
 import type { ReviewCard, Client } from "@/types/database";
 import { plainTextToHtml, type HtmlLink, type DecisionBox, type CtaButton } from "./html";
 
@@ -410,5 +411,41 @@ export async function sendStaffInviteEmail(opts: {
   const resend = new Resend(process.env.RESEND_PLATFORM_API);
   const { data, error } = await resend.emails.send({ from: FROM, to, replyTo: REPLY_TO, subject, text });
   if (error) throw new Error(`Resend send failed: ${error.message}`);
+  return { to, subject, id: data?.id ?? null };
+}
+
+// ── Internal signup notification to staff ─────────────────────────────────────
+//
+// Fired when an INVITED client finishes setting up their account (sets their password on the
+// set-password page). Tells staff WHICH client just completed setup + a one-click link to the
+// client record, so they can trigger that client's match run. This is an INTERNAL notification to
+// our own inbox, NOT outreach: the caller gates it on canSendEmail() (prod + enabled) so previews
+// never fire it, but it deliberately does NOT apply isRecipientAllowed -- the recipient is our own
+// SHANNON_EMAIL, not a client/prospect, so the testing-mode outreach allowlist must not silence it.
+// It never triggers matching itself (the manual review gate is preserved).
+export async function sendSignupNotificationEmail(opts: {
+  clientId: string;
+  clientName: string;
+  contactEmail?: string | null;
+}): Promise<SentResult> {
+  const to = (process.env.SHANNON_EMAIL || "shannon@grantedco.com").trim();
+  if (!isDeliverableEmail(to)) throw new Error(`No deliverable notification recipient: "${to}"`);
+  // Per-MEMBER wording: password-set is a per-member event, and an org can have multiple seats, so a
+  // second notice for the same org is a different person, not a duplicate onboarding. Naming who set
+  // up keeps it accurate either way; the org name is kept prominent for the match-run trigger.
+  const who = opts.contactEmail?.trim() || "A new user";
+  const subject = `Account set up — ${opts.clientName}`;
+  const text = [
+    `${who} just finished setting up their account for ${opts.clientName}.`,
+    "",
+    "Review the profile and trigger the match run:",
+    `${appBaseUrl()}/clients/${opts.clientId}`,
+    "",
+    "— Argo",
+  ].join("\n");
+
+  const resend = new Resend(process.env.RESEND_PLATFORM_API);
+  const { data, error } = await resend.emails.send({ from: FROM, to, replyTo: REPLY_TO, subject, text });
+  if (error) throw new Error(`Resend signup-notify failed: ${error.message}`);
   return { to, subject, id: data?.id ?? null };
 }
