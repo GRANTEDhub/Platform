@@ -38,10 +38,11 @@ export async function notifyAccountSetupComplete(): Promise<void> {
     const admin = createServiceClient();
     const { data: members } = await admin
       .from("client_members")
-      .select("email, client_id, clients(name, profile_confirmed_at)")
+      .select("id, email, client_id, clients(name, profile_confirmed_at)")
       .eq("user_id", user.id)
       .returns<
         {
+          id: string;
           email: string | null;
           client_id: string;
           // PostgREST can return an embedded to-one relation as an object OR a 1-element array,
@@ -61,6 +62,23 @@ export async function notifyAccountSetupComplete(): Promise<void> {
       // wording (below) keeps that accurate ("<email> set up their account for <org>") rather than
       // reading as a duplicate org onboarding.
       if (client?.profile_confirmed_at) continue;
+
+      // EXACTLY-ONCE CLAIM, and it is what makes this replay-proof. notifyAccountSetupComplete
+      // compiles to a POST endpoint an authenticated invited client can call directly, so the
+      // submit-guards on the page (a same-tick ref, the overlay) only stop the honest double-tap
+      // -- they can't stop a scripted replay. profile_confirmed_at is org-level and doesn't flip
+      // until the client confirms at /welcome, so without this a client could POST this action in
+      // a loop between setup and confirm and flood shannon@ (and burn Resend). The claim is a
+      // conditional UPDATE: stamp setup_notified_at only where it IS NULL, and the row count tells
+      // us whether THIS call won the race. Lost/repeat calls read zero rows and skip the send, so
+      // each member is notified at most once regardless of how many times the action is invoked.
+      const { data: claimed } = await admin
+        .from("client_members")
+        .update({ setup_notified_at: new Date().toISOString() })
+        .eq("id", member.id)
+        .is("setup_notified_at", null)
+        .select("id");
+      if (!claimed || claimed.length === 0) continue;
 
       // Per-org try/catch: one org's Resend failure must not abort the loop and skip later orgs.
       try {
