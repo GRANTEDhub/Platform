@@ -13,6 +13,7 @@ import {
   MissionField,
   ProgramsSection,
   PriorityAreasSection,
+  PartnersSection,
 } from "@/components/intake/narrative-parts";
 import { ORG_TYPES } from "@/lib/clients/org-types";
 import type { NarrativeIntake } from "@/lib/intake/narrative";
@@ -165,6 +166,10 @@ export function ConfirmProfile({
           help="Correct anything we got wrong, and add what we missed."
           addLabel="+ Add a program"
           collapsible
+        />
+        <PartnersSection
+          c={narrative}
+          help="Organizations you partner with, and what each partnership provides. Add any we should know about."
         />
       </section>
 
