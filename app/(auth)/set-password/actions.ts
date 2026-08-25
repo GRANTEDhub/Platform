@@ -54,17 +54,27 @@ export async function notifyAccountSetupComplete(): Promise<void> {
       if (!member.client_id) continue;
       const client = Array.isArray(member.clients) ? member.clients[0] : member.clients;
 
-      // FIRST-SETUP ONLY. This runs at password-set, which for a genuine first-timer is BEFORE they
-      // confirm their profile (profile_confirmed_at is null). An org this user already onboarded --
-      // a resent setup link / password reset, or their OTHER org -- has profile_confirmed_at set, so
-      // it's skipped: no misleading "New client onboarded", no nudge to re-run a done match.
+      // FIRST-SETUP ONLY. profile_confirmed_at is ORG-level (set once any member confirms the profile
+      // at /welcome), so this skips an org this user already onboarded -- a resent setup link /
+      // password reset, or their OTHER org. Known limit: for a multi-seat org, if two members set
+      // their passwords BEFORE either confirms the profile, each fires a notice; the per-member
+      // wording (below) keeps that accurate ("<email> set up their account for <org>") rather than
+      // reading as a duplicate org onboarding.
       if (client?.profile_confirmed_at) continue;
 
-      await sendSignupNotificationEmail({
-        clientId: member.client_id,
-        clientName: client?.name ?? "A client",
-        contactEmail: member.email ?? user.email ?? null,
-      });
+      // Per-org try/catch: one org's Resend failure must not abort the loop and skip later orgs.
+      try {
+        await sendSignupNotificationEmail({
+          clientId: member.client_id,
+          clientName: client?.name ?? "A client",
+          contactEmail: member.email ?? user.email ?? null,
+        });
+      } catch (e) {
+        console.error(
+          `[signup-notify] send failed for client ${member.client_id}:`,
+          e instanceof Error ? e.message : e,
+        );
+      }
     }
   } catch (e) {
     // Never throw: this must not affect the client's account setup or navigation.

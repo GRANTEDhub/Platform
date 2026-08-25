@@ -430,18 +430,19 @@ export async function sendSignupNotificationEmail(opts: {
 }): Promise<SentResult> {
   const to = (process.env.SHANNON_EMAIL || "shannon@grantedco.com").trim();
   if (!isDeliverableEmail(to)) throw new Error(`No deliverable notification recipient: "${to}"`);
-  const subject = `New client onboarded: ${opts.clientName}`;
+  // Per-MEMBER wording: password-set is a per-member event, and an org can have multiple seats, so a
+  // second notice for the same org is a different person, not a duplicate onboarding. Naming who set
+  // up keeps it accurate either way; the org name is kept prominent for the match-run trigger.
+  const who = opts.contactEmail?.trim() || "A new user";
+  const subject = `Account set up — ${opts.clientName}`;
   const text = [
-    `${opts.clientName} just finished setting up their account.`,
-    opts.contactEmail ? `User: ${opts.contactEmail}` : null,
+    `${who} just finished setting up their account for ${opts.clientName}.`,
     "",
-    "Review their profile and trigger their match run:",
+    "Review the profile and trigger the match run:",
     `${appBaseUrl()}/clients/${opts.clientId}`,
     "",
     "— Argo",
-  ]
-    .filter((l): l is string => l !== null)
-    .join("\n");
+  ].join("\n");
 
   const resend = new Resend(process.env.RESEND_PLATFORM_API);
   const { data, error } = await resend.emails.send({ from: FROM, to, replyTo: REPLY_TO, subject, text });
