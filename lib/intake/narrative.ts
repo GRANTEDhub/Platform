@@ -93,6 +93,10 @@ export function parseNarrative(input: unknown): NarrativeIntake {
     : [];
 
   const partnerships = cap(obj.partnerships, 2000);
+  // Whether the input carried a `partners` key at all -- distinct from an empty
+  // array. A form submit always serializes `partners` (present, possibly []), so an
+  // explicit clear arrives as []; only a true legacy row omits the key entirely.
+  const partnersProvided = Array.isArray(obj.partners);
   let partners: NarrativePartner[] = Array.isArray(obj.partners)
     ? obj.partners
         .slice(0, 20) // bound the public endpoint
@@ -108,10 +112,13 @@ export function parseNarrative(input: unknown): NarrativeIntake {
         })
         .filter((p) => p.name || p.role)
     : [];
-  // Self-healing migration: a row saved BEFORE structured partners carries only the
-  // free-text `partnerships`. Surface it as one partner entry (details filled, name
-  // blank) so the text is never lost and can be split by hand on the next edit.
-  if (partners.length === 0 && partnerships) {
+  // Self-healing migration: a TRUE legacy row (saved before structured partners) carries
+  // only the free-text `partnerships` and NO `partners` key. Surface it as one partner
+  // entry (details filled, name blank) so the text is never lost and can be split by hand
+  // on the next edit. Gate on the key's ABSENCE, not emptiness: a form submit serializes
+  // the whole shape, so a client who removed their last partner sends `partners: []` with
+  // a still-stale `partnerships` -- resurrecting from THAT would silently undo the delete.
+  if (!partnersProvided && partnerships) {
     partners = [{ name: "", role: partnerships }];
   }
 
