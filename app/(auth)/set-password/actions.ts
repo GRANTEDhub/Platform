@@ -70,14 +70,26 @@ export async function notifyAccountSetupComplete(): Promise<void> {
       // until the client confirms at /welcome, so without this a client could POST this action in
       // a loop between setup and confirm and flood shannon@ (and burn Resend). The claim is a
       // conditional UPDATE: stamp setup_notified_at only where it IS NULL, and the row count tells
-      // us whether THIS call won the race. Lost/repeat calls read zero rows and skip the send, so
-      // each member is notified at most once regardless of how many times the action is invoked.
-      const { data: claimed } = await admin
+      // us whether THIS call won the race. Lost/repeat calls read zero rows and skip the send.
+      //
+      // The claim is a RESERVATION, not a record of a sent email -- see the send-failure rollback
+      // below. On the SUCCESSFUL-send path the stamp sticks and every replay is a no-op, so each
+      // member is notified at most once no matter how many times the action is invoked.
+      const { data: claimed, error: claimError } = await admin
         .from("client_members")
         .update({ setup_notified_at: new Date().toISOString() })
         .eq("id", member.id)
         .is("setup_notified_at", null)
         .select("id");
+      // supabase-js RETURNS query errors, it does not throw them (no .throwOnError()), so the outer
+      // try/catch can't see a failed claim -- and a null `claimed` from an ERROR is otherwise
+      // indistinguishable from a null from a LOST race. Log it (the send path below logs its
+      // failures; a swallowed claim failure must leave the same trail) and skip: on a claim error we
+      // don't know whether the row got stamped, so sending anyway risks a double-notify.
+      if (claimError) {
+        console.error(`[signup-notify] claim failed for client ${member.client_id}:`, claimError.message);
+        continue;
+      }
       if (!claimed || claimed.length === 0) continue;
 
       // Per-org try/catch: one org's Resend failure must not abort the loop and skip later orgs.
@@ -88,9 +100,21 @@ export async function notifyAccountSetupComplete(): Promise<void> {
           contactEmail: member.email ?? user.email ?? null,
         });
       } catch (e) {
+        // RELEASE THE CLAIM so a later attempt (repeat visit / retry) can re-notify. Stamping before
+        // the send is what closes the flood -- a concurrent replay loses the race and skips -- but a
+        // send that then FAILS must not leave the row permanently claimed, which would silently drop
+        // the one notification this whole feature exists to deliver. Rolling back only re-opens
+        // replays when sends are FAILING, and a failing send produces no inbox flood by definition;
+        // the successful-send path keeps its claim and stays a no-op on replay. A failed rollback is
+        // logged (can't be helped further here) but is the rare case: the row simply stays claimed.
+        const { error: releaseError } = await admin
+          .from("client_members")
+          .update({ setup_notified_at: null })
+          .eq("id", member.id);
         console.error(
           `[signup-notify] send failed for client ${member.client_id}:`,
           e instanceof Error ? e.message : e,
+          releaseError ? `(claim release also failed: ${releaseError.message})` : "",
         );
       }
     }
