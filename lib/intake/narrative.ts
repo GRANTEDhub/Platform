@@ -98,7 +98,13 @@ export function parseNarrative(input: unknown): NarrativeIntake {
         .slice(0, 20) // bound the public endpoint
         .map((p) => {
           const r = (p ?? {}) as Record<string, unknown>;
-          return { name: cap(r.name, 200), role: cap(r.role, 1000) };
+          // role cap MATCHES the legacy `partnerships` cap (2000, above) and the
+          // PartnersSection role textarea's maxLength. The self-heal below pours a
+          // whole `partnerships` blob into one role, so a shorter role cap here (or a
+          // shorter textarea maxLength) leaves the pre-filled value over the input's
+          // limit -- the browser then blocks ALL typing until it is trimmed. Keep the
+          // three in sync.
+          return { name: cap(r.name, 200), role: cap(r.role, 2000) };
         })
         .filter((p) => p.name || p.role)
     : [];

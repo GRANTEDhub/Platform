@@ -287,7 +287,7 @@ export function PartnersSection({
             <textarea
               className={AREA}
               rows={2}
-              maxLength={1000}
+              maxLength={2000}
               placeholder="What the partnership entails (their role, what they bring)"
               value={p.role}
               onChange={(e) => setPartner(i, { role: e.target.value })}
