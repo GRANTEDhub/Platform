@@ -110,6 +110,18 @@ export async function runToolLoop(opts: {
       continue;
     }
 
+    // A SERVER-side tool (e.g. web_search) can pause a long turn with stop_reason "pause_turn": the
+    // model's partial turn is returned and the request must be RE-ISSUED to resume it — with NO
+    // tool_result added, because the server already ran the tool inline. Without this the loop would
+    // break here and return a SILENTLY TRUNCATED answer (the documented server-tool pitfall). Only
+    // under "auto": "none"/"off" set tool_choice so no server tool can run, so no pause can occur.
+    // Bounded by the same round cap + deadline as tool rounds, so a pathological pause→pause cannot
+    // loop forever. Inert for a client-tool-only caller (GrantBot never emits pause_turn).
+    if (toolMode === "auto" && res.stopReason === "pause_turn") {
+      working.push({ role: "assistant", content: res.rawContent });
+      continue;
+    }
+
     break;
   }
 

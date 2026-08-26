@@ -46,6 +46,8 @@ import {
 import { fetchGrantSource, type FetchResult } from "@/lib/grantbot/fetch";
 import { clientContextForJudge } from "@/lib/grants/subseat-routing";
 import { allocationSourcesFor } from "@/lib/grants/allocation-sources";
+import { formulaProgramTag } from "@/lib/grants/formula-programs";
+import { intelWebSearchEnabled, intelPhase1Config, serverSearchQueries } from "@/lib/grants/intel-web-search";
 import type { Grant, Client } from "@/types/database";
 
 // Opus, exclusively, for this path — a low-volume verification pass where quality matters and the
@@ -57,6 +59,10 @@ export const INTEL_MODEL = "claude-opus-5";
 // QA may need two reads (the NOFO, then the allocation table it links or the seed page), so one more
 // round than GrantBot's chat default. Still tightly bounded, inside the route's maxDuration=300s.
 export const MAX_INTEL_FETCH_ROUNDS = 3;
+// With discovery on (INTEL_WEB_SEARCH_ENABLED), the pass may need to SEARCH for an unseeded allocation
+// table and then FETCH it, so it gets a couple more rounds. Only used on the flag-on path — flag off
+// stays on MAX_INTEL_FETCH_ROUNDS, byte-identical to today. Still bounded by INTEL_DEADLINE_MS.
+export const MAX_INTEL_DISCOVERY_ROUNDS = 5;
 export const INTEL_DEADLINE_MS = 240_000;
 // Total budget across BOTH phases, under the route's maxDuration=300s, with headroom left for the
 // final DB write. Phase 2's timeout is what REMAINS of this after phase 1, so a slow phase 1 can't
@@ -81,6 +87,10 @@ export interface IntelReview {
   summary: string;
   evidence: IntelEvidence[];
   fetched: FetchAuditRecord[];
+  // The web_search queries the pass actually issued (server-side web_search). Empty when discovery is off
+  // or the model never searched. Recorded so the eval can PROVE discovery was exercised (not just that a
+  // fetch of a handed URL succeeded) and to make search usage visible to staff.
+  searched: string[];
   unverified: boolean;
   model: string;
   reviewed_by: string | null;
@@ -168,7 +178,11 @@ const SUBMIT_TOOL = {
 
 // ── Context builder (pure) ───────────────────────────────────────────────────────────────────────
 
-export function intelContext(card: IntelCard, grant: Grant, client: Client): string {
+// `discovery` (INTEL_WEB_SEARCH_ENABLED) adds the formula-program note when the grant is a known formula
+// program — telling the pass that entity-type eligibility is not application eligibility here and to
+// search for the allocation table if it is not seeded. Default false keeps the context byte-identical to
+// today's fetch-only pass, so flag-off QA is unchanged.
+export function intelContext(card: IntelCard, grant: Grant, client: Client, discovery = false): string {
   const rc = card.reasoning_context ?? null;
   const cfdas = (grant.assistance_listings ?? []).map((a) => a?.number).filter(Boolean).join(", ") || "(none)";
   const sources = allocationSourcesFor(grant.assistance_listings ?? null);
@@ -180,6 +194,12 @@ export function intelContext(card: IntelCard, grant: Grant, client: Client): str
           .join("\n")
       : "  (no seeded allocation source for this program — verify against the NOFO source URL and any .gov links it carries)";
 
+  const formula = discovery ? formulaProgramTag(grant.assistance_listings ?? null) : { isFormula: false as const, cfda: null, program: null };
+  const formulaNote =
+    formula.isFormula && formula.program
+      ? `FORMULA / ALLOCATION PROGRAM — CFDA ${formula.cfda} (${formula.program.label}): here ENTITY-TYPE eligibility is NOT application eligibility. ${formula.program.allocationNote} Verify the client against this allocation reality (the allocation table / State Administering Agency structure), not just the entity-type list. If the authoritative allocation page is not among the sources above, SEARCH for it, then fetch and read it.\n\n`
+      : "";
+
   return (
     `GRANT\n` +
     `  Title: ${grant.title ?? "(untitled)"}\n` +
@@ -189,6 +209,7 @@ export function intelContext(card: IntelCard, grant: Grant, client: Client): str
     `  Eligible entity types (as extracted): ${(grant.eligible_entity_types ?? []).join("; ") || "(none stated)"}\n` +
     `  Geographic eligibility: ${grant.geographic_eligibility ?? "(none stated)"}\n` +
     `  NOFO source URL: ${grant.source_url ?? "(none)"}\n\n` +
+    formulaNote +
     `AUTHORITATIVE SOURCES TO CHECK (fetch these; follow .gov links to the specific table):\n${authoritative}\n\n` +
     `THE ENGINE'S READ (what you are verifying):\n` +
     `  fit_score: ${card.fit_score ?? "(none)"}\n` +
@@ -253,6 +274,8 @@ export function finalizeIntel(opts: {
   audit: FetchAuditRecord[];
   // The bodies of the pages actually fetched (ok:true), for verifying a cited quote occurs in one.
   fetchedBodies: string[];
+  // The web_search queries issued this pass (optional; defaults to none for the fetch-only / test paths).
+  searched?: string[];
   engineFitScore: number | null;
   model: string;
   reviewedBy: string | null;
@@ -263,6 +286,7 @@ export function finalizeIntel(opts: {
   const base = {
     engine_fit_score: engineFitScore,
     fetched: audit,
+    searched: opts.searched ?? [],
     model,
     reviewed_by: reviewedBy,
     reviewed_at: now,
@@ -379,24 +403,38 @@ function modelTurnFromResponse(res: Anthropic.Message): ModelTurn {
   };
 }
 
-// The real phase-1 callModel: Opus + the one fetch tool. Same tool_choice mapping as GrantBot.
-function realCallModel(): CallModel {
+// The real phase-1 callModel: Opus + the fetch tool, plus (when discovery is on) Anthropic's server-side
+// web_search. Same tool_choice mapping as GrantBot. `discovery=false` is byte-identical to the pre-search
+// pass: system is INTEL_SYSTEM_PROMPT unchanged and the tool set is exactly [WEB_FETCH_TOOL].
+// `searched` is a caller-held sink (same pattern as the fetch audit): each request records the web_search
+// queries it issued, and the NEXT request's tool set is rebuilt from searched.length — so once the pass's
+// search budget is spent, web_search is dropped (the per-PASS cap, not just per-request). The tool set +
+// system come from the pure, unit-tested intelPhase1Config: off → [WEB_FETCH_TOOL] + base system
+// (byte-identical); on → adds web_search (max_uses = remaining budget) + the addendum. The web_search entry
+// is cast because this SDK (0.39.0) predates server-side tools and ships no type for it; the wire protocol
+// carries it. tool_choice "none" also disables the server tool, so a pause_turn only arises under "auto".
+function realCallModel(discovery: boolean, searched: string[]): CallModel {
   const anthropic = getAnthropicClient();
   return async ({ messages, tools, remainingMs }) => {
+    const { tools: toolList, system } = intelPhase1Config(discovery, WEB_FETCH_TOOL, INTEL_SYSTEM_PROMPT, searched.length);
+    const toolset = toolList as unknown as Anthropic.Tool[];
     const timeout = Math.min(290_000, Math.max(remainingMs, 5_000));
     const res = await anthropic.messages.create(
       {
         model: INTEL_MODEL,
         max_tokens: INTEL_MAX_TOKENS,
         temperature: 0,
-        system: INTEL_SYSTEM_PROMPT,
+        system,
         messages: messages as Anthropic.MessageParam[],
-        ...(tools === "off" ? {} : { tools: [WEB_FETCH_TOOL] }),
+        ...(tools === "off" ? {} : { tools: toolset }),
         ...(tools === "auto" ? { tool_choice: { type: "auto" as const, disable_parallel_tool_use: true } } : {}),
         ...(tools === "none" ? { tool_choice: { type: "none" as const } } : {}),
       },
       { timeout, maxRetries: 1 },
     );
+    // Record the searches Anthropic ran inline this request, so the next round's budget + the eval's
+    // discovery assertion both read real usage.
+    for (const q of serverSearchQueries(res.content)) searched.push(q);
     return modelTurnFromResponse(res);
   };
 }
@@ -443,6 +481,9 @@ export interface RunIntelOptions {
   structure?: (analysisText: string, audit: FetchAuditRecord[], timeoutMs: number) => Promise<RawVerdict | null>;
   fetcher?: (url: string) => Promise<FetchResult>;
   deadlineMs?: number;
+  // Web-search discovery (INTEL_WEB_SEARCH_ENABLED). Defaults to the flag; overridable in tests so the
+  // flag-on/off context + tool set are asserted deterministically without touching process.env.
+  discovery?: boolean;
 }
 
 // Run the on-demand QA pass for one (card, grant, client). RETURNS an IntelReview; writes nothing.
@@ -457,7 +498,13 @@ export async function runIntelReview(
   const now = opts.now ?? (() => new Date().toISOString());
   const clock = () => Date.parse(now()) || 0;
   const startMs = clock();
-  const callModel = opts.callModel ?? realCallModel();
+  // ONE flag read, threaded to both the context (formula note) and the call (web_search tool + addendum)
+  // so they can't diverge. Off → today's fetch-only pass, byte-identical.
+  const discovery = opts.discovery ?? intelWebSearchEnabled();
+  // Caller-held sink for the web_search queries the pass issues (server-side). Drives both the per-pass
+  // search budget (realCallModel drops the tool once spent) and the stored `searched` list.
+  const searched: string[] = [];
+  const callModel = opts.callModel ?? realCallModel(discovery, searched);
   const structure = opts.structure ?? realStructure;
 
   // Phase 1: the bounded fetch loop. Audit records AND the fetched page bodies accumulate as fetches
@@ -481,13 +528,15 @@ export async function runIntelReview(
   };
 
   const loop = await runToolLoop({
-    messages: [{ role: "user", content: intelContext(card, grant, client) }],
+    messages: [{ role: "user", content: intelContext(card, grant, client, discovery) }],
     toolsEnabled: true,
     callModel,
     dispatch,
     now: clock,
     deadlineMs: opts.deadlineMs ?? INTEL_DEADLINE_MS,
-    maxToolRounds: MAX_INTEL_FETCH_ROUNDS,
+    // Discovery (search + fetch) legitimately needs a couple more rounds than fetch-only; off keeps the
+    // pre-search round budget.
+    maxToolRounds: discovery ? MAX_INTEL_DISCOVERY_ROUNDS : MAX_INTEL_FETCH_ROUNDS,
   });
 
   // Phase 2: structure the analysis into the typed verdict, then apply the grounding guard. It gets
@@ -498,6 +547,7 @@ export async function runIntelReview(
     parsed,
     audit,
     fetchedBodies,
+    searched,
     engineFitScore: card.fit_score,
     model: INTEL_MODEL,
     reviewedBy: opts.reviewedBy ?? null,

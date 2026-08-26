@@ -33,6 +33,18 @@ import type { Grant, Client } from "@/types/database";
 //      adverse verdict is STRUCTURALLY impossible without a successful fetch (finalizeIntel's grounding
 //      guard), so the verdict must NOT be demote/flag. Proves fail-safe end-to-end on the live path.
 //
+//   4. VOCA-discovery-DEMOTE (INTEL_WEB_SEARCH_ENABLED) — a nonprofit victim-services org scored a
+//      confident direct 3 on VOCA Victim Assistance (CFDA 16.575). VOCA is a FORMULA grant to the states;
+//      local/nonprofit providers are SUBGRANTEES through the state VOCA administering agency, not direct
+//      federal applicants. 16.575 is formula-TAGGED but has NO seeded allocation URL (allocation-sources
+//      only seeds 16.738), so the pass has no handed URL for the subgrant reality — it must web-SEARCH to
+//      discover the authoritative .gov source, then FETCH and ground it. This is the discovery deliverable:
+//      it exercises the path the seed map alone cannot reach. Runs with discovery:true; cases 1-3 run
+//      discovery:false so the seed-map + fail-safe guarantees are proven independent of the flag. It asserts
+//      web_search was ACTUALLY invoked (r.searched) — not merely that a fetch of the handed URL succeeded —
+//      so the flip gate can't false-green without exercising discovery. If case 4 comes back "unverified"
+//      or with 0 searches, that is the FINDING (discovery didn't fire / couldn't ground the subgrant page).
+//
 // Majority-of-runs assertions (expect.soft), because a single Opus run varies. The bar is the feature's
 // philosophy: adverse ONLY when web-grounded; never over-demote a clear direct recipient.
 
@@ -83,7 +95,7 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
           card(),
           grant(),
           client({ name: "Mississippi County", org_type: "local_government", location_state: "AR" }),
-          {},
+          { discovery: false },
         ),
       );
       const adverse = results.map((r) => r.verdict === "demote" || r.verdict === "flag");
@@ -107,7 +119,7 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
           card({ why_this_org: ["State administering agency; direct JAG recipient."], reasoning_context: { fit_score_derivation: "State is the direct recipient / State Administering Agency for JAG." } }),
           grant({ title: "Edward Byrne Memorial Justice Assistance Grant (JAG) Program — State", eligible_entity_types: ["states", "state administering agencies"] }),
           client({ name: "State of Arkansas", org_type: "state_government", location_state: "AR" }),
-          {},
+          { discovery: false },
         ),
       );
       console.log("[intel-eval] JAG-state verdicts:", results.map((r) => r.verdict).join(", "));
@@ -127,7 +139,7 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
           card(),
           grant({ assistance_listings: [{ number: "99.999", program_title: "Unseeded" }], source_url: "https://example.com/not-a-gov-page" }),
           client({ name: "Somewhere County", org_type: "local_government" }),
-          {},
+          { discovery: false },
         ),
       );
       console.log("[intel-eval] no-source verdicts:", results.map((r) => r.verdict).join(", "));
@@ -136,5 +148,56 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
       }
     },
     RUNS * 200_000,
+  );
+
+  it(
+    "4. VOCA × nonprofit, discovery ON → web-SEARCH reaches the unseeded subgrant reality and grounds it",
+    async () => {
+      // 16.575 is formula-tagged but UNSEEDED (no allocation-sources URL), so the pass must SEARCH to find
+      // the authoritative VOCA structure, then FETCH a .gov page and ground on it. The discovery proof is
+      // a GROUNDED fetch on a program with no handed URL — impossible fetch-only. Adverse is the expected
+      // read (subgrantee-through-the-state), but the hard guarantee is still the fail-safe: no adverse
+      // without a grounded fetch.
+      const results = await runN(RUNS, () =>
+        runIntelReview(
+          card({
+            why_this_org: ["Nonprofit victim-services provider; scored as a direct applicant."],
+            reasoning_context: { fit_score_derivation: "Nonprofit victim service organizations are eligible; scored as a direct recipient." },
+          }),
+          grant({
+            title: "Crime Victim Assistance (VOCA) — Victim Assistance Formula Grant",
+            funder: "Office for Victims of Crime",
+            assistance_listings: [{ number: "16.575", program_title: "Crime Victim Assistance" }],
+            eligible_entity_types: ["nonprofit organizations", "victim service organizations"],
+            // A real, stable OVC .gov landing page; the SUBGRANT/formula reality it must confirm lives on
+            // the program's authoritative pages, which the pass has to search for (nothing is seeded).
+            source_url: "https://ovc.ojp.gov/program/victims-of-crime-act-voca/overview",
+          }),
+          client({ name: "Hope Victim Services", org_type: "nonprofit", location_state: "AR" }),
+          { discovery: true },
+        ),
+      );
+      const searchedUsed = results.map((r) => r.searched.length > 0);
+      const grounded = results.map((r) => r.fetched.some((f) => f.ok));
+      const adverse = results.map((r) => r.verdict === "demote" || r.verdict === "flag");
+      const reasoned = results.map((r) => /subgrant|sub-grant|through the state|state (voca )?administering|pass.?through|not.*direct/i.test(r.summary));
+      console.log("[intel-eval] VOCA-discovery searches:", results.map((r) => r.searched.length).join(", "));
+      console.log("[intel-eval] VOCA-discovery verdicts:", results.map((r) => `${r.verdict}${r.qa_fit_score != null ? `→${r.qa_fit_score}` : ""}`).join(", "));
+      console.log("[intel-eval] VOCA-discovery summaries:", results.map((r) => r.summary));
+      // Fail-safe (HARD, every run): no adverse verdict without a grounded fetch.
+      for (const r of results) {
+        if (r.verdict === "demote" || r.verdict === "flag") {
+          expect.soft(r.fetched.some((f) => f.ok), "adverse VOCA verdict must rest on a grounded .gov fetch (fail-safe)").toBe(true);
+        }
+      }
+      // DISCOVERY PROOF (majority): the pass actually INVOKED web_search. Without this the case could pass
+      // on a fetch of the handed OVC URL alone and never exercise discovery — a false-green flip gate.
+      expect.soft(majority(searchedUsed), "discovery must actually invoke web_search on an UNSEEDED formula program — 0 searches means the gate never exercised discovery").toBe(true);
+      // ...and grounds a .gov source for a program with NO seeded URL.
+      expect.soft(majority(grounded), "web-search discovery should reach + ground a .gov source for an UNSEEDED formula program — 'unverified' here is the finding to inspect").toBe(true);
+      expect.soft(majority(adverse), "a nonprofit that can only subgrant VOCA through the state should be demoted/flagged").toBe(true);
+      expect.soft(majority(reasoned), "the summary should name the subgrant / state-administering reality").toBe(true);
+    },
+    RUNS * 240_000,
   );
 });

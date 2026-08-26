@@ -119,6 +119,44 @@ describe("runToolLoop", () => {
     expect(sink).toEqual(["https://grants.gov/x"]);
   });
 
+  it("resumes a server-tool pause_turn: pushes the paused assistant turn back (no tool_result), then answers", async () => {
+    // A server tool (web_search) ran inline and the turn PAUSED. The loop must re-issue to resume —
+    // appending ONLY the paused assistant turn (no user tool_result, since there is no client tool to
+    // answer), not break and return the empty partial. Without this the QA analysis is silently truncated.
+    const { callModel, calls } = recorder([
+      turn({ stopReason: "pause_turn", rawContent: [{ type: "server_tool_use", id: "s1", name: "web_search" }], text: "" }),
+      turn({ text: "final answer" }),
+    ]);
+    let dispatched = 0;
+    const dispatch: ToolDispatch = async () => {
+      dispatched += 1;
+      return { resultText: "F" };
+    };
+    const r = await runToolLoop({ messages: [{ role: "user", content: "q" }], toolsEnabled: true, callModel, dispatch, now: () => 0 });
+    expect(dispatched).toBe(0); // server tool executed inline; the loop has nothing to dispatch
+    expect(calls.map((c) => c.tools)).toEqual(["auto", "auto"]);
+    // resume appends ONLY the assistant turn (+1), unlike a client-tool round which appends +2.
+    expect(calls[1].messagesLen).toBe(calls[0].messagesLen + 1);
+    expect(r.text).toBe("final answer");
+  });
+
+  it("a repeated pause_turn is bounded by the round cap (never loops forever)", async () => {
+    // The model pauses on every auto round; the loop must stop at the cap and force a final 'none' call.
+    const callModel: CallModel = async ({ tools }) =>
+      tools === "none"
+        ? turn({ text: "gave up cleanly" })
+        : turn({ stopReason: "pause_turn", rawContent: [{ type: "server_tool_use" }] });
+    const r = await runToolLoop({
+      messages: [{ role: "user", content: "q" }],
+      toolsEnabled: true,
+      callModel,
+      dispatch: async () => ({ resultText: "" }),
+      now: () => 0,
+      maxToolRounds: 2,
+    });
+    expect(r.text).toBe("gave up cleanly");
+  });
+
   it("passes the full remaining budget on the first call", async () => {
     const { callModel, calls } = recorder([turn({ text: "hi" })]);
     await runToolLoop({

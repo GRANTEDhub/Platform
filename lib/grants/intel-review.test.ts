@@ -9,7 +9,8 @@ import {
   type IntelCard,
   type IntelEvidence,
 } from "./intel-review";
-import type { FetchAuditRecord } from "@/lib/grantbot/web-fetch";
+import { intelPhase1Config, serverSearchQueries, WEB_SEARCH_TOOL_NAME, SEARCH_SYSTEM_ADDENDUM, MAX_INTEL_SEARCHES } from "./intel-web-search";
+import { WEB_FETCH_TOOL, WEB_FETCH_TOOL_NAME, type FetchAuditRecord } from "@/lib/grantbot/web-fetch";
 import type { FetchResult } from "@/lib/grantbot/fetch";
 import type { CallModel, ModelTurn } from "@/lib/grantbot/tool-loop";
 import type { Grant, Client } from "@/types/database";
@@ -183,7 +184,7 @@ describe("finalizeIntel — the fail-safe + proposal-only shaping", () => {
       fetchedBodies: [BODY],
     });
     expect(Object.keys(r).sort()).toEqual(
-      ["engine_fit_score", "evidence", "fetched", "model", "qa_fit_score", "reviewed_at", "reviewed_by", "summary", "unverified", "verdict"].sort(),
+      ["engine_fit_score", "evidence", "fetched", "searched", "model", "qa_fit_score", "reviewed_at", "reviewed_by", "summary", "unverified", "verdict"].sort(),
     );
   });
 });
@@ -200,12 +201,114 @@ describe("intelContext", () => {
   } as unknown as Grant;
   const client = { name: "Mississippi County", org_type: "local_government", location_state: "AR" } as unknown as Client;
 
+  const baseCard = { fit_score: 3, proposed_role: "Prime", recommended_prime: null, why_this_org: [], before_you_approve: [], reasoning_context: null };
+
   it("hands the reviewer the seeded JAG allocation source for CFDA 16.738", () => {
-    const ctx = intelContext({ fit_score: 3, proposed_role: "Prime", recommended_prime: null, why_this_org: [], before_you_approve: [], reasoning_context: null }, grant, client);
+    const ctx = intelContext(baseCard, grant, client);
     expect(ctx).toMatch(/bja\.ojp\.gov/);
     expect(ctx).toMatch(/16\.738/);
     expect(ctx).toMatch(/ENGINE'S READ/);
     expect(ctx).toMatch(/Mississippi County/);
+  });
+
+  it("discovery OFF (default) → NO formula-program note (byte-identical to today's context)", () => {
+    const ctx = intelContext(baseCard, grant, client); // discovery defaults false
+    expect(ctx).not.toMatch(/FORMULA \/ ALLOCATION PROGRAM/);
+  });
+
+  it("discovery ON → adds the formula-program note for a known formula CFDA (16.738)", () => {
+    const ctx = intelContext(baseCard, grant, client, true);
+    expect(ctx).toMatch(/FORMULA \/ ALLOCATION PROGRAM — CFDA 16\.738/);
+    expect(ctx).toMatch(/ENTITY-TYPE eligibility is NOT application eligibility/);
+    expect(ctx).toMatch(/SEARCH for it/);
+  });
+
+  it("discovery ON but a NON-formula CFDA → no formula note (tag is conservative)", () => {
+    const competitive = { ...grant, assistance_listings: [{ number: "93.999" }] } as unknown as Grant;
+    const ctx = intelContext(baseCard, competitive, client, true);
+    expect(ctx).not.toMatch(/FORMULA \/ ALLOCATION PROGRAM/);
+  });
+});
+
+describe("intelPhase1Config — flag-gated tool set + system (the byte-identical-off guarantee)", () => {
+  const SYS = "BASE SYSTEM PROMPT";
+
+  it("discovery OFF → tools are EXACTLY [fetch] and system is unchanged", () => {
+    const cfg = intelPhase1Config(false, WEB_FETCH_TOOL, SYS);
+    expect(cfg.tools).toEqual([WEB_FETCH_TOOL]);
+    expect(cfg.tools.map((t) => (t as { name: string }).name)).toEqual([WEB_FETCH_TOOL_NAME]);
+    expect(cfg.system).toBe(SYS); // byte-identical: no addendum appended
+  });
+
+  it("discovery ON, budget unspent → adds web_search (max_uses = remaining budget) and the addendum", () => {
+    const cfg = intelPhase1Config(true, WEB_FETCH_TOOL, SYS); // searchesSpent defaults 0
+    const names = cfg.tools.map((t) => (t as { name: string }).name);
+    expect(names).toContain(WEB_FETCH_TOOL_NAME);
+    expect(names).toContain(WEB_SEARCH_TOOL_NAME);
+    expect(cfg.tools).toHaveLength(2);
+    const search = cfg.tools.find((t) => (t as { name: string }).name === WEB_SEARCH_TOOL_NAME) as { max_uses: number };
+    expect(search.max_uses).toBe(MAX_INTEL_SEARCHES);
+    expect(cfg.system).toBe(SYS + SEARCH_SYSTEM_ADDENDUM);
+  });
+
+  it("discovery ON, some budget spent → web_search max_uses is the REMAINING budget", () => {
+    const cfg = intelPhase1Config(true, WEB_FETCH_TOOL, SYS, MAX_INTEL_SEARCHES - 1);
+    const search = cfg.tools.find((t) => (t as { name: string }).name === WEB_SEARCH_TOOL_NAME) as { max_uses: number };
+    expect(search.max_uses).toBe(1);
+  });
+
+  it("discovery ON, budget SPENT → web_search is DROPPED (per-pass cap is real, not just per-request)", () => {
+    const cfg = intelPhase1Config(true, WEB_FETCH_TOOL, SYS, MAX_INTEL_SEARCHES);
+    expect(cfg.tools.map((t) => (t as { name: string }).name)).toEqual([WEB_FETCH_TOOL_NAME]);
+    expect(cfg.system).toBe(SYS + SEARCH_SYSTEM_ADDENDUM); // addendum stays (system is stable across rounds)
+  });
+});
+
+describe("serverSearchQueries — reads real web_search usage from response content", () => {
+  it("extracts the query from each web_search server_tool_use block", () => {
+    const content = [
+      { type: "text", text: "let me search" },
+      { type: "server_tool_use", id: "s1", name: "web_search", input: { query: "VOCA state administering agency Arkansas" } },
+      { type: "web_search_tool_result", tool_use_id: "s1", content: [] },
+      { type: "server_tool_use", id: "s2", name: "web_search", input: { query: "VOCA subgrantee formula" } },
+    ];
+    expect(serverSearchQueries(content)).toEqual(["VOCA state administering agency Arkansas", "VOCA subgrantee formula"]);
+  });
+
+  it("ignores non-search blocks and non-array content", () => {
+    expect(serverSearchQueries([{ type: "text", text: "x" }, { type: "tool_use", name: "fetch_grant_source", input: { url: "u" } }])).toEqual([]);
+    expect(serverSearchQueries(null)).toEqual([]);
+    expect(serverSearchQueries("nope")).toEqual([]);
+  });
+});
+
+describe("runIntelReview — threads the discovery flag into the reviewer context", () => {
+  const card: IntelCard = { fit_score: 3, proposed_role: "Prime", recommended_prime: null, why_this_org: [], before_you_approve: [], reasoning_context: null };
+  const grant = { title: "JAG", assistance_listings: [{ number: "16.738" }], source_url: "https://simpler.grants.gov/x" } as unknown as Grant;
+  const client = { name: "Mississippi County", org_type: "local_government" } as unknown as Client;
+  const now = () => "2026-08-26T00:00:00.000Z";
+
+  // A callModel that captures the first user message (the reviewer context) and answers immediately.
+  const capture = (): { calls: string[]; model: CallModel } => {
+    const calls: string[] = [];
+    const model: CallModel = async ({ messages }): Promise<ModelTurn> => {
+      const first = messages[0] as { content?: unknown };
+      calls.push(typeof first?.content === "string" ? first.content : JSON.stringify(first?.content));
+      return { text: "no change", toolUses: [], stopReason: "end_turn", usage: null, rawContent: [] };
+    };
+    return { calls, model };
+  };
+
+  it("discovery:true → the formula note reaches the model context", async () => {
+    const cap = capture();
+    await runIntelReview(card, grant, client, { now, discovery: true, callModel: cap.model, structure: async () => null });
+    expect(cap.calls[0]).toMatch(/FORMULA \/ ALLOCATION PROGRAM/);
+  });
+
+  it("discovery:false → no formula note in the model context (byte-identical off)", async () => {
+    const cap = capture();
+    await runIntelReview(card, grant, client, { now, discovery: false, callModel: cap.model, structure: async () => null });
+    expect(cap.calls[0]).not.toMatch(/FORMULA \/ ALLOCATION PROGRAM/);
   });
 });
 
