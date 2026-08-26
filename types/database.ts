@@ -645,6 +645,11 @@ export interface ReviewCard {
   overridden_by: string | null;
   overridden_at: string | null;
   override_reason: string | null;
+  // Account-managed SME gate (migration 0059): set when staff release a matched card into
+  // the client's Grant Report. Null until released. Gates client visibility, and the
+  // Ledger's per-card re-match declines to re-score a released card (a client may be
+  // looking at it).
+  sme_released_at: string | null;
   // Send tracking. Populated by the (not-yet-built) send step.
   sent_at: string | null;
   sent_to: string | null;

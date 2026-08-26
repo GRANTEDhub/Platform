@@ -57,6 +57,9 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
     sent_at: c.sent_at,
     proposed_role: c.proposed_role,
     recommended_prime: c.recommended_prime,
+    // Gates the per-card re-match control (canRematch below): a released card is not
+    // re-scored from here.
+    sme_released_at: c.sme_released_at,
   }));
   // In-flight = not yet terminal. Move 2's matching queue adds 'queued' (waiting
   // for the drain) and 'matching' (drain is scoring it) alongside the original
@@ -321,6 +324,11 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
             <CardContent>
               <MatchOutcomes
                 cards={outcomes}
+                // Admin calibration only (same gate as Re-match / Add-to-client), and never
+                // while a roster episode is live (processing / queued / matching): a per-card
+                // re-score would race runMatching's resume and, during a re-shred, leave a card
+                // scored against the old profile. The route enforces the same status check.
+                canRematch={canCalibrate && !processing}
                 emptyText={
                   processing
                     ? "Scoring in progress…"
