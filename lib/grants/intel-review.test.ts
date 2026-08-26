@@ -4,6 +4,7 @@ import {
   quoteGroundedInBodies,
   intelContext,
   runIntelReview,
+  isSafeHttpUrl,
   INTEL_MODEL,
   type IntelCard,
   type IntelEvidence,
@@ -29,6 +30,17 @@ const failAudit = (url: string, reason = "http_error"): FetchAuditRecord => ({ u
 const ev = (source_url: string, quote: string): IntelEvidence => ({ claim: "cannot prime", source_url, quote });
 
 const BASE = { engineFitScore: 3, model: INTEL_MODEL, reviewedBy: "staff-1", now: "2026-08-26T00:00:00.000Z" };
+
+describe("isSafeHttpUrl", () => {
+  it("accepts http(s), rejects javascript:/data:/garbage", () => {
+    expect(isSafeHttpUrl("https://bja.ojp.gov/x")).toBe(true);
+    expect(isSafeHttpUrl("http://example.gov")).toBe(true);
+    expect(isSafeHttpUrl("javascript:alert(1)")).toBe(false);
+    expect(isSafeHttpUrl("data:text/html,<script>")).toBe(false);
+    expect(isSafeHttpUrl("not a url")).toBe(false);
+    expect(isSafeHttpUrl("")).toBe(false);
+  });
+});
 
 describe("quoteGroundedInBodies", () => {
   it("true when a long-enough quote occurs in a fetched body (case/whitespace-insensitive)", () => {
@@ -132,6 +144,35 @@ describe("finalizeIntel — the fail-safe + proposal-only shaping", () => {
     });
     expect(r.verdict).toBe("demote");
     expect(r.qa_fit_score).toBe(2); // engine 3 → clamped/stepped to 2
+  });
+
+  it("blanks an unsafe (javascript:) evidence source_url so it can't render as a link (XSS guard)", () => {
+    const r = finalizeIntel({
+      ...BASE,
+      parsed: {
+        verdict: "demote",
+        qa_fit_score: 1,
+        summary: "x",
+        evidence: [{ claim: "c", quote: GOOD_QUOTE, source_url: "javascript:alert(document.cookie)" }],
+      },
+      audit: [okAudit("https://bja.ojp.gov/x")],
+      fetchedBodies: [BODY],
+    });
+    expect(r.verdict).toBe("demote"); // still grounded by the quote
+    expect(r.evidence[0].source_url).toBe(""); // the javascript: url was stripped
+    expect(r.evidence[0].quote).toBe(GOOD_QUOTE); // claim + quote preserved
+  });
+
+  it("a demote of an engine-1 card becomes a flag (can't render 'engine 1 → QA 1')", () => {
+    const r = finalizeIntel({
+      ...BASE,
+      engineFitScore: 1,
+      parsed: { verdict: "demote", qa_fit_score: 1, summary: "weaker than a 1", evidence: [ev("https://bja.ojp.gov/x", GOOD_QUOTE)] },
+      audit: [okAudit("https://bja.ojp.gov/x")],
+      fetchedBodies: [BODY],
+    });
+    expect(r.verdict).toBe("flag");
+    expect(r.qa_fit_score).toBeNull();
   });
 
   it("the payload carries no field that could mutate the card score (proposal-only)", () => {
