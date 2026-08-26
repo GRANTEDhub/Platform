@@ -40,8 +40,10 @@ import type { Grant, Client } from "@/types/database";
 //      only seeds 16.738), so the pass has no handed URL for the subgrant reality — it must web-SEARCH to
 //      discover the authoritative .gov source, then FETCH and ground it. This is the discovery deliverable:
 //      it exercises the path the seed map alone cannot reach. Runs with discovery:true; cases 1-3 run
-//      discovery:false so the seed-map + fail-safe guarantees are proven independent of the flag. If case 4
-//      comes back "unverified", that is the FINDING (search+fetch couldn't reach/ground the subgrant page).
+//      discovery:false so the seed-map + fail-safe guarantees are proven independent of the flag. It asserts
+//      web_search was ACTUALLY invoked (r.searched) — not merely that a fetch of the handed URL succeeded —
+//      so the flip gate can't false-green without exercising discovery. If case 4 comes back "unverified"
+//      or with 0 searches, that is the FINDING (discovery didn't fire / couldn't ground the subgrant page).
 //
 // Majority-of-runs assertions (expect.soft), because a single Opus run varies. The bar is the feature's
 // philosophy: adverse ONLY when web-grounded; never over-demote a clear direct recipient.
@@ -175,9 +177,11 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
           { discovery: true },
         ),
       );
+      const searchedUsed = results.map((r) => r.searched.length > 0);
       const grounded = results.map((r) => r.fetched.some((f) => f.ok));
       const adverse = results.map((r) => r.verdict === "demote" || r.verdict === "flag");
       const reasoned = results.map((r) => /subgrant|sub-grant|through the state|state (voca )?administering|pass.?through|not.*direct/i.test(r.summary));
+      console.log("[intel-eval] VOCA-discovery searches:", results.map((r) => r.searched.length).join(", "));
       console.log("[intel-eval] VOCA-discovery verdicts:", results.map((r) => `${r.verdict}${r.qa_fit_score != null ? `→${r.qa_fit_score}` : ""}`).join(", "));
       console.log("[intel-eval] VOCA-discovery summaries:", results.map((r) => r.summary));
       // Fail-safe (HARD, every run): no adverse verdict without a grounded fetch.
@@ -186,7 +190,10 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
           expect.soft(r.fetched.some((f) => f.ok), "adverse VOCA verdict must rest on a grounded .gov fetch (fail-safe)").toBe(true);
         }
       }
-      // Discovery proof (majority): reaches + grounds a .gov source for a program with NO seeded URL.
+      // DISCOVERY PROOF (majority): the pass actually INVOKED web_search. Without this the case could pass
+      // on a fetch of the handed OVC URL alone and never exercise discovery — a false-green flip gate.
+      expect.soft(majority(searchedUsed), "discovery must actually invoke web_search on an UNSEEDED formula program — 0 searches means the gate never exercised discovery").toBe(true);
+      // ...and grounds a .gov source for a program with NO seeded URL.
       expect.soft(majority(grounded), "web-search discovery should reach + ground a .gov source for an UNSEEDED formula program — 'unverified' here is the finding to inspect").toBe(true);
       expect.soft(majority(adverse), "a nonprofit that can only subgrant VOCA through the state should be demoted/flagged").toBe(true);
       expect.soft(majority(reasoned), "the summary should name the subgrant / state-administering reality").toBe(true);

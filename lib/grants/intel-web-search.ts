@@ -40,36 +40,63 @@ export function intelWebSearchEnabled(): boolean {
 // ships to prod until the flag is flipped, and the flag is only flipped on a green eval.
 export const WEB_SEARCH_TOOL_TYPE = "web_search_20250305";
 
-// Bound the number of searches per QA pass (the discovery analogue of MAX_INTEL_FETCH_ROUNDS bounding
-// fetches). A verification pass needs a search or two to find the right table, not a crawl.
+// Bound the number of searches per QA PASS — not per request. max_uses caps a SINGLE Messages API
+// request, but the QA pass makes several (one per tool round + any pause_turn resume), each of which would
+// otherwise carry its own fresh max_uses. So the real per-pass cap is enforced in code: web_search is
+// dropped from the tool set once this many searches have been OBSERVED across the pass (see the
+// searchesSpent argument to intelPhase1Config + serverSearchQueries), and each request's max_uses is set
+// to the budget that REMAINS, so a single round can never exceed the pass total either.
 export const MAX_INTEL_SEARCHES = 4;
 
 export const WEB_SEARCH_TOOL_NAME = "web_search";
 
 // The server-tool definition, as a server-side constant (never from the request body — same rule as
-// WEB_FETCH_TOOL and turnBlocks). No `run` function: server tools execute on Anthropic's servers.
-export const WEB_SEARCH_TOOL = {
-  type: WEB_SEARCH_TOOL_TYPE,
-  name: WEB_SEARCH_TOOL_NAME,
-  max_uses: MAX_INTEL_SEARCHES,
-} as const;
+// WEB_FETCH_TOOL and turnBlocks). No `run` function: server tools execute on Anthropic's servers. max_uses
+// is the budget LEFT for this pass, so it also caps a single request to the pass remainder.
+export function webSearchTool(maxUses: number) {
+  return { type: WEB_SEARCH_TOOL_TYPE, name: WEB_SEARCH_TOOL_NAME, max_uses: maxUses } as const;
+}
 
 // The phase-1 tool set + system prompt for a QA call, assembled from the base fetch tool + base system.
 // PURE and exported so the flag-gated shape is unit-tested structurally, not just by comment:
 //   discovery=false → tools are EXACTLY [fetchTool] and system is baseSystem unchanged — byte-identical
 //     to the pre-search pass (this is the revert guarantee, proven by a test, not asserted in prose);
-//   discovery=true  → the fetch tool PLUS Anthropic's server-side web_search, and the search addendum.
-// The base fetch tool + base system are passed in (rather than imported) to avoid a cycle with
-// intel-review.ts, which owns them.
+//   discovery=true, searchesSpent < MAX_INTEL_SEARCHES → the fetch tool PLUS web_search (max_uses = the
+//     REMAINING budget), and the search addendum;
+//   discovery=true, budget spent → web_search DROPPED (tools are [fetchTool]) so the per-pass cap is real,
+//     while the system keeps the addendum (stable across rounds; the model simply has no search tool left).
+// searchesSpent is the count OBSERVED so far this pass (from serverSearchQueries). The base fetch tool +
+// base system are passed in (rather than imported) to avoid a cycle with intel-review.ts, which owns them.
 export function intelPhase1Config<T>(
   discovery: boolean,
   fetchTool: T,
   baseSystem: string,
-): { tools: Array<T | typeof WEB_SEARCH_TOOL>; system: string } {
+  searchesSpent = 0,
+): { tools: Array<T | ReturnType<typeof webSearchTool>>; system: string } {
+  const budgetLeft = MAX_INTEL_SEARCHES - searchesSpent;
+  const includeSearch = discovery && budgetLeft > 0;
   return {
-    tools: discovery ? [fetchTool, WEB_SEARCH_TOOL] : [fetchTool],
+    tools: includeSearch ? [fetchTool, webSearchTool(budgetLeft)] : [fetchTool],
     system: discovery ? baseSystem + SEARCH_SYSTEM_ADDENDUM : baseSystem,
   };
+}
+
+// Extract the web_search queries the model actually issued from an Anthropic response's content blocks —
+// the server_tool_use blocks Anthropic adds when it runs web_search inline. PURE (no SDK types needed;
+// this SDK doesn't ship them) and exported so both the per-pass budget enforcement and the eval's
+// "discovery was actually exercised" assertion read the SAME source of truth. Anything that is not a
+// web_search server_tool_use block is ignored.
+export function serverSearchQueries(content: unknown): string[] {
+  if (!Array.isArray(content)) return [];
+  const out: string[] = [];
+  for (const b of content) {
+    if (!b || typeof b !== "object") continue;
+    const blk = b as { type?: unknown; name?: unknown; input?: unknown };
+    if (blk.type !== "server_tool_use" || blk.name !== WEB_SEARCH_TOOL_NAME) continue;
+    const q = (blk.input as { query?: unknown } | null)?.query;
+    out.push(typeof q === "string" ? q : "");
+  }
+  return out;
 }
 
 // The flag-gated system-prompt addendum. Appended to INTEL_SYSTEM_PROMPT only when the flag is on, so the

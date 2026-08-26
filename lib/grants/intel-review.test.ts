@@ -9,7 +9,7 @@ import {
   type IntelCard,
   type IntelEvidence,
 } from "./intel-review";
-import { intelPhase1Config, WEB_SEARCH_TOOL_NAME, SEARCH_SYSTEM_ADDENDUM } from "./intel-web-search";
+import { intelPhase1Config, serverSearchQueries, WEB_SEARCH_TOOL_NAME, SEARCH_SYSTEM_ADDENDUM, MAX_INTEL_SEARCHES } from "./intel-web-search";
 import { WEB_FETCH_TOOL, WEB_FETCH_TOOL_NAME, type FetchAuditRecord } from "@/lib/grantbot/web-fetch";
 import type { FetchResult } from "@/lib/grantbot/fetch";
 import type { CallModel, ModelTurn } from "@/lib/grantbot/tool-loop";
@@ -184,7 +184,7 @@ describe("finalizeIntel — the fail-safe + proposal-only shaping", () => {
       fetchedBodies: [BODY],
     });
     expect(Object.keys(r).sort()).toEqual(
-      ["engine_fit_score", "evidence", "fetched", "model", "qa_fit_score", "reviewed_at", "reviewed_by", "summary", "unverified", "verdict"].sort(),
+      ["engine_fit_score", "evidence", "fetched", "searched", "model", "qa_fit_score", "reviewed_at", "reviewed_by", "summary", "unverified", "verdict"].sort(),
     );
   });
 });
@@ -240,13 +240,45 @@ describe("intelPhase1Config — flag-gated tool set + system (the byte-identical
     expect(cfg.system).toBe(SYS); // byte-identical: no addendum appended
   });
 
-  it("discovery ON → adds web_search and appends the search addendum", () => {
-    const cfg = intelPhase1Config(true, WEB_FETCH_TOOL, SYS);
+  it("discovery ON, budget unspent → adds web_search (max_uses = remaining budget) and the addendum", () => {
+    const cfg = intelPhase1Config(true, WEB_FETCH_TOOL, SYS); // searchesSpent defaults 0
     const names = cfg.tools.map((t) => (t as { name: string }).name);
     expect(names).toContain(WEB_FETCH_TOOL_NAME);
     expect(names).toContain(WEB_SEARCH_TOOL_NAME);
     expect(cfg.tools).toHaveLength(2);
+    const search = cfg.tools.find((t) => (t as { name: string }).name === WEB_SEARCH_TOOL_NAME) as { max_uses: number };
+    expect(search.max_uses).toBe(MAX_INTEL_SEARCHES);
     expect(cfg.system).toBe(SYS + SEARCH_SYSTEM_ADDENDUM);
+  });
+
+  it("discovery ON, some budget spent → web_search max_uses is the REMAINING budget", () => {
+    const cfg = intelPhase1Config(true, WEB_FETCH_TOOL, SYS, MAX_INTEL_SEARCHES - 1);
+    const search = cfg.tools.find((t) => (t as { name: string }).name === WEB_SEARCH_TOOL_NAME) as { max_uses: number };
+    expect(search.max_uses).toBe(1);
+  });
+
+  it("discovery ON, budget SPENT → web_search is DROPPED (per-pass cap is real, not just per-request)", () => {
+    const cfg = intelPhase1Config(true, WEB_FETCH_TOOL, SYS, MAX_INTEL_SEARCHES);
+    expect(cfg.tools.map((t) => (t as { name: string }).name)).toEqual([WEB_FETCH_TOOL_NAME]);
+    expect(cfg.system).toBe(SYS + SEARCH_SYSTEM_ADDENDUM); // addendum stays (system is stable across rounds)
+  });
+});
+
+describe("serverSearchQueries — reads real web_search usage from response content", () => {
+  it("extracts the query from each web_search server_tool_use block", () => {
+    const content = [
+      { type: "text", text: "let me search" },
+      { type: "server_tool_use", id: "s1", name: "web_search", input: { query: "VOCA state administering agency Arkansas" } },
+      { type: "web_search_tool_result", tool_use_id: "s1", content: [] },
+      { type: "server_tool_use", id: "s2", name: "web_search", input: { query: "VOCA subgrantee formula" } },
+    ];
+    expect(serverSearchQueries(content)).toEqual(["VOCA state administering agency Arkansas", "VOCA subgrantee formula"]);
+  });
+
+  it("ignores non-search blocks and non-array content", () => {
+    expect(serverSearchQueries([{ type: "text", text: "x" }, { type: "tool_use", name: "fetch_grant_source", input: { url: "u" } }])).toEqual([]);
+    expect(serverSearchQueries(null)).toEqual([]);
+    expect(serverSearchQueries("nope")).toEqual([]);
   });
 });
 

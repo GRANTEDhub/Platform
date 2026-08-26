@@ -47,7 +47,7 @@ import { fetchGrantSource, type FetchResult } from "@/lib/grantbot/fetch";
 import { clientContextForJudge } from "@/lib/grants/subseat-routing";
 import { allocationSourcesFor } from "@/lib/grants/allocation-sources";
 import { formulaProgramTag } from "@/lib/grants/formula-programs";
-import { intelWebSearchEnabled, intelPhase1Config } from "@/lib/grants/intel-web-search";
+import { intelWebSearchEnabled, intelPhase1Config, serverSearchQueries } from "@/lib/grants/intel-web-search";
 import type { Grant, Client } from "@/types/database";
 
 // Opus, exclusively, for this path — a low-volume verification pass where quality matters and the
@@ -87,6 +87,10 @@ export interface IntelReview {
   summary: string;
   evidence: IntelEvidence[];
   fetched: FetchAuditRecord[];
+  // The web_search queries the pass actually issued (server-side web_search). Empty when discovery is off
+  // or the model never searched. Recorded so the eval can PROVE discovery was exercised (not just that a
+  // fetch of a handed URL succeeded) and to make search usage visible to staff.
+  searched: string[];
   unverified: boolean;
   model: string;
   reviewed_by: string | null;
@@ -270,6 +274,8 @@ export function finalizeIntel(opts: {
   audit: FetchAuditRecord[];
   // The bodies of the pages actually fetched (ok:true), for verifying a cited quote occurs in one.
   fetchedBodies: string[];
+  // The web_search queries issued this pass (optional; defaults to none for the fetch-only / test paths).
+  searched?: string[];
   engineFitScore: number | null;
   model: string;
   reviewedBy: string | null;
@@ -280,6 +286,7 @@ export function finalizeIntel(opts: {
   const base = {
     engine_fit_score: engineFitScore,
     fetched: audit,
+    searched: opts.searched ?? [],
     model,
     reviewed_by: reviewedBy,
     reviewed_at: now,
@@ -399,16 +406,18 @@ function modelTurnFromResponse(res: Anthropic.Message): ModelTurn {
 // The real phase-1 callModel: Opus + the fetch tool, plus (when discovery is on) Anthropic's server-side
 // web_search. Same tool_choice mapping as GrantBot. `discovery=false` is byte-identical to the pre-search
 // pass: system is INTEL_SYSTEM_PROMPT unchanged and the tool set is exactly [WEB_FETCH_TOOL].
-function realCallModel(discovery: boolean): CallModel {
+// `searched` is a caller-held sink (same pattern as the fetch audit): each request records the web_search
+// queries it issued, and the NEXT request's tool set is rebuilt from searched.length — so once the pass's
+// search budget is spent, web_search is dropped (the per-PASS cap, not just per-request). The tool set +
+// system come from the pure, unit-tested intelPhase1Config: off → [WEB_FETCH_TOOL] + base system
+// (byte-identical); on → adds web_search (max_uses = remaining budget) + the addendum. The web_search entry
+// is cast because this SDK (0.39.0) predates server-side tools and ships no type for it; the wire protocol
+// carries it. tool_choice "none" also disables the server tool, so a pause_turn only arises under "auto".
+function realCallModel(discovery: boolean, searched: string[]): CallModel {
   const anthropic = getAnthropicClient();
-  // Server-assembled tool set + system (never from a request body — same rule as WEB_FETCH_TOOL), via the
-  // pure, unit-tested intelPhase1Config: off → [WEB_FETCH_TOOL] + base system (byte-identical); on → adds
-  // web_search + the addendum. The web_search entry is cast because this SDK (0.39.0) predates server-side
-  // tools and ships no type for it; the wire protocol carries it (see intel-web-search.ts). tool_choice
-  // "none" also disables the server tool, so a pause_turn can only arise under "auto" (handled by the loop).
-  const { tools: toolList, system } = intelPhase1Config(discovery, WEB_FETCH_TOOL, INTEL_SYSTEM_PROMPT);
-  const toolset = toolList as unknown as Anthropic.Tool[];
   return async ({ messages, tools, remainingMs }) => {
+    const { tools: toolList, system } = intelPhase1Config(discovery, WEB_FETCH_TOOL, INTEL_SYSTEM_PROMPT, searched.length);
+    const toolset = toolList as unknown as Anthropic.Tool[];
     const timeout = Math.min(290_000, Math.max(remainingMs, 5_000));
     const res = await anthropic.messages.create(
       {
@@ -423,6 +432,9 @@ function realCallModel(discovery: boolean): CallModel {
       },
       { timeout, maxRetries: 1 },
     );
+    // Record the searches Anthropic ran inline this request, so the next round's budget + the eval's
+    // discovery assertion both read real usage.
+    for (const q of serverSearchQueries(res.content)) searched.push(q);
     return modelTurnFromResponse(res);
   };
 }
@@ -489,7 +501,10 @@ export async function runIntelReview(
   // ONE flag read, threaded to both the context (formula note) and the call (web_search tool + addendum)
   // so they can't diverge. Off → today's fetch-only pass, byte-identical.
   const discovery = opts.discovery ?? intelWebSearchEnabled();
-  const callModel = opts.callModel ?? realCallModel(discovery);
+  // Caller-held sink for the web_search queries the pass issues (server-side). Drives both the per-pass
+  // search budget (realCallModel drops the tool once spent) and the stored `searched` list.
+  const searched: string[] = [];
+  const callModel = opts.callModel ?? realCallModel(discovery, searched);
   const structure = opts.structure ?? realStructure;
 
   // Phase 1: the bounded fetch loop. Audit records AND the fetched page bodies accumulate as fetches
@@ -532,6 +547,7 @@ export async function runIntelReview(
     parsed,
     audit,
     fetchedBodies,
+    searched,
     engineFitScore: card.fit_score,
     model: INTEL_MODEL,
     reviewedBy: opts.reviewedBy ?? null,
