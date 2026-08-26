@@ -8,6 +8,7 @@ import { ConceptCard } from "@/components/report/concept-card";
 import { ScoreFeedback } from "@/components/report/score-feedback";
 import { MarkUnreadButton } from "@/components/report/mark-unread-button";
 import { ScoreFactorsBackfill } from "@/components/report/score-factors-backfill";
+import { CardRematchButton } from "@/components/grants/card-rematch-button";
 import { GrantReviewConsole, type ReviewKeyDetail, type ReviewMeta } from "@/components/report/grant-review-console";
 import { AlertSend } from "@/app/(app)/review/[id]/alert-send";
 import { getConceptProposal } from "@/lib/concept/store";
@@ -43,7 +44,7 @@ type GrantEmbed = Pick<
   | "allowable_uses"
   | "award_range_min" | "award_range_max" | "award_range_is_estimate"
   | "eligible_entity_types" | "geographic_eligibility" | "ineligible_entities" | "hard_disqualifiers"
-  | "skip_reason" | "grant_status"
+  | "skip_reason" | "grant_status" | "status"
 >;
 
 type CardRow = {
@@ -98,7 +99,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   const { data } = await supabase
     .from("review_cards")
     .select(
-      "id, fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, reasoning_context, decision, sme_released_at, sent_at, sent_to, grant_id, grants(id, source_url, title, funder, fon, assistance_listings, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status)",
+      "id, fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, reasoning_context, decision, sme_released_at, sent_at, sent_to, grant_id, grants(id, source_url, title, funder, fon, assistance_listings, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status, status)",
     )
     .eq("id", params.cardId)
     .eq("client_id", params.id)
@@ -118,6 +119,11 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
     >();
 
   const isLead = isUnconvertedLead(client?.pipeline_stage);
+
+  // A roster episode is live on this grant (a re-shred or a whole-roster re-match). A per-card
+  // re-match during it would race runMatching's resume, so the button hides (the route also
+  // rejects it). Mirrors the Ledger's `processing` gate on the same three statuses.
+  const grantProcessing = g.status === "processing" || g.status === "queued" || g.status === "matching";
 
   const [{ count: queueCount }, attempts, feedbackRows] = await Promise.all([
     // What is left after this one. Same predicate as the dashboard's pinned review row,
@@ -314,6 +320,15 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         // rather than admins only: the reviewer looking at the empty panel is the person
         // who needs the breakdown, and the route writes nothing but the six ratings.
         scoreFactors={factors.unscored ? <ScoreFactorsBackfill cardId={params.cardId} /> : null}
+        // Staff-only single-card re-match, in the ScoreCard footer. Admin-gated (a re-score can
+        // drop the card), and only on a still-pending, not-yet-released card that isn't mid-
+        // episode: a decided card is the human's call, a released one a client may be viewing.
+        // The portal never passes this prop, so it can only render for staff.
+        rematch={
+          isAdmin && card.decision === "pending" && !card.sme_released_at && !grantProcessing ? (
+            <CardRematchButton cardId={params.cardId} tone="dark" backHref={backHref} />
+          ) : null
+        }
         fitScore={card.fit_score}
         verdict={FIT_BAND[card.fit_score].label}
         // What the score MEANS for the next step, derived from the lit factor rather than
