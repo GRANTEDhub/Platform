@@ -79,19 +79,48 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
   if (!client) return NextResponse.json({ error: "Client not found" }, { status: 404 });
   if (!grant) return NextResponse.json({ error: "Grant not found" }, { status: 404 });
 
+  // Refuse while a roster scoring episode is live (processing / queued / matching). A per-card
+  // re-score would RACE runMatching's cursor-free resume: it writes a match_attempts row at
+  // `now`, which is at/after the episode marker, so scoredClientIdsSince then counts this client
+  // as already-scored-this-episode and the roster run SKIPS it -- leaving a card scored against
+  // the OLD profile during a re-shred that is rebuilding it. It is also redundant while the whole
+  // roster is being scored anyway. The UI hides the control in these states; this is the backstop.
+  if (grant.status === "processing" || grant.status === "queued" || grant.status === "matching") {
+    return NextResponse.json(
+      { error: "This grant is being scored right now — re-match a single card once it finishes." },
+      { status: 409 },
+    );
+  }
+
   const storedFitScore = card.fit_score;
+
+  // The latest attempt for this pair BEFORE we score, so we can tell OUR attempt row from a
+  // stale one. recordAttempt SWALLOWS an insert failure, so a post-scoring "latest attempt"
+  // could otherwise be an older run's -- and we would report its (prefiltered / error / removal)
+  // reason as if it were this run's. We trust the post-scoring attempt only if it is strictly
+  // newer than this. (Both timestamps are DB-side match_attempts.created_at, same clock; and the
+  // status gate above rules out a concurrent roster run writing an attempt for this pair.)
+  const { data: priorAttempt } = await db
+    .from("match_attempts")
+    .select("created_at")
+    .eq("grant_id", card.grant_id)
+    .eq("client_id", card.client_id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ created_at: string }>();
+  const priorAt = priorAttempt?.created_at ?? null;
 
   // The re-score + safe persist. scoreGrantClientPair swallows its own errors (it records an
   // 'error' attempt rather than throwing), so this await resolves even on a scoring failure;
   // the outcome is read back from the attempt row below, not from a thrown exception.
   await scoreGrantClientPair(grant, client, db);
 
-  // Read the authoritative outcome scoreGrantClientPair just wrote, then re-read the card to
-  // see whether it survived. classifyRematch turns the two into one verdict the button renders.
+  // Read the outcome scoreGrantClientPair just wrote, then re-read the card to see whether it
+  // survived. classifyRematch turns the two into one verdict the button renders.
   const [{ data: attempt }, { data: after }] = await Promise.all([
     db
       .from("match_attempts")
-      .select("outcome, fit_score, suppress_reason, disqualify_reason, prefilter_reason, error_detail")
+      .select("outcome, fit_score, suppress_reason, disqualify_reason, prefilter_reason, error_detail, created_at")
       .eq("grant_id", card.grant_id)
       .eq("client_id", card.client_id)
       .order("created_at", { ascending: false })
@@ -103,20 +132,26 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
         disqualify_reason: string | null;
         prefilter_reason: string | null;
         error_detail: string | null;
+        created_at: string;
       }>(),
     db.from("review_cards").select("fit_score").eq("id", params.id).maybeSingle<{ fit_score: number | null }>(),
   ]);
 
+  // Only THIS request's attempt counts. If the insert was swallowed, `attempt` is a stale row
+  // (not strictly newer) -> treat it as absent, and classifyRematch falls back to the card state
+  // alone (refreshed vs dropped from the re-read), never reporting a previous run's reason.
+  const freshAttempt = attempt && (!priorAt || attempt.created_at > priorAt) ? attempt : null;
+
   const outcome = classifyRematch({
     storedFitScore,
     cardStillExists: !!after,
-    attemptOutcome: attempt?.outcome ?? null,
+    attemptOutcome: freshAttempt?.outcome ?? null,
     // Prefer the surviving card's score; fall back to the attempt's when the card is gone.
-    freshFitScore: after?.fit_score ?? attempt?.fit_score ?? null,
-    suppressReason: attempt?.suppress_reason ?? null,
-    disqualifyReason: attempt?.disqualify_reason ?? null,
-    prefilterReason: attempt?.prefilter_reason ?? null,
-    errorDetail: attempt?.error_detail ?? null,
+    freshFitScore: after?.fit_score ?? freshAttempt?.fit_score ?? null,
+    suppressReason: freshAttempt?.suppress_reason ?? null,
+    disqualifyReason: freshAttempt?.disqualify_reason ?? null,
+    prefilterReason: freshAttempt?.prefilter_reason ?? null,
+    errorDetail: freshAttempt?.error_detail ?? null,
   });
 
   return NextResponse.json({ ok: true, outcome });

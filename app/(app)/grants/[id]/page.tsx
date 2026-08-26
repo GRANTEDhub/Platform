@@ -324,9 +324,11 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
             <CardContent>
               <MatchOutcomes
                 cards={outcomes}
-                // Admin calibration only (same gate as Re-match / Add-to-client): a per-card
-                // re-match on each still-pending row. Off for everyone else -> read-only list.
-                canRematch={canCalibrate}
+                // Admin calibration only (same gate as Re-match / Add-to-client), and never
+                // while a roster episode is live (processing / queued / matching): a per-card
+                // re-score would race runMatching's resume and, during a re-shred, leave a card
+                // scored against the old profile. The route enforces the same status check.
+                canRematch={canCalibrate && !processing}
                 emptyText={
                   processing
                     ? "Scoring in progress…"
