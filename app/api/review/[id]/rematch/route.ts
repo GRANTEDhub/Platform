@@ -115,13 +115,6 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
   // the outcome is read back from the attempt row below, not from a thrown exception.
   await scoreGrantClientPair(grant, client, db);
 
-  // A re-score supersedes any stored IntellEngine QA verdict: it was computed against the OLD score
-  // and its "engine N → QA M" comparison would now be stale. Clear it so the panel shows "not yet
-  // run" rather than a mismatched verdict. (A dropped card cascade-deletes its verdict already; this
-  // covers the surviving/refreshed case. Best-effort — never fail the re-match on this.)
-  const { error: intelDelErr } = await db.from("card_intel_reviews").delete().eq("review_card_id", params.id);
-  if (intelDelErr) console.error("Failed to clear stale intel verdict on re-match for card", params.id, intelDelErr);
-
   // Read the outcome scoreGrantClientPair just wrote, then re-read the card to see whether it
   // survived. classifyRematch turns the two into one verdict the button renders.
   const [{ data: attempt }, { data: after }] = await Promise.all([
@@ -160,6 +153,16 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     prefilterReason: freshAttempt?.prefilter_reason ?? null,
     errorDetail: freshAttempt?.error_detail ?? null,
   });
+
+  // Clear a stored IntellEngine QA verdict ONLY when the card was actually re-scored in place: its
+  // "engine N → QA M" comparison is now stale. NOT on a scoring error / pre-filter (the card is
+  // unchanged, so the verdict is still valid and possibly expensive to have produced), and NOT on a
+  // drop (the FK cascade already removed it). scoreGrantClientPair swallows its errors, so this is
+  // gated on the classified outcome, not on the await resolving. Best-effort — never fail the re-match.
+  if (outcome.kind === "refreshed") {
+    const { error: intelDelErr } = await db.from("card_intel_reviews").delete().eq("review_card_id", params.id);
+    if (intelDelErr) console.error("Failed to clear stale intel verdict on re-match for card", params.id, intelDelErr);
+  }
 
   return NextResponse.json({ ok: true, outcome });
 }
