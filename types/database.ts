@@ -653,6 +653,9 @@ export interface ReviewCard {
   // Send tracking. Populated by the (not-yet-built) send step.
   sent_at: string | null;
   sent_to: string | null;
+  // NOTE: the on-demand IntellEngine QA verdict is NOT a column here — it lives in the staff-only
+  // card_intel_reviews table (migration 0086), because RLS is row-level and 0055 exposes review_cards
+  // rows to client members. See lib/grants/intel-review.ts.
 }
 
 // One row per (grant, client) scoring attempt — the engine's observability log.

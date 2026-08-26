@@ -9,6 +9,8 @@ import { ScoreFeedback } from "@/components/report/score-feedback";
 import { MarkUnreadButton } from "@/components/report/mark-unread-button";
 import { ScoreFactorsBackfill } from "@/components/report/score-factors-backfill";
 import { CardRematchButton } from "@/components/grants/card-rematch-button";
+import { IntelReviewPanel } from "@/components/report/intel-review-panel";
+import type { IntelReview } from "@/lib/grants/intel-review";
 import { GrantReviewConsole, type ReviewKeyDetail, type ReviewMeta } from "@/components/report/grant-review-console";
 import { AlertSend } from "@/app/(app)/review/[id]/alert-send";
 import { getConceptProposal } from "@/lib/concept/store";
@@ -124,6 +126,21 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   // re-match during it would race runMatching's resume, so the button hides (the route also
   // rejects it). Mirrors the Ledger's `processing` gate on the same three statuses.
   const grantProcessing = g.status === "processing" || g.status === "queued" || g.status === "matching";
+
+  // The on-demand QA verdict lives in the STAFF-ONLY card_intel_reviews table (migration 0086), not a
+  // review_cards column — so a client member (who can read their own review_cards rows under 0055)
+  // cannot reach it. Only fetched when the Intel panel could render (admin, pending, unreleased);
+  // is_staff() RLS admits this read.
+  const showIntel = isAdmin && card.decision === "pending" && !card.sme_released_at;
+  let intelReview: IntelReview | null = null;
+  if (showIntel) {
+    const { data: intelRow } = await supabase
+      .from("card_intel_reviews")
+      .select("intel_review")
+      .eq("review_card_id", params.cardId)
+      .maybeSingle<{ intel_review: IntelReview }>();
+    intelReview = intelRow?.intel_review ?? null;
+  }
 
   const [{ count: queueCount }, attempts, feedbackRows] = await Promise.all([
     // What is left after this one. Same predicate as the dashboard's pinned review row,
@@ -329,6 +346,10 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
             <CardRematchButton cardId={params.cardId} tone="dark" backHref={backHref} />
           ) : null
         }
+        // On-demand IntellEngine QA: annotate-only (never changes the score), so it needs no
+        // processing gate — just admin + a still-pending, not-yet-released card. Raw verdict is
+        // staff-only; the portal never passes this slot.
+        intel={showIntel ? <IntelReviewPanel cardId={params.cardId} initial={intelReview} /> : null}
         fitScore={card.fit_score}
         verdict={FIT_BAND[card.fit_score].label}
         // What the score MEANS for the next step, derived from the lit factor rather than
