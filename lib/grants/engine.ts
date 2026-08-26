@@ -13,6 +13,7 @@ import { formatSamForMatcher } from "@/lib/sam/expiry";
 import { formatClientProfileForEnrichment } from "@/lib/clients/profile";
 import { routeSupportingSeat } from "@/lib/grants/subseat-routing";
 import { applyMissionGate } from "@/lib/grants/mission-gate";
+import { lowAwardSkipReason } from "@/lib/grants/award-count-gate";
 import type { Client, Grant, IdealApplicantProfile, FactorScores } from "@/types/database";
 
 export interface ExtractedGrant {
@@ -1128,7 +1129,9 @@ export function jsPreFilter(
   // Grant-level global suppressions (single national award / fixed-slot TTA).
   const grantSuppression = grantLevelSuppressionReason(extracted);
   if (grantSuppression) return grantSuppression;
-
+  // Client-conditional low-award gate (MATCH_LOW_AWARD_GATE_ENABLED).
+  const lowAward = lowAwardSkipReason(extracted, client);
+  if (lowAward) return lowAward;
   // Entity-type eligibility is deliberately NOT gated here anymore. The structured
   // `eligible_entity_types` field is known-incomplete: it originates from the coarse
   // Grants.gov / Simpler `applicant_types` export (frequently just ["Other"]), and
