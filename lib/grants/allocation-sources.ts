@@ -35,7 +35,7 @@ export const ALLOCATION_SOURCES: Record<string, AllocationSource> = {
   "16.738": {
     label: "Edward Byrne Memorial Justice Assistance Grant (JAG) — Local allocations & disparate/asterisk jurisdictions",
     urls: [
-      "https://bja.ojp.gov/program/jag/jag-allocations",
+      "https://bja.ojp.gov/funding/jag-local-allocations-ar.pdf",
       "https://bja.ojp.gov/program/jag/overview",
     ],
   },
