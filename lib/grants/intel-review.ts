@@ -209,6 +209,18 @@ function normalizeText(s: string): string {
   return s.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+// A source_url is MODEL OUTPUT, and a fetched (untrusted) .gov page can steer the model to emit a
+// `javascript:` / `data:` URL. Only http(s) is a safe anchor href; anything else is blanked so the
+// staff panel never renders it as a clickable link (self-XSS guard). The panel guards again at render.
+export function isSafeHttpUrl(u: string): boolean {
+  try {
+    const p = new URL(u).protocol;
+    return p === "https:" || p === "http:";
+  } catch {
+    return false;
+  }
+}
+
 // An adverse verdict must be grounded on a quote that ACTUALLY APPEARS in a page we fetched — NOT
 // merely a URL on a host we happened to fetch. This is the anti-hallucination guard: after fetching
 // one bja.ojp.gov page the model cannot cite a different path with an invented quote, because the
@@ -264,7 +276,15 @@ export function finalizeIntel(opts: {
     };
   }
 
-  const evidence = Array.isArray(parsed.evidence) ? parsed.evidence.filter((e) => e && e.source_url && e.quote) : [];
+  // Keep evidence with a real quote (the grounding signal); BLANK any unsafe source_url so a
+  // model-emitted javascript:/data: URL can never reach the panel's anchor href.
+  const evidence: IntelEvidence[] = (Array.isArray(parsed.evidence) ? parsed.evidence : [])
+    .filter((e) => e && e.quote)
+    .map((e) => ({
+      claim: e.claim ?? "",
+      quote: e.quote,
+      source_url: isSafeHttpUrl(e.source_url ?? "") ? e.source_url : "",
+    }));
   let verdict: IntelVerdict = parsed.verdict;
   let summary = (parsed.summary ?? "").trim();
   let unverified = false;
@@ -301,10 +321,16 @@ export function finalizeIntel(opts: {
   // the engine's own score; flag/unverified → null. It is never written to review_cards.fit_score.
   let qa_fit_score: number | null = null;
   if (verdict === "demote") {
-    const proposed = clampScore(parsed.qa_fit_score);
-    // A demote must land BELOW the engine score; if the model gave a >= or missing number, step down one.
-    const ceiling = typeof engineFitScore === "number" ? engineFitScore - 1 : 3;
-    qa_fit_score = proposed !== null && proposed <= (ceiling ?? 3) ? proposed : Math.max(1, ceiling ?? 2);
+    if (engineFitScore == null || engineFitScore <= 1) {
+      // Can't demote below the floor (1). A "demote" of a 1 is not a lower score, it's a concern —
+      // record it as a flag rather than render a self-contradictory "engine 1 → QA 1".
+      verdict = "flag";
+    } else {
+      const proposed = clampScore(parsed.qa_fit_score);
+      // A demote must land BELOW the engine score; a >= or missing number steps down exactly one.
+      const ceiling = engineFitScore - 1;
+      qa_fit_score = proposed !== null && proposed <= ceiling ? proposed : Math.max(1, ceiling);
+    }
   } else if (verdict === "affirm") {
     qa_fit_score = engineFitScore;
   }
@@ -377,20 +403,26 @@ async function realStructure(analysisText: string, audit: FetchAuditRecord[]): P
   const fetchedList =
     audit.map((a) => `  - ${a.ok ? "OK" : "FAILED"} ${a.finalUrl ?? a.url}${a.ok ? "" : ` (${a.reason})`}`).join("\n") ||
     "  (no fetches were made)";
-  const res = await anthropic.messages.create({
-    model: INTEL_MODEL,
-    max_tokens: 1500,
-    temperature: 0,
-    system: STRUCTURE_SYSTEM_PROMPT,
-    tools: [SUBMIT_TOOL],
-    tool_choice: { type: "tool", name: SUBMIT_TOOL.name },
-    messages: [
-      {
-        role: "user",
-        content: `PAGES FETCHED DURING THE REVIEW:\n${fetchedList}\n\nQA ANALYSIS:\n${analysisText}`,
-      },
-    ],
-  });
+  const res = await anthropic.messages.create(
+    {
+      model: INTEL_MODEL,
+      max_tokens: 1500,
+      temperature: 0,
+      system: STRUCTURE_SYSTEM_PROMPT,
+      tools: [SUBMIT_TOOL],
+      tool_choice: { type: "tool", name: SUBMIT_TOOL.name },
+      messages: [
+        {
+          role: "user",
+          content: `PAGES FETCHED DURING THE REVIEW:\n${fetchedList}\n\nQA ANALYSIS:\n${analysisText}`,
+        },
+      ],
+    },
+    // Bounded, like phase 1: phase 1 can spend up to INTEL_DEADLINE_MS of the route's 300s, so this
+    // structuring call must not hang past what's left — a timeout throws into runIntelReview's
+    // caller (the route's catch → clean 502 "retry"), rather than being killed by Vercel's hard limit.
+    { timeout: 45_000, maxRetries: 1 },
+  );
   const tool = res.content.find((b) => b.type === "tool_use");
   if (!tool || tool.type !== "tool_use") return null;
   return tool.input as RawVerdict;
