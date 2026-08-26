@@ -35,20 +35,22 @@ type Tone = "light" | "dark";
 // Per-surface class tokens. `light` is the Ledger's neutral shadcn vocabulary; `dark` is the
 // console ScoreCard's white-on-chrome (matching ScoreFeedback) — the footer sits on
 // bg-brand-chrome, so muted-foreground would be near-invisible there.
+// ring INCLUDES ring-2 (the width): a ring color/offset with no width draws nothing, so
+// `focus-visible:outline-none` would leave keyboard users with no focus indicator at all.
 const TONE: Record<Tone, { base: string; hover: string; strong: string; warn: string; ring: string }> = {
   light: {
     base: "text-muted-foreground",
     hover: "hover:text-foreground",
     strong: "text-foreground",
     warn: "text-destructive",
-    ring: "focus-visible:ring-ring focus-visible:ring-offset-2",
+    ring: "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
   },
   dark: {
     base: "text-white/70",
     hover: "hover:text-white",
     strong: "text-white",
     warn: "text-orange-200",
-    ring: "focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome",
+    ring: "focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome",
   },
 };
 
@@ -107,14 +109,14 @@ export function CardRematchButton({
         result.storedFitScore !== null && result.freshFitScore !== null && result.drifted
           ? `${result.storedFitScore}/3 → ${result.freshFitScore}/3`
           : `still ${result.freshFitScore ?? result.storedFitScore ?? "?"}/3`;
+      // Always Refresh, even when the integer score didn't move: scoreGrantClientPair rewrites
+      // ALL card fields on a surviving re-score (factor_scores, why_this_org, reasoning_context),
+      // and the console renders those (rationale, factor table) — a "Done"-that-only-resets would
+      // leave the old rationale on screen next to a freshly-updated DB row.
       return (
         <ResultNote t={t}>
           Re-scored — {moved}.
-          {result.drifted ? (
-            <ResultAction t={t} label="Refresh" onClick={() => router.refresh()} />
-          ) : (
-            <ResultAction t={t} label="Done" onClick={reset} />
-          )}
+          <ResultAction t={t} label="Refresh" onClick={() => router.refresh()} />
         </ResultNote>
       );
     }
