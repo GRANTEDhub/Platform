@@ -29,10 +29,11 @@ import { ALLOWABLE_USES_FALLBACK, type AllowableUses } from "@/lib/grants/allowa
 // SHARED WITH THE CLIENT PORTAL. app/portal/grants/[id] mounts this same component, by
 // deliberate instruction: the two screens are meant to be pixel-identical so a change to
 // one lands on both. Every actionable difference is already a passed-in child —
-// `decision`, `concept`, `feedback`, `scoreFactors` — so the portal supplies its own and
-// passes null for what a client must not have. NOTHING in the frame itself forks on actor,
-// and it should stay that way: the moment this file grows an `isClient` branch, the two
-// screens start drifting and the reason for sharing it is gone.
+// `decision`, `concept`, `feedback`, `scoreFactors`, `rematch` — so the portal supplies its
+// own and passes null for what a client must not have (`rematch` defaults to null, so the
+// portal, which never passes it, can't render the staff re-match button). NOTHING in the
+// frame itself forks on actor, and it should stay that way: the moment this file grows an
+// `isClient` branch, the two screens start drifting and the reason for sharing it is gone.
 
 export interface ReviewMeta {
   label: string;
@@ -67,6 +68,7 @@ export function GrantReviewConsole({
   rationale,
   factors,
   scoreFactors,
+  rematch = null,
   fitScore,
   verdict,
   consequence,
@@ -118,6 +120,11 @@ export function GrantReviewConsole({
   // passed in, and null on any surface that should not be able to spend a scorer call.
   // Rendered ONLY in the unscored branch — a scored card never sees it.
   scoreFactors: React.ReactNode | null;
+  // The single-card re-match control, rendered in the ScoreCard footer beside the feedback
+  // controls. Same staff-only pattern as scoreFactors/feedback, and OPTIONAL with a null
+  // default: the staff page passes the button, the client portal never passes it, so it can
+  // only ever render for staff. A re-score can drop the card, so it is an admin action.
+  rematch?: React.ReactNode | null;
   fitScore: 1 | 2 | 3;
   verdict: string;
   consequence: string | null;
@@ -188,7 +195,7 @@ export function GrantReviewConsole({
           </div>
 
           <div className="flex min-h-0 flex-col gap-3.5">
-            <ScoreCard score={fitScore} verdict={verdict} consequence={consequence} feedback={feedback} />
+            <ScoreCard score={fitScore} verdict={verdict} consequence={consequence} feedback={feedback} rematch={rematch} />
             {decision}
             {concept}
             <KeyDetailsCard details={keyDetails} sourceUrl={sourceUrl} />
@@ -616,11 +623,16 @@ function ScoreCard({
   verdict,
   consequence,
   feedback,
+  rematch,
 }: {
   score: 1 | 2 | 3;
   verdict: string;
   consequence: string | null;
   feedback: React.ReactNode | null;
+  // Staff-only re-match control, in the footer beside the feedback controls. Null on the
+  // portal (the console defaults it to null and the portal never passes it), so this whole
+  // block collapses to nothing there.
+  rematch?: React.ReactNode | null;
 }) {
   return (
     <section className="shrink-0 rounded-sharp bg-brand-chrome px-[19px] pb-[15px] pt-4 text-white">
@@ -642,6 +654,9 @@ function ScoreCard({
         </div>
       </div>
       {feedback}
+      {/* Re-match sits in the same staff-controls cluster, a thin rule under the feedback
+          block. Null (portal, or a card that can't be re-matched) collapses it entirely. */}
+      {rematch && <div className="mt-3 border-t border-white/[0.14] pt-3">{rematch}</div>}
     </section>
   );
 }
