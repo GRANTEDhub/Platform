@@ -82,8 +82,15 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     );
   }
 
-  // THE ONE WRITE. intel_review only — nothing that could change the card's score/seat/decision.
-  const { error } = await db.from("review_cards").update({ intel_review: intel }).eq("id", params.id);
+  // THE WRITE, to the STAFF-ONLY card_intel_reviews table — never review_cards, so nothing here can
+  // change the card's score/seat/decision, AND (unlike a review_cards column) a client member has no
+  // RLS policy that admits them to read it. One current verdict per card (upsert on review_card_id).
+  const { error } = await db
+    .from("card_intel_reviews")
+    .upsert(
+      { review_card_id: params.id, intel_review: intel, created_by: user.id, updated_at: new Date().toISOString() },
+      { onConflict: "review_card_id" },
+    );
   if (error) {
     console.error("IntellEngine QA write failed for card", params.id, error);
     return NextResponse.json({ error: "Failed to save the QA verdict." }, { status: 500 });

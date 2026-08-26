@@ -1,39 +1,46 @@
 -- ╔══════════════════════════════════════════════════════════════════════════╗
--- ║ review_cards.intel_review: the on-demand IntellEngine QA verdict (Brick 1)  ║
+-- ║ card_intel_reviews: the on-demand IntellEngine QA verdict (Brick 1)         ║
 -- ╚══════════════════════════════════════════════════════════════════════════╝
 --
--- The staff-triggered QA / review pass ("Run IntellEngine Intel") writes ONE column: an
--- Opus + web-verification verdict on a surfaced card. It is ANNOTATE-ONLY and PROPOSAL-ONLY
--- by construction -- it never writes fit_score / seat / decision / suppressed, so it can
--- never remove or re-score a card. The card keeps the engine's score; this column carries
--- "engine says 3, QA says 1, here's the web-grounded reason", and a human makes the call.
+-- The staff-triggered QA / review pass ("Run IntellEngine Intel") writes an Opus + web-
+-- verification verdict on a surfaced card. ANNOTATE-ONLY / PROPOSAL-ONLY: it never touches the
+-- card's fit_score / seat / decision, so it can never remove or re-score a card. The card keeps
+-- the engine's score; this carries "engine 3 → QA 1, here's the web-grounded reason", and a
+-- human decides.
 --
--- SHAPE (jsonb; see lib/grants/intel-review.ts IntelReview):
---   { verdict: 'affirm'|'demote'|'flag'|'unverified',
---     engine_fit_score, qa_fit_score (PROPOSAL, never applied), summary,
---     evidence: [{claim, source_url, quote}], fetched: [{url, ok, reason, finalUrl, fetchedAt}],
---     unverified, model, reviewed_by, reviewed_at }
+-- A SEPARATE TABLE, not a review_cards column — and that is the WHOLE point of this shape. RLS is
+-- ROW-level, not column-level: 0055's `review_select` policy lets a client member SELECT their own
+-- client's review_cards rows (every column). So an `intel_review` COLUMN on review_cards would be
+-- readable by an authenticated portal member querying Supabase directly, even though no portal UI
+-- shows it — a leak of raw internal QA voice (summary, evidence, reviewer id). This table's SELECT
+-- policy is `public.is_staff()` ALONE, with NO client-member policy, so client members have no
+-- policy that admits them and cannot read it at all. Mirrors the grantbot tables (0080): staff
+-- SELECT only, every write service-role.
 --
--- NULL = no QA pass has run on this card yet -- which is every existing card and every card
--- until a staffer clicks the button. So this add is byte-identical to today on the live
--- surface: nothing reads the column until the on-demand route + the staff-only console panel
--- ship, and both no-op on null. There is no flag; the eval (RUN_INTEL_EVAL) is the "prove it"
--- gate, and the button simply doesn't exist client-side until this deploys.
---
--- STAFF-ONLY, NEVER CLIENT-FACING. This is raw internal QA voice. The client portal grant
--- query, the Grant Report, emails, and concept/PDF exports do NOT select this column and must
--- never start -- raw Intel is not a client artifact (org rule: paid-deliverable / client-
--- facing standards). It is structurally isolated by being a column only the staff console reads.
---
--- No index: read per-card on the console, never queried across. An index over "cards awaiting
--- QA" waits for the future AUTO-inline promotion (a separate build), not this on-demand one.
--- Adding a nullable jsonb column is a cheap metadata-only change (no table rewrite in modern
--- Postgres), so it stays inside the transaction wrapper + ledger insert.
+-- One CURRENT verdict per card (review_card_id UNIQUE, upsert on re-run). Cascade-deletes with the
+-- card. NULL/absent row = no QA pass has run yet — byte-identical to today until the route + the
+-- staff-only console panel ship, both of which no-op when absent. No flag; the eval (RUN_INTEL_EVAL)
+-- is the "prove it" gate. Shape of intel_review jsonb: lib/grants/intel-review.ts IntelReview.
 
 begin;
 
-alter table review_cards
-  add column if not exists intel_review jsonb;
+create table if not exists card_intel_reviews (
+  id uuid primary key default gen_random_uuid(),
+  review_card_id uuid not null unique references review_cards(id) on delete cascade,
+  intel_review jsonb not null,
+  created_by uuid references profiles(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table card_intel_reviews enable row level security;
+
+-- Staff-only read. NO client-member policy (unlike review_cards) → a portal member has no policy
+-- that admits them, so the raw verdict is unreachable to clients even for their own cards. NO
+-- write policy → every insert/update runs service-role (the /intel route), matching 0080.
+drop policy if exists card_intel_reviews_staff_select on card_intel_reviews;
+create policy card_intel_reviews_staff_select on card_intel_reviews
+  for select using (public.is_staff());
 
 insert into schema_migrations (version) values ('0086_review_card_intel_review') on conflict do nothing;
 

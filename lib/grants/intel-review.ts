@@ -40,10 +40,10 @@ import {
 import {
   WEB_FETCH_TOOL,
   WEB_FETCH_TOOL_NAME,
-  executeWebFetch,
+  frameFetchResult,
   type FetchAuditRecord,
 } from "@/lib/grantbot/web-fetch";
-import type { FetchResult } from "@/lib/grantbot/fetch";
+import { fetchGrantSource, type FetchResult } from "@/lib/grantbot/fetch";
 import { clientContextForJudge } from "@/lib/grants/subseat-routing";
 import { allocationSourcesFor } from "@/lib/grants/allocation-sources";
 import type { Grant, Client } from "@/types/database";
@@ -201,32 +201,26 @@ export function intelContext(card: IntelCard, grant: Grant, client: Client): str
 
 // ── Grounding guard + finalize (pure, the fail-safe) ───────────────────────────────────────────────
 
-function hostOf(u: string): string | null {
-  try {
-    return new URL(u).host.toLowerCase();
-  } catch {
-    return null;
-  }
+// Shortest quote we'll treat as evidence — a couple of words can coincidentally appear anywhere; a
+// real cited span is longer.
+const MIN_QUOTE_CHARS = 12;
+
+function normalizeText(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-// An adverse verdict must be grounded on a page we ACTUALLY fetched: at least one evidence item with
-// a real quote whose source_url host matches a successfully-fetched (ok:true) audit record's host.
-// Host match (not exact URL) is robust to the model citing a slightly different path/query on the
-// same .gov source it read.
-export function groundedOnFetch(evidence: IntelEvidence[], audit: FetchAuditRecord[]): boolean {
-  const okHosts = new Set<string>();
-  for (const a of audit) {
-    if (!a.ok) continue;
-    for (const u of [a.finalUrl, a.url]) {
-      const h = u ? hostOf(u) : null;
-      if (h) okHosts.add(h);
-    }
-  }
-  if (okHosts.size === 0) return false;
+// An adverse verdict must be grounded on a quote that ACTUALLY APPEARS in a page we fetched — NOT
+// merely a URL on a host we happened to fetch. This is the anti-hallucination guard: after fetching
+// one bja.ojp.gov page the model cannot cite a different path with an invented quote, because the
+// quote is checked against the retrieved page bodies. Normalized (case + whitespace) so verbatim
+// spans survive markup/whitespace differences; a quote that does not occur is not grounded.
+export function quoteGroundedInBodies(evidence: IntelEvidence[], fetchedBodies: string[]): boolean {
+  if (fetchedBodies.length === 0) return false;
+  const bodies = fetchedBodies.map(normalizeText);
   return evidence.some((e) => {
-    if (!e?.quote?.trim() || !e?.source_url?.trim()) return false;
-    const h = hostOf(e.source_url);
-    return !!h && okHosts.has(h);
+    const q = e?.quote ? normalizeText(e.quote) : "";
+    if (q.length < MIN_QUOTE_CHARS) return false;
+    return bodies.some((b) => b.includes(q));
   });
 }
 
@@ -241,12 +235,14 @@ function clampScore(n: unknown): number | null {
 export function finalizeIntel(opts: {
   parsed: RawVerdict | null;
   audit: FetchAuditRecord[];
+  // The bodies of the pages actually fetched (ok:true), for verifying a cited quote occurs in one.
+  fetchedBodies: string[];
   engineFitScore: number | null;
   model: string;
   reviewedBy: string | null;
   now: string;
 }): IntelReview {
-  const { parsed, audit, engineFitScore, model, reviewedBy, now } = opts;
+  const { parsed, audit, fetchedBodies, engineFitScore, model, reviewedBy, now } = opts;
 
   const base = {
     engine_fit_score: engineFitScore,
@@ -270,18 +266,33 @@ export function finalizeIntel(opts: {
 
   const evidence = Array.isArray(parsed.evidence) ? parsed.evidence.filter((e) => e && e.source_url && e.quote) : [];
   let verdict: IntelVerdict = parsed.verdict;
-
-  // THE FAIL-SAFE: an adverse call not grounded on a page we fetched becomes unverified.
-  const adverse = verdict === "demote" || verdict === "flag";
-  const grounded = groundedOnFetch(evidence, audit);
   let summary = (parsed.summary ?? "").trim();
   let unverified = false;
-  if (adverse && !grounded) {
-    verdict = "unverified";
-    unverified = true;
-    summary =
-      "QA proposed a concern but could not ground it on a source it actually retrieved — treated as unverified; manual check needed." +
-      (summary ? ` (Model note: ${summary})` : "");
+
+  // THE FAIL-SAFE, in two parts:
+  //   - an ADVERSE call (demote/flag) must be grounded on a quote that actually appears in a fetched
+  //     page (quoteGroundedInBodies) — a URL on a fetched host with an invented quote does not count;
+  //   - an AFFIRM must rest on at least one SUCCESSFUL fetch — otherwise it is "the model thinks it's
+  //     fine but read no source", which must not be shown as a web-backed affirmation.
+  // Either shortfall → unverified. (An adverse verdict grounded on a quote implies a successful fetch,
+  // so the two checks don't double-count.)
+  const hasSuccessfulFetch = audit.some((a) => a.ok);
+  if (verdict === "demote" || verdict === "flag") {
+    if (!quoteGroundedInBodies(evidence, fetchedBodies)) {
+      verdict = "unverified";
+      unverified = true;
+      summary =
+        "QA proposed a concern but could not ground it on a quote from a page it actually retrieved — treated as unverified; manual check needed." +
+        (summary ? ` (Model note: ${summary})` : "");
+    }
+  } else if (verdict === "affirm") {
+    if (!hasSuccessfulFetch) {
+      verdict = "unverified";
+      unverified = true;
+      summary =
+        "QA could not retrieve a source to verify against, so this is not a web-backed affirmation — treated as unverified; manual check needed." +
+        (summary ? ` (Model note: ${summary})` : "");
+    }
   } else if (verdict === "unverified") {
     unverified = true;
   }
@@ -410,16 +421,24 @@ export async function runIntelReview(
   const callModel = opts.callModel ?? realCallModel();
   const structure = opts.structure ?? realStructure;
 
-  // Phase 1: the bounded fetch loop. Audit records accumulate as fetches run.
+  // Phase 1: the bounded fetch loop. Audit records AND the fetched page bodies accumulate as fetches
+  // run — the bodies are what the adverse-verdict quote is later verified against (fail-safe).
   const audit: FetchAuditRecord[] = [];
+  const fetchedBodies: string[] = [];
+  const fetcher = opts.fetcher ?? fetchGrantSource;
   const dispatch: ToolDispatch = async (tu) => {
-    if (tu.name === WEB_FETCH_TOOL_NAME) {
-      const url = (tu.input as { url?: unknown })?.url;
-      const { resultText, audit: rec } = await executeWebFetch(url, { fetcher: opts.fetcher, now });
-      audit.push(rec);
-      return { resultText };
+    if (tu.name !== WEB_FETCH_TOOL_NAME) return { resultText: `Unknown tool "${tu.name}". Nothing was done.` };
+    const rawUrl = (tu.input as { url?: unknown })?.url;
+    const url = typeof rawUrl === "string" ? rawUrl.trim() : "";
+    if (!url) {
+      audit.push({ url: "", ok: false, reason: "no_url", fetchedAt: now() });
+      return { resultText: "No URL was provided to fetch. Ask for the .gov source URL rather than guessing one." };
     }
-    return { resultText: `Unknown tool "${tu.name}". Nothing was done.` };
+    const result = await fetcher(url);
+    const { resultText, audit: rec } = frameFetchResult(url, result, now);
+    audit.push(rec);
+    if (result.ok) fetchedBodies.push(result.text);
+    return { resultText };
   };
 
   const loop = await runToolLoop({
@@ -438,6 +457,7 @@ export async function runIntelReview(
   return finalizeIntel({
     parsed,
     audit,
+    fetchedBodies,
     engineFitScore: card.fit_score,
     model: INTEL_MODEL,
     reviewedBy: opts.reviewedBy ?? null,

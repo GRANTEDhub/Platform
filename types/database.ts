@@ -1,10 +1,6 @@
 // Hand-maintained types mirroring supabase/migrations/0001_init.sql.
 // Regenerate with `supabase gen types typescript` once the CLI is wired up.
 
-// Type-only import (erased at compile time, so no runtime cycle) — the jsonb shape of the
-// on-demand IntellEngine QA verdict lives with the code that produces it.
-import type { IntelReview } from "@/lib/grants/intel-review";
-
 export type UserRole = "admin" | "contractor";
 
 export interface Profile {
@@ -657,10 +653,9 @@ export interface ReviewCard {
   // Send tracking. Populated by the (not-yet-built) send step.
   sent_at: string | null;
   sent_to: string | null;
-  // On-demand IntellEngine QA verdict (migration 0086). Null = no QA pass has run. Written ONLY by
-  // the staff /intel route, annotate-only — never a source of fit_score/seat/decision. STAFF-ONLY:
-  // no client-facing query selects it. Shape is lib/grants/intel-review.ts IntelReview.
-  intel_review: IntelReview | null;
+  // NOTE: the on-demand IntellEngine QA verdict is NOT a column here — it lives in the staff-only
+  // card_intel_reviews table (migration 0086), because RLS is row-level and 0055 exposes review_cards
+  // rows to client members. See lib/grants/intel-review.ts.
 }
 
 // One row per (grant, client) scoring attempt — the engine's observability log.

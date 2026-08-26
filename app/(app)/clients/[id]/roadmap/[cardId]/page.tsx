@@ -65,9 +65,6 @@ type CardRow = {
   sent_at: string | null;
   sent_to: string | null;
   grant_id: string | null;
-  // The stored on-demand QA verdict (migration 0086), passed to the staff-only Intel panel as its
-  // initial state. Null until a staffer runs it. Staff-only — never selected by a client query.
-  intel_review: IntelReview | null;
   grants: GrantEmbed | GrantEmbed[] | null;
 };
 
@@ -104,7 +101,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   const { data } = await supabase
     .from("review_cards")
     .select(
-      "id, fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, reasoning_context, decision, sme_released_at, sent_at, sent_to, grant_id, intel_review, grants(id, source_url, title, funder, fon, assistance_listings, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status, status)",
+      "id, fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, reasoning_context, decision, sme_released_at, sent_at, sent_to, grant_id, grants(id, source_url, title, funder, fon, assistance_listings, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status, status)",
     )
     .eq("id", params.cardId)
     .eq("client_id", params.id)
@@ -129,6 +126,21 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   // re-match during it would race runMatching's resume, so the button hides (the route also
   // rejects it). Mirrors the Ledger's `processing` gate on the same three statuses.
   const grantProcessing = g.status === "processing" || g.status === "queued" || g.status === "matching";
+
+  // The on-demand QA verdict lives in the STAFF-ONLY card_intel_reviews table (migration 0086), not a
+  // review_cards column — so a client member (who can read their own review_cards rows under 0055)
+  // cannot reach it. Only fetched when the Intel panel could render (admin, pending, unreleased);
+  // is_staff() RLS admits this read.
+  const showIntel = isAdmin && card.decision === "pending" && !card.sme_released_at;
+  let intelReview: IntelReview | null = null;
+  if (showIntel) {
+    const { data: intelRow } = await supabase
+      .from("card_intel_reviews")
+      .select("intel_review")
+      .eq("review_card_id", params.cardId)
+      .maybeSingle<{ intel_review: IntelReview }>();
+    intelReview = intelRow?.intel_review ?? null;
+  }
 
   const [{ count: queueCount }, attempts, feedbackRows] = await Promise.all([
     // What is left after this one. Same predicate as the dashboard's pinned review row,
@@ -337,11 +349,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         // On-demand IntellEngine QA: annotate-only (never changes the score), so it needs no
         // processing gate — just admin + a still-pending, not-yet-released card. Raw verdict is
         // staff-only; the portal never passes this slot.
-        intel={
-          isAdmin && card.decision === "pending" && !card.sme_released_at ? (
-            <IntelReviewPanel cardId={params.cardId} initial={card.intel_review} />
-          ) : null
-        }
+        intel={showIntel ? <IntelReviewPanel cardId={params.cardId} initial={intelReview} /> : null}
         fitScore={card.fit_score}
         verdict={FIT_BAND[card.fit_score].label}
         // What the score MEANS for the next step, derived from the lit factor rather than
