@@ -1,0 +1,82 @@
+name: IntellEngine Intel Eval
+
+# Manual-only. This runs the model-in-the-loop IntellEngine QA eval
+# (lib/grants/intel-review.eval.test.ts) — the trust gate that must pass before
+# INTEL_WEB_SEARCH_ENABLED is flipped on. It is NOT part of CI: it makes real
+# (paid) Opus calls, real fetchGrantSource GETs to live .gov pages, and — for the
+# discovery case — Anthropic server-side web_search, so it only runs when a human
+# clicks "Run workflow".
+#
+# The button appears under Actions → "IntellEngine Intel Eval" only once this file
+# is on the default branch (main).
+#
+# SECRETS. Unlike the scoring evals, this eval uses SYNTHETIC fixtures (constructed
+# in the test) plus the real model + live web — it reads NO production DB rows — so
+# it needs ONLY ANTHROPIC_API_KEY, not the Supabase service-role key. It still
+# declares the SAME protected GitHub Environment as the other evals ("subseat-eval",
+# Settings → Environments, restricted to `main`), because that environment already
+# holds ANTHROPIC_API_KEY; nothing new to add. The Supabase secrets in that
+# environment are simply unused here.
+#
+# THE FLAG. This eval sets INTEL_WEB_SEARCH_ENABLED=1 to exercise the discovery
+# path; the test also passes `discovery` explicitly per fixture (cases 1-3 false so
+# the seed-map + fail-safe guarantees are proven flag-independent; case 4 true for
+# the web-search discovery proof).
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Runs per fixture (stability sampling; INTEL_EVAL_RUNS). Serial, so raising this grows both cost and wall-clock roughly linearly."
+        required: false
+        default: "3"
+
+# Never let two eval runs race on the same paid job.
+concurrency:
+  group: intel-review-eval
+  cancel-in-progress: false
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    # Environment-scoped secret (see header): GitHub injects this environment's secrets only into a job
+    # that declares it, and enforces the environment's branch policy — so the key can't be read by an
+    # arbitrary dispatch ref. We reuse subseat-eval only for its ANTHROPIC_API_KEY.
+    environment: subseat-eval
+    # Generous outer cap. The eval is serial over fixtures × runs; each run is an Opus pass with live
+    # web work bounded to ~4 minutes, so a default 3-run pass is well under this. This ceiling just
+    # bounds a badly rate-limited run.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # 22, not 20: kept in step with the other eval jobs so the toolchain is identical. This eval
+          # has no Supabase dependency, but Node 22 is harmless and avoids a per-job divergence.
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Fail LOUD if the key is unset/misnamed. Without this an empty ANTHROPIC_API_KEY trips the eval's
+      # own RUN gate (skipIf), every fixture is skipped, and vitest still exits 0 — a green check that
+      # verified nothing. The whole point of this job is to be a trustworthy flip gate, so a silent skip
+      # must be a hard failure instead.
+      - name: Verify ANTHROPIC_API_KEY is present
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY is empty or unset — add it to the 'subseat-eval' GitHub Environment (Settings → Environments). The eval would otherwise silently skip and report a false green."
+            exit 1
+          fi
+      - name: Run IntellEngine Intel eval
+        env:
+          RUN_INTEL_EVAL: "1"
+          # Exercise the discovery path (web_search + formula note). The test also passes discovery
+          # explicitly per fixture; this is belt-and-suspenders + documents intent.
+          INTEL_WEB_SEARCH_ENABLED: "true"
+          INTEL_EVAL_RUNS: ${{ inputs.runs }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        # The per-fixture verdicts/summaries the eval console.logs (and the soft-assertion messages) are
+        # captured in this step's log, so the JAG / state / VOCA-discovery reads are readable in the
+        # browser with pass/fail.
+        run: npx vitest run lib/grants/intel-review.eval.test.ts

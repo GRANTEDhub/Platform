@@ -9,7 +9,8 @@ import {
   type IntelCard,
   type IntelEvidence,
 } from "./intel-review";
-import type { FetchAuditRecord } from "@/lib/grantbot/web-fetch";
+import { intelPhase1Config, WEB_SEARCH_TOOL_NAME, SEARCH_SYSTEM_ADDENDUM } from "./intel-web-search";
+import { WEB_FETCH_TOOL, WEB_FETCH_TOOL_NAME, type FetchAuditRecord } from "@/lib/grantbot/web-fetch";
 import type { FetchResult } from "@/lib/grantbot/fetch";
 import type { CallModel, ModelTurn } from "@/lib/grantbot/tool-loop";
 import type { Grant, Client } from "@/types/database";
@@ -200,12 +201,82 @@ describe("intelContext", () => {
   } as unknown as Grant;
   const client = { name: "Mississippi County", org_type: "local_government", location_state: "AR" } as unknown as Client;
 
+  const baseCard = { fit_score: 3, proposed_role: "Prime", recommended_prime: null, why_this_org: [], before_you_approve: [], reasoning_context: null };
+
   it("hands the reviewer the seeded JAG allocation source for CFDA 16.738", () => {
-    const ctx = intelContext({ fit_score: 3, proposed_role: "Prime", recommended_prime: null, why_this_org: [], before_you_approve: [], reasoning_context: null }, grant, client);
+    const ctx = intelContext(baseCard, grant, client);
     expect(ctx).toMatch(/bja\.ojp\.gov/);
     expect(ctx).toMatch(/16\.738/);
     expect(ctx).toMatch(/ENGINE'S READ/);
     expect(ctx).toMatch(/Mississippi County/);
+  });
+
+  it("discovery OFF (default) → NO formula-program note (byte-identical to today's context)", () => {
+    const ctx = intelContext(baseCard, grant, client); // discovery defaults false
+    expect(ctx).not.toMatch(/FORMULA \/ ALLOCATION PROGRAM/);
+  });
+
+  it("discovery ON → adds the formula-program note for a known formula CFDA (16.738)", () => {
+    const ctx = intelContext(baseCard, grant, client, true);
+    expect(ctx).toMatch(/FORMULA \/ ALLOCATION PROGRAM — CFDA 16\.738/);
+    expect(ctx).toMatch(/ENTITY-TYPE eligibility is NOT application eligibility/);
+    expect(ctx).toMatch(/SEARCH for it/);
+  });
+
+  it("discovery ON but a NON-formula CFDA → no formula note (tag is conservative)", () => {
+    const competitive = { ...grant, assistance_listings: [{ number: "93.999" }] } as unknown as Grant;
+    const ctx = intelContext(baseCard, competitive, client, true);
+    expect(ctx).not.toMatch(/FORMULA \/ ALLOCATION PROGRAM/);
+  });
+});
+
+describe("intelPhase1Config — flag-gated tool set + system (the byte-identical-off guarantee)", () => {
+  const SYS = "BASE SYSTEM PROMPT";
+
+  it("discovery OFF → tools are EXACTLY [fetch] and system is unchanged", () => {
+    const cfg = intelPhase1Config(false, WEB_FETCH_TOOL, SYS);
+    expect(cfg.tools).toEqual([WEB_FETCH_TOOL]);
+    expect(cfg.tools.map((t) => (t as { name: string }).name)).toEqual([WEB_FETCH_TOOL_NAME]);
+    expect(cfg.system).toBe(SYS); // byte-identical: no addendum appended
+  });
+
+  it("discovery ON → adds web_search and appends the search addendum", () => {
+    const cfg = intelPhase1Config(true, WEB_FETCH_TOOL, SYS);
+    const names = cfg.tools.map((t) => (t as { name: string }).name);
+    expect(names).toContain(WEB_FETCH_TOOL_NAME);
+    expect(names).toContain(WEB_SEARCH_TOOL_NAME);
+    expect(cfg.tools).toHaveLength(2);
+    expect(cfg.system).toBe(SYS + SEARCH_SYSTEM_ADDENDUM);
+  });
+});
+
+describe("runIntelReview — threads the discovery flag into the reviewer context", () => {
+  const card: IntelCard = { fit_score: 3, proposed_role: "Prime", recommended_prime: null, why_this_org: [], before_you_approve: [], reasoning_context: null };
+  const grant = { title: "JAG", assistance_listings: [{ number: "16.738" }], source_url: "https://simpler.grants.gov/x" } as unknown as Grant;
+  const client = { name: "Mississippi County", org_type: "local_government" } as unknown as Client;
+  const now = () => "2026-08-26T00:00:00.000Z";
+
+  // A callModel that captures the first user message (the reviewer context) and answers immediately.
+  const capture = (): { calls: string[]; model: CallModel } => {
+    const calls: string[] = [];
+    const model: CallModel = async ({ messages }): Promise<ModelTurn> => {
+      const first = messages[0] as { content?: unknown };
+      calls.push(typeof first?.content === "string" ? first.content : JSON.stringify(first?.content));
+      return { text: "no change", toolUses: [], stopReason: "end_turn", usage: null, rawContent: [] };
+    };
+    return { calls, model };
+  };
+
+  it("discovery:true → the formula note reaches the model context", async () => {
+    const cap = capture();
+    await runIntelReview(card, grant, client, { now, discovery: true, callModel: cap.model, structure: async () => null });
+    expect(cap.calls[0]).toMatch(/FORMULA \/ ALLOCATION PROGRAM/);
+  });
+
+  it("discovery:false → no formula note in the model context (byte-identical off)", async () => {
+    const cap = capture();
+    await runIntelReview(card, grant, client, { now, discovery: false, callModel: cap.model, structure: async () => null });
+    expect(cap.calls[0]).not.toMatch(/FORMULA \/ ALLOCATION PROGRAM/);
   });
 });
 
