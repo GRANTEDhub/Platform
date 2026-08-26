@@ -372,16 +372,18 @@ export async function scoreGrantClientPair(grantRow: Grant, client: Client, db: 
         await db
           .from("review_cards")
           .update({ ...cardFields, generic_nexus_flagged: nexus.flagged })
-          .eq("id", existingCard.id);
+          .eq("id", existingCard.id)
+        .is("sme_released_at", null);
       }
       // else: an admin already decided this card -- leave it untouched.
     } else if (existingCard && existingCard.decision === "pending") {
       // Re-score dropped this client below the surface threshold (e.g. 2 -> 0
       // under the seat ceiling). It no longer surfaces, so remove the stale
       // un-acted card. A human-decided card (approved / passed / hold) is
-      // preserved -- never silently erase a GO/NO/HOLD.
-      await db.from("review_cards").delete().eq("id", existingCard.id);
+            // preserved -- never silently erase a GO/NO/HOLD.
+      await db.from("review_cards").delete().eq("id", existingCard.id).is("sme_released_at", null);
     }
+  }                
   } catch (err) {
     console.error(`Match error for client ${client.name}:`, err);
     await recordAttempt(db, {
