@@ -59,6 +59,17 @@ export function IntelReviewPanel({ cardId, initial }: { cardId: string; initial:
   );
 }
 
+// Defense-in-depth: source_url is model output, blanked at store time if not http(s) — guard again
+// here so an anchor is only ever rendered for a safe scheme (never javascript:/data:).
+function safeHref(u: string): string | null {
+  try {
+    const p = new URL(u).protocol;
+    return p === "https:" || p === "http:" ? u : null;
+  } catch {
+    return null;
+  }
+}
+
 const VERDICT_STYLE: Record<IntelVerdict, { label: string; className: string }> = {
   demote: { label: "Demote", className: "text-orange-200" },
   flag: { label: "Flag", className: "text-orange-200" },
@@ -103,9 +114,9 @@ function Verdict({
               <div key={i} className="border-l border-white/15 pl-2">
                 <p className="text-white/75">{e.claim}</p>
                 {e.quote && <p className="mt-0.5 italic text-white/55">“{e.quote}”</p>}
-                {e.source_url && (
+                {safeHref(e.source_url) && (
                   <a
-                    href={e.source_url}
+                    href={safeHref(e.source_url)!}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="mt-0.5 inline-flex items-center gap-1 text-white/70 underline underline-offset-2 hover:text-white"

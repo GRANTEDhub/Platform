@@ -115,6 +115,13 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
   // the outcome is read back from the attempt row below, not from a thrown exception.
   await scoreGrantClientPair(grant, client, db);
 
+  // A re-score supersedes any stored IntellEngine QA verdict: it was computed against the OLD score
+  // and its "engine N → QA M" comparison would now be stale. Clear it so the panel shows "not yet
+  // run" rather than a mismatched verdict. (A dropped card cascade-deletes its verdict already; this
+  // covers the surviving/refreshed case. Best-effort — never fail the re-match on this.)
+  const { error: intelDelErr } = await db.from("card_intel_reviews").delete().eq("review_card_id", params.id);
+  if (intelDelErr) console.error("Failed to clear stale intel verdict on re-match for card", params.id, intelDelErr);
+
   // Read the outcome scoreGrantClientPair just wrote, then re-read the card to see whether it
   // survived. classifyRematch turns the two into one verdict the button renders.
   const [{ data: attempt }, { data: after }] = await Promise.all([
