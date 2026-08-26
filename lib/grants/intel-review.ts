@@ -58,6 +58,10 @@ export const INTEL_MODEL = "claude-opus-5";
 // round than GrantBot's chat default. Still tightly bounded, inside the route's maxDuration=300s.
 export const MAX_INTEL_FETCH_ROUNDS = 3;
 export const INTEL_DEADLINE_MS = 240_000;
+// Total budget across BOTH phases, under the route's maxDuration=300s, with headroom left for the
+// final DB write. Phase 2's timeout is what REMAINS of this after phase 1, so a slow phase 1 can't
+// push the structuring call past the function limit.
+export const INTEL_TOTAL_BUDGET_MS = 285_000;
 export const INTEL_MAX_TOKENS = 4096;
 
 export type IntelVerdict = "affirm" | "demote" | "flag" | "unverified";
@@ -398,7 +402,7 @@ function realCallModel(): CallModel {
 }
 
 // The real phase-2 structured call (forced tool — the generic-nexus pattern).
-async function realStructure(analysisText: string, audit: FetchAuditRecord[]): Promise<RawVerdict | null> {
+async function realStructure(analysisText: string, audit: FetchAuditRecord[], timeoutMs: number): Promise<RawVerdict | null> {
   const anthropic = getAnthropicClient();
   const fetchedList =
     audit.map((a) => `  - ${a.ok ? "OK" : "FAILED"} ${a.finalUrl ?? a.url}${a.ok ? "" : ` (${a.reason})`}`).join("\n") ||
@@ -418,10 +422,11 @@ async function realStructure(analysisText: string, audit: FetchAuditRecord[]): P
         },
       ],
     },
-    // Bounded, like phase 1: phase 1 can spend up to INTEL_DEADLINE_MS of the route's 300s, so this
-    // structuring call must not hang past what's left — a timeout throws into runIntelReview's
-    // caller (the route's catch → clean 502 "retry"), rather than being killed by Vercel's hard limit.
-    { timeout: 45_000, maxRetries: 1 },
+    // Bounded by the budget LEFT after phase 1 (passed in — NOT a fixed value that ignores elapsed
+    // time), and maxRetries:0 so a client-side timeout does NOT retry and double the spend past the
+    // route's 300s limit; it throws once into runIntelReview's caller → the route's clean 502. Clamped
+    // to [5s, 60s] as a floor/ceiling on the remaining budget.
+    { timeout: Math.max(5_000, Math.min(timeoutMs, 60_000)), maxRetries: 0 },
   );
   const tool = res.content.find((b) => b.type === "tool_use");
   if (!tool || tool.type !== "tool_use") return null;
@@ -435,7 +440,7 @@ export interface RunIntelOptions {
   now?: () => string;
   // Injected seams for deterministic tests (no live model / network).
   callModel?: CallModel;
-  structure?: (analysisText: string, audit: FetchAuditRecord[]) => Promise<RawVerdict | null>;
+  structure?: (analysisText: string, audit: FetchAuditRecord[], timeoutMs: number) => Promise<RawVerdict | null>;
   fetcher?: (url: string) => Promise<FetchResult>;
   deadlineMs?: number;
 }
@@ -450,6 +455,8 @@ export async function runIntelReview(
   opts: RunIntelOptions = {},
 ): Promise<IntelReview> {
   const now = opts.now ?? (() => new Date().toISOString());
+  const clock = () => Date.parse(now()) || 0;
+  const startMs = clock();
   const callModel = opts.callModel ?? realCallModel();
   const structure = opts.structure ?? realStructure;
 
@@ -478,13 +485,14 @@ export async function runIntelReview(
     toolsEnabled: true,
     callModel,
     dispatch,
-    now: () => Date.parse(now()) || 0,
+    now: clock,
     deadlineMs: opts.deadlineMs ?? INTEL_DEADLINE_MS,
     maxToolRounds: MAX_INTEL_FETCH_ROUNDS,
   });
 
-  // Phase 2: structure the analysis into the typed verdict, then apply the grounding guard.
-  const parsed = await structure(loop.text, audit);
+  // Phase 2: structure the analysis into the typed verdict, then apply the grounding guard. It gets
+  // whatever of the total budget phase 1 left, so the two phases together stay under maxDuration.
+  const parsed = await structure(loop.text, audit, INTEL_TOTAL_BUDGET_MS - (clock() - startMs));
 
   return finalizeIntel({
     parsed,
