@@ -57,6 +57,9 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
     sent_at: c.sent_at,
     proposed_role: c.proposed_role,
     recommended_prime: c.recommended_prime,
+    // Gates the per-card re-match control (canRematch below): a released card is not
+    // re-scored from here.
+    sme_released_at: c.sme_released_at,
   }));
   // In-flight = not yet terminal. Move 2's matching queue adds 'queued' (waiting
   // for the drain) and 'matching' (drain is scoring it) alongside the original
@@ -321,6 +324,9 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
             <CardContent>
               <MatchOutcomes
                 cards={outcomes}
+                // Admin calibration only (same gate as Re-match / Add-to-client): a per-card
+                // re-match on each still-pending row. Off for everyone else -> read-only list.
+                canRematch={canCalibrate}
                 emptyText={
                   processing
                     ? "Scoring in progress…"
