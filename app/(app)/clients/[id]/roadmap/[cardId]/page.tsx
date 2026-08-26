@@ -9,6 +9,8 @@ import { ScoreFeedback } from "@/components/report/score-feedback";
 import { MarkUnreadButton } from "@/components/report/mark-unread-button";
 import { ScoreFactorsBackfill } from "@/components/report/score-factors-backfill";
 import { CardRematchButton } from "@/components/grants/card-rematch-button";
+import { IntelReviewPanel } from "@/components/report/intel-review-panel";
+import type { IntelReview } from "@/lib/grants/intel-review";
 import { GrantReviewConsole, type ReviewKeyDetail, type ReviewMeta } from "@/components/report/grant-review-console";
 import { AlertSend } from "@/app/(app)/review/[id]/alert-send";
 import { getConceptProposal } from "@/lib/concept/store";
@@ -63,6 +65,9 @@ type CardRow = {
   sent_at: string | null;
   sent_to: string | null;
   grant_id: string | null;
+  // The stored on-demand QA verdict (migration 0086), passed to the staff-only Intel panel as its
+  // initial state. Null until a staffer runs it. Staff-only — never selected by a client query.
+  intel_review: IntelReview | null;
   grants: GrantEmbed | GrantEmbed[] | null;
 };
 
@@ -99,7 +104,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   const { data } = await supabase
     .from("review_cards")
     .select(
-      "id, fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, reasoning_context, decision, sme_released_at, sent_at, sent_to, grant_id, grants(id, source_url, title, funder, fon, assistance_listings, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status, status)",
+      "id, fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, reasoning_context, decision, sme_released_at, sent_at, sent_to, grant_id, intel_review, grants(id, source_url, title, funder, fon, assistance_listings, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status, status)",
     )
     .eq("id", params.cardId)
     .eq("client_id", params.id)
@@ -327,6 +332,14 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         rematch={
           isAdmin && card.decision === "pending" && !card.sme_released_at && !grantProcessing ? (
             <CardRematchButton cardId={params.cardId} tone="dark" backHref={backHref} />
+          ) : null
+        }
+        // On-demand IntellEngine QA: annotate-only (never changes the score), so it needs no
+        // processing gate — just admin + a still-pending, not-yet-released card. Raw verdict is
+        // staff-only; the portal never passes this slot.
+        intel={
+          isAdmin && card.decision === "pending" && !card.sme_released_at ? (
+            <IntelReviewPanel cardId={params.cardId} initial={card.intel_review} />
           ) : null
         }
         fitScore={card.fit_score}
