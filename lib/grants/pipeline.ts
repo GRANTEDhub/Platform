@@ -383,7 +383,6 @@ export async function scoreGrantClientPair(grantRow: Grant, client: Client, db: 
             // preserved -- never silently erase a GO/NO/HOLD.
       await db.from("review_cards").delete().eq("id", existingCard.id).is("sme_released_at", null);
     }
-  }                
   } catch (err) {
     console.error(`Match error for client ${client.name}:`, err);
     await recordAttempt(db, {
