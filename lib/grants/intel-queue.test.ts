@@ -413,9 +413,16 @@ describe("apply-the-gate — buildQaPatch + cardCfdaApplyEligible (pure)", () =>
     expect(patch.qa_engine_fit_score).toBeNull();
   });
 
-  it("affirm and flag → null (nothing projected onto the card)", () => {
-    expect(buildQaPatch(card, demoteReview({ verdict: "affirm", qa_fit_score: 3, qa_factor_scores: null }), "T")).toBeNull();
-    expect(buildQaPatch(card, demoteReview({ verdict: "flag", qa_fit_score: null, qa_factor_scores: null }), "T")).toBeNull();
+  it("affirm and flag → a CLEARING patch (qa_status 'none', score columns nulled) so a reversal clears a prior demote", () => {
+    for (const v of ["affirm", "flag"] as const) {
+      const patch = buildQaPatch(card, demoteReview({ verdict: v, qa_fit_score: v === "affirm" ? 3 : null, qa_factor_scores: null }), "T");
+      expect(patch.qa_status).toBe("none"); // agrees / concern-only — no override in effect
+      // A demoted-then-reversed card must clear, else the stale demoted score keeps showing under coalesce.
+      expect(patch.qa_fit_score).toBeNull();
+      expect(patch.qa_factor_scores).toBeNull();
+      expect(patch.qa_sources).toBeNull();
+      expect(patch.qa_engine_fit_score).toBeNull();
+    }
   });
 
   it("reviewedBy stamps qa_reviewed_by (manual apply audit); default is null (the auto pass)", () => {
@@ -527,6 +534,23 @@ describe("drainIntelQueue — apply-the-gate flag + allowlist (AUTO_INTEL_APPLY)
     expect(card.qa_fit_score ?? null).toBeNull();
     expect(card.qa_factor_scores ?? null).toBeNull();
     expect(card.qa_sources ?? null).toBeNull();
+    expect(card.qa_engine_fit_score ?? null).toBeNull();
+    expect(card.fit_score).toBe(3);
+  });
+
+  it("ON + affirm re-QA of a PREVIOUSLY-demoted JAG card → the stale applied demote is CLEARED (PR G reversal)", async () => {
+    process.env.AUTO_INTEL_APPLY = "true";
+    const s = seed();
+    Object.assign(s.tables.review_cards[0], {
+      qa_fit_score: 2, qa_status: "applied", qa_engine_fit_score: 3,
+      qa_factor_scores: { seat_role: { rating: "weak", rationale: "stale" } }, qa_sources: [JAG_PDF],
+    });
+    await drainIntelQueue(asDb(s), { now, runReview: async () => demoteReview({ verdict: "affirm", qa_fit_score: 3, qa_factor_scores: null }) });
+    const card = s.tables.review_cards[0];
+    expect(card.qa_status).toBe("none"); // affirm agrees with the engine — no override in effect
+    // The stale demote must be gone so coalesce falls back to the engine's 3, not the reversed-away 2.
+    expect(card.qa_fit_score ?? null).toBeNull();
+    expect(card.qa_factor_scores ?? null).toBeNull();
     expect(card.qa_engine_fit_score ?? null).toBeNull();
     expect(card.fit_score).toBe(3);
   });

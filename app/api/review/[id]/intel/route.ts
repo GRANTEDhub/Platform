@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { runIntelReview, type IntelCard } from "@/lib/grants/intel-review";
+import { runIntelReview, type IntelCard, type IntelReview } from "@/lib/grants/intel-review";
 import { autoIntelApplyEnabled, buildQaPatch, applyQaPatch } from "@/lib/grants/intel-queue";
 import type { Client, FactorScores, Grant } from "@/types/database";
 
@@ -105,24 +105,34 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: "Failed to save the QA verdict." }, { status: 500 });
   }
 
-  // APPLY-THE-GATE, MANUAL PATH (PR E): a human clicking Re-run is a deliberate, reviewed action, so it
-  // applies the verdict onto the card's qa_* override columns — through the SAME buildQaPatch/applyQaPatch
-  // the auto drain uses, so the two paths write identical columns and can't drift. Two intentional
-  // differences from the auto sweep: (1) ANY CFDA, not the JAG-only allowlist — the human IS the fan-out
-  // gate, so no program restriction; (2) qa_reviewed_by = this staff id (audit), where the auto pass writes
-  // null. Same master flag: AUTO_INTEL_APPLY OFF disables ALL card rewrites, auto and manual alike. The
-  // auto path's `created_by IS NULL` gate is UNTOUCHED — this route applies its own verdict right here
-  // rather than leaning on the drain (which deliberately skips human verdicts). Never hides a card: a
-  // demote only lowers the displayed number; affirm/flag build no patch and leave the card untouched.
+  // APPLY-THE-GATE, MANUAL PATH (PR E; reconciled in PR G): a human clicking Re-run applies the verdict onto
+  // the card's qa_* columns through the SAME buildQaPatch/applyQaPatch the drain uses. ANY CFDA (the human is
+  // the fan-out gate), qa_reviewed_by = this staff id, same master flag (AUTO_INTEL_APPLY OFF disables all
+  // card rewrites). It never touches the engine's own columns and never hides a card: a demote only lowers
+  // the displayed number; affirm / flag / unverified CLEAR any prior override so a reversal can't leave a
+  // stale demoted score.
+  //
+  // Apply the DURABLE verdict — RE-READ from card_intel_reviews, not our in-memory `intel`. A concurrent
+  // Re-run on the same card (each session has its own button; last upsert wins, nothing serializes them)
+  // could have superseded our copy, and applying the stale one would diverge review_cards from the
+  // source-of-truth verdict. Re-reading mirrors the drain's reconciliation; in the common single-analyst
+  // case the persisted row IS our just-written verdict.
   let applied = false;
   if (autoIntelApplyEnabled()) {
-    const patch = buildQaPatch(
-      { id: card.id, fit_score: card.fit_score, factor_scores: card.factor_scores },
-      intel,
-      new Date().toISOString(),
-      user.id,
-    );
-    if (patch) applied = await applyQaPatch(db, card.id, patch);
+    const { data: persisted } = await db
+      .from("card_intel_reviews")
+      .select("intel_review")
+      .eq("review_card_id", params.id)
+      .maybeSingle<{ intel_review: IntelReview }>();
+    if (persisted?.intel_review) {
+      const patch = buildQaPatch(
+        { id: card.id, fit_score: card.fit_score, factor_scores: card.factor_scores },
+        persisted.intel_review,
+        new Date().toISOString(),
+        user.id,
+      );
+      applied = await applyQaPatch(db, card.id, patch);
+    }
   }
 
   return NextResponse.json({ ok: true, intel, applied });
