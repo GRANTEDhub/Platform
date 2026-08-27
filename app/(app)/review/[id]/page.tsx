@@ -17,6 +17,7 @@ import { ProgramAwardMap } from "./program-award-map";
 import { formatDeadlineShort } from "@/lib/grants/format";
 import { getSentAlertForCard } from "@/lib/alerts/sent-status";
 import { FactorBreakdown, ScoreArcRing } from "@/components/report/match-score";
+import { resolveFit } from "@/lib/report/qa-override";
 import { prospectCredibility } from "@/lib/prospects/credibility";
 import type { ProgramAwardSummary } from "@/lib/grants/program-awards";
 import type { ReviewCard, Client, Grant, Prospect } from "@/types/database";
@@ -84,12 +85,17 @@ export default async function CardDetailPage({
     clientMatchCount = count ?? null;
   }
 
+  // Coalesce the engine score/factors against the QA override layer (migration 0088), staleness-guarded —
+  // so this staff worklist shows the same number the console/portal do. Null today. `effFit` stays 1|2|3.
+  const resolvedQa = resolveFit(card);
+  const effFit: 1 | 2 | 3 = resolvedQa.fitScore ?? card.fit_score;
+
   // Score block: real fit_score + "SCORE" label, top-right inside the banner (both
   // tabs). Carries the decided-state badge beneath it when a decision is recorded.
   const scoreBlock = (
     <div className="flex flex-col items-end gap-2">
       <div className="flex flex-col items-end leading-none">
-        <span className="font-serif text-[32px] font-semibold text-white">{card.fit_score}</span>
+        <span className="font-serif text-[32px] font-semibold text-white">{effFit}</span>
         <span className="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-brand-orange">Score</span>
       </div>
       {card.decision !== "pending" && <DecisionBadge decision={card.decision} />}
@@ -294,9 +300,10 @@ function ProspectCredibilityCard({
 // click-to-expand overlay. Fit uses "N · Band" (fits 16px); "of 3" is implied by
 // the SCORE block top-right.
 function MatchStatTiles({ card, grant }: { card: FullCard; grant: GrantDetailFields }) {
+  const effFit = resolveFit(card).fitScore ?? card.fit_score; // QA override coalesce (0088); engine's today
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <Stat tone="onHero" truncateValue label="Fit" value={`${card.fit_score} · ${BAND[card.fit_score] ?? "—"}`} />
+      <Stat tone="onHero" truncateValue label="Fit" value={`${effFit} · ${BAND[effFit] ?? "—"}`} />
       <Stat tone="onHero" truncateValue label="Proposed role" value={card.proposed_role || "—"} />
       <RecommendedPrime
         tone="onHero"
@@ -326,7 +333,10 @@ function MatchSummaryCard({
   clientMatchCount: number | null;
 }) {
   const rc = card.reasoning_context || {};
-  const fitScore = card.fit_score;
+  // QA override coalesce (migration 0088), staleness-guarded — the engine's own values today.
+  const resolved = resolveFit(card);
+  const fitScore = resolved.fitScore ?? card.fit_score;
+  const effFactors = resolved.factorScores;
   const band = BAND[fitScore] ?? "—";
   const bandText = fitScore >= 3 ? "text-emerald-700" : fitScore === 2 ? "text-brand-orange" : "text-muted-foreground";
   // Full reasoning behind the show-more: the eligibility read + the engine's score
@@ -365,7 +375,7 @@ function MatchSummaryCard({
 
         {/* Right: per-factor breakdown */}
         <div className="min-w-0 w-full flex-1">
-          <FactorBreakdown scores={card.factor_scores} />
+          <FactorBreakdown scores={effFactors} />
         </div>
       </div>
 
@@ -384,6 +394,42 @@ function MatchSummaryCard({
         <div className="mt-4 border-t border-brand-navy/[0.08] pt-3">
           <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-brand-orange">How this score was reached</p>
           <ExpandableText text={reasoning} className="mt-2 text-sm leading-relaxed text-foreground" />
+        </div>
+      )}
+
+      {/* IntellEngine QA provenance (migration 0088), staff-only surface. Applied → the grounded .gov
+          sources QA verified the (coalesced) score against; unverified/failed → a plain couldn't-verify
+          line. The raw analyst note stays in card_intel_reviews. Null today (no verdict in effect). */}
+      {resolved.qa && (
+        <div className="mt-4 border-t border-brand-navy/[0.08] pt-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-brand-navy">IntellEngine QA</p>
+          {resolved.qa.status === "applied" ? (
+            resolved.qa.sources.filter((u) => /^https?:\/\//i.test(u)).length > 0 ? (
+              <ul className="mt-2 space-y-1">
+                {resolved.qa.sources
+                  .filter((u) => /^https?:\/\//i.test(u))
+                  .map((url) => (
+                    <li key={url} className="min-w-0">
+                      <a
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={url}
+                        className="block truncate text-sm text-brand-navy underline decoration-brand-navy/30 underline-offset-2 hover:decoration-brand-navy"
+                      >
+                        {url}
+                      </a>
+                    </li>
+                  ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">Score verified against the official source.</p>
+            )
+          ) : (
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+              Could not verify against the official source — showing the engine&rsquo;s score.
+            </p>
+          )}
         </div>
       )}
 

@@ -19,6 +19,7 @@ import { viewFitFactors, blockingReason } from "@/lib/report/fit-factors";
 import { wasCalibrated } from "@/lib/grants/calibration";
 import { computeEligibility } from "@/lib/intellengine/eligibility";
 import { FIT_BAND, deadlineDaysLeft, isOverdue } from "@/lib/report/shape";
+import { resolveFit } from "@/lib/report/qa-override";
 import { MarkRead } from "@/components/report/mark-read";
 import { formatAwardRange, compactCostShare } from "@/lib/grants/format";
 import { isUnconvertedLead } from "@/lib/leads/stage";
@@ -56,6 +57,12 @@ type CardRow = {
   why_this_org: string[] | null;
   concept_synopsis: string | null;
   factor_scores: FactorScores | null;
+  // The QA override layer (migration 0088); coalesced for display via resolveFit. Null today.
+  qa_fit_score: number | null;
+  qa_factor_scores: FactorScores | null;
+  qa_sources: string[] | null;
+  qa_status: string | null;
+  qa_engine_fit_score: number | null;
   reasoning_context: { consortium_rationale?: string; fit_score_derivation?: string } | null;
   decision: string;
   sme_released_at: string | null;
@@ -101,7 +108,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   const { data } = await supabase
     .from("review_cards")
     .select(
-      "id, fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, reasoning_context, decision, sme_released_at, sent_at, sent_to, grant_id, grants(id, source_url, title, funder, fon, assistance_listings, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status, status)",
+      "id, fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, qa_fit_score, qa_factor_scores, qa_sources, qa_status, qa_engine_fit_score, reasoning_context, decision, sme_released_at, sent_at, sent_to, grant_id, grants(id, source_url, title, funder, fon, assistance_listings, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status, status)",
     )
     .eq("id", params.cardId)
     .eq("client_id", params.id)
@@ -111,6 +118,14 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   const card = data as CardRow | null;
   const g = grantOf(card?.grants ?? null);
   if (!card || !g) notFound();
+
+  // Coalesce the engine score/factors against the QA override layer (migration 0088), staleness-guarded.
+  // Everything below renders off these effective values, so an applied+fresh QA verdict IS the score the
+  // reviewer and client see; with no verdict (today) they are exactly the engine's own. `effFit` stays
+  // 1|2|3 because the card is scored (fit_score is non-null here) and resolveFit only swaps within 1..3.
+  const resolved = resolveFit(card);
+  const effFit: 1 | 2 | 3 = resolved.fitScore ?? card.fit_score;
+  const effFactors = resolved.factorScores;
 
   const { data: client } = await supabase
     .from("clients")
@@ -191,7 +206,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   // ── The page's argument ───────────────────────────────────────────────────
   // Score -> weakness -> mitigation as one chain. See the note in
   // components/report/grant-review-console.tsx for why the layout exists to carry it.
-  const factors = viewFitFactors(card.factor_scores);
+  const factors = viewFitFactors(effFactors);
 
   const eligibility = computeEligibility({
     eligibleEntityTypes: g.eligible_entity_types,
@@ -216,7 +231,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   const calibrated = wasCalibrated(card.reasoning_context?.fit_score_derivation);
   const rationale = {
     lead: firstSentences(why[0] ?? card.concept_synopsis, 2),
-    blocking: blockingReason(factors, card.fit_score, { calibrated }),
+    blocking: blockingReason(factors, effFit, { calibrated }),
     mitigation: firstSentences(card.reasoning_context?.consortium_rationale, 2),
   };
 
@@ -350,8 +365,13 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         // processing gate — just admin + a still-pending, not-yet-released card. Raw verdict is
         // staff-only; the portal never passes this slot.
         intel={showIntel ? <IntelReviewPanel cardId={params.cardId} initial={intelReview} /> : null}
-        fitScore={card.fit_score}
-        verdict={FIT_BAND[card.fit_score].label}
+        // The client-safe QA badge (applied score change + grounded sources, or a "couldn't verify"
+        // note) — data, not a control, so it renders on BOTH this staff page and the client portal
+        // detail. Null when no QA verdict is in effect (today). The RAW analyst note is the separate
+        // staff-only `intel` slot above; this carries only the applied projection.
+        qaVerdict={resolved.qa}
+        fitScore={effFit}
+        verdict={FIT_BAND[effFit].label}
         // What the score MEANS for the next step, derived from the lit factor rather than
         // from three canned sentences keyed off the number.
         consequence={
@@ -361,7 +381,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
             ? null
             : factors.lead
               ? `Pursue only once ${factors.lead.label.toLowerCase()} is addressed.`
-              : card.fit_score === 3
+              : effFit === 3
                 ? "No blocking factor — this one is ready to go out."
                 : null
         }

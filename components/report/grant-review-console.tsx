@@ -7,6 +7,7 @@ import { EmphasizedTitle } from "@/components/report/emphasized-title";
 import { collapseDuplicatedBlock, previewHtml } from "@/lib/grants/description";
 import { splitTrailingParenthetical } from "@/lib/report/title";
 import type { FitFactorView, ReviewFactor } from "@/lib/report/fit-factors";
+import type { QaVerdictView } from "@/lib/report/qa-override";
 import type { EligibilityVerdict } from "@/lib/intellengine/eligibility";
 import { ALLOWABLE_USES_FALLBACK, type AllowableUses } from "@/lib/grants/allowable-uses";
 
@@ -71,6 +72,7 @@ export function GrantReviewConsole({
   scoreFactors,
   rematch = null,
   intel = null,
+  qaVerdict = null,
   fitScore,
   verdict,
   consequence,
@@ -132,6 +134,14 @@ export function GrantReviewConsole({
   // but it is RAW internal QA voice, so it stays staff-side by construction (the portal cannot pass it,
   // and no client-facing query selects intel_review).
   intel?: React.ReactNode | null;
+  // The APPLIED, client-safe QA projection (migration 0088), as DATA — not a control, so it renders on
+  // both this staff screen and the portal without forking on actor. `fitScore`/`factors` above already
+  // reflect an applied+fresh override (resolveFit on the page); this only drives the small provenance
+  // note under the fit factors — the grounded .gov sources on an applied verdict, or a "couldn't verify"
+  // line. The RAW analyst voice never rides here (that is the staff-only `intel` slot / card_intel_reviews).
+  // The PORTAL passes only `applied` verdicts (sources); the "couldn't verify" states are staff-passed, so
+  // a client never sees QA's internal plumbing — the same "pages decide what to pass" pattern as `intel`.
+  qaVerdict?: QaVerdictView | null;
   fitScore: 1 | 2 | 3;
   verdict: string;
   consequence: string | null;
@@ -198,6 +208,7 @@ export function GrantReviewConsole({
               factors={factors}
               scoreFactors={scoreFactors}
               footnote={scoreFootnote}
+              qaVerdict={qaVerdict}
             />
           </div>
 
@@ -483,11 +494,13 @@ function RationaleCard({
   factors,
   scoreFactors,
   footnote,
+  qaVerdict,
 }: {
   rationale: { lead: string | null; blocking: string | null; mitigation: string | null };
   factors: FitFactorView;
   scoreFactors: React.ReactNode | null;
   footnote: string;
+  qaVerdict: QaVerdictView | null;
 }) {
   const hasProse = rationale.lead || rationale.blocking || rationale.mitigation;
   return (
@@ -555,11 +568,69 @@ function RationaleCard({
         </div>
       </div>
 
+      {/* IntellEngine QA provenance, when a verdict is in effect (migration 0088). Above the footnote so
+          it reads as part of the score's provenance. Null when there is no verdict (today) — no band. */}
+      {qaVerdict && <QaVerdictNote qa={qaVerdict} />}
+
       {/* Pinned, full-width footnote — the machine-scored / six-factors context, kept from the
           old layout so the redesign does not quietly drop it. */}
       <p className="shrink-0 border-t border-hairline-strong px-5 py-[9px] text-[11px] text-ink-subtle">{footnote}</p>
     </section>
   );
+}
+
+// The QA provenance note under the fit factors. On an APPLIED verdict it shows the grounded .gov sources
+// QA verified the score against — client-safe (the plan's "the client sees the sources"), and the score /
+// factors above already reflect QA's number. On a staff-passed unverified/failed verdict it is a plain
+// "couldn't verify, showing the engine score" line; the portal hands this component only `applied`
+// verdicts, so a client never sees that internal plumbing. NEVER the raw analyst note — that is staff-only
+// in card_intel_reviews and is never selected into this path.
+function QaVerdictNote({ qa }: { qa: QaVerdictView }) {
+  if (qa.status === "applied") {
+    // Only real http(s) links render — a belt-and-suspenders guard even though qa_sources is built from
+    // the .gov-allowlisted fetcher, so a malformed value can never become a javascript: href.
+    const links = qa.sources.filter((u) => /^https?:\/\//i.test(u));
+    if (links.length === 0) return null;
+    return (
+      <div className="shrink-0 border-t border-hairline-strong px-5 py-[9px]">
+        <p className={EYEBROW}>Verified against</p>
+        <ul className="mt-1.5 flex flex-col gap-1">
+          {links.map((url) => (
+            <li key={url} className="min-w-0">
+              <a
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                title={url}
+                className="inline-flex max-w-full items-center gap-1.5 text-[12px] text-brand-navy underline decoration-brand-navy/30 underline-offset-2 hover:decoration-brand-navy focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60"
+              >
+                <ExternalLink className="h-3 w-3 shrink-0" aria-hidden="true" />
+                <span className="truncate">{sourceLabel(url)}</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+  // unverified | failed — staff-passed only (the portal never hands these through).
+  return (
+    <div className="shrink-0 border-t border-hairline-strong px-5 py-[9px]">
+      <p className="text-[11px] leading-[1.5] text-ink-subtle">
+        IntellEngine QA could not verify this against the official source — showing the engine&rsquo;s score.
+      </p>
+    </div>
+  );
+}
+
+// A source link's readable label: host + path, so a long .gov URL reads as its page rather than wrapping.
+function sourceLabel(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.host.replace(/^www\./, "")}${u.pathname.replace(/\/$/, "")}`;
+  } catch {
+    return url;
+  }
 }
 
 // One factor row — the name in a left cell, then a FULL-WIDTH 3-segment bar that spans the score
