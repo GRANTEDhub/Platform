@@ -12,13 +12,15 @@
 //     nothing else. So QA can never remove or re-score a card. The card keeps the engine's score;
 //     the verdict says "engine 3 → QA says 1, here's why", and a human makes the call.
 //   FAIL-SAFE (two-part grounding guard). An ADVERSE verdict (demote / flag) APPLIES only when it
-//     (1) cites a page we ACTUALLY FETCHED (groundedOnFetchedSource — host-level, deterministic) AND
-//     (2) SURVIVES an adversarial refute (a skeptical second read of the fetched page text, phase 3),
-//     else it is downgraded to "unverified" in code (finalizeIntel). This REPLACES the old
-//     verbatim-quote test, which suppressed correct reads of allocation tables / PDFs (the JAG case)
-//     just because the claim wasn't a clean contiguous substring: host-grounding + refute checks that
-//     QA read a real source AND that the source actually backs the concern, without demanding a
-//     quotable sentence. A flaky fetch, a from-memory claim, or a page that doesn't hold up on the
+//     (1) is GROUNDED — the pass actually FETCHED a relevant .gov page (fetchGrantSource is
+//     .gov-allowlisted and only fetches this grant's sources, so an ok fetch is a real authoritative
+//     read) AND (2) SURVIVES an adversarial refute (a skeptical second read of that fetched page text,
+//     phase 3), else it is downgraded to "unverified" in code (finalizeIntel). The refute — not any
+//     quote or URL the model emits — is the content guard: it reads the fetched bodies and must confirm
+//     the concern. This replaced first the verbatim-quote test (suppressed correct reads of allocation
+//     tables/PDFs) and then a host-match on the model's cited URL (the model reliably omits the URL even
+//     after reading the page, which gated out correct fetched demotes before the refute could bless
+//     them — the JAG case). A flaky fetch, a from-memory claim, or a page that doesn't hold up on the
 //     second read can never produce a confident demote. A source the pass cannot reach comes back as a
 //     typed "could not retrieve" → unverified, never a guess.
 //
@@ -321,15 +323,17 @@ export function intelContext(card: IntelCard, grant: Grant, client: Client, disc
 
 // ── Grounding guard + finalize (pure, the fail-safe) ───────────────────────────────────────────────
 
-// The registrable host of a URL (lowercased, `www.` stripped), or null if unparseable. Used to check a
-// cited source against the pages actually fetched — see groundedOnFetchedSource.
-function hostOf(u: string): string | null {
-  try {
-    return new URL(u).hostname.toLowerCase().replace(/^www\./, "");
-  } catch {
-    return null;
-  }
-}
+// GROUNDING. An adverse verdict (demote/flag) APPLIES only when the pass actually FETCHED a relevant .gov
+// page for this grant (a successful `fetchGrantSource` GET → an `ok` audit record) AND the adversarial
+// refute — which reads that fetched page text and is biased to refute — confirms the concern. The fetch is
+// what proves QA read a real, authoritative source (fetchGrantSource is .gov-allowlisted, and it only ever
+// fetches this grant's seeded / NOFO / discovered sources, so an ok fetch is relevant by construction); the
+// refute is the content check. We deliberately DO NOT require the model to echo the fetched URL in its
+// structured evidence: the phase-2 model reliably omits it even after reading the page, so that requirement
+// gated out correct, fetched, refute-confirmable demotes ("cited no page" — the JAG-county case, three eval
+// runs) BEFORE the refute could bless them. The URL echo was never the safety signal — the fetch audit
+// proves the page was retrieved and the refute proves the page backs the claim. `hasSuccessfulFetch`
+// (audit.some ok) is that grounding signal, computed inline in finalizeIntel / runIntelReview.
 
 // A source_url is MODEL OUTPUT, and a fetched (untrusted) .gov page can steer the model to emit a
 // `javascript:` / `data:` URL. Only http(s) is a safe anchor href; anything else is blanked so the
@@ -343,33 +347,11 @@ export function isSafeHttpUrl(u: string): boolean {
   }
 }
 
-// GROUNDING (replaces the old verbatim-quote guard). An adverse verdict must cite at least one page the
-// pass ACTUALLY FETCHED (an `ok` audit record) — the model cannot ground a demote on a page it never
-// retrieved. It no longer requires a verbatim substring to appear in the body: correct reads of allocation
-// tables / PDFs rarely yield a clean contiguous span, and demanding one suppressed correct verdicts (the
-// JAG case). The claim's CONTENT is checked separately by the adversarial refute (phase 3), which reads
-// the real fetched bodies — so host-level grounding + refute is the anti-hallucination pair, deterministic
-// half here (unit-tested), semantic half there. A cited path may differ slightly from the fetched path, so
-// grounding is at the host level and the refute does the content verification.
-export function groundedOnFetchedSource(evidence: IntelEvidence[], audit: FetchAuditRecord[]): boolean {
-  const fetchedHosts = new Set<string>();
-  for (const a of audit) {
-    if (!a.ok) continue;
-    for (const u of [a.finalUrl, a.url]) {
-      const h = u ? hostOf(u) : null;
-      if (h) fetchedHosts.add(h);
-    }
-  }
-  if (fetchedHosts.size === 0) return false;
-  return evidence.some((e) => {
-    const h = e?.source_url ? hostOf(e.source_url) : null;
-    return h != null && fetchedHosts.has(h);
-  });
-}
-
 // DISPLAY evidence: the sanitized list stored on the verdict and shown to staff. Keep only items with a real
 // quote (the supporting text a human reads) and BLANK any unsafe source_url (a `javascript:`/`data:` URL can
-// never reach the panel's anchor href). This is presentation, NOT the grounding signal — see groundingEvidence.
+// never reach the panel's anchor href). This is presentation only — it is NOT the grounding gate (that is
+// hasSuccessfulFetch + the refute), so a demote still applies when the model gives thin evidence, as long as
+// a real .gov page was fetched and the refute confirms it.
 function sanitizeEvidence(raw: unknown): IntelEvidence[] {
   return (Array.isArray(raw) ? raw : [])
     .filter((e) => e && e.quote)
@@ -378,26 +360,6 @@ function sanitizeEvidence(raw: unknown): IntelEvidence[] {
       quote: e.quote,
       source_url: isSafeHttpUrl(e.source_url ?? "") ? e.source_url : "",
     }));
-}
-
-// GROUNDING evidence: the set the host-match runs on. The grounding signal is "QA cited a page it actually
-// FETCHED" — i.e. a safe http source_url on a fetched host — NOT whether that item also carries a quotable
-// span. Requiring a quote here silently re-created the exact verbatim-quote gate the redesign removed: the
-// relaxed prompt tells the model it needn't quote a clean span, so on allocation tables it returns evidence
-// with a real fetched-host source_url but a thin/empty quote, sanitizeEvidence dropped those, and a correct,
-// fetched, refute-survivable demote was downgraded to "cited no page" (the JAG-county case). So grounding
-// keeps every item with a safe source_url, quote optional; the adversarial refute still checks the CLAIM
-// against the fetched page, so a bare source_url can't apply a demote on its own. Used in BOTH the pre-refute
-// gate (runIntelReview) and finalizeIntel, so the two decide "grounded" on the SAME set (the round-2
-// consistency fix — a divergence would waste a refute call and mislabel the stored record).
-function groundingEvidence(raw: unknown): IntelEvidence[] {
-  return (Array.isArray(raw) ? raw : [])
-    .map((e) => ({
-      claim: e?.claim ?? "",
-      quote: typeof e?.quote === "string" ? e.quote : "",
-      source_url: isSafeHttpUrl(e?.source_url ?? "") ? e.source_url : "",
-    }))
-    .filter((e) => e.source_url);
 }
 
 function clampScore(n: unknown): number | null {
@@ -479,25 +441,24 @@ export function finalizeIntel(opts: {
   let refute_survived: boolean | null = null;
 
   // THE FAIL-SAFE:
-  //   - an ADVERSE call (demote/flag) applies only when it is (1) GROUNDED on a page actually fetched
-  //     (groundedOnFetchedSource) AND (2) SURVIVED the adversarial refute (refuteSurvived === true). The
-  //     old verbatim-quote test is gone — it suppressed correct reads of allocation tables/PDFs; the refute
-  //     checks the claim against the real fetched content instead. Any shortfall → unverified (never a
-  //     from-nothing demote).
+  //   - an ADVERSE call (demote/flag) applies only when it is (1) GROUNDED — the pass fetched at least one
+  //     relevant .gov page (hasSuccessfulFetch; fetchGrantSource is .gov-allowlisted and only fetches this
+  //     grant's sources, so an ok fetch is a real authoritative read) AND (2) SURVIVED the adversarial refute
+  //     (refuteSurvived === true), which reads that fetched page text. We do NOT require the model to echo the
+  //     fetched URL in its evidence — it reliably omits it, which gated out correct fetched demotes before the
+  //     refute could confirm them (the JAG case). The refute, not a URL echo, is the content guard. Any
+  //     shortfall → unverified (never a from-nothing demote).
   //   - an AFFIRM must rest on at least one SUCCESSFUL fetch, else it is "the model thinks it's fine but
   //     read no source" — not a web-backed affirmation → unverified.
   const hasSuccessfulFetch = audit.some((a) => a.ok);
   if (verdict === "demote" || verdict === "flag") {
-    // Grounding runs on groundingEvidence (safe source_url, quote optional), NOT the quote-filtered display
-    // `evidence` — otherwise a fetched-host citation with a thin quote is dropped and a correct demote reads
-    // as "cited no page" (the JAG-county downgrade).
-    const grounded = hasSuccessfulFetch && groundedOnFetchedSource(groundingEvidence(parsed.evidence), audit);
+    const grounded = hasSuccessfulFetch;
     if (!grounded) {
       verdict = "unverified";
       unverified = true;
-      refute_survived = null; // the refute never ran — nothing grounded to test
+      refute_survived = null; // no source was retrieved — nothing for the refute to read
       summary =
-        "QA proposed a concern but cited no page it actually retrieved — treated as unverified; manual check needed." +
+        "QA proposed a concern but could not retrieve a .gov source to verify against — treated as unverified; manual check needed." +
         (summary ? ` (Model note: ${summary})` : "");
     } else if (opts.refuteSurvived === true) {
       refute_survived = true; // grounded AND survived the second read → applies
@@ -806,10 +767,9 @@ export async function runIntelReview(
   // an adverse verdict, so any shortfall (no budget, thrown, refuted) fails safe to "unverified".
   let refuteSurvived: boolean | null = null;
   if (parsed && (parsed.verdict === "demote" || parsed.verdict === "flag")) {
-    // Gate on the SAME groundingEvidence set finalizeIntel will recheck, so the two never disagree on
-    // "grounded" (round-2 consistency). Grounding is source_url-on-a-fetched-host, quote optional — the
-    // refute below is what checks the claim against the page.
-    const grounded = audit.some((a) => a.ok) && groundedOnFetchedSource(groundingEvidence(parsed.evidence), audit);
+    // Grounded = the pass fetched at least one relevant .gov page for the refute to read (the SAME signal
+    // finalizeIntel gates on). Run the refute over those fetched bodies; it is the content guard.
+    const grounded = audit.some((a) => a.ok);
     if (grounded) {
       const remaining = INTEL_TOTAL_BUDGET_MS - (clock() - startMs);
       if (remaining >= MIN_REFUTE_BUDGET_MS) {

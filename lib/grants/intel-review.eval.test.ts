@@ -29,14 +29,15 @@ import type { Grant, Client } from "@/types/database";
 //      jurisdiction on the JAG local allocation list and cannot prime a direct application. Runs discovery ON
 //      (the flag-on path), but 16.738 is a SEEDED program, so the pass FETCHES the seeded allocation URL
 //      rather than SEARCHING (0 web_searches is correct — search is for UNSEEDED programs; see VOCA).
-//      REDESIGNED GUARD (Step 3, PR A): the old guard downgraded this well-reasoned demote to `unverified`
-//      whenever the model couldn't quote a PDF-table cell VERBATIM — suppressing a correct answer. The new
-//      guard grounds on the FETCHED SOURCE (the cited page is in the fetch audit's ok-set) and requires the
-//      demote to SURVIVE an adversarial refute — no verbatim substring needed. So the bar RISES: the pass
-//      must now land a GROUNDED **demote** (not merely never-affirm) in the MAJORITY of runs, naming the
+//      REDESIGNED GUARD (Step 3, PR A): earlier gates downgraded this well-reasoned demote to `unverified`
+//      — first for lacking a VERBATIM PDF quote, then for the phase-2 model not echoing the fetched URL in
+//      its evidence (three eval runs of "cited no page" despite reading the real FY26 table). The final
+//      guard grounds on the FETCH ITSELF (a relevant .gov page was retrieved for the refute to read) and
+//      requires the demote to SURVIVE the adversarial refute — no quote, no URL echo. So the bar: the pass
+//      must land a GROUNDED **demote** (not merely never-affirm) in the MAJORITY of runs, naming the
 //      Arkansas allocation reality. The fail-safe is unchanged and still HARD every run — no adverse verdict
-//      without a grounded .gov fetch — and a run that genuinely can't reach/ground a source still honestly
-//      falls to `unverified` (never a guess).
+//      without a successful .gov fetch — and a run that genuinely can't reach a source still honestly falls
+//      to `unverified` (never a guess).
 //
 //   2. [A] JAG-state-AFFIRM    — the State of Arkansas (state_government, the State Administering Agency)
 //      on the SAME program IS a direct JAG recipient. QA must NOT over-demote a genuine direct

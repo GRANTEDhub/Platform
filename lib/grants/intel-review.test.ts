@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   finalizeIntel,
-  groundedOnFetchedSource,
   intelContext,
   runIntelReview,
   isSafeHttpUrl,
@@ -17,8 +16,11 @@ import type { Grant, Client } from "@/types/database";
 
 // Deterministic tests — NO live model, NO network. They lock the structural invariants of the REDESIGNED
 // guard (PR A):
-//   (1) GROUNDING: an adverse verdict (demote/flag) must cite a page the pass ACTUALLY FETCHED (host match
-//       against the audit ok-set) — not a verbatim-quote-in-body (that suppressed correct table/PDF reads).
+//   (1) GROUNDING: an adverse verdict (demote/flag) applies only if the pass actually FETCHED a relevant
+//       .gov page (hasSuccessfulFetch). It does NOT require the model to echo the fetched URL in evidence
+//       — the model reliably omits it, which gated out correct fetched demotes; the refute is the content
+//       guard. (Earlier iterations used a verbatim-quote-in-body test, then a host match on the cited URL;
+//       both suppressed correct reads. Now: a real fetch happened + the refute confirms it.)
 //   (2) REFUTE: a grounded adverse verdict APPLIES only if the adversarial second read supported it
 //       (refuteSurvived === true); refuted / could-not-run → 'unverified'. Model quality is the eval's job.
 //   (3) AFFIRM still needs a successful fetch, else 'unverified' (not a web-backed affirmation).
@@ -44,28 +46,6 @@ describe("isSafeHttpUrl", () => {
     expect(isSafeHttpUrl("data:text/html,<script>")).toBe(false);
     expect(isSafeHttpUrl("not a url")).toBe(false);
     expect(isSafeHttpUrl("")).toBe(false);
-  });
-});
-
-describe("groundedOnFetchedSource — cited a page we actually fetched (host match)", () => {
-  it("true when an evidence source_url is on a host that was fetched (ok)", () => {
-    expect(groundedOnFetchedSource([ev(FETCHED)], [okAudit(FETCHED)])).toBe(true);
-  });
-  it("true when the cited path differs but the host was fetched (host-level grounding)", () => {
-    expect(groundedOnFetchedSource([ev("https://bja.ojp.gov/a/different/path")], [okAudit(FETCHED)])).toBe(true);
-  });
-  it("true when the host matches the audit's finalUrl (post-redirect)", () => {
-    const rec: FetchAuditRecord = { url: "https://bit.ly/x", ok: true, finalUrl: FETCHED, truncated: false, fetchedAt: "T" };
-    expect(groundedOnFetchedSource([ev("https://bja.ojp.gov/y")], [rec])).toBe(true);
-  });
-  it("false when the cited host was never fetched", () => {
-    expect(groundedOnFetchedSource([ev(UNFETCHED)], [okAudit(FETCHED)])).toBe(false);
-  });
-  it("false when there were no successful fetches", () => {
-    expect(groundedOnFetchedSource([ev(FETCHED)], [failAudit(FETCHED)])).toBe(false);
-  });
-  it("false for an unparseable / javascript: source_url", () => {
-    expect(groundedOnFetchedSource([ev("javascript:alert(1)")], [okAudit(FETCHED)])).toBe(false);
   });
 });
 
@@ -138,26 +118,28 @@ describe("finalizeIntel — the fail-safe (grounding + refute) + shaping", () =>
     expect(r.verdict).toBe("unverified");
   });
 
-  it("demote citing a host that was NEVER fetched → unverified (ungrounded), refute_survived null", () => {
+  it("demote APPLIES on a successful fetch even when the model's cited evidence host was NOT fetched (grounding is the fetch + refute, not the cited URL — the JAG fix)", () => {
     const r = finalizeIntel({
       ...BASE,
-      parsed: { verdict: "demote", qa_fit_score: 1, summary: "asterisk county", evidence: [ev(UNFETCHED)] },
-      audit: [okAudit(FETCHED)],
-      refuteSurvived: true, // even a 'survived' can't rescue an ungrounded citation
+      parsed: { verdict: "demote", confidence: "high", qa_fit_score: 1, summary: "asterisk county", evidence: [ev(UNFETCHED)] },
+      audit: [okAudit(FETCHED)], // a real .gov page WAS fetched for the refute to read
+      refuteSurvived: true, // and the refute (reading it) confirmed the concern
     });
-    expect(r.verdict).toBe("unverified");
-    expect(r.refute_survived).toBeNull();
-    expect(r.summary).toMatch(/cited no page it actually retrieved/i);
+    expect(r.verdict).toBe("demote");
+    expect(r.qa_fit_score).toBe(1);
+    expect(r.refute_survived).toBe(true);
   });
 
-  it("demote with a failed fetch (no ok) → unverified", () => {
+  it("demote with NO successful fetch → unverified, 'could not retrieve' (nothing for the refute to read)", () => {
     const r = finalizeIntel({
       ...BASE,
       parsed: { verdict: "demote", qa_fit_score: 1, summary: "x", evidence: [ev(FETCHED)] },
       audit: [failAudit(FETCHED, "timeout")],
-      refuteSurvived: true,
+      refuteSurvived: true, // irrelevant — the refute never had a page
     });
     expect(r.verdict).toBe("unverified");
+    expect(r.summary).toMatch(/could not retrieve/i);
+    expect(r.refute_survived).toBeNull();
   });
 
   it("carries the model's corrected qa_factor_scores on an APPLIED demote", () => {
@@ -483,12 +465,10 @@ describe("runIntelReview — loop + guard + refute together, injected seams", ()
     expect(r.qa_fit_score).toBeNull();
   });
 
-  it("evidence with a fetched-host source_url but NO quote still GROUNDS (grounding is decoupled from the quote filter)", async () => {
-    // The JAG-county fix: the model cites a page it actually fetched (FETCHED host) but supplies no quotable
-    // span — the relaxed prompt says it needn't. groundingEvidence keeps it (source_url present, quote
-    // optional), so grounding PASSES, the refute runs, and a supported demote APPLIES — instead of the old
-    // "cited no page" downgrade. The DISPLAY evidence stays quote-filtered, so it's empty here; that is the
-    // accepted trade (grounding on source_url, presentation on quotes).
+  it("thin evidence (empty quote) does NOT block a demote — a real fetch happened and the refute confirmed", async () => {
+    // Grounding is the FETCH (hasSuccessfulFetch), not the model's quote or URL. okFetcher retrieved a real
+    // .gov page, so grounding passes regardless of the thin evidence; the refute confirms → demote applies,
+    // instead of the old "cited no page" downgrade. The DISPLAY evidence stays quote-filtered (empty here).
     let refuteRan = false;
     const r = await runIntelReview(card, grant, client, {
       now,
@@ -500,23 +480,32 @@ describe("runIntelReview — loop + guard + refute together, injected seams", ()
         return { supported: true, reason: "the allocation table lists the county as disparate" };
       },
     });
-    expect(refuteRan).toBe(true); // grounded on the fetched-host source_url → refute runs
+    expect(refuteRan).toBe(true); // a real fetch happened → grounded → refute runs
     expect(r.verdict).toBe("demote");
     expect(r.qa_fit_score).toBe(1);
     expect(r.refute_survived).toBe(true);
     expect(r.confidence).toBe("high");
-    expect(r.evidence).toHaveLength(0); // display evidence is quote-filtered; grounding was source_url-based
+    expect(r.evidence).toHaveLength(0); // display evidence quote-filtered; grounding is the fetch, not this
   });
 
-  it("a demote citing a host NOT fetched fails safe to unverified (ungrounded)", async () => {
+  it("a demote whose cited evidence host was NOT fetched still APPLIES when a real .gov page WAS fetched (the JAG fix)", async () => {
+    // The exact JAG-county failure: the model reads the fetched FY26 table and demotes, but its structured
+    // evidence cites a non-fetched host (or omits the URL). Grounding is the fetch that happened + the refute
+    // reading it — NOT the model's cited URL — so the demote lands instead of downgrading to "cited no page".
+    let refuteRan = false;
     const r = await runIntelReview(card, grant, client, {
       now,
-      callModel: fetchThenAnswer(),
+      callModel: fetchThenAnswer(), // fetches FETCHED (bja.ojp.gov) successfully
       fetcher: okFetcher(),
-      structure: async () => ({ verdict: "demote" as const, qa_fit_score: 1, summary: "x", evidence: [ev(UNFETCHED)] }),
-      refute: async () => ({ supported: true, reason: "x" }),
+      structure: async () => ({ verdict: "demote" as const, confidence: "high" as const, qa_fit_score: 1, summary: "asterisk county", evidence: [ev(UNFETCHED)] }),
+      refute: async () => {
+        refuteRan = true;
+        return { supported: true, reason: "x" };
+      },
     });
-    expect(r.verdict).toBe("unverified");
+    expect(refuteRan).toBe(true); // a fetch happened → grounded → refute runs
+    expect(r.verdict).toBe("demote");
+    expect(r.qa_fit_score).toBe(1);
   });
 
   it("no structured output from phase 2 → unverified, never a throw", async () => {
