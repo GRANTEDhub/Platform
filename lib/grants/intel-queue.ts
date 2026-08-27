@@ -500,20 +500,52 @@ async function processOne(
   }
 
   // APPLY-THE-GATE (flag + allowlist gated): project the verdict onto the card's qa_* OVERRIDE columns.
-  // OFF or off-allowlist → nothing written, byte-identical to today. The verdict is already durably in
-  // card_intel_reviews above (the source of truth); the override is a projection, so a write failure here
-  // is NON-FATAL — the job is still 'done' and the poller re-projects on a later pass. This never writes an
-  // engine column (buildQaPatch returns qa_* keys only).
+  // OFF or off-allowlist → this whole block is skipped, so the flag-off path is exactly the proposal-only
+  // write above and nothing more (byte-identical to today; the extra read + write below never run).
   if (autoIntelApplyEnabled() && cardCfdaApplyEligible(grant)) {
-    const patch = buildQaPatch(card, review, new Date(now()).toISOString());
-    if (patch) {
-      const { error: applyErr } = await db.from("review_cards").update(patch).eq("id", card.id);
-      if (applyErr) console.error(`[intel-apply] card ${card.id}: ${applyErr.message}`);
+    // Project the DURABLE verdict, and ONLY when it is an AUTO one. A human on-demand verdict can win the
+    // upsert race above — it lands during runReview and ignoreDuplicates then no-ops our write, so the
+    // durable record is the human's and our in-memory `review` was discarded. Projecting `review` here
+    // would make the card disagree with card_intel_reviews (the source of truth); and on-demand is
+    // proposal-only by design, so a human verdict is never auto-projected. Read the persisted row back and
+    // apply only when created_by is null (our auto pass owns it) — using the source-of-truth verdict, not
+    // the possibly-discarded `review`. (The pre-check above means our own prior verdict can't be the
+    // conflict: an already-verdicted card is skipped before runReview, so a conflict here is a human one.)
+    const { data: persisted } = await db
+      .from("card_intel_reviews")
+      .select("intel_review, created_by")
+      .eq("review_card_id", card.id)
+      .maybeSingle<{ intel_review: IntelReview; created_by: string | null }>();
+    if (persisted && persisted.created_by === null) {
+      const patch = buildQaPatch(card, persisted.intel_review, new Date(now()).toISOString());
+      if (patch) await applyQaPatch(db, card.id, patch);
     }
   }
 
   await finish({ status: "done", finished_at: new Date(now()).toISOString(), error_detail: null });
   return "done";
+}
+
+// Number of times to retry the qa_* projection write on a transient DB error before giving up.
+const APPLY_MAX_ATTEMPTS = 3;
+
+// Project the qa_* patch onto the card, retrying a transient DB error a few times. The verdict is already
+// durable in card_intel_reviews (staff see it in the console regardless of this write), so a projection
+// that STILL fails after the retries is a SOFT, never-hide degradation, not a lost verdict: the match
+// stays surfaced showing the engine's own score, and it self-heals on the next rematch — which clears the
+// card_intel_reviews verdict, re-enqueues the pair, and re-QAs it. There is deliberately no queue-driven
+// retry of the projection alone: processOne's pre-check skips an already-verdicted card, so re-queuing this
+// job would only skip; and parking the job as 'error' for a cosmetic override miss (the verdict IS durable)
+// would surface a misleading hard failure. A dedicated re-projection sweep for the rare persistent case is
+// PR-2 watchdog work. So: retry the transient blip, then leave it non-fatal but logged, never silent.
+async function applyQaPatch(db: DB, cardId: string, patch: QaPatch): Promise<void> {
+  for (let attempt = 1; attempt <= APPLY_MAX_ATTEMPTS; attempt++) {
+    const { error } = await db.from("review_cards").update(patch).eq("id", cardId);
+    if (!error) return;
+    if (attempt === APPLY_MAX_ATTEMPTS) {
+      console.error(`[intel-apply] card ${cardId}: qa_* projection failed after ${attempt} attempts (verdict is durable in card_intel_reviews; card shows the engine score until the next rematch): ${error.message}`);
+    }
+  }
 }
 
 // Reserve the estimated cost in the run log BEFORE the killable model call, returning the row id. This is

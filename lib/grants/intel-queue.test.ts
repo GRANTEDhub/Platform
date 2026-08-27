@@ -50,7 +50,7 @@ class Query {
     else if (this.lim != null) out = out.slice(0, this.lim);
     return out;
   }
-  private exec(): Promise<{ data: unknown; error: null }> {
+  private exec(): Promise<{ data: unknown; error: { message: string } | null }> {
     // Real supabase returns DETACHED rows: a later .update(...).eq("id", …) mutates the DB, never the JS
     // object an earlier SELECT handed you. The fake must copy on read too, else a claimed row's in-memory
     // `attempts` would appear pre-incremented and mask the retry-cap off-by-one this suite locks.
@@ -59,6 +59,11 @@ class Query {
       return Promise.resolve({ data: this.single ? (m[0] ?? null) : m, error: null });
     }
     if (this.op === "update") {
+      // Inject a transient failure on the Nth update to this table (locks the apply-write retry path).
+      if ((this.store.updateFailures[this.table] ?? 0) > 0) {
+        this.store.updateFailures[this.table]--;
+        return Promise.resolve({ data: null, error: { message: "transient db error" } });
+      }
       const m = this.matched();
       for (const r of m) Object.assign(r, this.patch);
       return Promise.resolve({ data: this.selectAfterWrite ? m.map((r) => ({ ...r })) : null, error: null });
@@ -72,10 +77,12 @@ class Query {
     }
     return Promise.resolve({ data: null, error: null });
   }
-  then<T>(res: (v: { data: unknown; error: null }) => T) { return this.exec().then(res); }
+  then<T>(res: (v: { data: unknown; error: { message: string } | null }) => T) { return this.exec().then(res); }
 }
 class Store {
   tables: Record<string, Row[]> = {};
+  // Test hook: number of upcoming .update()s to a given table that should return a transient error.
+  updateFailures: Record<string, number> = {};
   from(table: string) { return new Query(this, table); }
 }
 const db = () => new Store();
@@ -489,5 +496,51 @@ describe("drainIntelQueue — apply-the-gate flag + allowlist (AUTO_INTEL_APPLY)
     expect(card.qa_sources ?? null).toBeNull();
     expect(card.qa_engine_fit_score ?? null).toBeNull();
     expect(card.fit_score).toBe(3);
+  });
+
+  it("ON + a HUMAN verdict wins the upsert race (lands during runReview) → auto pass does NOT project", async () => {
+    process.env.AUTO_INTEL_APPLY = "true";
+    const s = seed();
+    // The auto pass's own verdict is a demote, but a staffer's on-demand verdict lands mid-runReview and
+    // wins the card_intel_reviews upsert (created_by = their id). The auto pass must not project its
+    // discarded demote onto the card — on-demand is proposal-only, and the card must match the durable row.
+    await drainIntelQueue(asDb(s), {
+      now,
+      runReview: async () => {
+        (s.tables.card_intel_reviews ??= []).push({
+          review_card_id: "card-1", intel_review: { verdict: "affirm" }, created_by: "staff-1",
+        });
+        return demoteReview();
+      },
+    });
+    const card = s.tables.review_cards[0];
+    expect(card.qa_fit_score ?? null).toBeNull(); // not projected — the human verdict owns the record
+    expect(card.qa_status ?? null).toBeNull();
+    expect(card.fit_score).toBe(3);
+    // The human verdict is the one durably stored (the auto upsert no-op'd it via ignoreDuplicates).
+    expect(s.tables.card_intel_reviews).toHaveLength(1);
+    expect(s.tables.card_intel_reviews[0].created_by).toBe("staff-1");
+  });
+
+  it("ON + a transient apply-write error, then success → the qa_* projection lands on retry", async () => {
+    process.env.AUTO_INTEL_APPLY = "true";
+    const s = seed();
+    s.updateFailures.review_cards = 1; // first update errors, the retry succeeds
+    await drainIntelQueue(asDb(s), { now, runReview: async () => demoteReview() });
+    const card = s.tables.review_cards[0];
+    expect(card.qa_fit_score).toBe(2);
+    expect(card.qa_status).toBe("applied");
+  });
+
+  it("ON + a PERSISTENT apply-write error → non-fatal (job done, verdict durable, engine score stands)", async () => {
+    process.env.AUTO_INTEL_APPLY = "true";
+    const s = seed();
+    s.updateFailures.review_cards = 99; // every apply-write attempt errors
+    const r = await drainIntelQueue(asDb(s), { now, runReview: async () => demoteReview() });
+    const card = s.tables.review_cards[0];
+    expect(r.done).toBe(1); // NOT parked as an error — the verdict is durable, the projection is cosmetic
+    expect(card.qa_fit_score ?? null).toBeNull(); // never-hide: card shows the engine score, still surfaced
+    expect(card.fit_score).toBe(3);
+    expect(s.tables.card_intel_reviews).toHaveLength(1); // verdict durably recorded for staff regardless
   });
 });
