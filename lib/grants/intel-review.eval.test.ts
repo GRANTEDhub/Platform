@@ -15,15 +15,16 @@ import type { Grant, Client } from "@/types/database";
 // data, whether an Opus + fetch-only pass can pull an allocation reality the engine missed. The
 // fixtures are SYNTHETIC (constructed here) but the model and the fetches are REAL, so the eval has no
 // prod-DB dependency and is reproducible — the only external dependencies are Anthropic and the live
-// .gov source. Three cases, matching the plan:
+// .gov source. Four cases, matching the plan:
 //
-//   1. JAG-county-DEMOTE   — Mississippi County (AR, local_government) scored a confident direct-
-//      recipient 3 on Byrne-JAG Local (CFDA 16.738). An AR county is a disparate / "asterisk"
-//      jurisdiction on the JAG local allocation list and cannot prime a direct application. QA should
-//      DEMOTE (adverse), grounded on the BJA allocation page. If it comes back "unverified", that is
-//      the FINDING: fetch-only could not reach/parse the allocation table (or the seed URL is stale) —
-//      see lib/grants/allocation-sources.ts and confirm the URL, then decide whether web SEARCH is a
-//      later build. This case failing "unverified" is informative, not a code bug.
+//   1. JAG-county-DEMOTE (discovery ON) — Mississippi County (AR, local_government) scored a confident
+//      direct-recipient 3 on Byrne-JAG Local (CFDA 16.738). An AR county is a disparate / "asterisk"
+//      jurisdiction on the JAG local allocation list and cannot prime a direct application. Runs with
+//      discovery ON, the way the flag-on feature actually runs: fetch-only + the STATIC seed URL could not
+//      ground a demote (the seed points at the prior-year AR allocation PDF while the open NOFO is the
+//      current year, so the model correctly failed SAFE to unverified rather than guess). Discovery closes
+//      that gap — it SEARCHES for the current-year Arkansas JAG allocation table, then FETCHes and grounds a
+//      DEMOTE. Asserts search fired + a grounded adverse verdict.
 //
 //   2. JAG-state-AFFIRM    — the State of Arkansas (state_government, the State Administering Agency)
 //      on the SAME program IS a direct JAG recipient. QA must NOT over-demote a genuine direct
@@ -39,7 +40,7 @@ import type { Grant, Client } from "@/types/database";
 //      federal applicants. 16.575 is formula-TAGGED but has NO seeded allocation URL (allocation-sources
 //      only seeds 16.738), so the pass has no handed URL for the subgrant reality — it must web-SEARCH to
 //      discover the authoritative .gov source, then FETCH and ground it. This is the discovery deliverable:
-//      it exercises the path the seed map alone cannot reach. Runs with discovery:true; cases 1-3 run
+//      it exercises the path the seed map alone cannot reach. Runs with discovery:true; cases 2-3 run
 //      discovery:false so the seed-map + fail-safe guarantees are proven independent of the flag. It asserts
 //      web_search was ACTUALLY invoked (r.searched) — not merely that a fetch of the handed URL succeeded —
 //      so the flip gate can't false-green without exercising discovery. If case 4 comes back "unverified"
@@ -88,24 +89,54 @@ const majority = (bools: boolean[]) => bools.filter(Boolean).length > bools.leng
 
 describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
   it(
-    "1. JAG × Mississippi County → DEMOTE, web-grounded (asterisk/disparate, can't prime)",
+    "1. JAG × Mississippi County, discovery ON → DEMOTE, web-grounded (asterisk/disparate, can't prime)",
     async () => {
+      // Discovery ON, the way the flag-on feature actually runs. Fetch-only + the static seed URL could
+      // not ground a demote here (the seed points at the prior-year AR allocation PDF while the open NOFO
+      // is the current year, so the model correctly failed SAFE to unverified rather than guess) — the very
+      // gap discovery closes: it can SEARCH for the current-year Arkansas JAG allocation table and ground on it.
       const results = await runN(RUNS, () =>
         runIntelReview(
           card(),
           grant(),
           client({ name: "Mississippi County", org_type: "local_government", location_state: "AR" }),
-          { discovery: false },
+          { discovery: true },
         ),
       );
+      const searchedUsed = results.map((r) => r.searched.length > 0);
       const adverse = results.map((r) => r.verdict === "demote" || r.verdict === "flag");
       const grounded = results.map((r) => r.fetched.some((f) => f.ok));
       const reasoned = results.map((r) => /asterisk|disparate|through the state|state administering|cannot (prime|apply)|allocation|not.*direct/i.test(r.summary));
       // Informative surfacing of what actually happened, so a failing run says WHY.
+      console.log("[intel-eval] JAG-county searches:", results.map((r) => r.searched.length).join(", "));
       console.log("[intel-eval] JAG-county verdicts:", results.map((r) => `${r.verdict}${r.qa_fit_score != null ? `→${r.qa_fit_score}` : ""}`).join(", "));
       console.log("[intel-eval] JAG-county summaries:", results.map((r) => r.summary));
-      expect.soft(majority(grounded), "fetch-only must reach the BJA source in the majority of runs — else confirm the seed URL / fetchability (this is the fetch-only finding)").toBe(true);
-      expect.soft(majority(adverse), "should demote/flag a county that cannot prime JAG — 'unverified' here means fetch-only could not ground it").toBe(true);
+      // Fail-safe (HARD, every run): no adverse verdict without a grounded fetch.
+      for (const r of results) {
+        if (r.verdict === "demote" || r.verdict === "flag") {
+          expect.soft(r.fetched.some((f) => f.ok), "adverse JAG-county verdict must rest on a grounded .gov fetch (fail-safe)").toBe(true);
+        }
+      }
+      // CORRELATE the adverse verdict with the ARKANSAS ALLOCATION reality it grounds on — not merely that
+      // SOME search ran and SOME page was fetched. This closes the false-green where a run could search for
+      // something unrelated and demote off the stale prior-year PDF or the generic JAG overview: an adverse
+      // summary must name Arkansas AND the allocation / disparate-jurisdiction structure. (We deliberately do
+      // NOT hard-assert the exact current-YEAR fetched URL — the fixture is evergreen and carries no NOFO
+      // year, so pinning a year would make the eval brittle and self-falsifying every fall; the actual
+      // grounded source + year is read from the eval logs when interpreting the result. In run 2 the model
+      // itself refused to ground a demote on the stale prior-year table, which is the behavior this guards.)
+      for (const r of results) {
+        if (r.verdict === "demote" || r.verdict === "flag") {
+          expect.soft(
+            /arkansas|\bAR\b/i.test(r.summary) &&
+              /alloc|disparate|asterisk|through the (state|county)|sub-?recipient|subgrant|state administering/i.test(r.summary),
+            "an adverse JAG-county verdict must name the Arkansas allocation reality it grounded on (not stale/generic evidence)",
+          ).toBe(true);
+        }
+      }
+      expect.soft(majority(searchedUsed), "discovery should search for the current-year Arkansas JAG allocation table").toBe(true);
+      expect.soft(majority(grounded), "should reach + ground a .gov allocation source in the majority of runs").toBe(true);
+      expect.soft(majority(adverse), "should demote/flag a county that cannot prime JAG (asterisk/disparate jurisdiction)").toBe(true);
       expect.soft(majority(reasoned), "the Intel summary should name the allocation reality").toBe(true);
     },
     RUNS * 200_000,
