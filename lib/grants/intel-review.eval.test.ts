@@ -240,9 +240,11 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
             funder: "Office for Victims of Crime",
             assistance_listings: [{ number: "16.575", program_title: "Crime Victim Assistance" }],
             eligible_entity_types: ["nonprofit organizations", "victim service organizations"],
-            // A real, stable OVC .gov landing page; the SUBGRANT/formula reality it must confirm lives on
-            // the program's authoritative pages, which the pass has to search for (nothing is seeded).
-            source_url: "https://ovc.ojp.gov/program/victims-of-crime-act-voca/overview",
+            // A real, live OVC .gov funding landing page (verified 200, 2026-08-27); the SUBGRANT/formula
+            // reality it must confirm lives on the program's authoritative pages, which the pass has to
+            // search for (nothing is seeded). The prior /program/victims-of-crime-act-voca/overview URL
+            // 404'd, so the pass had no fetchable starting point.
+            source_url: "https://ovc.ojp.gov/funding",
           }),
           client({ name: "Hope Victim Services", org_type: "nonprofit", location_state: "AR" }),
           { discovery: true },
