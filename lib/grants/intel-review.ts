@@ -112,9 +112,11 @@ export interface IntelReview {
   // or the model never searched. Recorded so the eval can PROVE discovery was exercised (not just that a
   // fetch of a handed URL succeeded) and to make search usage visible to staff.
   searched: string[];
-  // Whether the adversarial refute pass was run and the adverse verdict SURVIVED it (true), was refuted
-  // (false), or it did not apply / could not run (null = affirm/unverified, or no budget). Recorded for
-  // staff + the eval to see the correctness check actually fired.
+  // The adversarial refute outcome for an adverse verdict: true = ran and the demote SURVIVED (→ applied);
+  // false = ran and the second read GENUINELY refuted it (→ unverified, "the sources don't support this");
+  // null = it did not apply or could not complete — non-adverse/ungrounded, OR it threw / had no budget to
+  // run (→ unverified, "could not complete", a retry signal, NOT a refutation). The false-vs-null split
+  // keeps a technical failure distinguishable from a real refutation for staff + the eval.
   refute_survived: boolean | null;
   unverified: boolean;
   model: string;
@@ -469,8 +471,12 @@ export function finalizeIntel(opts: {
       summary =
         "QA proposed a concern but cited no page it actually retrieved — treated as unverified; manual check needed." +
         (summary ? ` (Model note: ${summary})` : "");
-    } else if (opts.refuteSurvived !== true) {
-      // Grounded, but the second-read refute did not confirm the concern against the fetched pages.
+    } else if (opts.refuteSurvived === true) {
+      refute_survived = true; // grounded AND survived the second read → applies
+    } else if (opts.refuteSurvived === false) {
+      // Grounded, but the skeptical second read GENUINELY did not confirm the concern against the fetched
+      // pages — a real refutation. refute_survived stays false so staff/eval can trust "the sources don't
+      // support this".
       verdict = "unverified";
       unverified = true;
       refute_survived = false;
@@ -478,7 +484,15 @@ export function finalizeIntel(opts: {
         "QA proposed a concern but it did not hold up against the fetched sources on a second read — treated as unverified; manual check needed." +
         (summary ? ` (Model note: ${summary})` : "");
     } else {
-      refute_survived = true;
+      // Grounded and adverse, but the refute COULD NOT COMPLETE (threw / no budget → null). Distinct from a
+      // genuine refutation: refute_survived stays null and the summary says "could not complete", so a
+      // technical failure is never mislabeled as "the sources don't support this" (it's a retry signal).
+      verdict = "unverified";
+      unverified = true;
+      refute_survived = null;
+      summary =
+        "QA proposed a concern but the second-read verification could not complete — treated as unverified; manual check needed." +
+        (summary ? ` (Model note: ${summary})` : "");
     }
   } else if (verdict === "affirm") {
     if (!hasSuccessfulFetch) {
@@ -638,8 +652,16 @@ async function realRefute(
   timeoutMs: number,
 ): Promise<RefuteResult> {
   const anthropic = getAnthropicClient();
+  // Give EACH fetched page an equal share of the refute budget rather than slicing the fetch-order
+  // concatenation as one blob. Otherwise a single large first page (e.g. a long NOFO fetched before the
+  // allocation table) could consume the whole budget, dropping the later-fetched page that actually carries
+  // the evidence — the refute model would then never see it and truthfully return supported=false,
+  // downgrading a correct, grounded demote to "unverified" (the same truncation-suppression the verbatim
+  // guard caused). Per-page capping guarantees every fetched page contributes.
+  const perPage =
+    fetchedBodies.length > 0 ? Math.max(1, Math.floor(MAX_REFUTE_CHARS / fetchedBodies.length)) : MAX_REFUTE_CHARS;
   const pages =
-    fetchedBodies.map((b, i) => `--- FETCHED PAGE ${i + 1} ---\n${b}`).join("\n\n").slice(0, MAX_REFUTE_CHARS) ||
+    fetchedBodies.map((b, i) => `--- FETCHED PAGE ${i + 1} ---\n${b.slice(0, perPage)}`).join("\n\n") ||
     "(no pages were fetched)";
   const claim =
     `QA verdict: ${parsed.verdict}` +
@@ -756,12 +778,13 @@ export async function runIntelReview(
       if (remaining >= MIN_REFUTE_BUDGET_MS) {
         try {
           const r = await refute(parsed, fetchedBodies, card.fit_score, remaining);
-          refuteSurvived = r.supported;
+          refuteSurvived = r.supported; // true = survived, false = genuinely refuted by the second read
         } catch {
-          refuteSurvived = false; // can't complete the check → fail-safe, don't apply
+          refuteSurvived = null; // COULD NOT COMPLETE the check (threw) — distinct from a genuine refutation;
+          // still fails safe (finalizeIntel applies only on === true), but stored/summarized honestly as null.
         }
       } else {
-        refuteSurvived = false; // no budget left to verify → fail-safe
+        refuteSurvived = null; // no budget left to RUN the check — could-not-complete, not a refutation
       }
     }
   }

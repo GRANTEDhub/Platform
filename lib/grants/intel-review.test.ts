@@ -437,11 +437,14 @@ describe("runIntelReview — loop + guard + refute together, injected seams", ()
       refute: async () => ({ supported: false, reason: "the fetched page does not establish the concern" }),
     });
     expect(r.verdict).toBe("unverified");
+    // A GENUINE refutation (the second read ran and said supported=false) stores false, with the
+    // "did not hold up" summary — a trustworthy "the sources don't support this".
     expect(r.refute_survived).toBe(false);
+    expect(r.summary).toMatch(/did not hold up/i);
     expect(r.qa_fit_score).toBeNull();
   });
 
-  it("a refute that THROWS fails safe to unverified (never propagates)", async () => {
+  it("a refute that THROWS fails safe to unverified, stored as null (could-not-complete, not a refutation)", async () => {
     const r = await runIntelReview(card, grant, client, {
       now,
       callModel: fetchThenAnswer(),
@@ -452,7 +455,11 @@ describe("runIntelReview — loop + guard + refute together, injected seams", ()
       },
     });
     expect(r.verdict).toBe("unverified");
-    expect(r.refute_survived).toBe(false);
+    // A THROW is a technical failure, not a refutation — stored as null (a retry signal) with a
+    // "could not complete" summary, so it is never mislabeled as "the sources don't support this".
+    expect(r.refute_survived).toBeNull();
+    expect(r.summary).toMatch(/could not complete/i);
+    expect(r.qa_fit_score).toBeNull();
   });
 
   it("the SAME demote fails safe to unverified when the fetch failed (ungrounded — refute never runs)", async () => {
