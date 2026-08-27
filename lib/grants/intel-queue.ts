@@ -171,11 +171,28 @@ export async function drainIntelQueue(db: DB, opts: DrainOptions = {}): Promise<
 
   const result = { processed: 0, done: 0, skipped: 0, errored: 0, reclaimed: 0, capReached: false, spentTodayUsd: 0 };
 
-  // 1. Reclaim jobs stuck in 'processing' (a crashed drain) so they aren't lost.
+  // 1. Reclaim jobs stuck in 'processing' so they aren't lost — but honor the attempt cap here too.
+  // A job killed OUT of process (function timeout at maxDuration=300s mid-runReview, OOM, crash) never
+  // reaches processOne's catch, so its cap check never runs; it just sits 'processing' with attempts
+  // already incremented at claim time. The reclaim is that path's ONLY backstop. Without a cap check it
+  // would requeue such a job forever on the ~20-min stale cycle — a chronically-timing-out pair retrying
+  // indefinitely, burning cost against the daily cap and defeating "retries to a cap then parks as error".
+  // So: a stale row that has already used its attempts parks as 'error' (surfaced, never silently dropped);
+  // the rest requeue. Park FIRST so the requeue (still status='processing') can't pick the parked ones up.
   const staleBeforeIso = new Date(now() - INTEL_STALE_PROCESSING_MS).toISOString();
+  const nowIso1 = new Date(now()).toISOString();
+  const { data: parkedStale } = await db
+    .from("intel_review_queue")
+    .update({ status: "error", finished_at: nowIso1, updated_at: nowIso1, error_detail: "stale processing: killed out-of-process, attempt cap reached" })
+    .eq("status", "processing")
+    .lt("started_at", staleBeforeIso)
+    .gte("attempts", INTEL_MAX_ATTEMPTS)
+    .select("id")
+    .returns<{ id: string }[]>();
+  result.errored += parkedStale?.length ?? 0;
   const { data: reclaimed } = await db
     .from("intel_review_queue")
-    .update({ status: "queued", updated_at: new Date(now()).toISOString() })
+    .update({ status: "queued", updated_at: nowIso1 })
     .eq("status", "processing")
     .lt("started_at", staleBeforeIso)
     .select("id")

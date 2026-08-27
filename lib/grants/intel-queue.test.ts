@@ -217,6 +217,24 @@ describe("drainIntelQueue — proposal-only + transitions", () => {
     expect(s.tables.card_intel_reviews[0]).toMatchObject({ created_by: "user-y" }); // not overwritten by created_by:null
   });
 
+  it("reclaim parks a stale 'processing' job as 'error' once it has used its attempts (out-of-process kill)", async () => {
+    // A job killed by the platform mid-run (processOne's catch never fired) sits 'processing' with attempts
+    // already at the cap. Started long enough ago to be stale. Cap the day so the drain stops right after
+    // the reclaim, isolating its effect.
+    const longAgo = new Date(NOW - 60 * 60 * 1000).toISOString(); // 1h ago > 20min stale threshold
+    s.tables.intel_auto_run_log = [{ cost_estimate_usd: 30, ran_at: "2026-08-27T09:00:00Z" }]; // at cap
+    s.tables.intel_review_queue = [
+      { id: "capped", grant_id: "g1", client_id: "c1", status: "processing", attempts: INTEL_MAX_ATTEMPTS, started_at: longAgo, enqueued_at: longAgo },
+      { id: "under", grant_id: "g2", client_id: "c2", status: "processing", attempts: INTEL_MAX_ATTEMPTS - 1, started_at: longAgo, enqueued_at: longAgo },
+    ];
+    const r = await drainIntelQueue(asDb(s), { now, runReview: async () => okReview() });
+    const status = Object.fromEntries(s.tables.intel_review_queue.map((row) => [row.id, row.status]));
+    expect(status["capped"]).toBe("error"); // used its attempts → parked, not resurrected forever
+    expect(status["under"]).toBe("queued"); // still has a retry → requeued
+    expect(r.reclaimed).toBe(1); // only the under-cap one counts as reclaimed
+    expect(r.errored).toBe(1); // the capped one is surfaced as an error
+  });
+
   it("stops at the daily cost cap (does no work, capReached)", async () => {
     // Already spent 30 today → at the default 30 cap.
     s.tables.intel_auto_run_log = [{ cost_estimate_usd: 30, ran_at: "2026-08-27T09:00:00Z" }];
