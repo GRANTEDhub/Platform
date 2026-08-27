@@ -47,14 +47,17 @@ class Query {
     return out;
   }
   private exec(): Promise<{ data: unknown; error: null }> {
+    // Real supabase returns DETACHED rows: a later .update(...).eq("id", …) mutates the DB, never the JS
+    // object an earlier SELECT handed you. The fake must copy on read too, else a claimed row's in-memory
+    // `attempts` would appear pre-incremented and mask the retry-cap off-by-one this suite locks.
     if (this.op === "select") {
-      const m = this.matched();
+      const m = this.matched().map((r) => ({ ...r }));
       return Promise.resolve({ data: this.single ? (m[0] ?? null) : m, error: null });
     }
     if (this.op === "update") {
       const m = this.matched();
       for (const r of m) Object.assign(r, this.patch);
-      return Promise.resolve({ data: this.selectAfterWrite ? m : null, error: null });
+      return Promise.resolve({ data: this.selectAfterWrite ? m.map((r) => ({ ...r })) : null, error: null });
     }
     if (this.op === "insert") { for (const r of this.inserts) this.rows.push({ ...r }); return Promise.resolve({ data: null, error: null }); }
     // upsert
@@ -132,6 +135,19 @@ describe("pollAndEnqueue — eligibility", () => {
     expect(s.tables.intel_review_queue[0].status).toBe("error"); // stays parked, not resurrected to queued
   });
 
+  it("polls oldest-first (FIFO) so a sustained backlog beyond the limit can't starve older cards", async () => {
+    const s = db();
+    s.tables.review_cards = [
+      pendingCard({ id: "new", client_id: "c-new", created_at: "2026-08-27T12:00:00Z" }),
+      pendingCard({ id: "mid", client_id: "c-mid", created_at: "2026-08-27T11:00:00Z" }),
+      pendingCard({ id: "old", client_id: "c-old", created_at: "2026-08-27T10:00:00Z" }),
+    ];
+    const n = await pollAndEnqueue(asDb(s), { now, limit: 2 });
+    expect(n).toBe(2);
+    const clients = (s.tables.intel_review_queue ?? []).map((r) => r.client_id).sort();
+    expect(clients).toEqual(["c-mid", "c-old"]); // the two OLDEST, never the newest
+  });
+
   it("skips prospect / decided / released cards", async () => {
     const s = db();
     s.tables.review_cards = [
@@ -191,11 +207,20 @@ describe("drainIntelQueue — proposal-only + transitions", () => {
     expect(s.tables.intel_auto_run_log[0]).toMatchObject({ verdict: "error" }); // cost still counted
   });
 
-  it("parks as 'error' once the attempt cap is reached", async () => {
-    s.tables.intel_review_queue[0].attempts = INTEL_MAX_ATTEMPTS; // this run makes it MAX+1
+  it("parks as 'error' ON the INTEL_MAX_ATTEMPTS-th attempt, not one later", async () => {
+    // attempts = MAX-1 before this run; the claim increments to MAX, so THIS is the MAX-th (final) attempt.
+    s.tables.intel_review_queue[0].attempts = INTEL_MAX_ATTEMPTS - 1;
     const r = await drainIntelQueue(asDb(s), { now, runReview: async () => { throw new Error("boom"); } });
     expect(r.errored).toBe(1);
     expect(s.tables.intel_review_queue[0].status).toBe("error");
+  });
+
+  it("does NOT park one attempt early (retry-cap is judged post-increment)", async () => {
+    // attempts = MAX-2 → this run is only the (MAX-1)-th attempt, so one retry must remain.
+    s.tables.intel_review_queue[0].attempts = INTEL_MAX_ATTEMPTS - 2;
+    const r = await drainIntelQueue(asDb(s), { now, runReview: async () => { throw new Error("boom"); } });
+    expect(r.errored).toBe(1);
+    expect(s.tables.intel_review_queue[0].status).toBe("queued"); // requeued, not parked
   });
 });
 

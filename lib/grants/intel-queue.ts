@@ -115,7 +115,10 @@ export async function pollAndEnqueue(db: DB, opts: { now?: () => number; limit?:
     .eq("card_type", "client")
     .not("client_id", "is", null)
     .not("grant_id", "is", null)
-    .order("created_at", { ascending: false })
+    // Oldest-first (FIFO). With a fixed limit, newest-first would let a sustained backlog beyond `limit`
+    // starve the older cards behind the window — breaking H1's "every surfaced card eventually gets a
+    // verdict". Matches the drain's enqueued_at-ASC claim order.
+    .order("created_at", { ascending: true })
     .limit(limit)
     .returns<{ id: string; grant_id: string; client_id: string }[]>();
 
@@ -244,6 +247,12 @@ async function processOne(
   const finish = (patch: Record<string, unknown>) =>
     db.from("intel_review_queue").update({ ...patch, updated_at: new Date(now()).toISOString() }).eq("id", row.id);
 
+  // The claim step already wrote attempts = row.attempts + 1 to the DB, but the SELECT'd `row` is a
+  // detached snapshot from BEFORE that increment (supabase does not mutate it), so THIS run is attempt
+  // number (row.attempts + 1). Judge the cap against that post-increment count — checking the stale
+  // row.attempts would run one extra Opus+web attempt (and cost-log entry) past INTEL_MAX_ATTEMPTS.
+  const attemptsSoFar = row.attempts + 1;
+
   // The current pending, unreleased, client card for this pair. If it's gone (decided / released /
   // removed since enqueue), there is nothing to QA — mark done, no cost. (H1 never held it.)
   const { data: card } = await db
@@ -292,7 +301,7 @@ async function processOne(
     await logRun(db, now, { grant_id: row.grant_id, client_id: row.client_id, review_card_id: card.id, verdict: "error", searches: 0, estCost });
     const detail = err instanceof Error ? err.message : String(err);
     await finish(
-      row.attempts >= INTEL_MAX_ATTEMPTS
+      attemptsSoFar >= INTEL_MAX_ATTEMPTS
         ? { status: "error", finished_at: new Date(now()).toISOString(), error_detail: detail.slice(0, 600) }
         : { status: "queued", error_detail: detail.slice(0, 600) },
     );
@@ -310,7 +319,7 @@ async function processOne(
   await logRun(db, now, { grant_id: row.grant_id, client_id: row.client_id, review_card_id: card.id, verdict: review.verdict, searches: review.searched.length, estCost });
   if (writeErr) {
     await finish(
-      row.attempts >= INTEL_MAX_ATTEMPTS
+      attemptsSoFar >= INTEL_MAX_ATTEMPTS
         ? { status: "error", finished_at: new Date(now()).toISOString(), error_detail: `write: ${writeErr.message}`.slice(0, 600) }
         : { status: "queued", error_detail: `write: ${writeErr.message}`.slice(0, 600) },
     );
