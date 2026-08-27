@@ -5,6 +5,7 @@ import {
   runIntelReview,
   isSafeHttpUrl,
   INTEL_MODEL,
+  STRUCTURE_MAX_ATTEMPTS,
   type IntelCard,
   type IntelEvidence,
 } from "./intel-review";
@@ -14,16 +15,18 @@ import type { FetchResult } from "@/lib/grantbot/fetch";
 import type { CallModel, ModelTurn } from "@/lib/grantbot/tool-loop";
 import type { Grant, Client } from "@/types/database";
 
-// Deterministic tests — NO live model, NO network. They lock the structural invariants of the REDESIGNED
-// guard (PR A):
-//   (1) GROUNDING: an adverse verdict (demote/flag) applies only if the pass actually FETCHED a relevant
-//       .gov page (hasSuccessfulFetch). It does NOT require the model to echo the fetched URL in evidence
-//       — the model reliably omits it, which gated out correct fetched demotes; the refute is the content
-//       guard. (Earlier iterations used a verbatim-quote-in-body test, then a host match on the cited URL;
-//       both suppressed correct reads. Now: a real fetch happened + the refute confirms it.)
-//   (2) REFUTE: a grounded adverse verdict APPLIES only if the adversarial second read supported it
-//       (refuteSurvived === true); refuted / could-not-run → 'unverified'. Model quality is the eval's job.
+// Deterministic tests — NO live model, NO network. They lock the structural invariants of the guard
+// (PR A, as amended by PR F — grounding is the gate, the refute is advisory):
+//   (1) GROUNDING is the GATE: an adverse verdict (demote/flag) applies only if the pass actually FETCHED a
+//       relevant .gov page (hasSuccessfulFetch). Ungrounded → 'unverified' — never a from-nothing demote.
+//       It does NOT require the model to echo the fetched URL in evidence.
+//   (2) REFUTE is ADVISORY (PR F): a GROUNDED adverse verdict applies whether the adversarial second read
+//       supported it, refuted it, or could not run — refute_survived is recorded + noted, never a veto. A
+//       redundant veto also killed CORRECT grounded demotes, and a grounded demote is never-hide + sourced +
+//       one-click-revertible, so it was dropped. Model quality is the eval's job.
 //   (3) AFFIRM still needs a successful fetch, else 'unverified' (not a web-backed affirmation).
+//   (4) STRUCTURED VERDICT is guaranteed (PR F): a verdict-less structuring call is retried before falling
+//       back, so a one-off structuring miss no longer silently loses a real verdict.
 
 const BODY = "Mississippi County is a disparate jurisdiction; it applies for JAG through the State Administering Agency.";
 const SPAN = "applies for JAG through the State Administering Agency"; // a supporting span (evidence.quote)
@@ -95,27 +98,31 @@ describe("finalizeIntel — the fail-safe (grounding + refute) + shaping", () =>
     expect(r.unverified).toBe(false);
   });
 
-  it("demote GROUNDED but refute FAILED → unverified (didn't hold up on a second read)", () => {
+  it("demote GROUNDED but refute did NOT confirm (false) → STILL demote; refute recorded as advisory (PR F)", () => {
     const r = finalizeIntel({
       ...BASE,
       parsed: { verdict: "demote", qa_fit_score: 1, summary: "asterisk county", evidence: [ev(FETCHED)] },
       audit: [okAudit(FETCHED)],
       refuteSurvived: false,
     });
-    expect(r.verdict).toBe("unverified");
-    expect(r.refute_survived).toBe(false);
-    expect(r.qa_fit_score).toBeNull();
-    expect(r.summary).toMatch(/did not hold up/i);
+    expect(r.verdict).toBe("demote"); // grounded applies; the refute no longer vetoes it
+    expect(r.qa_fit_score).toBe(1);
+    expect(r.refute_survived).toBe(false); // recorded for staff visibility
+    expect(r.unverified).toBe(false);
+    expect(r.summary).toMatch(/advisory/i); // an advisory note is appended, not a downgrade
   });
 
-  it("demote GROUNDED but refute not run (undefined) → unverified (apply requires an explicit survive)", () => {
+  it("demote GROUNDED, refute could-not-complete (null) → STILL demote; advisory note (PR F)", () => {
     const r = finalizeIntel({
       ...BASE,
       parsed: { verdict: "demote", qa_fit_score: 1, summary: "x", evidence: [ev(FETCHED)] },
       audit: [okAudit(FETCHED)],
-      // refuteSurvived omitted
+      refuteSurvived: null,
     });
-    expect(r.verdict).toBe("unverified");
+    expect(r.verdict).toBe("demote");
+    expect(r.qa_fit_score).toBe(1);
+    expect(r.refute_survived).toBeNull();
+    expect(r.summary).toMatch(/could not complete/i);
   });
 
   it("demote APPLIES on a successful fetch even when the model's cited evidence host was NOT fetched (grounding is the fetch + refute, not the cited URL — the JAG fix)", () => {
@@ -423,7 +430,7 @@ describe("runIntelReview — loop + guard + refute together, injected seams", ()
     expect(r.reviewed_by).toBe("staff-1");
   });
 
-  it("a grounded demote that is REFUTED fails safe to unverified", async () => {
+  it("a grounded demote the refute does NOT confirm STILL applies (refute is advisory — PR F)", async () => {
     const r = await runIntelReview(card, grant, client, {
       now,
       callModel: fetchThenAnswer(),
@@ -431,16 +438,14 @@ describe("runIntelReview — loop + guard + refute together, injected seams", ()
       structure: async () => demoteVerdict,
       refute: async () => ({ supported: false, reason: "the fetched page does not establish the concern" }),
     });
-    expect(r.verdict).toBe("unverified");
-    // A GENUINE refutation (the second read ran and said supported=false) stores false, with the
-    // "did not hold up" summary — a trustworthy "the sources don't support this".
-    expect(r.refute_survived).toBe(false);
-    expect(r.summary).toMatch(/did not hold up/i);
-    expect(r.confidence).toBe("low"); // a fail-safe downgrade derates the model's "high" self-report
-    expect(r.qa_fit_score).toBeNull();
+    expect(r.verdict).toBe("demote"); // grounded → applies; the refute no longer vetoes
+    expect(r.qa_fit_score).toBe(1);
+    expect(r.refute_survived).toBe(false); // recorded as an advisory note, not a downgrade
+    expect(r.summary).toMatch(/advisory/i);
+    expect(r.confidence).toBe("high"); // an applied demote keeps the model's confidence
   });
 
-  it("a refute that THROWS fails safe to unverified, stored as null (could-not-complete, not a refutation)", async () => {
+  it("a refute that THROWS still applies the grounded demote; refute_survived stored null (advisory — PR F)", async () => {
     const r = await runIntelReview(card, grant, client, {
       now,
       callModel: fetchThenAnswer(),
@@ -450,13 +455,12 @@ describe("runIntelReview — loop + guard + refute together, injected seams", ()
         throw new Error("refute model error");
       },
     });
-    expect(r.verdict).toBe("unverified");
-    // A THROW is a technical failure, not a refutation — stored as null (a retry signal) with a
-    // "could not complete" summary, so it is never mislabeled as "the sources don't support this".
+    expect(r.verdict).toBe("demote");
+    expect(r.qa_fit_score).toBe(1);
+    // A THROW is a technical failure, not a refutation — recorded null (honest "could not complete"), and
+    // the grounded demote still applies.
     expect(r.refute_survived).toBeNull();
     expect(r.summary).toMatch(/could not complete/i);
-    expect(r.confidence).toBe("low");
-    expect(r.qa_fit_score).toBeNull();
   });
 
   it("the SAME demote fails safe to unverified when the fetch failed (ungrounded — refute never runs)", async () => {
@@ -498,6 +502,40 @@ describe("runIntelReview — loop + guard + refute together, injected seams", ()
     expect(r.refute_survived).toBe(true);
     expect(r.confidence).toBe("high");
     expect(r.evidence).toHaveLength(0); // display evidence quote-filtered; grounding is the fetch, not this
+  });
+
+  it("(d) a verdict-less structuring call is RETRIED, then the real verdict applies (no silent no-verdict)", async () => {
+    let calls = 0;
+    const r = await runIntelReview(card, grant, client, {
+      now,
+      callModel: fetchThenAnswer(),
+      fetcher: okFetcher(),
+      // First structuring attempt yields nothing usable; the retry returns the real demote.
+      structure: async () => {
+        calls++;
+        return calls === 1 ? null : demoteVerdict;
+      },
+      refute: async () => ({ supported: true, reason: "confirmed" }),
+    });
+    expect(calls).toBe(2); // it retried once, then got a verdict
+    expect(r.verdict).toBe("demote");
+    expect(r.qa_fit_score).toBe(1);
+  });
+
+  it("(d) structuring that never yields a verdict falls back to unverified after the retries (rare, honest)", async () => {
+    let calls = 0;
+    const r = await runIntelReview(card, grant, client, {
+      now,
+      callModel: fetchThenAnswer(),
+      fetcher: okFetcher(),
+      structure: async () => {
+        calls++;
+        return null;
+      },
+    });
+    expect(calls).toBe(STRUCTURE_MAX_ATTEMPTS); // initial + retries, all verdict-less
+    expect(r.verdict).toBe("unverified");
+    expect(r.summary).toMatch(/no usable verdict/i);
   });
 
   it("a demote whose cited evidence host was NOT fetched still APPLIES when a real .gov page WAS fetched (the JAG fix)", async () => {

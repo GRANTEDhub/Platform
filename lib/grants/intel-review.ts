@@ -11,18 +11,17 @@
 //     fit_score / seat / decision / suppressed, and the route stores it in the ONE new column and
 //     nothing else. So QA can never remove or re-score a card. The card keeps the engine's score;
 //     the verdict says "engine 3 → QA says 1, here's why", and a human makes the call.
-//   FAIL-SAFE (two-part grounding guard). An ADVERSE verdict (demote / flag) APPLIES only when it
-//     (1) is GROUNDED — the pass actually FETCHED a relevant .gov page (fetchGrantSource is
-//     .gov-allowlisted and only fetches this grant's sources, so an ok fetch is a real authoritative
-//     read) AND (2) SURVIVES an adversarial refute (a skeptical second read of that fetched page text,
-//     phase 3), else it is downgraded to "unverified" in code (finalizeIntel). The refute — not any
-//     quote or URL the model emits — is the content guard: it reads the fetched bodies and must confirm
-//     the concern. This replaced first the verbatim-quote test (suppressed correct reads of allocation
-//     tables/PDFs) and then a host-match on the model's cited URL (the model reliably omits the URL even
-//     after reading the page, which gated out correct fetched demotes before the refute could bless
-//     them — the JAG case). A flaky fetch, a from-memory claim, or a page that doesn't hold up on the
-//     second read can never produce a confident demote. A source the pass cannot reach comes back as a
-//     typed "could not retrieve" → unverified, never a guess.
+//   FAIL-SAFE (GROUNDING is the gate; the refute is advisory — PR F). An ADVERSE verdict (demote / flag)
+//     APPLIES only when it is GROUNDED — the pass actually FETCHED a relevant .gov page (fetchGrantSource
+//     is .gov-allowlisted and only fetches this grant's sources, so an ok fetch is a real authoritative
+//     read). "Never demote from nothing": a from-memory claim, a flaky fetch, or a source the pass cannot
+//     reach comes back as a typed "could not retrieve" → unverified, never a guess. The adversarial refute
+//     (a skeptical second read of the fetched page text, phase 3) still RUNS and is RECORDED as an advisory
+//     note (refute_survived true / false / null), but it NO LONGER vetoes the verdict — because a grounded
+//     demote is never-hide, sourced, and one-click-revertible, so a redundant veto that also killed CORRECT
+//     grounded demotes (an over-eager second read overturning a right JAG demote) wasn't worth keeping. The
+//     earlier verbatim-quote test and cited-URL host-match were both retired for the same reason: over-strict
+//     guards that suppressed correct fetched reads of allocation tables/PDFs.
 //
 // PROFILE-FREE, like the occupancy / nexus judges (#138→#140 discipline): it reads the client's
 // CONFIRMED identity (clientContextForJudge — org type, location, service area, rules), never
@@ -79,6 +78,14 @@ export const INTEL_MAX_TOKENS = 4096;
 // Phase 3 (the adversarial refute) is only run when at least this much of the total budget remains — else
 // there is no time to verify, and an unverified adverse verdict fails safe to "unverified" (score untouched).
 export const MIN_REFUTE_BUDGET_MS = 8_000;
+// (d) Phase 2 (structuring) reliability. A forced-tool SUBMIT call can occasionally come back without a
+// usable verdict — truncated mid-tool-call, or a model punt. Retry it up to this many attempts total
+// before finalizeIntel falls back to "unverified" (Phase 1 is deadline-bounded, so Phase 2 has budget to
+// spare), and give the SUBMIT enough tokens that a rich demote (summary + changed-factor rationales) is not
+// truncated in the first place. These make a silent no-verdict run rare, not a recurring flake.
+export const STRUCTURE_MAX_ATTEMPTS = 3;
+export const MIN_STRUCTURE_BUDGET_MS = 8_000;
+export const INTEL_STRUCTURE_MAX_TOKENS = 3000;
 // Cap on the fetched-page text handed to the refute call, so a few large .gov pages can't blow the context.
 export const MAX_REFUTE_CHARS = 40_000;
 
@@ -401,9 +408,10 @@ export function finalizeIntel(opts: {
   audit: FetchAuditRecord[];
   // The web_search queries issued this pass (optional; defaults to none for the fetch-only / test paths).
   searched?: string[];
-  // The adversarial refute result for an adverse verdict: true = the fetched pages back the demote (it
-  // survived), false = refuted / could-not-confirm (fail-safe → unverified), null = not run (non-adverse,
-  // or the verdict was already ungrounded). An adverse verdict APPLIES only when refuteSurvived === true.
+  // The adversarial refute result for an adverse verdict, ADVISORY (PR F): true = the fetched pages back the
+  // demote, false = the second read did not independently confirm it, null = not run / could-not-complete.
+  // It is recorded + surfaced as a note but NEVER vetoes the verdict — a GROUNDED adverse verdict applies
+  // regardless. (Only groundedness gates: an ungrounded adverse verdict is still unverified.)
   refuteSurvived?: boolean | null;
   engineFitScore: number | null;
   model: string;
@@ -445,48 +453,43 @@ export function finalizeIntel(opts: {
   let unverified = false;
   let refute_survived: boolean | null = null;
 
-  // THE FAIL-SAFE:
-  //   - an ADVERSE call (demote/flag) applies only when it is (1) GROUNDED — the pass fetched at least one
-  //     relevant .gov page (hasSuccessfulFetch; fetchGrantSource is .gov-allowlisted and only fetches this
-  //     grant's sources, so an ok fetch is a real authoritative read) AND (2) SURVIVED the adversarial refute
-  //     (refuteSurvived === true), which reads that fetched page text. We do NOT require the model to echo the
-  //     fetched URL in its evidence — it reliably omits it, which gated out correct fetched demotes before the
-  //     refute could confirm them (the JAG case). The refute, not a URL echo, is the content guard. Any
-  //     shortfall → unverified (never a from-nothing demote).
+  // THE FAIL-SAFE (PR F — grounding is the gate, the refute is advisory):
+  //   - an ADVERSE call (demote/flag) applies when it is GROUNDED — the pass fetched at least one relevant
+  //     .gov page (hasSuccessfulFetch; fetchGrantSource is .gov-allowlisted and only fetches this grant's
+  //     sources, so an ok fetch is a real authoritative read). The adversarial refute still runs and is
+  //     recorded as an ADVISORY note (refute_survived true/false/null), but it does NOT veto the verdict:
+  //     a grounded demote is never-hide, sourced, and one-click-revertible, so a redundant veto that also
+  //     killed CORRECT grounded demotes (the JAG case) isn't worth keeping. An UNGROUNDED adverse verdict
+  //     is still unverified — never a from-nothing demote.
   //   - an AFFIRM must rest on at least one SUCCESSFUL fetch, else it is "the model thinks it's fine but
   //     read no source" — not a web-backed affirmation → unverified.
   const hasSuccessfulFetch = audit.some((a) => a.ok);
   if (verdict === "demote" || verdict === "flag") {
-    const grounded = hasSuccessfulFetch;
-    if (!grounded) {
+    if (!hasSuccessfulFetch) {
+      // NEVER DEMOTE FROM NOTHING — the gate is a REAL fetched .gov page. An adverse verdict with no
+      // successful fetch is an assertion, not a web-backed finding → unverified. This is the safety that
+      // actually matters, and it is UNCHANGED.
       verdict = "unverified";
       unverified = true;
       refute_survived = null; // no source was retrieved — nothing for the refute to read
       summary =
         "QA proposed a concern but could not retrieve a .gov source to verify against — treated as unverified; manual check needed." +
         (summary ? ` (Model note: ${summary})` : "");
-    } else if (opts.refuteSurvived === true) {
-      refute_survived = true; // grounded AND survived the second read → applies
-    } else if (opts.refuteSurvived === false) {
-      // Grounded, but the skeptical second read GENUINELY did not confirm the concern against the fetched
-      // pages — a real refutation. refute_survived stays false so staff/eval can trust "the sources don't
-      // support this".
-      verdict = "unverified";
-      unverified = true;
-      refute_survived = false;
-      summary =
-        "QA proposed a concern but it did not hold up against the fetched sources on a second read — treated as unverified; manual check needed." +
-        (summary ? ` (Model note: ${summary})` : "");
     } else {
-      // Grounded and adverse, but the refute COULD NOT COMPLETE (threw / no budget → null). Distinct from a
-      // genuine refutation: refute_survived stays null and the summary says "could not complete", so a
-      // technical failure is never mislabeled as "the sources don't support this" (it's a retry signal).
-      verdict = "unverified";
-      unverified = true;
-      refute_survived = null;
-      summary =
-        "QA proposed a concern but the second-read verification could not complete — treated as unverified; manual check needed." +
-        (summary ? ` (Model note: ${summary})` : "");
+      // GROUNDED → the adverse verdict APPLIES. The adversarial refute is now ADVISORY, not a veto (PR F):
+      // a grounded demote is bounded, sourced, never-hide, and one-click-revertible, so a redundant veto
+      // that also killed CORRECT grounded demotes (MS County JAG — a right demote overturned by an
+      // over-eager second read) isn't worth keeping. We still RUN the refute and RECORD its outcome for
+      // staff/eval visibility (refute_survived = true / false / null) and append an advisory note when it
+      // did not confirm — but it never changes the verdict. Grounding, not the refute, is the gate.
+      refute_survived = opts.refuteSurvived ?? null;
+      if (opts.refuteSurvived === false) {
+        summary +=
+          " (Advisory: an adversarial second read did not independently confirm this against the fetched sources — the grounded demote still applies; review the cited sources.)";
+      } else if (opts.refuteSurvived === null) {
+        summary += " (Advisory: the adversarial second read could not complete — the grounded demote still applies.)";
+      }
+      // verdict stays demote / flag
     }
   } else if (verdict === "affirm") {
     if (!hasSuccessfulFetch) {
@@ -620,7 +623,9 @@ async function realStructure(analysisText: string, audit: FetchAuditRecord[], ti
   const res = await anthropic.messages.create(
     {
       model: INTEL_MODEL,
-      max_tokens: 1500,
+      // Headroom so a rich demote (summary + changed-factor rationales) is not truncated mid-tool-call,
+      // which returns a verdict-less result and forces a needless "no usable verdict" (PR F, (d)).
+      max_tokens: INTEL_STRUCTURE_MAX_TOKENS,
       // No `temperature`: claude-opus-5 rejects it (see realCallModel).
       system: STRUCTURE_SYSTEM_PROMPT,
       tools: [SUBMIT_TOOL],
@@ -765,16 +770,28 @@ export async function runIntelReview(
 
   // Phase 2: structure the analysis into the typed verdict. It gets whatever of the total budget phase 1
   // left, so the phases together stay under maxDuration.
-  const parsed = await structure(loop.text, audit, INTEL_TOTAL_BUDGET_MS - (clock() - startMs));
+  //
+  // (d) GUARANTEE A STRUCTURED VERDICT: a forced-tool structuring call that returns without a usable verdict
+  // is a transient model miss (truncation / a punt), NOT a real "nothing to act on" — retry it with the
+  // remaining budget before finalizeIntel falls back, so a one-off structuring miss no longer silently loses
+  // a real verdict. Phase 1 is deadline-bounded (INTEL_DEADLINE_MS < INTEL_TOTAL_BUDGET_MS), so Phase 2 has
+  // budget to spare for the retries. A genuine post-retry failure stays an honest "no usable verdict" (rare),
+  // never a fabricated one.
+  let parsed = await structure(loop.text, audit, INTEL_TOTAL_BUDGET_MS - (clock() - startMs));
+  for (let attempt = 1; attempt < STRUCTURE_MAX_ATTEMPTS && (!parsed || !parsed.verdict); attempt++) {
+    const remaining = INTEL_TOTAL_BUDGET_MS - (clock() - startMs);
+    if (remaining < MIN_STRUCTURE_BUDGET_MS) break;
+    parsed = await structure(loop.text, audit, remaining);
+  }
 
-  // Phase 3: the adversarial refute — the correctness half of the grounding guard. Only for an adverse
-  // verdict that is grounded on a page actually fetched (else finalizeIntel unverifies it regardless, no
-  // point spending a call). refuteSurvived stays null otherwise; finalizeIntel requires === true to APPLY
-  // an adverse verdict, so any shortfall (no budget, thrown, refuted) fails safe to "unverified".
+  // Phase 3: the adversarial refute — now ADVISORY (PR F). Still run for an adverse verdict grounded on a
+  // page actually fetched (an ungrounded verdict is unverified regardless, so there is no point spending a
+  // call), and its result is recorded as a staff-facing note. It NO LONGER vetoes the verdict — finalizeIntel
+  // applies a grounded adverse verdict whether refuteSurvived is true, false, or null; only groundedness gates.
   let refuteSurvived: boolean | null = null;
   if (parsed && (parsed.verdict === "demote" || parsed.verdict === "flag")) {
     // Grounded = the pass fetched at least one relevant .gov page for the refute to read (the SAME signal
-    // finalizeIntel gates on). Run the refute over those fetched bodies; it is the content guard.
+    // finalizeIntel gates on). Run the refute over those fetched bodies for the advisory note.
     const grounded = audit.some((a) => a.ok);
     if (grounded) {
       const remaining = INTEL_TOTAL_BUDGET_MS - (clock() - startMs);
