@@ -423,7 +423,9 @@ function realCallModel(discovery: boolean, searched: string[]): CallModel {
       {
         model: INTEL_MODEL,
         max_tokens: INTEL_MAX_TOKENS,
-        temperature: 0,
+        // No `temperature`: claude-opus-5 REJECTS it — 400 "temperature is deprecated for this model"
+        // (unlike the matcher's claude-sonnet-4-6, which still accepts temperature:0). The QA pass is a
+        // verification read where the model's low-variance default is fine.
         system,
         messages: messages as Anthropic.MessageParam[],
         ...(tools === "off" ? {} : { tools: toolset }),
@@ -449,7 +451,7 @@ async function realStructure(analysisText: string, audit: FetchAuditRecord[], ti
     {
       model: INTEL_MODEL,
       max_tokens: 1500,
-      temperature: 0,
+      // No `temperature`: claude-opus-5 rejects it (see realCallModel).
       system: STRUCTURE_SYSTEM_PROMPT,
       tools: [SUBMIT_TOOL],
       tool_choice: { type: "tool", name: SUBMIT_TOOL.name },
