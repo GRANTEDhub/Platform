@@ -23,6 +23,7 @@
 // PURE-TESTABLE: the model call (runReview) and the clock (now) are injected, so eligibility, the cap,
 // the status transitions, and the proposal-only property are unit-tested with a fake DB and no network.
 
+import { randomUUID } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/server";
 import { runIntelReview, type IntelReview, type IntelCard } from "@/lib/grants/intel-review";
 import type { Grant, Client } from "@/types/database";
@@ -362,13 +363,16 @@ async function processOne(
     reasoning_context: card.reasoning_context,
   };
 
+  // Reserve the cost BEFORE the killable model call (see reserveRun) so a hard maxDuration timeout still
+  // counts against the daily cap. Backfilled with the outcome below; left 'processing' if the attempt dies.
+  const runLogId = randomUUID();
+  await reserveRun(db, now, { runLogId, grant_id: row.grant_id, client_id: row.client_id, review_card_id: card.id, estCost });
+
   let review: IntelReview;
   try {
     review = await runReview(intelCard, grant, client);
   } catch (err) {
-    // The model attempt likely burned tokens — log the estimate so a failing loop still hits the daily
-    // cap — then retry (up to MAX) or park as 'error'. Never silently drop.
-    await logRun(db, now, { grant_id: row.grant_id, client_id: row.client_id, review_card_id: card.id, verdict: "error", searches: 0, estCost });
+    await finalizeRun(db, now, runLogId, { verdict: "error" });
     const detail = err instanceof Error ? err.message : String(err);
     await finish(
       attemptsSoFar >= INTEL_MAX_ATTEMPTS
@@ -377,6 +381,7 @@ async function processOne(
     );
     return "error";
   }
+  await finalizeRun(db, now, runLogId, { verdict: review.verdict, searches: review.searched.length });
 
   // PROPOSAL-ONLY: the ONLY write is to card_intel_reviews. created_by null = the automatic pass (vs a
   // staff user id for the on-demand button). ignoreDuplicates → ON CONFLICT DO NOTHING: the pre-check above
@@ -389,7 +394,6 @@ async function processOne(
       { review_card_id: card.id, intel_review: review, created_by: null, updated_at: new Date(now()).toISOString() },
       { onConflict: "review_card_id", ignoreDuplicates: true },
     );
-  await logRun(db, now, { grant_id: row.grant_id, client_id: row.client_id, review_card_id: card.id, verdict: review.verdict, searches: review.searched.length, estCost });
   if (writeErr) {
     await finish(
       attemptsSoFar >= INTEL_MAX_ATTEMPTS
@@ -402,20 +406,44 @@ async function processOne(
   return "done";
 }
 
-async function logRun(
+// Reserve the estimated cost in the run log BEFORE the killable model call, returning the row id. This is
+// what makes the daily cap hold against OUT-OF-PROCESS kills: a Vercel maxDuration=300s timeout (or OOM /
+// crash) during runReview never reaches processOne's catch, so a log written only AFTER the pass would miss
+// that attempt's real Opus+web spend and dailySpentUsd (which sums ONLY this ledger) would under-count,
+// letting real spend blow past INTEL_AUTO_DAILY_CAP_USD. Reserving first means a killed attempt still
+// counts. The id is generated here (not the DB default) so the caller can backfill the verdict without an
+// insert-returning round-trip. A failed insert is surfaced, not silently dropped (the sibling finding).
+async function reserveRun(
   db: DB,
   now: () => number,
-  r: { grant_id: string; client_id: string; review_card_id: string; verdict: string; searches: number; estCost: number },
+  r: { runLogId: string; grant_id: string; client_id: string; review_card_id: string; estCost: number },
 ): Promise<void> {
-  await db.from("intel_auto_run_log").insert({
+  const { error } = await db.from("intel_auto_run_log").insert({
+    id: r.runLogId,
     grant_id: r.grant_id,
     client_id: r.client_id,
     review_card_id: r.review_card_id,
-    verdict: r.verdict,
-    searches: r.searches,
+    verdict: "processing", // backfilled by finalizeRun; stays 'processing' if the attempt is killed
+    searches: 0,
     cost_estimate_usd: r.estCost,
     ran_at: new Date(now()).toISOString(),
   });
+  if (error) console.error("[auto-intel] reserveRun failed (cost may be under-counted)", error);
+}
+
+// Backfill the reserved run-log row with the outcome once the pass resolves (or throws in-process). Cost is
+// unchanged — it was counted at reservation. A no-op if the reserve insert failed (0 rows match the id).
+async function finalizeRun(
+  db: DB,
+  now: () => number,
+  runLogId: string,
+  r: { verdict: string; searches?: number },
+): Promise<void> {
+  const { error } = await db
+    .from("intel_auto_run_log")
+    .update({ verdict: r.verdict, searches: r.searches ?? 0, ran_at: new Date(now()).toISOString() })
+    .eq("id", runLogId);
+  if (error) console.error("[auto-intel] finalizeRun failed", error);
 }
 
 // The real QA pass, with no reviewer (the automatic run) — the on-demand route passes the staff user id.

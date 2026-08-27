@@ -215,6 +215,20 @@ describe("drainIntelQueue — proposal-only + transitions", () => {
     expect(s.tables.intel_auto_run_log[0]).toMatchObject({ verdict: "demote", searches: 2 });
   });
 
+  it("reserves the cost in the run log BEFORE running QA (a hard timeout still counts against the cap)", async () => {
+    let logCountDuringRun = -1;
+    await drainIntelQueue(asDb(s), {
+      now,
+      runReview: async () => {
+        logCountDuringRun = (s.tables.intel_auto_run_log ?? []).length; // the row must already exist
+        return okReview("affirm");
+      },
+    });
+    expect(logCountDuringRun).toBe(1); // reserved before runReview ran (logging only after would be 0)
+    expect(s.tables.intel_auto_run_log[0]).toMatchObject({ cost_estimate_usd: 0.3 }); // cost counted
+    expect(s.tables.intel_auto_run_log[0]).toMatchObject({ verdict: "affirm" }); // backfilled after
+  });
+
   it("marks a job done+skipped (no model call) when the card is no longer pending", async () => {
     s.tables.review_cards = [pendingCard({ decision: "approved" })]; // decided since enqueue
     let called = false;
