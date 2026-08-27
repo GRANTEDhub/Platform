@@ -14,6 +14,7 @@ import type {
   ReviewCard,
 } from "@/types/database";
 import { formatAwardRange, formatDeadlineShort, compactCostShare } from "@/lib/grants/format";
+import { resolveFit, type QaVerdictView } from "@/lib/report/qa-override";
 
 export type FactorKey = keyof FactorScores;
 
@@ -170,6 +171,11 @@ export interface ReportItem {
   // ReadSide passed to toReportItems -- never both, and the renderer is not told which
   // column it came from. See ReadSide for why that indirection is the point.
   read: boolean;
+  // The IntellEngine QA badge for this card (migration 0088), or null when no QA verdict is in effect.
+  // `fitScore`/`rowFactors` above ALREADY reflect an applied+fresh override (resolveFit) — this field
+  // only drives the badge/sources UI. Populated only when the query selected the qa_* columns; a list
+  // that does not select them shapes to null, i.e. today's display.
+  qa: QaVerdictView | null;
 }
 
 // Which dashboard is being rendered, and therefore which read column is the truth.
@@ -220,6 +226,13 @@ export type ReportCardRow = Pick<
   concept_synopsis?: string | null;
   sme_released_at?: string | null;
   pursuit_path?: PursuitPath | null;
+  // The QA override layer (migration 0088). All optional: a list that does not select them resolves to
+  // "no override" (the engine score/factors, no badge) via resolveFit — byte-identical to pre-0088.
+  qa_fit_score?: number | null;
+  qa_factor_scores?: FactorScores | null;
+  qa_sources?: string[] | null;
+  qa_status?: string | null;
+  qa_engine_fit_score?: number | null;
   // Both optional: a surface selects only its own side's column, and a row that never
   // selected either shapes to read: false -- an unread row, which is the honest
   // default for a list that has no read state to show.
@@ -245,7 +258,10 @@ function toPlain(html: string | null | undefined, max = 240): string | null {
 export function toReportItem(card: ReportCardRow, side: ReadSide): ReportItem {
   const g = card.grants;
   const days = deadlineDaysLeft(g?.submission_deadline);
-  const fit = (card.fit_score ?? null) as 1 | 2 | 3 | null;
+  // Coalesce the engine score/factors against the QA override layer (staleness-guarded). With no qa_*
+  // selected / no verdict this returns the engine values and qa:null — today's display.
+  const resolved = resolveFit(card);
+  const fit = resolved.fitScore;
   return {
     id: card.id,
     grantId: card.grant_id,
@@ -261,7 +277,7 @@ export function toReportItem(card: ReportCardRow, side: ReadSide): ReportItem {
     deadlineDaysLeft: days,
     deadlineSoon: days !== null && days >= 0 && days <= 30,
     decision: card.decision,
-    rowFactors: factorViews(card.factor_scores, ROW_FACTORS),
+    rowFactors: factorViews(resolved.factorScores, ROW_FACTORS),
     totalAvailable: g?.total_funding ?? null,
     matchRequired: compactCostShare(g?.cost_share),
     purpose: toPlain(g?.description, 240),
@@ -278,6 +294,12 @@ export function toReportItem(card: ReportCardRow, side: ReadSide): ReportItem {
     smeReleased: !!card.sme_released_at,
     pursuitPath: card.pursuit_path ?? null,
     read: !!(side === "staff" ? card.staff_read_at : card.client_read_at),
+    // A CLIENT surface gets ONLY an applied verdict (its badge/sources) — the internal unverified/failed
+    // states are staff-only and must never ride into a client "use client" prop (Next serializes every
+    // prop into the browser RSC payload, so even an unrendered field leaks). Mirrors the detail pages'
+    // own gate; enforcing it here means the two client list surfaces can't forget it. Staff keep the full
+    // verdict. (This is the read-side half of the same "client sees only applied" boundary as apply-write.)
+    qa: side === "client" ? (resolved.qa?.status === "applied" ? resolved.qa : null) : resolved.qa,
   };
 }
 
