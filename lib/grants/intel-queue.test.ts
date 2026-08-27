@@ -122,6 +122,16 @@ describe("pollAndEnqueue — eligibility", () => {
     expect(s.tables.intel_review_queue[0].status).toBe("queued");
   });
 
+  it("does NOT re-enqueue a pair whose prior job is parked 'error' (backstop holds — no budget-burn loop)", async () => {
+    // A persistently-failing card wrote no verdict, so the has-verdict check can't catch it; the 'error'
+    // status must. Re-queuing it would resurrect it every poll and burn the daily cap forever.
+    const s = db(); s.tables.review_cards = [pendingCard()];
+    s.tables.intel_review_queue = [{ grant_id: "g1", client_id: "c1", status: "error", attempts: INTEL_MAX_ATTEMPTS }];
+    expect(await pollAndEnqueue(asDb(s), { now })).toBe(0);
+    expect(s.tables.intel_review_queue).toHaveLength(1);
+    expect(s.tables.intel_review_queue[0].status).toBe("error"); // stays parked, not resurrected to queued
+  });
+
   it("skips prospect / decided / released cards", async () => {
     const s = db();
     s.tables.review_cards = [

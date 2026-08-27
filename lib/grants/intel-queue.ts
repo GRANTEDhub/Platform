@@ -93,11 +93,16 @@ function startOfUtcDayIso(nowMs: number): string {
 
 // ── The poller: enqueue every eligible surfaced pair that has no verdict yet ────────────────────────
 // Eligible = a PENDING, unreleased, CLIENT (not prospect) card with a real (grant, client) pair, that
-// (a) has no card_intel_reviews verdict, and (b) has no live queue job (queued/processing). A prior
-// 'done'/'error' queue row for the pair is re-queued by the upsert — which is how a card re-scored after
-// a rematch-clear (#436 cleared its verdict) gets re-QA'd. (A card whose verdict is stale because the
-// drain re-scored it in place still HAS a verdict, so it is not re-picked here — that staleness refresh
-// is deliberately a PR-2 lifecycle refinement, not PR 1.)
+// (a) has no card_intel_reviews verdict, and (b) has no BLOCKING queue row (queued/processing/error).
+// A prior 'done' queue row IS re-queued by the upsert — which is how a card re-scored after a
+// rematch-clear (#436 cleared its verdict) gets re-QA'd. A prior 'error' row is NOT re-queued: parking as
+// 'error' after INTEL_MAX_ATTEMPTS is a terminal backstop (surfaced for a human, never silently retried).
+// An errored card wrote no verdict, so the (a) check can't catch it — if the poller re-queued it too, a
+// persistently-failing card would be resurrected every cycle and burn the daily cost cap forever,
+// defeating the very backstop. Resetting an errored pair for another attempt is a deliberate human /
+// PR-2-watchdog action, not an automatic poll. (A card whose verdict is stale because the drain re-scored
+// it in place still HAS a verdict, so it is not re-picked here — that staleness refresh is deliberately a
+// PR-2 lifecycle refinement, not PR 1.)
 export async function pollAndEnqueue(db: DB, opts: { now?: () => number; limit?: number } = {}): Promise<number> {
   const now = opts.now ?? (() => Date.now());
   const limit = opts.limit ?? INTEL_POLL_LIMIT;
@@ -117,15 +122,17 @@ export async function pollAndEnqueue(db: DB, opts: { now?: () => number; limit?:
   if (!cards || cards.length === 0) return 0;
 
   const cardIds = cards.map((c) => c.id);
-  const [{ data: verdicts }, { data: active }] = await Promise.all([
+  const [{ data: verdicts }, { data: blocking }] = await Promise.all([
     db.from("card_intel_reviews").select("review_card_id").in("review_card_id", cardIds).returns<{ review_card_id: string }[]>(),
-    db.from("intel_review_queue").select("grant_id, client_id").in("status", ["queued", "processing"]).returns<{ grant_id: string; client_id: string }[]>(),
+    // queued/processing = in flight; 'error' = terminally parked. All three BLOCK re-enqueue; only a
+    // 'done' row is re-queueable (its verdict having been cleared), which the upsert below handles.
+    db.from("intel_review_queue").select("grant_id, client_id").in("status", ["queued", "processing", "error"]).returns<{ grant_id: string; client_id: string }[]>(),
   ]);
 
   const qad = new Set((verdicts ?? []).map((v) => v.review_card_id));
-  const live = new Set((active ?? []).map((q) => pairKey(q.grant_id, q.client_id)));
+  const blocked = new Set((blocking ?? []).map((q) => pairKey(q.grant_id, q.client_id)));
 
-  const eligible = cards.filter((c) => !qad.has(c.id) && !live.has(pairKey(c.grant_id, c.client_id)));
+  const eligible = cards.filter((c) => !qad.has(c.id) && !blocked.has(pairKey(c.grant_id, c.client_id)));
   if (eligible.length === 0) return 0;
 
   const nowIso = new Date(now()).toISOString();
@@ -140,8 +147,9 @@ export async function pollAndEnqueue(db: DB, opts: { now?: () => number; limit?:
     finished_at: null,
     updated_at: nowIso,
   }));
-  // onConflict (grant, client): resets a prior done/error row back to queued. Never hits a live row
-  // (filtered out above), so an in-flight job is undisturbed.
+  // onConflict (grant, client): resets a prior 'done' row back to queued (the re-QA-after-clear path).
+  // Never hits a queued/processing/error row — all filtered out above — so an in-flight job is undisturbed
+  // and a terminally-parked 'error' row stays parked.
   const { error } = await db.from("intel_review_queue").upsert(rows, { onConflict: "grant_id,client_id" });
   if (error) {
     console.error("[auto-intel] enqueue failed", error);
