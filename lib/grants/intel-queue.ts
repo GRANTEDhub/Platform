@@ -270,6 +270,21 @@ async function processOne(
     return "skipped";
   }
 
+  // A verdict can appear between enqueue and now — most likely a staffer ran the on-demand Intel pass
+  // (POST /api/review/[id]/intel, created_by = their user id) while this auto job waited. The auto pass
+  // has nothing to add and must never clobber a human verdict, so skip: no model call, no cost, no write.
+  // (The poller excludes already-verdicted cards, so this only fires on that narrow race.)
+  const { data: existingVerdict } = await db
+    .from("card_intel_reviews")
+    .select("review_card_id")
+    .eq("review_card_id", card.id)
+    .limit(1)
+    .maybeSingle<{ review_card_id: string }>();
+  if (existingVerdict) {
+    await finish({ status: "done", finished_at: new Date(now()).toISOString(), error_detail: "verdict already present" });
+    return "skipped";
+  }
+
   const [{ data: grant }, { data: client }] = await Promise.all([
     db
       .from("grants")
@@ -309,12 +324,15 @@ async function processOne(
   }
 
   // PROPOSAL-ONLY: the ONLY write is to card_intel_reviews. created_by null = the automatic pass (vs a
-  // staff user id for the on-demand button). One current verdict per card (upsert on review_card_id).
+  // staff user id for the on-demand button). ignoreDuplicates → ON CONFLICT DO NOTHING: the pre-check above
+  // catches an existing verdict, but a human on-demand verdict can still land DURING runReview; this makes
+  // the write atomic so the auto pass can never overwrite it (no TOCTOU). The auto pass only ever fills a
+  // gap — a re-QA after a rematch clears the row entirely, so there is no verdict to conflict with then.
   const { error: writeErr } = await db
     .from("card_intel_reviews")
     .upsert(
       { review_card_id: card.id, intel_review: review, created_by: null, updated_at: new Date(now()).toISOString() },
-      { onConflict: "review_card_id" },
+      { onConflict: "review_card_id", ignoreDuplicates: true },
     );
   await logRun(db, now, { grant_id: row.grant_id, client_id: row.client_id, review_card_id: card.id, verdict: review.verdict, searches: review.searched.length, estCost });
   if (writeErr) {

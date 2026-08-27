@@ -19,6 +19,7 @@ class Query {
   private patch: Row = {};
   private inserts: Row[] = [];
   private onConflict: string[] = [];
+  private ignoreDuplicates = false;
   private single = false;
   private selectAfterWrite = false;
   private orderBy: { col: string; asc: boolean } | null = null;
@@ -37,7 +38,7 @@ class Query {
   limit(n: number) { this.lim = n; return this; }
   returns() { return this; }
   update(patch: Row) { this.op = "update"; this.patch = patch; return this; }
-  upsert(rows: Row | Row[], opts?: { onConflict?: string }) { this.op = "upsert"; this.inserts = Array.isArray(rows) ? rows : [rows]; this.onConflict = (opts?.onConflict ?? "").split(",").map((s) => s.trim()).filter(Boolean); return this; }
+  upsert(rows: Row | Row[], opts?: { onConflict?: string; ignoreDuplicates?: boolean }) { this.op = "upsert"; this.inserts = Array.isArray(rows) ? rows : [rows]; this.onConflict = (opts?.onConflict ?? "").split(",").map((s) => s.trim()).filter(Boolean); this.ignoreDuplicates = opts?.ignoreDuplicates ?? false; return this; }
   insert(rows: Row | Row[]) { this.op = "insert"; this.inserts = Array.isArray(rows) ? rows : [rows]; return this; }
   maybeSingle() { this.single = true; return this.exec(); }
   private matched(): Row[] {
@@ -60,10 +61,10 @@ class Query {
       return Promise.resolve({ data: this.selectAfterWrite ? m.map((r) => ({ ...r })) : null, error: null });
     }
     if (this.op === "insert") { for (const r of this.inserts) this.rows.push({ ...r }); return Promise.resolve({ data: null, error: null }); }
-    // upsert
+    // upsert. ignoreDuplicates → ON CONFLICT DO NOTHING (leave the existing row untouched).
     for (const nr of this.inserts) {
       const existing = this.onConflict.length ? this.rows.find((r) => this.onConflict.every((k) => r[k] === nr[k])) : undefined;
-      if (existing) Object.assign(existing, nr);
+      if (existing) { if (!this.ignoreDuplicates) Object.assign(existing, nr); }
       else this.rows.push({ ...nr });
     }
     return Promise.resolve({ data: null, error: null });
@@ -188,6 +189,32 @@ describe("drainIntelQueue — proposal-only + transitions", () => {
     expect(r.skipped).toBe(1);
     expect(s.tables.intel_review_queue[0].status).toBe("done");
     expect(s.tables.card_intel_reviews ?? []).toHaveLength(0);
+  });
+
+  it("skips (no model call) when a verdict already exists — never clobbers a staff on-demand verdict", async () => {
+    // A staffer ran the on-demand Intel pass (created_by = their id) while this auto job waited.
+    s.tables.card_intel_reviews = [{ review_card_id: "card-1", created_by: "user-x", intel_review: { verdict: "affirm" } }];
+    let called = false;
+    const r = await drainIntelQueue(asDb(s), { now, runReview: async () => { called = true; return okReview("demote"); } });
+    expect(called).toBe(false); // pre-check short-circuits before the model call
+    expect(r.skipped).toBe(1);
+    expect(s.tables.card_intel_reviews).toHaveLength(1);
+    expect(s.tables.card_intel_reviews[0]).toMatchObject({ created_by: "user-x" }); // human verdict preserved
+    expect(s.tables.intel_review_queue[0].status).toBe("done");
+  });
+
+  it("write-level guard: a verdict landing DURING the QA run is not clobbered (ON CONFLICT DO NOTHING)", async () => {
+    // No verdict at pre-check time; a human verdict lands while runReview is in flight (the residual race).
+    const r = await drainIntelQueue(asDb(s), {
+      now,
+      runReview: async () => {
+        s.tables.card_intel_reviews = [{ review_card_id: "card-1", created_by: "user-y", intel_review: { verdict: "affirm" } }];
+        return okReview("demote");
+      },
+    });
+    expect(r.done).toBe(1);
+    expect(s.tables.card_intel_reviews).toHaveLength(1);
+    expect(s.tables.card_intel_reviews[0]).toMatchObject({ created_by: "user-y" }); // not overwritten by created_by:null
   });
 
   it("stops at the daily cost cap (does no work, capReached)", async () => {
