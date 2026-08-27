@@ -94,10 +94,12 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
   it(
     "1. JAG × Mississippi County, discovery ON → never AFFIRMED (demote when grounded, else unverified; seeded → fetches)",
     async () => {
-      // Discovery ON, the way the flag-on feature actually runs. Fetch-only + the static seed URL could
-      // not ground a demote here (the seed points at the prior-year AR allocation PDF while the open NOFO
-      // is the current year, so the model correctly failed SAFE to unverified rather than guess) — the very
-      // gap discovery closes: it can SEARCH for the current-year Arkansas JAG allocation table and ground on it.
+      // Discovery ON, the way the flag-on feature actually runs. 16.738 is a SEEDED program, so the pass
+      // FETCHES the seeded allocation URL rather than SEARCHING (0 web_searches is correct here — search is
+      // for UNSEEDED programs; see the VOCA case). The model reasons the disparate/asterisk demote every
+      // run, but grounding a verbatim quote from the allocation PDF table is flaky, so the fail-safe rightly
+      // holds it to `unverified` on runs where the quote can't be verified. The bar: never wrongly AFFIRM the
+      // county as a clean prime (see the assertions + header for the full rationale).
       const results = await runN(RUNS, () =>
         runIntelReview(
           card(),
