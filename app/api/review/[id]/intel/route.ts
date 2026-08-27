@@ -10,8 +10,10 @@ export const maxDuration = 300;
 //
 // PROPOSAL-ONLY, ENFORCED HERE: this route writes EXACTLY ONE column, intel_review. It never touches
 // fit_score / seat / decision / suppressed, so QA can never remove or re-score a card. The verdict
-// says "engine 3 → QA says 1, here's the web-grounded reason"; a human makes the call. (This is why
-// there is no pending/released/processing gate like /rematch has — an annotation can't race anything.)
+// says "engine 3 → QA says 1, here's the web-grounded reason"; a human makes the call. (There is no
+// pending/released/processing gate like /rematch has: this staff write is authoritative and always wins.
+// The automatic QA pass (lib/grants/intel-queue.ts) is the side that yields — it pre-checks for an
+// existing verdict and writes ON CONFLICT DO NOTHING, so it can never clobber this on-demand one.)
 //
 // STAFF-ONLY / NEVER CLIENT-FACING: intel_review is raw internal QA voice. The client portal query,
 // the Grant Report, emails, and concept/PDF exports do NOT select it and must never start.
