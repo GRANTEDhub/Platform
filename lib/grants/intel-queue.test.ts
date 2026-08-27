@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { pollAndEnqueue, drainIntelQueue, runAutoIntel, INTEL_MAX_ATTEMPTS, buildQaPatch, cardCfdaApplyEligible } from "./intel-queue";
+import { pollAndEnqueue, drainIntelQueue, runAutoIntel, INTEL_MAX_ATTEMPTS, buildQaPatch, applyQaPatch, cardCfdaApplyEligible } from "./intel-queue";
 import type { IntelReview } from "./intel-review";
 
 // Deterministic — NO model, NO network, NO real Supabase. A tiny in-memory fake DB implements just the
@@ -416,6 +416,39 @@ describe("apply-the-gate — buildQaPatch + cardCfdaApplyEligible (pure)", () =>
   it("affirm and flag → null (nothing projected onto the card)", () => {
     expect(buildQaPatch(card, demoteReview({ verdict: "affirm", qa_fit_score: 3, qa_factor_scores: null }), "T")).toBeNull();
     expect(buildQaPatch(card, demoteReview({ verdict: "flag", qa_fit_score: null, qa_factor_scores: null }), "T")).toBeNull();
+  });
+
+  it("reviewedBy stamps qa_reviewed_by (manual apply audit); default is null (the auto pass)", () => {
+    // Default (drain): null.
+    expect(buildQaPatch(card, demoteReview(), "T")!.qa_reviewed_by).toBeNull();
+    // Manual Re-run: the acting staff id, on both the demote and the unverified branch.
+    expect(buildQaPatch(card, demoteReview(), "T", "staff-9")!.qa_reviewed_by).toBe("staff-9");
+    expect(
+      buildQaPatch(card, demoteReview({ verdict: "unverified", qa_fit_score: null, qa_factor_scores: null, unverified: true }), "T", "staff-9")!
+        .qa_reviewed_by,
+    ).toBe("staff-9");
+  });
+});
+
+describe("applyQaPatch — writes the patch, returns whether it landed", () => {
+  const patch = { qa_fit_score: 2, qa_status: "applied" as const, qa_applied_at: "T", qa_reviewed_by: "staff-9" };
+
+  it("success → updates the row and returns true", async () => {
+    const s = db();
+    s.tables.review_cards = [pendingCard()];
+    const ok = await applyQaPatch(asDb(s), "card-1", patch);
+    expect(ok).toBe(true);
+    expect(s.tables.review_cards[0].qa_fit_score).toBe(2);
+    expect(s.tables.review_cards[0].qa_reviewed_by).toBe("staff-9");
+  });
+
+  it("persistent DB error → returns false, non-throwing (verdict stays durable elsewhere)", async () => {
+    const s = db();
+    s.tables.review_cards = [pendingCard()];
+    s.updateFailures.review_cards = 99;
+    const ok = await applyQaPatch(asDb(s), "card-1", patch);
+    expect(ok).toBe(false);
+    expect(s.tables.review_cards[0].qa_fit_score ?? null).toBeNull();
   });
 });
 
