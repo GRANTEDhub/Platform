@@ -367,6 +367,23 @@ export function groundedOnFetchedSource(evidence: IntelEvidence[], audit: FetchA
   });
 }
 
+// Filter + sanitize the model's raw evidence into what actually counts as grounding: keep only items with a
+// real quote (the grounding signal) and BLANK any unsafe source_url (a `javascript:`/`data:` URL can never
+// reach the panel's anchor href — and a blanked url is not a fetched host, so it can't ground). Used in BOTH
+// the pre-refute grounding gate (runIntelReview) and finalizeIntel's grounding check, so the two decide
+// "grounded" on the SAME array — otherwise a raw item with a fetched host but no quote / an unsafe scheme
+// would pass the gate (spending the refute call) yet fail finalizeIntel's recheck, storing a misleading
+// "cited no page" (refute_survived=null) even though the refute actually ran and passed.
+function sanitizeEvidence(raw: unknown): IntelEvidence[] {
+  return (Array.isArray(raw) ? raw : [])
+    .filter((e) => e && e.quote)
+    .map((e) => ({
+      claim: e.claim ?? "",
+      quote: e.quote,
+      source_url: isSafeHttpUrl(e.source_url ?? "") ? e.source_url : "",
+    }));
+}
+
 function clampScore(n: unknown): number | null {
   if (typeof n !== "number" || !Number.isFinite(n)) return null;
   const i = Math.round(n);
@@ -436,18 +453,10 @@ export function finalizeIntel(opts: {
     };
   }
 
-  const confidence: IntelConfidence =
+  let confidence: IntelConfidence =
     parsed.confidence === "high" || parsed.confidence === "low" ? parsed.confidence : "medium";
 
-  // Keep evidence with a real quote (the grounding signal); BLANK any unsafe source_url so a
-  // model-emitted javascript:/data: URL can never reach the panel's anchor href.
-  const evidence: IntelEvidence[] = (Array.isArray(parsed.evidence) ? parsed.evidence : [])
-    .filter((e) => e && e.quote)
-    .map((e) => ({
-      claim: e.claim ?? "",
-      quote: e.quote,
-      source_url: isSafeHttpUrl(e.source_url ?? "") ? e.source_url : "",
-    }));
+  const evidence = sanitizeEvidence(parsed.evidence);
   let verdict: IntelVerdict = parsed.verdict;
   let summary = (parsed.summary ?? "").trim();
   let unverified = false;
@@ -505,6 +514,12 @@ export function finalizeIntel(opts: {
   } else if (verdict === "unverified") {
     unverified = true;
   }
+
+  // Confidence tracks the FINAL verdict, not the model's original self-report. When the fail-safe overrides
+  // the model (grounding/refute failed → unverified), a stored "high confidence" next to "unverified" is
+  // self-contradictory — the model never actually reached a trustworthy conclusion. Derate to "low", the
+  // same value the no-usable-output early-return already stores.
+  if (verdict === "unverified") confidence = "low";
 
   // qa_fit_score is the applied/proposed score, from the FINAL verdict. Demote → the (clamped) lower score;
   // affirm → the engine's own score; flag/unverified → null.
@@ -772,7 +787,10 @@ export async function runIntelReview(
   // an adverse verdict, so any shortfall (no budget, thrown, refuted) fails safe to "unverified".
   let refuteSurvived: boolean | null = null;
   if (parsed && (parsed.verdict === "demote" || parsed.verdict === "flag")) {
-    const grounded = audit.some((a) => a.ok) && groundedOnFetchedSource(parsed.evidence ?? [], audit);
+    // Gate on the SAME sanitized evidence finalizeIntel will recheck, so the two never disagree on
+    // "grounded" — otherwise a raw item with a fetched host but no quote / an unsafe URL would spend the
+    // refute call here yet be judged ungrounded there, storing a misleading "cited no page".
+    const grounded = audit.some((a) => a.ok) && groundedOnFetchedSource(sanitizeEvidence(parsed.evidence), audit);
     if (grounded) {
       const remaining = INTEL_TOTAL_BUDGET_MS - (clock() - startMs);
       if (remaining >= MIN_REFUTE_BUDGET_MS) {

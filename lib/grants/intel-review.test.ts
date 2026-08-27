@@ -424,6 +424,7 @@ describe("runIntelReview — loop + guard + refute together, injected seams", ()
     expect(r.qa_fit_score).toBe(1);
     expect(r.engine_fit_score).toBe(3);
     expect(r.refute_survived).toBe(true);
+    expect(r.confidence).toBe("high"); // an APPLIED demote keeps the model's confidence
     expect(r.fetched.some((f) => f.ok)).toBe(true);
     expect(r.reviewed_by).toBe("staff-1");
   });
@@ -441,6 +442,7 @@ describe("runIntelReview — loop + guard + refute together, injected seams", ()
     // "did not hold up" summary — a trustworthy "the sources don't support this".
     expect(r.refute_survived).toBe(false);
     expect(r.summary).toMatch(/did not hold up/i);
+    expect(r.confidence).toBe("low"); // a fail-safe downgrade derates the model's "high" self-report
     expect(r.qa_fit_score).toBeNull();
   });
 
@@ -459,6 +461,7 @@ describe("runIntelReview — loop + guard + refute together, injected seams", ()
     // "could not complete" summary, so it is never mislabeled as "the sources don't support this".
     expect(r.refute_survived).toBeNull();
     expect(r.summary).toMatch(/could not complete/i);
+    expect(r.confidence).toBe("low");
     expect(r.qa_fit_score).toBeNull();
   });
 
@@ -477,6 +480,29 @@ describe("runIntelReview — loop + guard + refute together, injected seams", ()
     });
     expect(r.verdict).toBe("unverified");
     expect(refuteRan).toBe(false); // nothing grounded → no point refuting
+    expect(r.qa_fit_score).toBeNull();
+  });
+
+  it("evidence dropped by sanitize (fetched host but no usable quote) is ungrounded in BOTH checks — refute never runs, stored honestly", async () => {
+    // The raw evidence cites a FETCHED host, but its quote is empty, so sanitizeEvidence drops it. The
+    // pre-refute gate and finalizeIntel both run groundedOnFetchedSource on the SAME sanitized array, so they
+    // agree it is ungrounded: the refute is never spent, and the record is not mislabeled as a refutation.
+    let refuteRan = false;
+    const r = await runIntelReview(card, grant, client, {
+      now,
+      callModel: fetchThenAnswer(),
+      fetcher: okFetcher(),
+      structure: async () => ({ verdict: "demote" as const, confidence: "high" as const, qa_fit_score: 1, summary: "asterisk county", evidence: [ev(FETCHED, "")] }),
+      refute: async () => {
+        refuteRan = true;
+        return { supported: true, reason: "x" };
+      },
+    });
+    expect(r.verdict).toBe("unverified");
+    expect(refuteRan).toBe(false); // sanitized evidence is ungrounded → no wasted refute call
+    expect(r.refute_survived).toBeNull(); // never ran — not a "false" refutation
+    expect(r.summary).toMatch(/cited no page/i);
+    expect(r.confidence).toBe("low");
     expect(r.qa_fit_score).toBeNull();
   });
 
