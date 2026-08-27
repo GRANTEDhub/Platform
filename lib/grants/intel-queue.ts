@@ -80,7 +80,7 @@ export interface ApplyCard {
 export interface QaPatch {
   qa_fit_score?: number | null;
   qa_factor_scores?: FactorScores | null;
-  qa_sources?: string[];
+  qa_sources?: string[] | null;
   qa_status: "applied" | "unverified";
   qa_engine_fit_score?: number | null;
   qa_applied_at: string;
@@ -113,8 +113,20 @@ export function buildQaPatch(card: ApplyCard, review: IntelReview, nowIso: strin
     };
   }
   if (review.verdict === "unverified") {
-    // Fail-safe surface: QA couldn't verify. Score columns stay untouched (the engine's number stands).
-    return { qa_status: "unverified", qa_applied_at: nowIso, qa_reviewed_by: null };
+    // Fail-safe surface: QA couldn't verify, so the ENGINE's number must stand. Explicitly CLEAR any prior
+    // applied-demote override — a card can be demoted, then re-QA'd (verdict cleared on a same-score rematch)
+    // and come back unverified; leaving qa_fit_score/factors/sources set would keep the stale demoted score
+    // displaying under the read-layer coalesce while the current verdict is "couldn't verify". Nulling every
+    // score column makes coalesce fall back to fit_score; on a never-applied card it is a harmless no-op.
+    return {
+      qa_fit_score: null,
+      qa_factor_scores: null,
+      qa_sources: null,
+      qa_status: "unverified",
+      qa_engine_fit_score: null,
+      qa_applied_at: nowIso,
+      qa_reviewed_by: null,
+    };
   }
   return null;
 }

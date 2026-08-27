@@ -395,11 +395,15 @@ describe("apply-the-gate — buildQaPatch + cardCfdaApplyEligible (pure)", () =>
     }
   });
 
-  it("unverified → qa_status only, NO score/factor keys (score left as-is — the fail-safe)", () => {
+  it("unverified → qa_status 'unverified' + every score/factor/source column NULLED (clears a stale demote)", () => {
     const patch = buildQaPatch(card, demoteReview({ verdict: "unverified", qa_fit_score: null, qa_factor_scores: null, unverified: true }), "T")!;
     expect(patch.qa_status).toBe("unverified");
-    expect("qa_fit_score" in patch).toBe(false);
-    expect("qa_factor_scores" in patch).toBe(false);
+    // The fail-safe must actively clear any prior applied-demote override — not just flip the status —
+    // else a demoted-then-re-QA'd card keeps showing the stale score under the read-layer coalesce.
+    expect(patch.qa_fit_score).toBeNull();
+    expect(patch.qa_factor_scores).toBeNull();
+    expect(patch.qa_sources).toBeNull();
+    expect(patch.qa_engine_fit_score).toBeNull();
   });
 
   it("affirm and flag → null (nothing projected onto the card)", () => {
@@ -465,6 +469,25 @@ describe("drainIntelQueue — apply-the-gate flag + allowlist (AUTO_INTEL_APPLY)
     const card = s.tables.review_cards[0];
     expect(card.qa_status).toBe("unverified");
     expect(card.qa_fit_score ?? null).toBeNull();
+    expect(card.fit_score).toBe(3);
+  });
+
+  it("ON + unverified re-QA of a PREVIOUSLY-demoted JAG card → the stale applied override is CLEARED", async () => {
+    process.env.AUTO_INTEL_APPLY = "true";
+    const s = seed();
+    // Simulate a card that a prior QA pass applied-demoted (same-score rematch cleared its verdict → re-QA).
+    Object.assign(s.tables.review_cards[0], {
+      qa_fit_score: 2, qa_status: "applied", qa_engine_fit_score: 3,
+      qa_factor_scores: { seat_role: { rating: "weak", rationale: "stale" } }, qa_sources: [JAG_PDF],
+    });
+    await drainIntelQueue(asDb(s), { now, runReview: async () => demoteReview({ verdict: "unverified", qa_fit_score: null, qa_factor_scores: null, unverified: true }) });
+    const card = s.tables.review_cards[0];
+    expect(card.qa_status).toBe("unverified");
+    // The stale demote must be gone so coalesce falls back to the engine's fit_score (3), not the old 2.
+    expect(card.qa_fit_score ?? null).toBeNull();
+    expect(card.qa_factor_scores ?? null).toBeNull();
+    expect(card.qa_sources ?? null).toBeNull();
+    expect(card.qa_engine_fit_score ?? null).toBeNull();
     expect(card.fit_score).toBe(3);
   });
 });
