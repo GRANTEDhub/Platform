@@ -26,13 +26,97 @@
 import { randomUUID } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/server";
 import { runIntelReview, type IntelReview, type IntelCard } from "@/lib/grants/intel-review";
-import type { Grant, Client } from "@/types/database";
+import type { Grant, Client, FactorScores } from "@/types/database";
 
 type DB = ReturnType<typeof createServiceClient>;
 
 // ── Flag + config (env-overridable; defaults are conservative) ────────────────────────────────────
 export function autoIntelEnabled(): boolean {
   return process.env.AUTO_INTEL_ENABLED === "true";
+}
+
+// ── Apply-the-gate (Step 3, PR B) ──────────────────────────────────────────────────────────────────
+// A SECOND flag, independent of AUTO_INTEL_ENABLED: when ON, the drain PROJECTS the QA verdict onto the
+// card's qa_* OVERRIDE columns (0088) so the displayed score/factors become QA's. It never touches the
+// engine's own fit_score / factor_scores / decision / suppressed — the read layer (PR C) coalesces
+// qa_fit_score ?? fit_score. Default OFF is byte-identical: no qa_* column is written, so the coalesce is
+// inert and the card is exactly today's. NEVER-HIDE is structural (review_cards has no suppress column;
+// a demote only lowers the OVERRIDE score, the row still surfaces).
+export function autoIntelApplyEnabled(): boolean {
+  return process.env.AUTO_INTEL_APPLY === "true";
+}
+
+// NARROW-AND-PROVEN launch scope: apply-mode acts ONLY on the CFDAs listed here. Today that is JAG-Local
+// (16.738) alone — the case proven end-to-end (eval run #8: grounded demote→2, 3/3, affirms untouched).
+// Every OTHER program stays PROPOSAL-ONLY (its QA verdict lands in card_intel_reviews, the card is
+// untouched) until it has been watched on real cards. Widening is a one-line data change here.
+export const APPLY_ELIGIBLE_CFDAS = new Set<string>(["16.738"]);
+
+// Strip a trailing letter suffix (e.g. "16.738A" → "16.738"); mirrors allocation-sources / formula-programs.
+function normalizeCfda(raw: string): string {
+  return raw.trim().replace(/[A-Za-z]$/, "");
+}
+
+// Is this grant on the apply allowlist? A single assistance-listing match is enough. Empty/unknown → false
+// (fail closed: an unrecognized program stays proposal-only).
+export function cardCfdaApplyEligible(grant: Pick<Grant, "assistance_listings">): boolean {
+  for (const a of grant.assistance_listings ?? []) {
+    const num = a?.number ? normalizeCfda(a.number) : "";
+    if (num && APPLY_ELIGIBLE_CFDAS.has(num)) return true;
+  }
+  return false;
+}
+
+// The card fields the apply-write reads: the engine's own score (staleness snapshot + demote floor) and its
+// real per-factor scores (the merge base for qa_factor_scores).
+export interface ApplyCard {
+  id: string;
+  fit_score: number | null;
+  factor_scores: FactorScores | null;
+}
+
+// The qa_* override patch written to review_cards. EVERY key is qa_-prefixed — this is the structural
+// guarantee the drain never writes an engine column (locked by the "writes ONLY qa_* columns" test).
+export interface QaPatch {
+  qa_fit_score?: number | null;
+  qa_factor_scores?: FactorScores | null;
+  qa_sources?: string[];
+  qa_status: "applied" | "unverified";
+  qa_engine_fit_score?: number | null;
+  qa_applied_at: string;
+  qa_reviewed_by: null;
+}
+
+// Build the qa_* projection for a verdict, or null when there is nothing to apply. PURE + exported so the
+// projection (merge, floor, status, the qa_*-only invariant) is unit-tested with no DB. Only two verdicts
+// project: an applied DEMOTE (rewrites the displayed score + merged factors + shows the grounded sources)
+// and an UNVERIFIED (surfaces "QA couldn't complete", score LEFT AS-IS — the fail-safe Shannon required).
+// affirm (QA agrees, no change) and flag (a staff-only concern, no score change) write NOTHING to the card.
+export function buildQaPatch(card: ApplyCard, review: IntelReview, nowIso: string): QaPatch | null {
+  if (review.verdict === "demote" && review.qa_fit_score != null) {
+    // Merge QA's CHANGED factor(s) onto the engine's REAL factors — never store the model's fabricated five.
+    const mergedFactors: FactorScores | null = review.qa_factor_scores
+      ? ({ ...(card.factor_scores ?? {}), ...review.qa_factor_scores } as FactorScores)
+      : card.factor_scores;
+    // The grounded .gov pages QA actually fetched — client-safe URLs, deduped, shown on the card.
+    const sources = Array.from(
+      new Set(review.fetched.filter((f) => f.ok).map((f) => f.finalUrl ?? f.url).filter((u): u is string => !!u)),
+    );
+    return {
+      qa_fit_score: review.qa_fit_score,
+      qa_factor_scores: mergedFactors,
+      qa_sources: sources,
+      qa_status: "applied",
+      qa_engine_fit_score: card.fit_score, // snapshot: the read-layer ignores the override once fit_score moves
+      qa_applied_at: nowIso,
+      qa_reviewed_by: null,
+    };
+  }
+  if (review.verdict === "unverified") {
+    // Fail-safe surface: QA couldn't verify. Score columns stay untouched (the engine's number stands).
+    return { qa_status: "unverified", qa_applied_at: nowIso, qa_reviewed_by: null };
+  }
+  return null;
 }
 
 const numEnv = (v: string | undefined, d: number): number => {
@@ -313,14 +397,14 @@ async function processOne(
   // removed since enqueue), there is nothing to QA — mark done, no cost. (H1 never held it.)
   const { data: card } = await db
     .from("review_cards")
-    .select("id, fit_score, proposed_role, recommended_prime, why_this_org, before_you_approve, reasoning_context")
+    .select("id, fit_score, factor_scores, proposed_role, recommended_prime, why_this_org, before_you_approve, reasoning_context")
     .eq("grant_id", row.grant_id)
     .eq("client_id", row.client_id)
     .eq("decision", "pending")
     .is("sme_released_at", null)
     .eq("card_type", "client")
     .limit(1)
-    .maybeSingle<IntelCard & { id: string }>();
+    .maybeSingle<IntelCard & ApplyCard>();
   if (!card) {
     await finish({ status: "done", finished_at: new Date(now()).toISOString(), error_detail: "card no longer pending" });
     return "skipped";
@@ -402,6 +486,20 @@ async function processOne(
     );
     return "error";
   }
+
+  // APPLY-THE-GATE (flag + allowlist gated): project the verdict onto the card's qa_* OVERRIDE columns.
+  // OFF or off-allowlist → nothing written, byte-identical to today. The verdict is already durably in
+  // card_intel_reviews above (the source of truth); the override is a projection, so a write failure here
+  // is NON-FATAL — the job is still 'done' and the poller re-projects on a later pass. This never writes an
+  // engine column (buildQaPatch returns qa_* keys only).
+  if (autoIntelApplyEnabled() && cardCfdaApplyEligible(grant)) {
+    const patch = buildQaPatch(card, review, new Date(now()).toISOString());
+    if (patch) {
+      const { error: applyErr } = await db.from("review_cards").update(patch).eq("id", card.id);
+      if (applyErr) console.error(`[intel-apply] card ${card.id}: ${applyErr.message}`);
+    }
+  }
+
   await finish({ status: "done", finished_at: new Date(now()).toISOString(), error_detail: null });
   return "done";
 }
