@@ -11,11 +11,16 @@
 //     fit_score / seat / decision / suppressed, and the route stores it in the ONE new column and
 //     nothing else. So QA can never remove or re-score a card. The card keeps the engine's score;
 //     the verdict says "engine 3 → QA says 1, here's why", and a human makes the call.
-//   FAIL-SAFE. Because it never writes fit_score, a failed fetch CANNOT change a score. And an
-//     ADVERSE verdict (demote / flag) that is not grounded on a page we actually fetched is
-//     downgraded to "unverified" in code (finalizeIntel), so a flaky fetch or a from-memory claim
-//     can never produce a confident demote. Fetch-only (fetchGrantSource) has no search, so a source
-//     it cannot reach comes back as a typed "could not retrieve" → unverified, never a guess.
+//   FAIL-SAFE (two-part grounding guard). An ADVERSE verdict (demote / flag) APPLIES only when it
+//     (1) cites a page we ACTUALLY FETCHED (groundedOnFetchedSource — host-level, deterministic) AND
+//     (2) SURVIVES an adversarial refute (a skeptical second read of the fetched page text, phase 3),
+//     else it is downgraded to "unverified" in code (finalizeIntel). This REPLACES the old
+//     verbatim-quote test, which suppressed correct reads of allocation tables / PDFs (the JAG case)
+//     just because the claim wasn't a clean contiguous substring: host-grounding + refute checks that
+//     QA read a real source AND that the source actually backs the concern, without demanding a
+//     quotable sentence. A flaky fetch, a from-memory claim, or a page that doesn't hold up on the
+//     second read can never produce a confident demote. A source the pass cannot reach comes back as a
+//     typed "could not retrieve" → unverified, never a guess.
 //
 // PROFILE-FREE, like the occupancy / nexus judges (#138→#140 discipline): it reads the client's
 // CONFIRMED identity (clientContextForJudge — org type, location, service area, rules), never
@@ -48,7 +53,7 @@ import { clientContextForJudge } from "@/lib/grants/subseat-routing";
 import { allocationSourcesFor } from "@/lib/grants/allocation-sources";
 import { formulaProgramTag } from "@/lib/grants/formula-programs";
 import { intelWebSearchEnabled, intelPhase1Config, serverSearchQueries } from "@/lib/grants/intel-web-search";
-import type { Grant, Client } from "@/types/database";
+import type { Grant, Client, FactorScores } from "@/types/database";
 
 // Opus, exclusively, for this path — a low-volume verification pass where quality matters and the
 // per-card spend is small. Kept distinct from the matcher's MODEL so a QA pass never silently runs
@@ -69,8 +74,19 @@ export const INTEL_DEADLINE_MS = 240_000;
 // push the structuring call past the function limit.
 export const INTEL_TOTAL_BUDGET_MS = 285_000;
 export const INTEL_MAX_TOKENS = 4096;
+// Phase 3 (the adversarial refute) is only run when at least this much of the total budget remains — else
+// there is no time to verify, and an unverified adverse verdict fails safe to "unverified" (score untouched).
+export const MIN_REFUTE_BUDGET_MS = 8_000;
+// Cap on the fetched-page text handed to the refute call, so a few large .gov pages can't blow the context.
+export const MAX_REFUTE_CHARS = 40_000;
 
 export type IntelVerdict = "affirm" | "demote" | "flag" | "unverified";
+
+// The model's self-reported confidence in the verdict. RECORDED for staff + the eval, but NOT the apply
+// gate — a self-report is weak evidence, and gating apply on it would re-introduce the exact
+// over-suppression the verbatim-quote guard caused. The real apply gate is grounded-on-a-fetched-source +
+// SURVIVED the adversarial refute (see finalizeIntel). Confidence just annotates.
+export type IntelConfidence = "high" | "medium" | "low";
 
 export interface IntelEvidence {
   claim: string;
@@ -79,11 +95,16 @@ export interface IntelEvidence {
 }
 
 // The stored jsonb (review_cards.intel_review). engine_fit_score / fetched / model / reviewed_* are
-// stamped by code; verdict / qa_fit_score / summary / evidence come from the model, guarded.
+// stamped by code; verdict / qa_fit_score / qa_factor_scores / confidence / summary / evidence come from
+// the model, guarded.
 export interface IntelReview {
   verdict: IntelVerdict;
+  confidence: IntelConfidence;
   engine_fit_score: number | null;
-  qa_fit_score: number | null; // PROPOSAL only — never written to review_cards.fit_score
+  qa_fit_score: number | null; // the applied/proposed score (null unless the verdict is an applied demote/affirm)
+  // The corrected per-factor structure (same shape as review_cards.factor_scores). Non-null only when an
+  // adverse verdict APPLIES — so the displayed factor bars/rationale stay consistent with the new score.
+  qa_factor_scores: FactorScores | null;
   summary: string;
   evidence: IntelEvidence[];
   fetched: FetchAuditRecord[];
@@ -91,6 +112,10 @@ export interface IntelReview {
   // or the model never searched. Recorded so the eval can PROVE discovery was exercised (not just that a
   // fetch of a handed URL succeeded) and to make search usage visible to staff.
   searched: string[];
+  // Whether the adversarial refute pass was run and the adverse verdict SURVIVED it (true), was refuted
+  // (false), or it did not apply / could not run (null = affirm/unverified, or no budget). Recorded for
+  // staff + the eval to see the correctness check actually fired.
+  refute_survived: boolean | null;
   unverified: boolean;
   model: string;
   reviewed_by: string | null;
@@ -114,9 +139,18 @@ export interface IntelCard {
 // The raw model verdict, before code stamps/guards it.
 interface RawVerdict {
   verdict: IntelVerdict;
+  confidence?: IntelConfidence;
   qa_fit_score: number | null;
+  qa_factor_scores?: FactorScores | null;
   summary: string;
   evidence: IntelEvidence[];
+}
+
+// The adversarial refute pass result (phase 3). `supported` = the fetched pages actually back the adverse
+// verdict (it SURVIVES); false = the pages do not support it / contradict it (refuted → not applied).
+interface RefuteResult {
+  supported: boolean;
+  reason: string;
 }
 
 // ── Prompts ──────────────────────────────────────────────────────────────────────────────────────
@@ -136,13 +170,29 @@ YOUR VERDICT (state it explicitly at the end):
 - FLAG: a real eligibility concern worth surfacing, but not a clean score proposal.
 - UNVERIFIED: you could not retrieve a source you needed to decide. This is an honest outcome, not a failure to hide.
 
-Ground EVERY adverse call (demote or flag) in a verbatim quote from a page you fetched, with its URL. A verdict you cannot ground on a retrieved source is UNVERIFIED, full stop.
+GROUND every adverse call (demote or flag) in a page you ACTUALLY FETCHED, and give its URL. Cite the specific table row / cell / passage that establishes it — you do NOT need a clean contiguous verbatim sentence (allocation tables and PDFs rarely give one); a faithful account of the exact cell you read is enough. What you must NOT do is decide from memory, or cite a page you did not fetch. A verdict you cannot tie to a source you retrieved is UNVERIFIED, full stop.
 
-Write a clear analysis: your verdict, the proposed score if demoting, the key quoted evidence with source URLs, and exactly what you could and could not verify.`;
+Write a clear analysis: your verdict, the proposed score if demoting, the key evidence with source URLs (the closest supporting text from the fetched page), and exactly what you could and could not verify.`;
 
 const STRUCTURE_SYSTEM_PROMPT = `Convert the IntellEngine QA analysis below into the structured verdict via the submit_intel_review tool, called exactly once.
 
-Use ONLY what the analysis states — do not add findings it did not make. For every evidence item, give the source URL and a VERBATIM quote from the fetched page the analysis relied on. If the analysis could not ground an adverse call (demote/flag) in a source it actually fetched, return verdict "unverified". For "demote", qa_fit_score is the lower score the analysis named (1-3); for "affirm"/"flag"/"unverified", leave qa_fit_score null.`;
+Use ONLY what the analysis states — do not add findings it did not make.
+
+GROUNDING (this is how you avoid hallucinating a concern): every evidence item's source_url MUST be a page the analysis ACTUALLY FETCHED (it appears in the "PAGES FETCHED" list). Quote the most specific span you can from that page — but you do NOT need a clean contiguous verbatim sentence: allocation tables, PDFs, and structured pages rarely yield one, and a correct read of a table is still a real finding. Give the closest supporting text or a faithful paraphrase of the exact cell/row, plus its source_url. What you may NOT do is cite a page the analysis never fetched, or a claim the fetched pages do not support. If the analysis reached an adverse read (demote/flag) but fetched no relevant page to back it, return verdict "unverified".
+
+For "demote", qa_fit_score is the lower score the analysis named (1-3) and qa_factor_scores is the corrected six-factor object (rewrite only the factor(s) the finding changes — usually eligibility/seat_role — and carry the rest from the engine's read; the rewritten factor's rationale is the plain-language "why"). For "affirm"/"flag"/"unverified", leave qa_fit_score and qa_factor_scores null.
+
+confidence is your honest self-assessment of how solid the verdict is given what you read (high/medium/low).`;
+
+// One factor's corrected rating + plain-language reason — the shape of review_cards.factor_scores entries.
+const FACTOR_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    rating: { type: "string", enum: ["strong", "moderate", "weak", "insufficient_data"] },
+    rationale: { type: "string" },
+  },
+  required: ["rating", "rationale"],
+} as const;
 
 const SUBMIT_TOOL = {
   name: "submit_intel_review",
@@ -151,9 +201,27 @@ const SUBMIT_TOOL = {
     type: "object" as const,
     properties: {
       verdict: { type: "string", enum: ["affirm", "demote", "flag", "unverified"] },
+      confidence: {
+        type: "string",
+        enum: ["high", "medium", "low"],
+        description: "How solid the verdict is given what you actually read.",
+      },
       qa_fit_score: {
         type: ["integer", "null"],
         description: "For 'demote', the lower score the analysis proposed (1-3). Null otherwise.",
+      },
+      qa_factor_scores: {
+        type: ["object", "null"],
+        description:
+          "For 'demote' (and 'flag' when it changes a factor), the corrected six-factor object so the card's factor bars stay consistent with the new score. Null for affirm/unverified.",
+        properties: {
+          seat_role: FACTOR_SCHEMA,
+          eligibility: FACTOR_SCHEMA,
+          geographic: FACTOR_SCHEMA,
+          program_history: FACTOR_SCHEMA,
+          cost_share: FACTOR_SCHEMA,
+          mission: FACTOR_SCHEMA,
+        },
       },
       summary: {
         type: "string",
@@ -165,14 +233,39 @@ const SUBMIT_TOOL = {
           type: "object",
           properties: {
             claim: { type: "string" },
-            source_url: { type: "string" },
-            quote: { type: "string", description: "Verbatim span from the fetched page." },
+            source_url: { type: "string", description: "A page the analysis actually fetched." },
+            quote: { type: "string", description: "The closest supporting span/cell from that page (need not be a clean verbatim sentence)." },
           },
           required: ["claim", "source_url", "quote"],
         },
       },
     },
-    required: ["verdict", "qa_fit_score", "summary", "evidence"],
+    required: ["verdict", "confidence", "qa_fit_score", "qa_factor_scores", "summary", "evidence"],
+  },
+} as const;
+
+// The adversarial refute (phase 3). It replaces the verbatim-quote guard's job — checking the CLAIM against
+// the real fetched content — with a skeptical second read: given ONLY the pages the pass fetched, does the
+// evidence actually support lowering the score? It is deliberately biased toward NOT supporting, so a
+// confident misread of a page (the failure the quote-guard was a proxy for) is caught. supported=true only
+// when the fetched pages clearly back the concern.
+const REFUTE_SYSTEM_PROMPT = `You are a skeptical reviewer checking an IntellEngine QA verdict before it changes a client's score. The QA pass proposed lowering (DEMOTE) or flagging this match. Your job is to try to REFUTE that concern using ONLY the fetched page text provided — do not use outside knowledge or memory.
+
+Return supported=true ONLY if the fetched pages CLEARLY establish the concern (e.g. the allocation table really does list this jurisdiction as an asterisk/disparate unit that cannot prime). Return supported=false if the fetched pages do NOT establish it — including when the basis for the concern is not actually present in the fetched text, when the pages are ambiguous, or when they contradict the concern. When in doubt, supported=false: a score change must rest on what the sources actually show. Give a one-sentence reason.`;
+
+const REFUTE_TOOL = {
+  name: "submit_refute_check",
+  description: "State whether the fetched pages support the QA concern. Call exactly once.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      supported: {
+        type: "boolean",
+        description: "true only if the fetched pages clearly establish the concern; false otherwise.",
+      },
+      reason: { type: "string", description: "One sentence: what the fetched pages do or do not show." },
+    },
+    required: ["supported", "reason"],
   },
 } as const;
 
@@ -226,12 +319,14 @@ export function intelContext(card: IntelCard, grant: Grant, client: Client, disc
 
 // ── Grounding guard + finalize (pure, the fail-safe) ───────────────────────────────────────────────
 
-// Shortest quote we'll treat as evidence — a couple of words can coincidentally appear anywhere; a
-// real cited span is longer.
-const MIN_QUOTE_CHARS = 12;
-
-function normalizeText(s: string): string {
-  return s.toLowerCase().replace(/\s+/g, " ").trim();
+// The registrable host of a URL (lowercased, `www.` stripped), or null if unparseable. Used to check a
+// cited source against the pages actually fetched — see groundedOnFetchedSource.
+function hostOf(u: string): string | null {
+  try {
+    return new URL(u).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return null;
+  }
 }
 
 // A source_url is MODEL OUTPUT, and a fetched (untrusted) .gov page can steer the model to emit a
@@ -246,18 +341,27 @@ export function isSafeHttpUrl(u: string): boolean {
   }
 }
 
-// An adverse verdict must be grounded on a quote that ACTUALLY APPEARS in a page we fetched — NOT
-// merely a URL on a host we happened to fetch. This is the anti-hallucination guard: after fetching
-// one bja.ojp.gov page the model cannot cite a different path with an invented quote, because the
-// quote is checked against the retrieved page bodies. Normalized (case + whitespace) so verbatim
-// spans survive markup/whitespace differences; a quote that does not occur is not grounded.
-export function quoteGroundedInBodies(evidence: IntelEvidence[], fetchedBodies: string[]): boolean {
-  if (fetchedBodies.length === 0) return false;
-  const bodies = fetchedBodies.map(normalizeText);
+// GROUNDING (replaces the old verbatim-quote guard). An adverse verdict must cite at least one page the
+// pass ACTUALLY FETCHED (an `ok` audit record) — the model cannot ground a demote on a page it never
+// retrieved. It no longer requires a verbatim substring to appear in the body: correct reads of allocation
+// tables / PDFs rarely yield a clean contiguous span, and demanding one suppressed correct verdicts (the
+// JAG case). The claim's CONTENT is checked separately by the adversarial refute (phase 3), which reads
+// the real fetched bodies — so host-level grounding + refute is the anti-hallucination pair, deterministic
+// half here (unit-tested), semantic half there. A cited path may differ slightly from the fetched path, so
+// grounding is at the host level and the refute does the content verification.
+export function groundedOnFetchedSource(evidence: IntelEvidence[], audit: FetchAuditRecord[]): boolean {
+  const fetchedHosts = new Set<string>();
+  for (const a of audit) {
+    if (!a.ok) continue;
+    for (const u of [a.finalUrl, a.url]) {
+      const h = u ? hostOf(u) : null;
+      if (h) fetchedHosts.add(h);
+    }
+  }
+  if (fetchedHosts.size === 0) return false;
   return evidence.some((e) => {
-    const q = e?.quote ? normalizeText(e.quote) : "";
-    if (q.length < MIN_QUOTE_CHARS) return false;
-    return bodies.some((b) => b.includes(q));
+    const h = e?.source_url ? hostOf(e.source_url) : null;
+    return h != null && fetchedHosts.has(h);
   });
 }
 
@@ -267,21 +371,44 @@ function clampScore(n: unknown): number | null {
   return i < 1 ? 1 : i > 3 ? 3 : i;
 }
 
-// Turn the raw model verdict + the fetch audit into the stored IntelReview, applying the grounding
-// guard. Pure and exported so the fail-safe is unit-tested without a live model.
+const FACTOR_KEYS = ["seat_role", "eligibility", "geographic", "program_history", "cost_share", "mission"] as const;
+const FACTOR_RATINGS = new Set(["strong", "moderate", "weak", "insufficient_data"]);
+
+// Validate a model-returned corrected factor object into the exact review_cards.factor_scores shape, or
+// null. All six factors must be present with a valid rating — a partial/garbage object is rejected whole
+// (null) rather than half-written, so the display never coalesces a malformed factor set onto a card.
+function sanitizeFactorScores(v: unknown): FactorScores | null {
+  if (!v || typeof v !== "object") return null;
+  const rec = v as Record<string, unknown>;
+  const out: Record<string, { rating: string; rationale: string }> = {};
+  for (const k of FACTOR_KEYS) {
+    const f = rec[k];
+    if (!f || typeof f !== "object") return null;
+    const fr = f as Record<string, unknown>;
+    if (typeof fr.rating !== "string" || !FACTOR_RATINGS.has(fr.rating)) return null;
+    out[k] = { rating: fr.rating, rationale: typeof fr.rationale === "string" ? fr.rationale : "" };
+  }
+  return out as unknown as FactorScores;
+}
+
+// Turn the raw model verdict + the fetch audit into the stored IntelReview, applying the grounding guard.
+// Pure and exported so the fail-safe is unit-tested without a live model. The correctness half of the guard
+// (the adversarial refute) runs in runIntelReview; its result is passed in as `refuteSurvived`.
 export function finalizeIntel(opts: {
   parsed: RawVerdict | null;
   audit: FetchAuditRecord[];
-  // The bodies of the pages actually fetched (ok:true), for verifying a cited quote occurs in one.
-  fetchedBodies: string[];
   // The web_search queries issued this pass (optional; defaults to none for the fetch-only / test paths).
   searched?: string[];
+  // The adversarial refute result for an adverse verdict: true = the fetched pages back the demote (it
+  // survived), false = refuted / could-not-confirm (fail-safe → unverified), null = not run (non-adverse,
+  // or the verdict was already ungrounded). An adverse verdict APPLIES only when refuteSurvived === true.
+  refuteSurvived?: boolean | null;
   engineFitScore: number | null;
   model: string;
   reviewedBy: string | null;
   now: string;
 }): IntelReview {
-  const { parsed, audit, fetchedBodies, engineFitScore, model, reviewedBy, now } = opts;
+  const { parsed, audit, engineFitScore, model, reviewedBy, now } = opts;
 
   const base = {
     engine_fit_score: engineFitScore,
@@ -297,12 +424,18 @@ export function finalizeIntel(opts: {
     return {
       ...base,
       verdict: "unverified",
+      confidence: "low",
       qa_fit_score: null,
+      qa_factor_scores: null,
+      refute_survived: null,
       unverified: true,
       summary: "QA ran but produced no usable verdict — manual check needed.",
       evidence: [],
     };
   }
+
+  const confidence: IntelConfidence =
+    parsed.confidence === "high" || parsed.confidence === "low" ? parsed.confidence : "medium";
 
   // Keep evidence with a real quote (the grounding signal); BLANK any unsafe source_url so a
   // model-emitted javascript:/data: URL can never reach the panel's anchor href.
@@ -316,22 +449,36 @@ export function finalizeIntel(opts: {
   let verdict: IntelVerdict = parsed.verdict;
   let summary = (parsed.summary ?? "").trim();
   let unverified = false;
+  let refute_survived: boolean | null = null;
 
-  // THE FAIL-SAFE, in two parts:
-  //   - an ADVERSE call (demote/flag) must be grounded on a quote that actually appears in a fetched
-  //     page (quoteGroundedInBodies) — a URL on a fetched host with an invented quote does not count;
-  //   - an AFFIRM must rest on at least one SUCCESSFUL fetch — otherwise it is "the model thinks it's
-  //     fine but read no source", which must not be shown as a web-backed affirmation.
-  // Either shortfall → unverified. (An adverse verdict grounded on a quote implies a successful fetch,
-  // so the two checks don't double-count.)
+  // THE FAIL-SAFE:
+  //   - an ADVERSE call (demote/flag) applies only when it is (1) GROUNDED on a page actually fetched
+  //     (groundedOnFetchedSource) AND (2) SURVIVED the adversarial refute (refuteSurvived === true). The
+  //     old verbatim-quote test is gone — it suppressed correct reads of allocation tables/PDFs; the refute
+  //     checks the claim against the real fetched content instead. Any shortfall → unverified (never a
+  //     from-nothing demote).
+  //   - an AFFIRM must rest on at least one SUCCESSFUL fetch, else it is "the model thinks it's fine but
+  //     read no source" — not a web-backed affirmation → unverified.
   const hasSuccessfulFetch = audit.some((a) => a.ok);
   if (verdict === "demote" || verdict === "flag") {
-    if (!quoteGroundedInBodies(evidence, fetchedBodies)) {
+    const grounded = hasSuccessfulFetch && groundedOnFetchedSource(evidence, audit);
+    if (!grounded) {
       verdict = "unverified";
       unverified = true;
+      refute_survived = null; // the refute never ran — nothing grounded to test
       summary =
-        "QA proposed a concern but could not ground it on a quote from a page it actually retrieved — treated as unverified; manual check needed." +
+        "QA proposed a concern but cited no page it actually retrieved — treated as unverified; manual check needed." +
         (summary ? ` (Model note: ${summary})` : "");
+    } else if (opts.refuteSurvived !== true) {
+      // Grounded, but the second-read refute did not confirm the concern against the fetched pages.
+      verdict = "unverified";
+      unverified = true;
+      refute_survived = false;
+      summary =
+        "QA proposed a concern but it did not hold up against the fetched sources on a second read — treated as unverified; manual check needed." +
+        (summary ? ` (Model note: ${summary})` : "");
+    } else {
+      refute_survived = true;
     }
   } else if (verdict === "affirm") {
     if (!hasSuccessfulFetch) {
@@ -345,8 +492,8 @@ export function finalizeIntel(opts: {
     unverified = true;
   }
 
-  // qa_fit_score is a PROPOSAL, from the FINAL verdict. Demote → the (clamped) lower score; affirm →
-  // the engine's own score; flag/unverified → null. It is never written to review_cards.fit_score.
+  // qa_fit_score is the applied/proposed score, from the FINAL verdict. Demote → the (clamped) lower score;
+  // affirm → the engine's own score; flag/unverified → null.
   let qa_fit_score: number | null = null;
   if (verdict === "demote") {
     if (engineFitScore == null || engineFitScore <= 1) {
@@ -363,10 +510,18 @@ export function finalizeIntel(opts: {
     qa_fit_score = engineFitScore;
   }
 
+  // Corrected factors ride only an APPLIED demote (a real score change), so the card's factor bars stay
+  // consistent with the new number. Flag/affirm/unverified leave the engine's factors in place.
+  const qa_factor_scores: FactorScores | null =
+    verdict === "demote" ? sanitizeFactorScores(parsed.qa_factor_scores) : null;
+
   return {
     ...base,
     verdict,
+    confidence,
     qa_fit_score,
+    qa_factor_scores,
+    refute_survived,
     unverified,
     summary: summary || "(no summary)",
     evidence,
@@ -473,6 +628,47 @@ async function realStructure(analysisText: string, audit: FetchAuditRecord[], ti
   return tool.input as RawVerdict;
 }
 
+// The real phase-3 refute (forced tool). A skeptical second read of the fetched page text against the
+// adverse verdict — the correctness half of the grounding guard. Returns supported=false on any shortfall
+// (no structured result, ambiguous pages), so an adverse verdict only APPLIES on a clear supported=true.
+async function realRefute(
+  parsed: RawVerdict,
+  fetchedBodies: string[],
+  engineFitScore: number | null,
+  timeoutMs: number,
+): Promise<RefuteResult> {
+  const anthropic = getAnthropicClient();
+  const pages =
+    fetchedBodies.map((b, i) => `--- FETCHED PAGE ${i + 1} ---\n${b}`).join("\n\n").slice(0, MAX_REFUTE_CHARS) ||
+    "(no pages were fetched)";
+  const claim =
+    `QA verdict: ${parsed.verdict}` +
+    (parsed.qa_fit_score != null ? ` (proposed score ${parsed.qa_fit_score}; engine had ${engineFitScore ?? "?"})` : "") +
+    `\nConcern: ${parsed.summary ?? "(none)"}` +
+    `\nCited evidence:\n${(parsed.evidence ?? []).map((e) => `  - ${e.claim} [${e.source_url}]: "${e.quote}"`).join("\n") || "  (none)"}`;
+  const res = await anthropic.messages.create(
+    {
+      model: INTEL_MODEL,
+      max_tokens: 600,
+      // No `temperature`: claude-opus-5 rejects it (see realCallModel).
+      system: REFUTE_SYSTEM_PROMPT,
+      tools: [REFUTE_TOOL],
+      tool_choice: { type: "tool", name: REFUTE_TOOL.name },
+      messages: [
+        {
+          role: "user",
+          content: `THE QA CONCERN TO CHECK:\n${claim}\n\nFETCHED PAGE TEXT (the only evidence you may use):\n${pages}`,
+        },
+      ],
+    },
+    { timeout: Math.max(5_000, Math.min(timeoutMs, 60_000)), maxRetries: 0 },
+  );
+  const tool = res.content.find((b) => b.type === "tool_use");
+  if (!tool || tool.type !== "tool_use") return { supported: false, reason: "refute produced no structured result" };
+  const out = tool.input as Partial<RefuteResult>;
+  return { supported: out.supported === true, reason: typeof out.reason === "string" ? out.reason : "" };
+}
+
 // ── Orchestration ───────────────────────────────────────────────────────────────────────────────────
 
 export interface RunIntelOptions {
@@ -481,6 +677,8 @@ export interface RunIntelOptions {
   // Injected seams for deterministic tests (no live model / network).
   callModel?: CallModel;
   structure?: (analysisText: string, audit: FetchAuditRecord[], timeoutMs: number) => Promise<RawVerdict | null>;
+  // The phase-3 adversarial refute (correctness half of the grounding guard). Injected in tests.
+  refute?: (parsed: RawVerdict, fetchedBodies: string[], engineFitScore: number | null, timeoutMs: number) => Promise<RefuteResult>;
   fetcher?: (url: string) => Promise<FetchResult>;
   deadlineMs?: number;
   // Web-search discovery (INTEL_WEB_SEARCH_ENABLED). Defaults to the flag; overridable in tests so the
@@ -508,9 +706,10 @@ export async function runIntelReview(
   const searched: string[] = [];
   const callModel = opts.callModel ?? realCallModel(discovery, searched);
   const structure = opts.structure ?? realStructure;
+  const refute = opts.refute ?? realRefute;
 
   // Phase 1: the bounded fetch loop. Audit records AND the fetched page bodies accumulate as fetches
-  // run — the bodies are what the adverse-verdict quote is later verified against (fail-safe).
+  // run — the bodies are what phase 3's adversarial refute reads to verify an adverse verdict (fail-safe).
   const audit: FetchAuditRecord[] = [];
   const fetchedBodies: string[] = [];
   const fetcher = opts.fetcher ?? fetchGrantSource;
@@ -541,15 +740,37 @@ export async function runIntelReview(
     maxToolRounds: discovery ? MAX_INTEL_DISCOVERY_ROUNDS : MAX_INTEL_FETCH_ROUNDS,
   });
 
-  // Phase 2: structure the analysis into the typed verdict, then apply the grounding guard. It gets
-  // whatever of the total budget phase 1 left, so the two phases together stay under maxDuration.
+  // Phase 2: structure the analysis into the typed verdict. It gets whatever of the total budget phase 1
+  // left, so the phases together stay under maxDuration.
   const parsed = await structure(loop.text, audit, INTEL_TOTAL_BUDGET_MS - (clock() - startMs));
+
+  // Phase 3: the adversarial refute — the correctness half of the grounding guard. Only for an adverse
+  // verdict that is grounded on a page actually fetched (else finalizeIntel unverifies it regardless, no
+  // point spending a call). refuteSurvived stays null otherwise; finalizeIntel requires === true to APPLY
+  // an adverse verdict, so any shortfall (no budget, thrown, refuted) fails safe to "unverified".
+  let refuteSurvived: boolean | null = null;
+  if (parsed && (parsed.verdict === "demote" || parsed.verdict === "flag")) {
+    const grounded = audit.some((a) => a.ok) && groundedOnFetchedSource(parsed.evidence ?? [], audit);
+    if (grounded) {
+      const remaining = INTEL_TOTAL_BUDGET_MS - (clock() - startMs);
+      if (remaining >= MIN_REFUTE_BUDGET_MS) {
+        try {
+          const r = await refute(parsed, fetchedBodies, card.fit_score, remaining);
+          refuteSurvived = r.supported;
+        } catch {
+          refuteSurvived = false; // can't complete the check → fail-safe, don't apply
+        }
+      } else {
+        refuteSurvived = false; // no budget left to verify → fail-safe
+      }
+    }
+  }
 
   return finalizeIntel({
     parsed,
     audit,
-    fetchedBodies,
     searched,
+    refuteSurvived,
     engineFitScore: card.fit_score,
     model: INTEL_MODEL,
     reviewedBy: opts.reviewedBy ?? null,

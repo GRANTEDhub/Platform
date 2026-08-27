@@ -17,17 +17,19 @@ import type { Grant, Client } from "@/types/database";
 // prod-DB dependency and is reproducible — the only external dependencies are Anthropic and the live
 // .gov source. Four cases, matching the plan:
 //
-//   1. JAG-county-NEVER-AFFIRM (discovery ON) — Mississippi County (AR, local_government) scored a confident
+//   1. JAG-county-GROUNDED-DEMOTE (discovery ON) — Mississippi County (AR, local_government) scored a confident
 //      direct-recipient 3 on Byrne-JAG Local (CFDA 16.738). An AR county is a disparate / "asterisk"
 //      jurisdiction on the JAG local allocation list and cannot prime a direct application. Runs discovery ON
 //      (the flag-on path), but 16.738 is a SEEDED program, so the pass FETCHES the seeded allocation URL
-//      rather than SEARCHING (0 web_searches is correct — search is for UNSEEDED programs; see VOCA). The
-//      model reasons the disparate/asterisk demote every run (naming the AR table, the Blytheville joint
-//      allocation, the MOU), but grounding a VERBATIM quote from the allocation PDF table is flaky, so the
-//      grounding guard rightly holds it to `unverified` on runs where the quote can't be verified — the
-//      fail-safe working, not a failure. The bar here is therefore: NEVER wrongly AFFIRM a disparate county
-//      as a clean prime (demote/flag when grounded, else honestly unverified), and any adverse verdict that
-//      lands must name the Arkansas allocation reality.
+//      rather than SEARCHING (0 web_searches is correct — search is for UNSEEDED programs; see VOCA).
+//      REDESIGNED GUARD (Step 3, PR A): the old guard downgraded this well-reasoned demote to `unverified`
+//      whenever the model couldn't quote a PDF-table cell VERBATIM — suppressing a correct answer. The new
+//      guard grounds on the FETCHED SOURCE (the cited page is in the fetch audit's ok-set) and requires the
+//      demote to SURVIVE an adversarial refute — no verbatim substring needed. So the bar RISES: the pass
+//      must now land a GROUNDED **demote** (not merely never-affirm) in the MAJORITY of runs, naming the
+//      Arkansas allocation reality. The fail-safe is unchanged and still HARD every run — no adverse verdict
+//      without a grounded .gov fetch — and a run that genuinely can't reach/ground a source still honestly
+//      falls to `unverified` (never a guess).
 //
 //   2. JAG-state-AFFIRM    — the State of Arkansas (state_government, the State Administering Agency)
 //      on the SAME program IS a direct JAG recipient. QA must NOT over-demote a genuine direct
@@ -92,14 +94,15 @@ const majority = (bools: boolean[]) => bools.filter(Boolean).length > bools.leng
 
 describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
   it(
-    "1. JAG × Mississippi County, discovery ON → never AFFIRMED (demote when grounded, else unverified; seeded → fetches)",
+    "1. JAG × Mississippi County, discovery ON → GROUNDED DEMOTE (host-grounded + survives refute; no verbatim quote needed)",
     async () => {
       // Discovery ON, the way the flag-on feature actually runs. 16.738 is a SEEDED program, so the pass
       // FETCHES the seeded allocation URL rather than SEARCHING (0 web_searches is correct here — search is
-      // for UNSEEDED programs; see the VOCA case). The model reasons the disparate/asterisk demote every
-      // run, but grounding a verbatim quote from the allocation PDF table is flaky, so the fail-safe rightly
-      // holds it to `unverified` on runs where the quote can't be verified. The bar: never wrongly AFFIRM the
-      // county as a clean prime (see the assertions + header for the full rationale).
+      // for UNSEEDED programs; see the VOCA case). REDESIGNED GUARD: the pass grounds on the fetched .gov
+      // source (audit ok-set) and the demote must survive an adversarial refute — it no longer needs a
+      // verbatim PDF-table quote, so a correctly-reasoned demote is applied rather than downgraded to
+      // `unverified`. The bar: a GROUNDED demote in the majority of runs, naming the Arkansas allocation
+      // reality; the fail-safe (no adverse without a grounded fetch) still holds every run.
       const results = await runN(RUNS, () =>
         runIntelReview(
           card(),
@@ -109,6 +112,7 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
         ),
       );
       const notAffirmed = results.map((r) => r.verdict !== "affirm");
+      const demoted = results.map((r) => r.verdict === "demote" || r.verdict === "flag");
       const grounded = results.map((r) => r.fetched.some((f) => f.ok));
       const reasoned = results.map((r) => /asterisk|disparate|through the state|state administering|cannot (prime|apply)|allocation|not.*direct/i.test(r.summary));
       // Informative surfacing of what actually happened, so a failing run says WHY.
@@ -140,14 +144,14 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
       }
       // The county is a SEEDED program (16.738 has an allocation URL), so the pass FETCHES it rather than
       // SEARCHING — 0 web_searches is correct here (search is for UNSEEDED programs, proven by the VOCA case),
-      // which is why there is no searchedUsed assertion. And PDF-quote grounding on the allocation TABLE is
-      // flaky: the model reasons the disparate/asterisk demote every run, but the grounding guard rightly holds
-      // it to `unverified` on runs where the exact quote can't be verified against the fetched PDF. So the bar
-      // is NEVER-wrongly-AFFIRM a disparate county as a clean prime — demote/flag when grounded, else honestly
-      // unverified (the fail-safe holding is correct, not a failure). Any adverse verdict that DOES land is
-      // still fail-safe-grounded and must name the Arkansas allocation reality (asserted above).
+      // which is why there is no searchedUsed assertion. REDESIGNED GUARD: grounding no longer needs a verbatim
+      // PDF-table quote — a host-grounded, refute-surviving demote is APPLIED. So the primary bar is now a
+      // GROUNDED **demote** in the majority of runs (the whole point of the guard fix); never-affirm and the
+      // allocation-reality naming remain, and the fail-safe (no adverse without a grounded fetch) still holds
+      // every run (asserted above). A run that genuinely can't ground still falls honestly to `unverified`.
       expect.soft(majority(grounded), "should reach + ground a .gov allocation source in the majority of runs").toBe(true);
-      expect.soft(majority(notAffirmed), "must NOT affirm a disparate/asterisk county as a clean prime — demote/flag when grounded, else honestly unverified").toBe(true);
+      expect.soft(majority(demoted), "the redesigned guard must APPLY a grounded demote (not downgrade to unverified for lack of a verbatim quote) in the majority of runs").toBe(true);
+      expect.soft(majority(notAffirmed), "must NOT affirm a disparate/asterisk county as a clean prime").toBe(true);
       expect.soft(majority(reasoned), "the Intel summary should name the allocation reality").toBe(true);
     },
     RUNS * 200_000,
