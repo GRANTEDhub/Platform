@@ -81,7 +81,7 @@ export interface QaPatch {
   qa_fit_score?: number | null;
   qa_factor_scores?: FactorScores | null;
   qa_sources?: string[] | null;
-  qa_status: "applied" | "unverified";
+  qa_status: "applied" | "unverified" | "none";
   qa_engine_fit_score?: number | null;
   qa_applied_at: string;
   // NULL = the automatic pass; a staff user id = a human on-demand "Re-run" applied it (audit; mirrors
@@ -89,17 +89,21 @@ export interface QaPatch {
   qa_reviewed_by: string | null;
 }
 
-// Build the qa_* projection for a verdict, or null when there is nothing to apply. PURE + exported so the
-// projection (merge, floor, status, the qa_*-only invariant) is unit-tested with no DB. Only two verdicts
-// project: an applied DEMOTE (rewrites the displayed score + merged factors + shows the grounded sources)
-// and an UNVERIFIED (surfaces "QA couldn't complete", score LEFT AS-IS — the fail-safe Shannon required).
-// affirm (QA agrees, no change) and flag (a staff-only concern, no score change) write NOTHING to the card.
+// Build the qa_* projection for a verdict. PURE + exported so the projection (merge, floor, status, the
+// qa_*-only invariant) is unit-tested with no DB. A DEMOTE applies (rewrites the displayed score + merged
+// factors + grounded sources); every OTHER verdict returns a CLEARING patch that nulls the score columns so
+// the read-layer coalesce falls back to the engine score — differing only in qa_status: 'unverified' (QA
+// couldn't verify) vs 'none' (affirm agrees / flag is a concern with no score change). The clear is
+// LOAD-BEARING, not cosmetic: a card can be applied-demoted and then a re-run REVERSES to affirm/flag/
+// unverified — with the engine score unchanged the staleness guard still honors the old override, so
+// without an explicit clear the stale demoted score would keep displaying under a verdict that no longer
+// demotes. On a never-applied card the clear is a harmless no-op (the columns were already null).
 export function buildQaPatch(
   card: ApplyCard,
   review: IntelReview,
   nowIso: string,
   reviewedBy: string | null = null,
-): QaPatch | null {
+): QaPatch {
   if (review.verdict === "demote" && review.qa_fit_score != null) {
     // Merge QA's CHANGED factor(s) onto the engine's REAL factors — never store the model's fabricated five.
     const mergedFactors: FactorScores | null = review.qa_factor_scores
@@ -119,23 +123,17 @@ export function buildQaPatch(
       qa_reviewed_by: reviewedBy,
     };
   }
-  if (review.verdict === "unverified") {
-    // Fail-safe surface: QA couldn't verify, so the ENGINE's number must stand. Explicitly CLEAR any prior
-    // applied-demote override — a card can be demoted, then re-QA'd (verdict cleared on a same-score rematch)
-    // and come back unverified; leaving qa_fit_score/factors/sources set would keep the stale demoted score
-    // displaying under the read-layer coalesce while the current verdict is "couldn't verify". Nulling every
-    // score column makes coalesce fall back to fit_score; on a never-applied card it is a harmless no-op.
-    return {
-      qa_fit_score: null,
-      qa_factor_scores: null,
-      qa_sources: null,
-      qa_status: "unverified",
-      qa_engine_fit_score: null,
-      qa_applied_at: nowIso,
-      qa_reviewed_by: reviewedBy,
-    };
-  }
-  return null;
+  // Every non-demote verdict CLEARS the override (see the header note): unverified surfaces "couldn't
+  // verify"; affirm/flag agree the engine score stands. Same clearing patch, different status.
+  return {
+    qa_fit_score: null,
+    qa_factor_scores: null,
+    qa_sources: null,
+    qa_status: review.verdict === "unverified" ? "unverified" : "none",
+    qa_engine_fit_score: null,
+    qa_applied_at: nowIso,
+    qa_reviewed_by: reviewedBy,
+  };
 }
 
 const numEnv = (v: string | undefined, d: number): number => {
@@ -524,8 +522,9 @@ async function processOne(
       .eq("review_card_id", card.id)
       .maybeSingle<{ intel_review: IntelReview; created_by: string | null }>();
     if (persisted && persisted.created_by === null) {
-      const patch = buildQaPatch(card, persisted.intel_review, new Date(now()).toISOString());
-      if (patch) await applyQaPatch(db, card.id, patch);
+      // Every verdict yields a patch now: a demote applies, and affirm/flag/unverified CLEAR any prior
+      // applied override (so an auto re-QA that reverses a demote no longer leaves a stale score).
+      await applyQaPatch(db, card.id, buildQaPatch(card, persisted.intel_review, new Date(now()).toISOString()));
     }
   }
 
