@@ -84,7 +84,9 @@ export interface QaPatch {
   qa_status: "applied" | "unverified";
   qa_engine_fit_score?: number | null;
   qa_applied_at: string;
-  qa_reviewed_by: null;
+  // NULL = the automatic pass; a staff user id = a human on-demand "Re-run" applied it (audit; mirrors
+  // card_intel_reviews.created_by). The drain passes null; the manual route passes the acting staff id.
+  qa_reviewed_by: string | null;
 }
 
 // Build the qa_* projection for a verdict, or null when there is nothing to apply. PURE + exported so the
@@ -92,7 +94,12 @@ export interface QaPatch {
 // project: an applied DEMOTE (rewrites the displayed score + merged factors + shows the grounded sources)
 // and an UNVERIFIED (surfaces "QA couldn't complete", score LEFT AS-IS — the fail-safe Shannon required).
 // affirm (QA agrees, no change) and flag (a staff-only concern, no score change) write NOTHING to the card.
-export function buildQaPatch(card: ApplyCard, review: IntelReview, nowIso: string): QaPatch | null {
+export function buildQaPatch(
+  card: ApplyCard,
+  review: IntelReview,
+  nowIso: string,
+  reviewedBy: string | null = null,
+): QaPatch | null {
   if (review.verdict === "demote" && review.qa_fit_score != null) {
     // Merge QA's CHANGED factor(s) onto the engine's REAL factors — never store the model's fabricated five.
     const mergedFactors: FactorScores | null = review.qa_factor_scores
@@ -109,7 +116,7 @@ export function buildQaPatch(card: ApplyCard, review: IntelReview, nowIso: strin
       qa_status: "applied",
       qa_engine_fit_score: card.fit_score, // snapshot: the read-layer ignores the override once fit_score moves
       qa_applied_at: nowIso,
-      qa_reviewed_by: null,
+      qa_reviewed_by: reviewedBy,
     };
   }
   if (review.verdict === "unverified") {
@@ -125,7 +132,7 @@ export function buildQaPatch(card: ApplyCard, review: IntelReview, nowIso: strin
       qa_status: "unverified",
       qa_engine_fit_score: null,
       qa_applied_at: nowIso,
-      qa_reviewed_by: null,
+      qa_reviewed_by: reviewedBy,
     };
   }
   return null;
@@ -538,14 +545,18 @@ const APPLY_MAX_ATTEMPTS = 3;
 // job would only skip; and parking the job as 'error' for a cosmetic override miss (the verdict IS durable)
 // would surface a misleading hard failure. A dedicated re-projection sweep for the rare persistent case is
 // PR-2 watchdog work. So: retry the transient blip, then leave it non-fatal but logged, never silent.
-async function applyQaPatch(db: DB, cardId: string, patch: QaPatch): Promise<void> {
+// Exported so the on-demand "Re-run" route (app/api/review/[id]/intel) applies its OWN verdict through the
+// exact same write as the drain — one apply path, no drift. Returns whether the projection landed (the
+// route surfaces `applied` so a staffer watching the card knows the score was rewritten).
+export async function applyQaPatch(db: DB, cardId: string, patch: QaPatch): Promise<boolean> {
   for (let attempt = 1; attempt <= APPLY_MAX_ATTEMPTS; attempt++) {
     const { error } = await db.from("review_cards").update(patch).eq("id", cardId);
-    if (!error) return;
+    if (!error) return true;
     if (attempt === APPLY_MAX_ATTEMPTS) {
       console.error(`[intel-apply] card ${cardId}: qa_* projection failed after ${attempt} attempts (verdict is durable in card_intel_reviews; card shows the engine score until the next rematch): ${error.message}`);
     }
   }
+  return false;
 }
 
 // Reserve the estimated cost in the run log BEFORE the killable model call, returning the row id. This is
