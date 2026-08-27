@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { pollAndEnqueue, drainIntelQueue, runAutoIntel, INTEL_MAX_ATTEMPTS } from "./intel-queue";
+import { pollAndEnqueue, drainIntelQueue, runAutoIntel, INTEL_MAX_ATTEMPTS, buildQaPatch, cardCfdaApplyEligible } from "./intel-queue";
 import type { IntelReview } from "./intel-review";
 
 // Deterministic — NO model, NO network, NO real Supabase. A tiny in-memory fake DB implements just the
@@ -50,7 +50,7 @@ class Query {
     else if (this.lim != null) out = out.slice(0, this.lim);
     return out;
   }
-  private exec(): Promise<{ data: unknown; error: null }> {
+  private exec(): Promise<{ data: unknown; error: { message: string } | null }> {
     // Real supabase returns DETACHED rows: a later .update(...).eq("id", …) mutates the DB, never the JS
     // object an earlier SELECT handed you. The fake must copy on read too, else a claimed row's in-memory
     // `attempts` would appear pre-incremented and mask the retry-cap off-by-one this suite locks.
@@ -59,6 +59,11 @@ class Query {
       return Promise.resolve({ data: this.single ? (m[0] ?? null) : m, error: null });
     }
     if (this.op === "update") {
+      // Inject a transient failure on the Nth update to this table (locks the apply-write retry path).
+      if ((this.store.updateFailures[this.table] ?? 0) > 0) {
+        this.store.updateFailures[this.table]--;
+        return Promise.resolve({ data: null, error: { message: "transient db error" } });
+      }
       const m = this.matched();
       for (const r of m) Object.assign(r, this.patch);
       return Promise.resolve({ data: this.selectAfterWrite ? m.map((r) => ({ ...r })) : null, error: null });
@@ -72,10 +77,12 @@ class Query {
     }
     return Promise.resolve({ data: null, error: null });
   }
-  then<T>(res: (v: { data: unknown; error: null }) => T) { return this.exec().then(res); }
+  then<T>(res: (v: { data: unknown; error: { message: string } | null }) => T) { return this.exec().then(res); }
 }
 class Store {
   tables: Record<string, Row[]> = {};
+  // Test hook: number of upcoming .update()s to a given table that should return a transient error.
+  updateFailures: Record<string, number> = {};
   from(table: string) { return new Query(this, table); }
 }
 const db = () => new Store();
@@ -339,5 +346,201 @@ describe("runAutoIntel — flag gate", () => {
     expect(r.enqueued).toBe(1);
     expect(r.done).toBe(1);
     expect(s.tables.card_intel_reviews).toHaveLength(1);
+  });
+});
+
+// ── Apply-the-gate (Step 3, PR B) ────────────────────────────────────────────────────────────────
+const engineFactors = {
+  seat_role: { rating: "moderate", rationale: "seat" },
+  eligibility: { rating: "moderate", rationale: "elig" },
+  geographic: { rating: "strong", rationale: "in-state" },
+  program_history: { rating: "moderate", rationale: "some" },
+  cost_share: { rating: "strong", rationale: "n/a" },
+  mission: { rating: "strong", rationale: "aligned" },
+};
+const JAG_PDF = "https://bja.ojp.gov/funding/fy26-jag-local-allocations-ar.pdf";
+// A demote verdict as the QA pass returns it: qa_factor_scores is a PARTIAL (only the changed factor).
+const demoteReview = (over: Partial<IntelReview> = {}): IntelReview => ({
+  verdict: "demote", confidence: "high", engine_fit_score: 3, qa_fit_score: 2,
+  qa_factor_scores: { seat_role: { rating: "weak", rationale: "asterisk — cannot prime" } } as IntelReview["qa_factor_scores"],
+  summary: "asterisk county", evidence: [],
+  fetched: [{ url: JAG_PDF, ok: true, finalUrl: JAG_PDF, truncated: false, fetchedAt: "T" }],
+  searched: [], refute_survived: true, unverified: false, model: "claude-opus-5", reviewed_by: null, reviewed_at: "T",
+  ...over,
+});
+const rating = (o: unknown, k: string): string => (o as Record<string, { rating: string }>)[k].rating;
+
+describe("apply-the-gate — buildQaPatch + cardCfdaApplyEligible (pure)", () => {
+  const card = { id: "card-1", fit_score: 3, factor_scores: engineFactors as never };
+
+  it("cardCfdaApplyEligible: JAG 16.738 (+ letter suffix) → true; anything else / empty → false", () => {
+    expect(cardCfdaApplyEligible({ assistance_listings: [{ number: "16.738" }] } as never)).toBe(true);
+    expect(cardCfdaApplyEligible({ assistance_listings: [{ number: "16.738A" }] } as never)).toBe(true);
+    expect(cardCfdaApplyEligible({ assistance_listings: [{ number: "16.575" }] } as never)).toBe(false);
+    expect(cardCfdaApplyEligible({ assistance_listings: [] } as never)).toBe(false);
+    expect(cardCfdaApplyEligible({ assistance_listings: null } as never)).toBe(false);
+  });
+
+  it("demote → applied patch: merged factors, deduped grounded sources, engine-score snapshot", () => {
+    const patch = buildQaPatch(card, demoteReview(), "2026-08-27T12:00:00Z");
+    expect(patch).not.toBeNull();
+    expect(patch!.qa_status).toBe("applied");
+    expect(patch!.qa_fit_score).toBe(2);
+    expect(patch!.qa_engine_fit_score).toBe(3); // snapshot for the read-layer staleness check
+    expect(patch!.qa_reviewed_by).toBeNull();
+    // MERGE: QA's changed seat_role overlaid on the engine's real five (never the fabricated ones)
+    expect(rating(patch!.qa_factor_scores, "seat_role")).toBe("weak");
+    expect(rating(patch!.qa_factor_scores, "eligibility")).toBe("moderate"); // carried from engine
+    expect(rating(patch!.qa_factor_scores, "mission")).toBe("strong"); // carried from engine
+    expect(patch!.qa_sources).toEqual([JAG_PDF]);
+  });
+
+  it("INVARIANT: every key of the patch is qa_-prefixed — buildQaPatch can never name an engine column", () => {
+    for (const v of ["demote", "unverified"] as const) {
+      const patch = buildQaPatch(card, demoteReview({ verdict: v, qa_fit_score: v === "demote" ? 2 : null }), "T")!;
+      for (const k of Object.keys(patch)) expect(k.startsWith("qa_")).toBe(true);
+    }
+  });
+
+  it("unverified → qa_status 'unverified' + every score/factor/source column NULLED (clears a stale demote)", () => {
+    const patch = buildQaPatch(card, demoteReview({ verdict: "unverified", qa_fit_score: null, qa_factor_scores: null, unverified: true }), "T")!;
+    expect(patch.qa_status).toBe("unverified");
+    // The fail-safe must actively clear any prior applied-demote override — not just flip the status —
+    // else a demoted-then-re-QA'd card keeps showing the stale score under the read-layer coalesce.
+    expect(patch.qa_fit_score).toBeNull();
+    expect(patch.qa_factor_scores).toBeNull();
+    expect(patch.qa_sources).toBeNull();
+    expect(patch.qa_engine_fit_score).toBeNull();
+  });
+
+  it("affirm and flag → null (nothing projected onto the card)", () => {
+    expect(buildQaPatch(card, demoteReview({ verdict: "affirm", qa_fit_score: 3, qa_factor_scores: null }), "T")).toBeNull();
+    expect(buildQaPatch(card, demoteReview({ verdict: "flag", qa_fit_score: null, qa_factor_scores: null }), "T")).toBeNull();
+  });
+});
+
+describe("drainIntelQueue — apply-the-gate flag + allowlist (AUTO_INTEL_APPLY)", () => {
+  const prev = process.env.AUTO_INTEL_APPLY;
+  afterEach(() => { if (prev === undefined) delete process.env.AUTO_INTEL_APPLY; else process.env.AUTO_INTEL_APPLY = prev; });
+
+  const seed = () => {
+    const s = db(); seedPairData(s); // grant g1 carries CFDA 16.738 (JAG)
+    s.tables.review_cards = [pendingCard({ factor_scores: engineFactors })];
+    s.tables.intel_review_queue = [{ id: "q1", grant_id: "g1", client_id: "c1", status: "queued", attempts: 0, enqueued_at: "2026-08-27T11:00:00Z" }];
+    return s;
+  };
+
+  it("OFF (default) → review_cards untouched even on a JAG demote (byte-identical to today)", async () => {
+    delete process.env.AUTO_INTEL_APPLY;
+    const s = seed();
+    await drainIntelQueue(asDb(s), { now, runReview: async () => demoteReview() });
+    const card = s.tables.review_cards[0];
+    expect(card.qa_fit_score ?? null).toBeNull();
+    expect(card.qa_status ?? null).toBeNull();
+    expect(card.fit_score).toBe(3);
+    expect(s.tables.card_intel_reviews).toHaveLength(1); // verdict still stored (proposal path)
+  });
+
+  it("ON + JAG demote → writes ONLY qa_* columns; engine fit_score / factor_scores / decision UNTOUCHED", async () => {
+    process.env.AUTO_INTEL_APPLY = "true";
+    const s = seed();
+    await drainIntelQueue(asDb(s), { now, runReview: async () => demoteReview() });
+    const card = s.tables.review_cards[0];
+    // qa_* override projected
+    expect(card.qa_fit_score).toBe(2);
+    expect(card.qa_status).toBe("applied");
+    expect(card.qa_engine_fit_score).toBe(3);
+    expect(rating(card.qa_factor_scores, "seat_role")).toBe("weak");
+    // NEVER-HIDE / proposal-safety: the engine's own columns are untouched, and the row still exists (surfaced)
+    expect(card.fit_score).toBe(3);
+    expect(rating(card.factor_scores, "seat_role")).toBe("moderate");
+    expect(card.decision).toBe("pending");
+    expect(card.sme_released_at ?? null).toBeNull();
+  });
+
+  it("ON + NON-JAG (VOCA 16.575) demote → review_cards untouched (allowlist keeps it proposal-only)", async () => {
+    process.env.AUTO_INTEL_APPLY = "true";
+    const s = seed();
+    s.tables.grants = [{ id: "g1", title: "VOCA", assistance_listings: [{ number: "16.575" }], source_url: "https://x.gov" }];
+    await drainIntelQueue(asDb(s), { now, runReview: async () => demoteReview() });
+    const card = s.tables.review_cards[0];
+    expect(card.qa_fit_score ?? null).toBeNull();
+    expect(card.fit_score).toBe(3);
+    expect(s.tables.card_intel_reviews).toHaveLength(1); // still proposal-only for VOCA
+  });
+
+  it("ON + unverified on a JAG card → qa_status 'unverified', engine fit_score left as-is (fail-safe)", async () => {
+    process.env.AUTO_INTEL_APPLY = "true";
+    const s = seed();
+    await drainIntelQueue(asDb(s), { now, runReview: async () => demoteReview({ verdict: "unverified", qa_fit_score: null, qa_factor_scores: null, unverified: true }) });
+    const card = s.tables.review_cards[0];
+    expect(card.qa_status).toBe("unverified");
+    expect(card.qa_fit_score ?? null).toBeNull();
+    expect(card.fit_score).toBe(3);
+  });
+
+  it("ON + unverified re-QA of a PREVIOUSLY-demoted JAG card → the stale applied override is CLEARED", async () => {
+    process.env.AUTO_INTEL_APPLY = "true";
+    const s = seed();
+    // Simulate a card that a prior QA pass applied-demoted (same-score rematch cleared its verdict → re-QA).
+    Object.assign(s.tables.review_cards[0], {
+      qa_fit_score: 2, qa_status: "applied", qa_engine_fit_score: 3,
+      qa_factor_scores: { seat_role: { rating: "weak", rationale: "stale" } }, qa_sources: [JAG_PDF],
+    });
+    await drainIntelQueue(asDb(s), { now, runReview: async () => demoteReview({ verdict: "unverified", qa_fit_score: null, qa_factor_scores: null, unverified: true }) });
+    const card = s.tables.review_cards[0];
+    expect(card.qa_status).toBe("unverified");
+    // The stale demote must be gone so coalesce falls back to the engine's fit_score (3), not the old 2.
+    expect(card.qa_fit_score ?? null).toBeNull();
+    expect(card.qa_factor_scores ?? null).toBeNull();
+    expect(card.qa_sources ?? null).toBeNull();
+    expect(card.qa_engine_fit_score ?? null).toBeNull();
+    expect(card.fit_score).toBe(3);
+  });
+
+  it("ON + a HUMAN verdict wins the upsert race (lands during runReview) → auto pass does NOT project", async () => {
+    process.env.AUTO_INTEL_APPLY = "true";
+    const s = seed();
+    // The auto pass's own verdict is a demote, but a staffer's on-demand verdict lands mid-runReview and
+    // wins the card_intel_reviews upsert (created_by = their id). The auto pass must not project its
+    // discarded demote onto the card — on-demand is proposal-only, and the card must match the durable row.
+    await drainIntelQueue(asDb(s), {
+      now,
+      runReview: async () => {
+        (s.tables.card_intel_reviews ??= []).push({
+          review_card_id: "card-1", intel_review: { verdict: "affirm" }, created_by: "staff-1",
+        });
+        return demoteReview();
+      },
+    });
+    const card = s.tables.review_cards[0];
+    expect(card.qa_fit_score ?? null).toBeNull(); // not projected — the human verdict owns the record
+    expect(card.qa_status ?? null).toBeNull();
+    expect(card.fit_score).toBe(3);
+    // The human verdict is the one durably stored (the auto upsert no-op'd it via ignoreDuplicates).
+    expect(s.tables.card_intel_reviews).toHaveLength(1);
+    expect(s.tables.card_intel_reviews[0].created_by).toBe("staff-1");
+  });
+
+  it("ON + a transient apply-write error, then success → the qa_* projection lands on retry", async () => {
+    process.env.AUTO_INTEL_APPLY = "true";
+    const s = seed();
+    s.updateFailures.review_cards = 1; // first update errors, the retry succeeds
+    await drainIntelQueue(asDb(s), { now, runReview: async () => demoteReview() });
+    const card = s.tables.review_cards[0];
+    expect(card.qa_fit_score).toBe(2);
+    expect(card.qa_status).toBe("applied");
+  });
+
+  it("ON + a PERSISTENT apply-write error → non-fatal (job done, verdict durable, engine score stands)", async () => {
+    process.env.AUTO_INTEL_APPLY = "true";
+    const s = seed();
+    s.updateFailures.review_cards = 99; // every apply-write attempt errors
+    const r = await drainIntelQueue(asDb(s), { now, runReview: async () => demoteReview() });
+    const card = s.tables.review_cards[0];
+    expect(r.done).toBe(1); // NOT parked as an error — the verdict is durable, the projection is cosmetic
+    expect(card.qa_fit_score ?? null).toBeNull(); // never-hide: card shows the engine score, still surfaced
+    expect(card.fit_score).toBe(3);
+    expect(s.tables.card_intel_reviews).toHaveLength(1); // verdict durably recorded for staff regardless
   });
 });

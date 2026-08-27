@@ -104,9 +104,10 @@ export interface IntelReview {
   confidence: IntelConfidence;
   engine_fit_score: number | null;
   qa_fit_score: number | null; // the applied/proposed score (null unless the verdict is an applied demote/affirm)
-  // The corrected per-factor structure (same shape as review_cards.factor_scores). Non-null only when an
-  // adverse verdict APPLIES — so the displayed factor bars/rationale stay consistent with the new score.
-  qa_factor_scores: FactorScores | null;
+  // The corrected factor(s) — a PARTIAL of review_cards.factor_scores: ONLY the factor(s) the finding
+  // changed (the apply-write merges them onto the engine's real factors). Non-null only when an adverse
+  // verdict APPLIES — so the displayed factor bars/rationale stay consistent with the new score.
+  qa_factor_scores: Partial<FactorScores> | null;
   summary: string;
   evidence: IntelEvidence[];
   fetched: FetchAuditRecord[];
@@ -145,7 +146,7 @@ interface RawVerdict {
   verdict: IntelVerdict;
   confidence?: IntelConfidence;
   qa_fit_score: number | null;
-  qa_factor_scores?: FactorScores | null;
+  qa_factor_scores?: Partial<FactorScores> | null;
   summary: string;
   evidence: IntelEvidence[];
 }
@@ -184,7 +185,7 @@ Use ONLY what the analysis states — do not add findings it did not make.
 
 GROUNDING (this is how you avoid hallucinating a concern): every evidence item's source_url MUST be a page the analysis ACTUALLY FETCHED (it appears in the "PAGES FETCHED" list). Quote the most specific span you can from that page — but you do NOT need a clean contiguous verbatim sentence: allocation tables, PDFs, and structured pages rarely yield one, and a correct read of a table is still a real finding. Give the closest supporting text or a faithful paraphrase of the exact cell/row, plus its source_url. What you may NOT do is cite a page the analysis never fetched, or a claim the fetched pages do not support. If the analysis reached an adverse read (demote/flag) but fetched no relevant page to back it, return verdict "unverified".
 
-For "demote", qa_fit_score is the lower score the analysis named (1-3) and qa_factor_scores is the corrected six-factor object (rewrite only the factor(s) the finding changes — usually eligibility/seat_role — and carry the rest from the engine's read; the rewritten factor's rationale is the plain-language "why"). For "affirm"/"flag"/"unverified", leave qa_fit_score and qa_factor_scores null.
+For "demote", qa_fit_score is the lower score the analysis named (1-3) and qa_factor_scores contains ONLY the factor(s) the finding actually changes — usually eligibility and/or seat_role. Do NOT restate the factors you did not change: you were not given the engine's per-factor ratings, so inventing them would fabricate data. Code merges your changed factor(s) onto the engine's real factors. Each changed factor's rationale is the plain-language "why". For "affirm"/"flag"/"unverified", leave qa_fit_score and qa_factor_scores null.
 
 confidence is your honest self-assessment of how solid the verdict is given what you read (high/medium/low).`;
 
@@ -217,7 +218,7 @@ const SUBMIT_TOOL = {
       qa_factor_scores: {
         type: ["object", "null"],
         description:
-          "For 'demote' (and 'flag' when it changes a factor), the corrected six-factor object so the card's factor bars stay consistent with the new score. Null for affirm/unverified.",
+          "For 'demote' ONLY: an object with JUST the factor(s) your finding changes (usually eligibility and/or seat_role), so the card's factor bars stay consistent with the new score. Do NOT include factors you did not change — code merges these onto the engine's real factors. Null for affirm/flag/unverified.",
         properties: {
           seat_role: FACTOR_SCHEMA,
           eligibility: FACTOR_SCHEMA,
@@ -371,21 +372,25 @@ function clampScore(n: unknown): number | null {
 const FACTOR_KEYS = ["seat_role", "eligibility", "geographic", "program_history", "cost_share", "mission"] as const;
 const FACTOR_RATINGS = new Set(["strong", "moderate", "weak", "insufficient_data"]);
 
-// Validate a model-returned corrected factor object into the exact review_cards.factor_scores shape, or
-// null. All six factors must be present with a valid rating — a partial/garbage object is rejected whole
-// (null) rather than half-written, so the display never coalesces a malformed factor set onto a card.
-function sanitizeFactorScores(v: unknown): FactorScores | null {
+// Validate a model-returned CORRECTED-FACTORS object into a PARTIAL review_cards.factor_scores shape. The
+// model returns ONLY the factor(s) its finding changes (usually eligibility / seat_role) — NOT all six — so
+// a valid subset is kept and the apply-write (lib/grants/intel-queue.ts) merges it onto the engine's REAL
+// stored factor_scores at apply time. Requiring all six re-introduced the fabrication the review flagged:
+// the model was never given the engine's per-factor ratings, so "carry the rest from the engine's read"
+// meant inventing the five it didn't change. Here it only states what it changed; code carries the rest.
+// Unknown keys and factors with an invalid rating are dropped; an empty / garbage object → null.
+function sanitizeFactorScores(v: unknown): Partial<FactorScores> | null {
   if (!v || typeof v !== "object") return null;
   const rec = v as Record<string, unknown>;
   const out: Record<string, { rating: string; rationale: string }> = {};
   for (const k of FACTOR_KEYS) {
     const f = rec[k];
-    if (!f || typeof f !== "object") return null;
+    if (!f || typeof f !== "object") continue;
     const fr = f as Record<string, unknown>;
-    if (typeof fr.rating !== "string" || !FACTOR_RATINGS.has(fr.rating)) return null;
+    if (typeof fr.rating !== "string" || !FACTOR_RATINGS.has(fr.rating)) continue;
     out[k] = { rating: fr.rating, rationale: typeof fr.rationale === "string" ? fr.rationale : "" };
   }
-  return out as unknown as FactorScores;
+  return Object.keys(out).length > 0 ? (out as unknown as Partial<FactorScores>) : null;
 }
 
 // Turn the raw model verdict + the fetch audit into the stored IntelReview, applying the grounding guard.
@@ -520,8 +525,9 @@ export function finalizeIntel(opts: {
   }
 
   // Corrected factors ride only an APPLIED demote (a real score change), so the card's factor bars stay
-  // consistent with the new number. Flag/affirm/unverified leave the engine's factors in place.
-  const qa_factor_scores: FactorScores | null =
+  // consistent with the new number. A PARTIAL (only the changed factor(s)); the apply-write merges it onto
+  // the engine's real factors. Flag/affirm/unverified leave the engine's factors in place.
+  const qa_factor_scores: Partial<FactorScores> | null =
     verdict === "demote" ? sanitizeFactorScores(parsed.qa_factor_scores) : null;
 
   return {

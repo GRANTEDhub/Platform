@@ -606,6 +606,19 @@ export interface ReviewCard {
   // Per-factor sub-scores (migration 0038, #105). Null for cards scored before it
   // shipped -- the UI renders a "not yet scored" line rather than breaking.
   factor_scores: FactorScores | null;
+  // QA override layer (migration 0088, Step 3 PR B). The IntellEngine QA drain writes these; the read
+  // layer displays coalesce(qa_fit_score, fit_score) / (qa_factor_scores ?? factor_scores) and only while
+  // qa_engine_fit_score == fit_score (else the override is stale -- the engine re-scored -- and ignored).
+  // It NEVER overwrites the engine's own columns above. All null until AUTO_INTEL_APPLY projects a verdict.
+  // qa_status: 'applied' (a demote was projected) | 'unverified' (QA couldn't verify; score left as-is) |
+  // 'failed' | 'none' | null. qa_reviewed_by null = the automatic pass.
+  qa_fit_score: number | null;
+  qa_factor_scores: FactorScores | null;
+  qa_sources: string[] | null;
+  qa_status: string | null;
+  qa_engine_fit_score: number | null;
+  qa_applied_at: string | null;
+  qa_reviewed_by: string | null;
   // Track 2 discriminator (migration 0019). 'client' (default) or 'prospect'.
   // The client-first gate counts only client cards; a prospect card must never
   // enter the lock/release computation. prospect_id is set on prospect cards.

@@ -26,13 +26,109 @@
 import { randomUUID } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/server";
 import { runIntelReview, type IntelReview, type IntelCard } from "@/lib/grants/intel-review";
-import type { Grant, Client } from "@/types/database";
+import type { Grant, Client, FactorScores } from "@/types/database";
 
 type DB = ReturnType<typeof createServiceClient>;
 
 // ── Flag + config (env-overridable; defaults are conservative) ────────────────────────────────────
 export function autoIntelEnabled(): boolean {
   return process.env.AUTO_INTEL_ENABLED === "true";
+}
+
+// ── Apply-the-gate (Step 3, PR B) ──────────────────────────────────────────────────────────────────
+// A SECOND flag, independent of AUTO_INTEL_ENABLED: when ON, the drain PROJECTS the QA verdict onto the
+// card's qa_* OVERRIDE columns (0088) so the displayed score/factors become QA's. It never touches the
+// engine's own fit_score / factor_scores / decision / suppressed — the read layer (PR C) coalesces
+// qa_fit_score ?? fit_score. Default OFF is byte-identical: no qa_* column is written, so the coalesce is
+// inert and the card is exactly today's. NEVER-HIDE is structural (review_cards has no suppress column;
+// a demote only lowers the OVERRIDE score, the row still surfaces).
+export function autoIntelApplyEnabled(): boolean {
+  return process.env.AUTO_INTEL_APPLY === "true";
+}
+
+// NARROW-AND-PROVEN launch scope: apply-mode acts ONLY on the CFDAs listed here. Today that is JAG-Local
+// (16.738) alone — the case proven end-to-end (eval run #8: grounded demote→2, 3/3, affirms untouched).
+// Every OTHER program stays PROPOSAL-ONLY (its QA verdict lands in card_intel_reviews, the card is
+// untouched) until it has been watched on real cards. Widening is a one-line data change here.
+export const APPLY_ELIGIBLE_CFDAS = new Set<string>(["16.738"]);
+
+// Strip a trailing letter suffix (e.g. "16.738A" → "16.738"); mirrors allocation-sources / formula-programs.
+function normalizeCfda(raw: string): string {
+  return raw.trim().replace(/[A-Za-z]$/, "");
+}
+
+// Is this grant on the apply allowlist? A single assistance-listing match is enough. Empty/unknown → false
+// (fail closed: an unrecognized program stays proposal-only).
+export function cardCfdaApplyEligible(grant: Pick<Grant, "assistance_listings">): boolean {
+  for (const a of grant.assistance_listings ?? []) {
+    const num = a?.number ? normalizeCfda(a.number) : "";
+    if (num && APPLY_ELIGIBLE_CFDAS.has(num)) return true;
+  }
+  return false;
+}
+
+// The card fields the apply-write reads: the engine's own score (staleness snapshot + demote floor) and its
+// real per-factor scores (the merge base for qa_factor_scores).
+export interface ApplyCard {
+  id: string;
+  fit_score: number | null;
+  factor_scores: FactorScores | null;
+}
+
+// The qa_* override patch written to review_cards. EVERY key is qa_-prefixed — this is the structural
+// guarantee the drain never writes an engine column (locked by the "writes ONLY qa_* columns" test).
+export interface QaPatch {
+  qa_fit_score?: number | null;
+  qa_factor_scores?: FactorScores | null;
+  qa_sources?: string[] | null;
+  qa_status: "applied" | "unverified";
+  qa_engine_fit_score?: number | null;
+  qa_applied_at: string;
+  qa_reviewed_by: null;
+}
+
+// Build the qa_* projection for a verdict, or null when there is nothing to apply. PURE + exported so the
+// projection (merge, floor, status, the qa_*-only invariant) is unit-tested with no DB. Only two verdicts
+// project: an applied DEMOTE (rewrites the displayed score + merged factors + shows the grounded sources)
+// and an UNVERIFIED (surfaces "QA couldn't complete", score LEFT AS-IS — the fail-safe Shannon required).
+// affirm (QA agrees, no change) and flag (a staff-only concern, no score change) write NOTHING to the card.
+export function buildQaPatch(card: ApplyCard, review: IntelReview, nowIso: string): QaPatch | null {
+  if (review.verdict === "demote" && review.qa_fit_score != null) {
+    // Merge QA's CHANGED factor(s) onto the engine's REAL factors — never store the model's fabricated five.
+    const mergedFactors: FactorScores | null = review.qa_factor_scores
+      ? ({ ...(card.factor_scores ?? {}), ...review.qa_factor_scores } as FactorScores)
+      : card.factor_scores;
+    // The grounded .gov pages QA actually fetched — client-safe URLs, deduped, shown on the card.
+    const sources = Array.from(
+      new Set(review.fetched.filter((f) => f.ok).map((f) => f.finalUrl ?? f.url).filter((u): u is string => !!u)),
+    );
+    return {
+      qa_fit_score: review.qa_fit_score,
+      qa_factor_scores: mergedFactors,
+      qa_sources: sources,
+      qa_status: "applied",
+      qa_engine_fit_score: card.fit_score, // snapshot: the read-layer ignores the override once fit_score moves
+      qa_applied_at: nowIso,
+      qa_reviewed_by: null,
+    };
+  }
+  if (review.verdict === "unverified") {
+    // Fail-safe surface: QA couldn't verify, so the ENGINE's number must stand. Explicitly CLEAR any prior
+    // applied-demote override — a card can be demoted, then re-QA'd (verdict cleared on a same-score rematch)
+    // and come back unverified; leaving qa_fit_score/factors/sources set would keep the stale demoted score
+    // displaying under the read-layer coalesce while the current verdict is "couldn't verify". Nulling every
+    // score column makes coalesce fall back to fit_score; on a never-applied card it is a harmless no-op.
+    return {
+      qa_fit_score: null,
+      qa_factor_scores: null,
+      qa_sources: null,
+      qa_status: "unverified",
+      qa_engine_fit_score: null,
+      qa_applied_at: nowIso,
+      qa_reviewed_by: null,
+    };
+  }
+  return null;
 }
 
 const numEnv = (v: string | undefined, d: number): number => {
@@ -313,14 +409,14 @@ async function processOne(
   // removed since enqueue), there is nothing to QA — mark done, no cost. (H1 never held it.)
   const { data: card } = await db
     .from("review_cards")
-    .select("id, fit_score, proposed_role, recommended_prime, why_this_org, before_you_approve, reasoning_context")
+    .select("id, fit_score, factor_scores, proposed_role, recommended_prime, why_this_org, before_you_approve, reasoning_context")
     .eq("grant_id", row.grant_id)
     .eq("client_id", row.client_id)
     .eq("decision", "pending")
     .is("sme_released_at", null)
     .eq("card_type", "client")
     .limit(1)
-    .maybeSingle<IntelCard & { id: string }>();
+    .maybeSingle<IntelCard & ApplyCard>();
   if (!card) {
     await finish({ status: "done", finished_at: new Date(now()).toISOString(), error_detail: "card no longer pending" });
     return "skipped";
@@ -402,8 +498,54 @@ async function processOne(
     );
     return "error";
   }
+
+  // APPLY-THE-GATE (flag + allowlist gated): project the verdict onto the card's qa_* OVERRIDE columns.
+  // OFF or off-allowlist → this whole block is skipped, so the flag-off path is exactly the proposal-only
+  // write above and nothing more (byte-identical to today; the extra read + write below never run).
+  if (autoIntelApplyEnabled() && cardCfdaApplyEligible(grant)) {
+    // Project the DURABLE verdict, and ONLY when it is an AUTO one. A human on-demand verdict can win the
+    // upsert race above — it lands during runReview and ignoreDuplicates then no-ops our write, so the
+    // durable record is the human's and our in-memory `review` was discarded. Projecting `review` here
+    // would make the card disagree with card_intel_reviews (the source of truth); and on-demand is
+    // proposal-only by design, so a human verdict is never auto-projected. Read the persisted row back and
+    // apply only when created_by is null (our auto pass owns it) — using the source-of-truth verdict, not
+    // the possibly-discarded `review`. (The pre-check above means our own prior verdict can't be the
+    // conflict: an already-verdicted card is skipped before runReview, so a conflict here is a human one.)
+    const { data: persisted } = await db
+      .from("card_intel_reviews")
+      .select("intel_review, created_by")
+      .eq("review_card_id", card.id)
+      .maybeSingle<{ intel_review: IntelReview; created_by: string | null }>();
+    if (persisted && persisted.created_by === null) {
+      const patch = buildQaPatch(card, persisted.intel_review, new Date(now()).toISOString());
+      if (patch) await applyQaPatch(db, card.id, patch);
+    }
+  }
+
   await finish({ status: "done", finished_at: new Date(now()).toISOString(), error_detail: null });
   return "done";
+}
+
+// Number of times to retry the qa_* projection write on a transient DB error before giving up.
+const APPLY_MAX_ATTEMPTS = 3;
+
+// Project the qa_* patch onto the card, retrying a transient DB error a few times. The verdict is already
+// durable in card_intel_reviews (staff see it in the console regardless of this write), so a projection
+// that STILL fails after the retries is a SOFT, never-hide degradation, not a lost verdict: the match
+// stays surfaced showing the engine's own score, and it self-heals on the next rematch — which clears the
+// card_intel_reviews verdict, re-enqueues the pair, and re-QAs it. There is deliberately no queue-driven
+// retry of the projection alone: processOne's pre-check skips an already-verdicted card, so re-queuing this
+// job would only skip; and parking the job as 'error' for a cosmetic override miss (the verdict IS durable)
+// would surface a misleading hard failure. A dedicated re-projection sweep for the rare persistent case is
+// PR-2 watchdog work. So: retry the transient blip, then leave it non-fatal but logged, never silent.
+async function applyQaPatch(db: DB, cardId: string, patch: QaPatch): Promise<void> {
+  for (let attempt = 1; attempt <= APPLY_MAX_ATTEMPTS; attempt++) {
+    const { error } = await db.from("review_cards").update(patch).eq("id", cardId);
+    if (!error) return;
+    if (attempt === APPLY_MAX_ATTEMPTS) {
+      console.error(`[intel-apply] card ${cardId}: qa_* projection failed after ${attempt} attempts (verdict is durable in card_intel_reviews; card shows the engine score until the next rematch): ${error.message}`);
+    }
+  }
 }
 
 // Reserve the estimated cost in the run log BEFORE the killable model call, returning the row id. This is

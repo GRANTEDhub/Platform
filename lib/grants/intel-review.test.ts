@@ -158,18 +158,30 @@ describe("finalizeIntel — the fail-safe (grounding + refute) + shaping", () =>
       refuteSurvived: true,
     });
     expect(r.verdict).toBe("demote");
-    expect(r.qa_factor_scores?.seat_role.rating).toBe("weak");
+    expect(r.qa_factor_scores?.seat_role?.rating).toBe("weak");
   });
 
-  it("rejects a malformed/partial qa_factor_scores whole (null, not half-written)", () => {
+  it("keeps a PARTIAL qa_factor_scores (only the changed factor) — the apply-write merges it onto the engine's real factors", () => {
     const r = finalizeIntel({
       ...BASE,
-      parsed: { verdict: "demote", qa_fit_score: 1, qa_factor_scores: { seat_role: { rating: "weak", rationale: "x" } } as never, summary: "x", evidence: [ev(FETCHED)] },
+      parsed: { verdict: "demote", qa_fit_score: 1, qa_factor_scores: { seat_role: { rating: "weak", rationale: "asterisk — cannot prime" } }, summary: "x", evidence: [ev(FETCHED)] },
       audit: [okAudit(FETCHED)],
       refuteSurvived: true,
     });
     expect(r.verdict).toBe("demote");
-    expect(r.qa_factor_scores).toBeNull(); // missing five factors → rejected
+    // The model returns ONLY the factor it changed — not the fabricated other five. sanitize keeps the
+    // valid subset; the drain (buildQaPatch) merges it onto the card's real factor_scores.
+    expect(r.qa_factor_scores).toEqual({ seat_role: { rating: "weak", rationale: "asterisk — cannot prime" } });
+  });
+
+  it("drops factors with an invalid rating but keeps the valid ones (→ null only if none valid)", () => {
+    const r = finalizeIntel({
+      ...BASE,
+      parsed: { verdict: "demote", qa_fit_score: 1, qa_factor_scores: { seat_role: { rating: "bogus" }, eligibility: { rating: "weak", rationale: "MOU-only" } } as never, summary: "x", evidence: [ev(FETCHED)] },
+      audit: [okAudit(FETCHED)],
+      refuteSurvived: true,
+    });
+    expect(r.qa_factor_scores).toEqual({ eligibility: { rating: "weak", rationale: "MOU-only" } });
   });
 
   it("demote with a nonsensical/high qa score is stepped below the engine score", () => {
