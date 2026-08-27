@@ -24,18 +24,21 @@ export interface AllocationSource {
   urls: string[];
 }
 
-// NOTE FOR SHANNON: confirm the exact JAG allocations URL below. I seeded the BJA JAG program +
-// allocations pages best-effort, but I can't reach the web from the sandbox to verify the live
-// path. It's a plain data value — if it 404s, eval #1 will show "could not retrieve" and you can
-// drop the correct .gov URL straight in here (one line), no code change.
+// JAG allocations URL — VERIFIED live (2026-08-27): the FY26 Arkansas Local JAG allocations PDF
+// returns 200 application/pdf and pdf-parse extracts it cleanly (2 pages, names Mississippi County,
+// the shaded disparate groups, the single-fiscal-agent / one-award / MOU rule). The earlier best-effort
+// year-less guess (…/jag-local-allocations-ar.pdf) only 301-redirects to the FY25 file, so the QA pass
+// couldn't reliably ground on it. YEAR-STAMPED URL — this is fy26; it must be bumped to fy27 when BJA
+// posts the next cycle (a one-line data change). Kept AR-specific because the disparate-jurisdiction
+// table is per-state and GRANTED's roster is Arkansas-anchored; other states need their own entry.
 export const ALLOCATION_SOURCES: Record<string, AllocationSource> = {
   // Edward Byrne Memorial Justice Assistance Grant (JAG) — Local. The local allocation table
   // marks disparate / asterisk jurisdictions that must apply jointly / through the county / via
   // the state, i.e. cannot prime a direct application despite being a "unit of local government".
   "16.738": {
-    label: "Edward Byrne Memorial Justice Assistance Grant (JAG) — Local allocations & disparate/asterisk jurisdictions",
+    label: "Edward Byrne Memorial Justice Assistance Grant (JAG) — FY26 Arkansas Local allocations & disparate/asterisk jurisdictions",
     urls: [
-      "https://bja.ojp.gov/funding/jag-local-allocations-ar.pdf",
+      "https://bja.ojp.gov/funding/fy26-jag-local-allocations-ar.pdf",
       "https://bja.ojp.gov/program/jag/overview",
     ],
   },

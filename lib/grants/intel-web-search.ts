@@ -7,13 +7,14 @@
 // WHY SERVER-SIDE web_search, AND WHY IT DOES NOT WIDEN THE SAFETY BOUNDARY:
 //   - It runs on Anthropic's servers, so it adds NO new egress from our infra, NO SSRF surface, and NO
 //     new secret. (Contrast a custom search-API tool, which would need all three.)
-//   - It is DISCOVERY ONLY. The verification boundary is unchanged and structural: an adverse verdict
-//     still requires a verbatim quote that appears in a page we actually FETCHED with fetchGrantSource
-//     (quoteGroundedInBodies, the fail-safe in intel-review.ts) — and fetchGrantSource only reaches the
-//     .gov allowlist. A web_search RESULT (a snippet from anywhere) never enters fetchedBodies, so it can
-//     never ground a demote/flag. The most a bad/injected snippet can do is send the model to fetch a
-//     .gov page (allowlist-guarded) or leave the verdict "unverified". QA writes no score regardless
-//     (proposal-only), so the blast radius is near zero.
+//   - It is DISCOVERY ONLY. The verification boundary is unchanged: an adverse verdict still requires that
+//     QA actually FETCHED a relevant .gov page with fetchGrantSource (hasSuccessfulFetch, the grounding
+//     signal in intel-review.ts) AND that the demote survive an adversarial refute read over that fetched
+//     page text (finalizeIntel applies only on grounded + refute-survived) — and fetchGrantSource only
+//     reaches the .gov allowlist. A web_search RESULT (a snippet from anywhere) never enters the fetched
+//     bodies, so it can never ground a demote/flag. The most a bad/injected snippet can do is send the model
+//     to fetch a .gov page (allowlist-guarded) or leave the verdict "unverified". QA writes no score
+//     regardless (proposal-only), so the blast radius is near zero.
 //   - It is FLAG-GATED and OFF is byte-identical to today's fetch-only pass: with the flag off, no
 //     web_search tool is attached to the request and no search instruction is added to the system prompt,
 //     so the QA request body, the tool set, and the stored verdict are exactly the pre-search ones. The
@@ -101,13 +102,15 @@ export function serverSearchQueries(content: unknown): string[] {
 
 // The flag-gated system-prompt addendum. Appended to INTEL_SYSTEM_PROMPT only when the flag is on, so the
 // flag-off system prompt is unchanged. It states the discovery-only contract in the prompt too, though the
-// real guarantee is structural (quoteGroundedInBodies), so a prompt drift can't loosen the fail-safe.
+// real guarantee is code-side (grounding = a real .gov page was fetched, hasSuccessfulFetch, + the
+// adversarial refute over that page in finalizeIntel/runIntelReview), so a prompt drift can't loosen the
+// fail-safe.
 export const SEARCH_SYSTEM_ADDENDUM = `
 ADDITIONAL TOOL — web_search:
 You also have web_search, a read-only web search, to DISCOVER the authoritative page when you are not handed its URL — e.g. the allocation / sub-recipient table for a formula program that the sources above do not list. Use it to FIND the right official source, then read it for real.
 
 Rules that make search safe and useful:
 - A search RESULT (a title or snippet) is a LEAD, never authority and never evidence. It is NOT sufficient to ground any verdict.
-- After a search points you to the authoritative page, FETCH that page with fetch_grant_source and verify against what you actually read. Only a verbatim quote from a page you FETCHED can ground a demote or flag.
+- After a search points you to the authoritative page, FETCH that page with fetch_grant_source and verify against what you actually read. A demote or flag can only be grounded on a page you FETCHED (a search snippet never grounds it) — but you do NOT need a clean contiguous verbatim quote; a faithful account of the specific cell/row/passage you read is enough.
 - Prefer official U.S. .gov sources (the program's agency page, the allocation table, the State Administering Agency). Ignore secondary, commentary, or commercial sites — they cannot be fetched and cannot ground anything.
 - If search finds no authoritative source you can then fetch, say so and return "unverified". Do not reconstruct an allocation reality from a snippet.`;

@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   finalizeIntel,
-  quoteGroundedInBodies,
   intelContext,
   runIntelReview,
   isSafeHttpUrl,
@@ -15,20 +14,27 @@ import type { FetchResult } from "@/lib/grantbot/fetch";
 import type { CallModel, ModelTurn } from "@/lib/grantbot/tool-loop";
 import type { Grant, Client } from "@/types/database";
 
-// Deterministic tests — NO live model, NO network. They lock the structural invariants:
-//   (1) PROPOSAL-ONLY: the payload never carries a fit_score mutation; qa_fit_score is a proposal.
-//   (2) FAIL-SAFE: an adverse verdict whose quote is not found in a FETCHED PAGE BODY → 'unverified'
-//       (not merely a host match — the anti-hallucination guard); and an 'affirm' with no successful
-//       fetch → 'unverified' (not a web-backed affirmation). Model quality is the eval's job.
+// Deterministic tests — NO live model, NO network. They lock the structural invariants of the REDESIGNED
+// guard (PR A):
+//   (1) GROUNDING: an adverse verdict (demote/flag) applies only if the pass actually FETCHED a relevant
+//       .gov page (hasSuccessfulFetch). It does NOT require the model to echo the fetched URL in evidence
+//       — the model reliably omits it, which gated out correct fetched demotes; the refute is the content
+//       guard. (Earlier iterations used a verbatim-quote-in-body test, then a host match on the cited URL;
+//       both suppressed correct reads. Now: a real fetch happened + the refute confirms it.)
+//   (2) REFUTE: a grounded adverse verdict APPLIES only if the adversarial second read supported it
+//       (refuteSurvived === true); refuted / could-not-run → 'unverified'. Model quality is the eval's job.
+//   (3) AFFIRM still needs a successful fetch, else 'unverified' (not a web-backed affirmation).
 
-// A page body the "fetch" returned, and quotes that do / don't occur in it.
 const BODY = "Mississippi County is a disparate jurisdiction; it applies for JAG through the State Administering Agency.";
-const GOOD_QUOTE = "applies for JAG through the State Administering Agency"; // substring of BODY, > 12 chars
-const BAD_QUOTE = "is a paradigmatic direct recipient with no barriers"; // NOT in BODY (hallucinated)
+const SPAN = "applies for JAG through the State Administering Agency"; // a supporting span (evidence.quote)
 
 const okAudit = (url: string): FetchAuditRecord => ({ url, ok: true, finalUrl: url, truncated: false, fetchedAt: "T" });
 const failAudit = (url: string, reason = "http_error"): FetchAuditRecord => ({ url, ok: false, reason, fetchedAt: "T" });
-const ev = (source_url: string, quote: string): IntelEvidence => ({ claim: "cannot prime", source_url, quote });
+const ev = (source_url: string, quote = SPAN): IntelEvidence => ({ claim: "cannot prime", source_url, quote });
+
+// A fetched .gov page and a matching cited source (same host) vs a host the pass never fetched.
+const FETCHED = "https://bja.ojp.gov/program/jag/jag-allocations";
+const UNFETCHED = "https://grants.nih.gov/some/other/page";
 
 const BASE = { engineFitScore: 3, model: INTEL_MODEL, reviewedBy: "staff-1", now: "2026-08-26T00:00:00.000Z" };
 
@@ -43,38 +49,26 @@ describe("isSafeHttpUrl", () => {
   });
 });
 
-describe("quoteGroundedInBodies", () => {
-  it("true when a long-enough quote occurs in a fetched body (case/whitespace-insensitive)", () => {
-    expect(quoteGroundedInBodies([ev("https://bja.ojp.gov/x", "  APPLIES for JAG through the State Administering Agency ")], [BODY])).toBe(true);
-  });
-  it("false when the quote was never on the page (hallucinated, even if the host was fetched)", () => {
-    expect(quoteGroundedInBodies([ev("https://bja.ojp.gov/x", BAD_QUOTE)], [BODY])).toBe(false);
-  });
-  it("false when there are no fetched bodies at all", () => {
-    expect(quoteGroundedInBodies([ev("https://bja.ojp.gov/x", GOOD_QUOTE)], [])).toBe(false);
-  });
-  it("false for a too-short quote even if the fragment is in the body", () => {
-    expect(quoteGroundedInBodies([ev("https://bja.ojp.gov/x", "disparate")], [BODY])).toBe(false); // < 12 chars
-  });
-});
-
-describe("finalizeIntel — the fail-safe + proposal-only shaping", () => {
-  it("null parsed → unverified, no score proposal", () => {
-    const r = finalizeIntel({ ...BASE, parsed: null, audit: [], fetchedBodies: [] });
+describe("finalizeIntel — the fail-safe (grounding + refute) + shaping", () => {
+  it("null parsed → unverified, low confidence, no score/factors", () => {
+    const r = finalizeIntel({ ...BASE, parsed: null, audit: [] });
     expect(r.verdict).toBe("unverified");
+    expect(r.confidence).toBe("low");
     expect(r.qa_fit_score).toBeNull();
+    expect(r.qa_factor_scores).toBeNull();
+    expect(r.refute_survived).toBeNull();
     expect(r.unverified).toBe(true);
   });
 
   it("affirm WITH a successful fetch → affirm, qa_fit_score = engine score", () => {
     const r = finalizeIntel({
       ...BASE,
-      parsed: { verdict: "affirm", qa_fit_score: null, summary: "holds up", evidence: [] },
-      audit: [okAudit("https://bja.ojp.gov/x")],
-      fetchedBodies: [BODY],
+      parsed: { verdict: "affirm", confidence: "high", qa_fit_score: null, summary: "holds up", evidence: [] },
+      audit: [okAudit(FETCHED)],
     });
     expect(r.verdict).toBe("affirm");
     expect(r.qa_fit_score).toBe(3);
+    expect(r.confidence).toBe("high");
     expect(r.unverified).toBe(false);
   });
 
@@ -82,109 +76,154 @@ describe("finalizeIntel — the fail-safe + proposal-only shaping", () => {
     const r = finalizeIntel({
       ...BASE,
       parsed: { verdict: "affirm", qa_fit_score: null, summary: "looks fine", evidence: [] },
-      audit: [failAudit("https://bja.ojp.gov/x", "timeout")],
-      fetchedBodies: [],
+      audit: [failAudit(FETCHED, "timeout")],
     });
     expect(r.verdict).toBe("unverified");
-    expect(r.unverified).toBe(true);
     expect(r.summary).toMatch(/not a web-backed affirmation/i);
   });
 
-  it("demote GROUNDED (quote found in a fetched body) → demote, qa below engine", () => {
+  it("demote GROUNDED + refute SURVIVED → demote, qa below engine, refute_survived true", () => {
     const r = finalizeIntel({
       ...BASE,
-      parsed: { verdict: "demote", qa_fit_score: 1, summary: "asterisk county, apply through the state", evidence: [ev("https://bja.ojp.gov/x", GOOD_QUOTE)] },
-      audit: [okAudit("https://bja.ojp.gov/x")],
-      fetchedBodies: [BODY],
+      parsed: { verdict: "demote", confidence: "high", qa_fit_score: 1, summary: "asterisk county", evidence: [ev(FETCHED)] },
+      audit: [okAudit(FETCHED)],
+      refuteSurvived: true,
     });
     expect(r.verdict).toBe("demote");
     expect(r.qa_fit_score).toBe(1);
+    expect(r.refute_survived).toBe(true);
     expect(r.unverified).toBe(false);
   });
 
-  it("demote whose quote is NOT in any fetched body → unverified (hallucinated-quote guard)", () => {
+  it("demote GROUNDED but refute FAILED → unverified (didn't hold up on a second read)", () => {
     const r = finalizeIntel({
       ...BASE,
-      parsed: { verdict: "demote", qa_fit_score: 1, summary: "asterisk county", evidence: [ev("https://bja.ojp.gov/x", BAD_QUOTE)] },
-      audit: [okAudit("https://bja.ojp.gov/x")], // fetched the host, but the quote wasn't on it
-      fetchedBodies: [BODY],
+      parsed: { verdict: "demote", qa_fit_score: 1, summary: "asterisk county", evidence: [ev(FETCHED)] },
+      audit: [okAudit(FETCHED)],
+      refuteSurvived: false,
     });
     expect(r.verdict).toBe("unverified");
-    expect(r.unverified).toBe(true);
+    expect(r.refute_survived).toBe(false);
     expect(r.qa_fit_score).toBeNull();
-    expect(r.summary).toMatch(/could not ground/i);
+    expect(r.summary).toMatch(/did not hold up/i);
   });
 
-  it("demote with a failed fetch (no body) → unverified", () => {
+  it("demote GROUNDED but refute not run (undefined) → unverified (apply requires an explicit survive)", () => {
     const r = finalizeIntel({
       ...BASE,
-      parsed: { verdict: "demote", qa_fit_score: 1, summary: "asterisk county", evidence: [ev("https://bja.ojp.gov/x", GOOD_QUOTE)] },
-      audit: [failAudit("https://bja.ojp.gov/x", "timeout")],
-      fetchedBodies: [],
+      parsed: { verdict: "demote", qa_fit_score: 1, summary: "x", evidence: [ev(FETCHED)] },
+      audit: [okAudit(FETCHED)],
+      // refuteSurvived omitted
     });
     expect(r.verdict).toBe("unverified");
-    expect(r.qa_fit_score).toBeNull();
   });
 
-  it("flag not grounded → unverified too", () => {
+  it("demote APPLIES on a successful fetch even when the model's cited evidence host was NOT fetched (grounding is the fetch + refute, not the cited URL — the JAG fix)", () => {
     const r = finalizeIntel({
       ...BASE,
-      parsed: { verdict: "flag", qa_fit_score: null, summary: "seems off", evidence: [] },
-      audit: [okAudit("https://bja.ojp.gov/x")],
-      fetchedBodies: [BODY],
+      parsed: { verdict: "demote", confidence: "high", qa_fit_score: 1, summary: "asterisk county", evidence: [ev(UNFETCHED)] },
+      audit: [okAudit(FETCHED)], // a real .gov page WAS fetched for the refute to read
+      refuteSurvived: true, // and the refute (reading it) confirmed the concern
+    });
+    expect(r.verdict).toBe("demote");
+    expect(r.qa_fit_score).toBe(1);
+    expect(r.refute_survived).toBe(true);
+  });
+
+  it("demote with NO successful fetch → unverified, 'could not retrieve' (nothing for the refute to read)", () => {
+    const r = finalizeIntel({
+      ...BASE,
+      parsed: { verdict: "demote", qa_fit_score: 1, summary: "x", evidence: [ev(FETCHED)] },
+      audit: [failAudit(FETCHED, "timeout")],
+      refuteSurvived: true, // irrelevant — the refute never had a page
     });
     expect(r.verdict).toBe("unverified");
+    expect(r.summary).toMatch(/could not retrieve/i);
+    expect(r.refute_survived).toBeNull();
+  });
+
+  it("carries the model's corrected qa_factor_scores on an APPLIED demote", () => {
+    const factors = {
+      seat_role: { rating: "weak", rationale: "asterisk/disparate — cannot prime" },
+      eligibility: { rating: "weak", rationale: "MOU-partner only" },
+      geographic: { rating: "strong", rationale: "in-state" },
+      program_history: { rating: "moderate", rationale: "some" },
+      cost_share: { rating: "strong", rationale: "n/a" },
+      mission: { rating: "strong", rationale: "aligned" },
+    };
+    const r = finalizeIntel({
+      ...BASE,
+      parsed: { verdict: "demote", qa_fit_score: 1, qa_factor_scores: factors as never, summary: "x", evidence: [ev(FETCHED)] },
+      audit: [okAudit(FETCHED)],
+      refuteSurvived: true,
+    });
+    expect(r.verdict).toBe("demote");
+    expect(r.qa_factor_scores?.seat_role.rating).toBe("weak");
+  });
+
+  it("rejects a malformed/partial qa_factor_scores whole (null, not half-written)", () => {
+    const r = finalizeIntel({
+      ...BASE,
+      parsed: { verdict: "demote", qa_fit_score: 1, qa_factor_scores: { seat_role: { rating: "weak", rationale: "x" } } as never, summary: "x", evidence: [ev(FETCHED)] },
+      audit: [okAudit(FETCHED)],
+      refuteSurvived: true,
+    });
+    expect(r.verdict).toBe("demote");
+    expect(r.qa_factor_scores).toBeNull(); // missing five factors → rejected
   });
 
   it("demote with a nonsensical/high qa score is stepped below the engine score", () => {
     const r = finalizeIntel({
       ...BASE,
-      parsed: { verdict: "demote", qa_fit_score: 5, summary: "x", evidence: [ev("https://bja.ojp.gov/x", GOOD_QUOTE)] },
-      audit: [okAudit("https://bja.ojp.gov/x")],
-      fetchedBodies: [BODY],
+      parsed: { verdict: "demote", qa_fit_score: 5, summary: "x", evidence: [ev(FETCHED)] },
+      audit: [okAudit(FETCHED)],
+      refuteSurvived: true,
     });
     expect(r.verdict).toBe("demote");
     expect(r.qa_fit_score).toBe(2); // engine 3 → clamped/stepped to 2
   });
 
-  it("blanks an unsafe (javascript:) evidence source_url so it can't render as a link (XSS guard)", () => {
+  it("blanks an unsafe (javascript:) evidence source_url; stays grounded via a valid fetched source", () => {
     const r = finalizeIntel({
       ...BASE,
       parsed: {
         verdict: "demote",
         qa_fit_score: 1,
         summary: "x",
-        evidence: [{ claim: "c", quote: GOOD_QUOTE, source_url: "javascript:alert(document.cookie)" }],
+        evidence: [ev(FETCHED), { claim: "c", quote: SPAN, source_url: "javascript:alert(document.cookie)" }],
       },
-      audit: [okAudit("https://bja.ojp.gov/x")],
-      fetchedBodies: [BODY],
+      audit: [okAudit(FETCHED)],
+      refuteSurvived: true,
     });
-    expect(r.verdict).toBe("demote"); // still grounded by the quote
-    expect(r.evidence[0].source_url).toBe(""); // the javascript: url was stripped
-    expect(r.evidence[0].quote).toBe(GOOD_QUOTE); // claim + quote preserved
+    expect(r.verdict).toBe("demote"); // grounded by the valid fetched source
+    expect(r.evidence.some((e) => e.source_url === "")).toBe(true); // the javascript: url was stripped
+    expect(r.evidence.some((e) => e.source_url === FETCHED)).toBe(true);
   });
 
   it("a demote of an engine-1 card becomes a flag (can't render 'engine 1 → QA 1')", () => {
     const r = finalizeIntel({
       ...BASE,
       engineFitScore: 1,
-      parsed: { verdict: "demote", qa_fit_score: 1, summary: "weaker than a 1", evidence: [ev("https://bja.ojp.gov/x", GOOD_QUOTE)] },
-      audit: [okAudit("https://bja.ojp.gov/x")],
-      fetchedBodies: [BODY],
+      parsed: { verdict: "demote", qa_fit_score: 1, summary: "weaker than a 1", evidence: [ev(FETCHED)] },
+      audit: [okAudit(FETCHED)],
+      refuteSurvived: true,
     });
     expect(r.verdict).toBe("flag");
     expect(r.qa_fit_score).toBeNull();
   });
 
-  it("the payload carries no field that could mutate the card score (proposal-only)", () => {
+  it("the payload shape carries the new guard fields (confidence, qa_factor_scores, refute_survived)", () => {
     const r = finalizeIntel({
       ...BASE,
-      parsed: { verdict: "demote", qa_fit_score: 1, summary: "x", evidence: [ev("https://bja.ojp.gov/x", GOOD_QUOTE)] },
-      audit: [okAudit("https://bja.ojp.gov/x")],
-      fetchedBodies: [BODY],
+      parsed: { verdict: "demote", qa_fit_score: 1, summary: "x", evidence: [ev(FETCHED)] },
+      audit: [okAudit(FETCHED)],
+      refuteSurvived: true,
     });
     expect(Object.keys(r).sort()).toEqual(
-      ["engine_fit_score", "evidence", "fetched", "searched", "model", "qa_fit_score", "reviewed_at", "reviewed_by", "summary", "unverified", "verdict"].sort(),
+      [
+        "confidence", "engine_fit_score", "evidence", "fetched", "searched", "model", "qa_factor_scores",
+        "qa_fit_score", "refute_survived", "reviewed_at", "reviewed_by", "summary", "unverified", "verdict",
+      ].sort(),
     );
   });
 });
@@ -288,7 +327,6 @@ describe("runIntelReview — threads the discovery flag into the reviewer contex
   const client = { name: "Mississippi County", org_type: "local_government" } as unknown as Client;
   const now = () => "2026-08-26T00:00:00.000Z";
 
-  // A callModel that captures the first user message (the reviewer context) and answers immediately.
   const capture = (): { calls: string[]; model: CallModel } => {
     const calls: string[] = [];
     const model: CallModel = async ({ messages }): Promise<ModelTurn> => {
@@ -312,7 +350,7 @@ describe("runIntelReview — threads the discovery flag into the reviewer contex
   });
 });
 
-describe("runIntelReview — loop + guard together, injected seams", () => {
+describe("runIntelReview — loop + guard + refute together, injected seams", () => {
   const card: IntelCard = {
     fit_score: 3,
     proposed_role: "Prime",
@@ -333,7 +371,7 @@ describe("runIntelReview — loop + guard together, injected seams", () => {
         round++;
         return {
           text: "",
-          toolUses: [{ id: "t1", name: "fetch_grant_source", input: { url: "https://bja.ojp.gov/program/jag/jag-allocations" } }],
+          toolUses: [{ id: "t1", name: "fetch_grant_source", input: { url: FETCHED } }],
           stopReason: "tool_use",
           usage: null,
           rawContent: [],
@@ -353,42 +391,121 @@ describe("runIntelReview — loop + guard together, injected seams", () => {
     fetchedAt: "T",
   });
 
-  it("a grounded demote survives (quote occurs in the fetched body)", async () => {
+  const demoteVerdict = { verdict: "demote" as const, confidence: "high" as const, qa_fit_score: 1, summary: "asterisk county, apply through the state", evidence: [ev(FETCHED)] };
+
+  it("a grounded demote that SURVIVES the refute applies", async () => {
     const r = await runIntelReview(card, grant, client, {
       now,
       reviewedBy: "staff-1",
       callModel: fetchThenAnswer(),
       fetcher: okFetcher(),
-      structure: async () => ({ verdict: "demote", qa_fit_score: 1, summary: "asterisk county, apply through the state", evidence: [ev("https://bja.ojp.gov/program/jag/jag-allocations", GOOD_QUOTE)] }),
+      structure: async () => demoteVerdict,
+      refute: async () => ({ supported: true, reason: "the allocation table lists the county as disparate" }),
     });
     expect(r.verdict).toBe("demote");
     expect(r.qa_fit_score).toBe(1);
     expect(r.engine_fit_score).toBe(3);
+    expect(r.refute_survived).toBe(true);
+    expect(r.confidence).toBe("high"); // an APPLIED demote keeps the model's confidence
     expect(r.fetched.some((f) => f.ok)).toBe(true);
     expect(r.reviewed_by).toBe("staff-1");
   });
 
-  it("the SAME demote fails safe to unverified when the fetch failed", async () => {
+  it("a grounded demote that is REFUTED fails safe to unverified", async () => {
+    const r = await runIntelReview(card, grant, client, {
+      now,
+      callModel: fetchThenAnswer(),
+      fetcher: okFetcher(),
+      structure: async () => demoteVerdict,
+      refute: async () => ({ supported: false, reason: "the fetched page does not establish the concern" }),
+    });
+    expect(r.verdict).toBe("unverified");
+    // A GENUINE refutation (the second read ran and said supported=false) stores false, with the
+    // "did not hold up" summary — a trustworthy "the sources don't support this".
+    expect(r.refute_survived).toBe(false);
+    expect(r.summary).toMatch(/did not hold up/i);
+    expect(r.confidence).toBe("low"); // a fail-safe downgrade derates the model's "high" self-report
+    expect(r.qa_fit_score).toBeNull();
+  });
+
+  it("a refute that THROWS fails safe to unverified, stored as null (could-not-complete, not a refutation)", async () => {
+    const r = await runIntelReview(card, grant, client, {
+      now,
+      callModel: fetchThenAnswer(),
+      fetcher: okFetcher(),
+      structure: async () => demoteVerdict,
+      refute: async () => {
+        throw new Error("refute model error");
+      },
+    });
+    expect(r.verdict).toBe("unverified");
+    // A THROW is a technical failure, not a refutation — stored as null (a retry signal) with a
+    // "could not complete" summary, so it is never mislabeled as "the sources don't support this".
+    expect(r.refute_survived).toBeNull();
+    expect(r.summary).toMatch(/could not complete/i);
+    expect(r.confidence).toBe("low");
+    expect(r.qa_fit_score).toBeNull();
+  });
+
+  it("the SAME demote fails safe to unverified when the fetch failed (ungrounded — refute never runs)", async () => {
+    let refuteRan = false;
     const failFetcher: (u: string) => Promise<FetchResult> = async () => ({ ok: false, reason: "timeout" });
     const r = await runIntelReview(card, grant, client, {
       now,
       callModel: fetchThenAnswer(),
       fetcher: failFetcher,
-      structure: async () => ({ verdict: "demote", qa_fit_score: 1, summary: "asterisk county", evidence: [ev("https://bja.ojp.gov/program/jag/jag-allocations", GOOD_QUOTE)] }),
+      structure: async () => demoteVerdict,
+      refute: async () => {
+        refuteRan = true;
+        return { supported: true, reason: "x" };
+      },
     });
     expect(r.verdict).toBe("unverified");
-    expect(r.unverified).toBe(true);
+    expect(refuteRan).toBe(false); // nothing grounded → no point refuting
     expect(r.qa_fit_score).toBeNull();
   });
 
-  it("a demote citing a quote NOT on the fetched page fails safe to unverified", async () => {
+  it("thin evidence (empty quote) does NOT block a demote — a real fetch happened and the refute confirmed", async () => {
+    // Grounding is the FETCH (hasSuccessfulFetch), not the model's quote or URL. okFetcher retrieved a real
+    // .gov page, so grounding passes regardless of the thin evidence; the refute confirms → demote applies,
+    // instead of the old "cited no page" downgrade. The DISPLAY evidence stays quote-filtered (empty here).
+    let refuteRan = false;
     const r = await runIntelReview(card, grant, client, {
       now,
       callModel: fetchThenAnswer(),
       fetcher: okFetcher(),
-      structure: async () => ({ verdict: "demote", qa_fit_score: 1, summary: "x", evidence: [ev("https://bja.ojp.gov/program/jag/jag-allocations", BAD_QUOTE)] }),
+      structure: async () => ({ verdict: "demote" as const, confidence: "high" as const, qa_fit_score: 1, summary: "asterisk county", evidence: [ev(FETCHED, "")] }),
+      refute: async () => {
+        refuteRan = true;
+        return { supported: true, reason: "the allocation table lists the county as disparate" };
+      },
     });
-    expect(r.verdict).toBe("unverified");
+    expect(refuteRan).toBe(true); // a real fetch happened → grounded → refute runs
+    expect(r.verdict).toBe("demote");
+    expect(r.qa_fit_score).toBe(1);
+    expect(r.refute_survived).toBe(true);
+    expect(r.confidence).toBe("high");
+    expect(r.evidence).toHaveLength(0); // display evidence quote-filtered; grounding is the fetch, not this
+  });
+
+  it("a demote whose cited evidence host was NOT fetched still APPLIES when a real .gov page WAS fetched (the JAG fix)", async () => {
+    // The exact JAG-county failure: the model reads the fetched FY26 table and demotes, but its structured
+    // evidence cites a non-fetched host (or omits the URL). Grounding is the fetch that happened + the refute
+    // reading it — NOT the model's cited URL — so the demote lands instead of downgrading to "cited no page".
+    let refuteRan = false;
+    const r = await runIntelReview(card, grant, client, {
+      now,
+      callModel: fetchThenAnswer(), // fetches FETCHED (bja.ojp.gov) successfully
+      fetcher: okFetcher(),
+      structure: async () => ({ verdict: "demote" as const, confidence: "high" as const, qa_fit_score: 1, summary: "asterisk county", evidence: [ev(UNFETCHED)] }),
+      refute: async () => {
+        refuteRan = true;
+        return { supported: true, reason: "x" };
+      },
+    });
+    expect(refuteRan).toBe(true); // a fetch happened → grounded → refute runs
+    expect(r.verdict).toBe("demote");
+    expect(r.qa_fit_score).toBe(1);
   });
 
   it("no structured output from phase 2 → unverified, never a throw", async () => {

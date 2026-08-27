@@ -86,8 +86,9 @@ const NOW = Date.parse("2026-08-27T12:00:00.000Z");
 const now = () => NOW;
 
 const okReview = (verdict: IntelReview["verdict"] = "affirm", searches = 0): IntelReview => ({
-  verdict, engine_fit_score: 3, qa_fit_score: verdict === "affirm" ? 3 : null, summary: "s", evidence: [], fetched: [],
-  searched: Array(searches).fill("q"), unverified: false, model: "claude-opus-5", reviewed_by: null, reviewed_at: "T",
+  verdict, confidence: "high", engine_fit_score: 3, qa_fit_score: verdict === "affirm" ? 3 : null, qa_factor_scores: null,
+  summary: "s", evidence: [], fetched: [], searched: Array(searches).fill("q"), refute_survived: null,
+  unverified: false, model: "claude-opus-5", reviewed_by: null, reviewed_at: "T",
 });
 
 const pendingCard = (over: Row = {}): Row => ({
