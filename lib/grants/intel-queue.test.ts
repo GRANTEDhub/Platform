@@ -24,6 +24,7 @@ class Query {
   private selectAfterWrite = false;
   private orderBy: { col: string; asc: boolean } | null = null;
   private lim: number | null = null;
+  private rangeFromTo: { from: number; to: number } | null = null;
   constructor(private store: Store, private table: string) {
     this.rows = store.tables[table] ?? (store.tables[table] = []);
   }
@@ -36,6 +37,7 @@ class Query {
   lt(col: string, val: unknown) { this.filters.push((r) => String(r[col]) < String(val)); return this; }
   order(col: string, o?: { ascending?: boolean }) { this.orderBy = { col, asc: o?.ascending !== false }; return this; }
   limit(n: number) { this.lim = n; return this; }
+  range(from: number, to: number) { this.rangeFromTo = { from, to }; return this; }
   returns() { return this; }
   update(patch: Row) { this.op = "update"; this.patch = patch; return this; }
   upsert(rows: Row | Row[], opts?: { onConflict?: string; ignoreDuplicates?: boolean }) { this.op = "upsert"; this.inserts = Array.isArray(rows) ? rows : [rows]; this.onConflict = (opts?.onConflict ?? "").split(",").map((s) => s.trim()).filter(Boolean); this.ignoreDuplicates = opts?.ignoreDuplicates ?? false; return this; }
@@ -44,7 +46,8 @@ class Query {
   private matched(): Row[] {
     let out = this.rows.filter((r) => this.filters.every((f) => f(r)));
     if (this.orderBy) { const { col, asc } = this.orderBy; out = [...out].sort((a, b) => (String(a[col]) < String(b[col]) ? -1 : 1) * (asc ? 1 : -1)); }
-    if (this.lim != null) out = out.slice(0, this.lim);
+    if (this.rangeFromTo) out = out.slice(this.rangeFromTo.from, this.rangeFromTo.to + 1);
+    else if (this.lim != null) out = out.slice(0, this.lim);
     return out;
   }
   private exec(): Promise<{ data: unknown; error: null }> {
@@ -147,6 +150,37 @@ describe("pollAndEnqueue — eligibility", () => {
     expect(n).toBe(2);
     const clients = (s.tables.intel_review_queue ?? []).map((r) => r.client_id).sort();
     expect(clients).toEqual(["c-mid", "c-old"]); // the two OLDEST, never the newest
+  });
+
+  it("pages past a wall of already-verdicted / error-parked oldest cards to reach an eligible newer one", async () => {
+    // The 2 oldest pending cards are blocked (one has a verdict, one is terminally error-parked); an
+    // eligible newer card sits behind them. A single fixed oldest-2 window + post-filter would return
+    // eligible=[] every cycle and starve the newer card forever — pagination must advance past the wall.
+    const s = db();
+    s.tables.review_cards = [
+      pendingCard({ id: "old-verdicted", client_id: "c1", created_at: "2026-08-27T10:00:00Z" }),
+      pendingCard({ id: "old-errored", client_id: "c2", created_at: "2026-08-27T10:30:00Z" }),
+      pendingCard({ id: "new-eligible", client_id: "c3", created_at: "2026-08-27T11:00:00Z" }),
+    ];
+    s.tables.card_intel_reviews = [{ review_card_id: "old-verdicted" }];
+    s.tables.intel_review_queue = [{ grant_id: "g1", client_id: "c2", status: "error", attempts: INTEL_MAX_ATTEMPTS }];
+    const n = await pollAndEnqueue(asDb(s), { now, limit: 2 });
+    expect(n).toBe(1);
+    const queued = s.tables.intel_review_queue.filter((r) => r.status === "queued");
+    expect(queued).toHaveLength(1);
+    expect(queued[0].client_id).toBe("c3"); // the eligible card behind the wall got enqueued
+  });
+
+  it("dedups a (grant, client) pair with two pending cards into a single queue row", async () => {
+    // Two pending cards for the same pair would otherwise put the same conflict key twice in one upsert
+    // payload — which Postgres rejects. The poller collapses them to one enqueue.
+    const s = db();
+    s.tables.review_cards = [
+      pendingCard({ id: "card-a", client_id: "c1", created_at: "2026-08-27T10:00:00Z" }),
+      pendingCard({ id: "card-b", client_id: "c1", created_at: "2026-08-27T10:30:00Z" }),
+    ];
+    expect(await pollAndEnqueue(asDb(s), { now })).toBe(1);
+    expect(s.tables.intel_review_queue).toHaveLength(1);
   });
 
   it("skips prospect / decided / released cards", async () => {

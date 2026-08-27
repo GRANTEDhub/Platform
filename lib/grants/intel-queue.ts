@@ -45,8 +45,13 @@ const intEnv = (v: string | undefined, d: number): number => Math.floor(numEnv(v
 export const INTEL_EST_COST_PER_CARD_USD = numEnv(process.env.INTEL_EST_COST_PER_CARD_USD, 0.3);
 // Hard daily ceiling: once today's summed estimate reaches this, the drain stops and defers to tomorrow.
 export const INTEL_AUTO_DAILY_CAP_USD = numEnv(process.env.INTEL_AUTO_DAILY_CAP_USD, 30);
-// How many candidate cards the poller scans per invocation.
+// How many eligible cards the poller enqueues per invocation, and the page size it scans in.
 export const INTEL_POLL_LIMIT = intEnv(process.env.INTEL_POLL_LIMIT, 50);
+// The poller pages past already-verdicted / blocked cards to reach eligible ones behind them; this bounds
+// how far it scans per invocation (INTEL_POLL_LIMIT × this many pages) so a huge blocked prefix can't make
+// one poll run unbounded. A prefix larger than the whole scan is the systemic-failure case a later
+// watchdog (PR 2) covers; here we just never jam on a realistic backlog.
+export const INTEL_POLL_MAX_PAGES = intEnv(process.env.INTEL_POLL_MAX_PAGES, 20);
 // QA passes run in parallel per invocation (I/O-bound on the model); each still gets its own budget.
 export const INTEL_DRAIN_CONCURRENCY = intEnv(process.env.INTEL_DRAIN_CONCURRENCY, 3);
 // Retry a failed job up to this many attempts, then park it as 'error' (never silently dropped).
@@ -103,43 +108,76 @@ function startOfUtcDayIso(nowMs: number): string {
 // PR-2-watchdog action, not an automatic poll. (A card whose verdict is stale because the drain re-scored
 // it in place still HAS a verdict, so it is not re-picked here — that staleness refresh is deliberately a
 // PR-2 lifecycle refinement, not PR 1.)
+//
+// PAGE PAST blocked cards, don't post-filter a single fixed window (#442 review finding). Oldest-first is
+// FIFO — matches the drain's enqueued_at-ASC claim order — but the oldest pending cards are DOMINATED by
+// ones already blocked from re-QA: a QA'd card stays decision='pending' until staff act, so its verdict
+// filters it out, and terminally error-parked cards never leave 'pending' at all. Fetching one oldest-N
+// window and filtering it in JS would then return an EMPTY eligible set for cycle after cycle while newer,
+// genuinely-eligible cards starve behind that wall of already-done rows. So instead we scan oldest-first
+// in pages, skipping blocked/verdicted cards, until we've collected `limit` eligible pairs or exhausted a
+// bounded scan (INTEL_POLL_LIMIT × INTEL_POLL_MAX_PAGES cards) — the window always advances past the wall.
 export async function pollAndEnqueue(db: DB, opts: { now?: () => number; limit?: number } = {}): Promise<number> {
   const now = opts.now ?? (() => Date.now());
   const limit = opts.limit ?? INTEL_POLL_LIMIT;
+  const pageSize = Math.max(1, limit);
 
-  const { data: cards } = await db
-    .from("review_cards")
-    .select("id, grant_id, client_id")
-    .eq("decision", "pending")
-    .is("sme_released_at", null)
-    .eq("card_type", "client")
-    .not("client_id", "is", null)
-    .not("grant_id", "is", null)
-    // Oldest-first (FIFO). With a fixed limit, newest-first would let a sustained backlog beyond `limit`
-    // starve the older cards behind the window — breaking H1's "every surfaced card eventually gets a
-    // verdict". Matches the drain's enqueued_at-ASC claim order.
-    .order("created_at", { ascending: true })
-    .limit(limit)
-    .returns<{ id: string; grant_id: string; client_id: string }[]>();
-
-  if (!cards || cards.length === 0) return 0;
-
-  const cardIds = cards.map((c) => c.id);
-  const [{ data: verdicts }, { data: blocking }] = await Promise.all([
-    db.from("card_intel_reviews").select("review_card_id").in("review_card_id", cardIds).returns<{ review_card_id: string }[]>(),
-    // queued/processing = in flight; 'error' = terminally parked. All three BLOCK re-enqueue; only a
-    // 'done' row is re-queueable (its verdict having been cleared), which the upsert below handles.
-    db.from("intel_review_queue").select("grant_id, client_id").in("status", ["queued", "processing", "error"]).returns<{ grant_id: string; client_id: string }[]>(),
-  ]);
-
-  const qad = new Set((verdicts ?? []).map((v) => v.review_card_id));
+  // Blocking (grant,client) pairs — any live/terminal queue row. Fetched once; queued/processing are
+  // in flight, 'error' is terminally parked. Only a 'done' row is re-queueable (its verdict cleared), which
+  // the upsert below handles by NOT appearing here.
+  const { data: blocking } = await db
+    .from("intel_review_queue")
+    .select("grant_id, client_id")
+    .in("status", ["queued", "processing", "error"])
+    .returns<{ grant_id: string; client_id: string }[]>();
   const blocked = new Set((blocking ?? []).map((q) => pairKey(q.grant_id, q.client_id)));
 
-  const eligible = cards.filter((c) => !qad.has(c.id) && !blocked.has(pairKey(c.grant_id, c.client_id)));
+  const eligible: { id: string; grant_id: string; client_id: string }[] = [];
+  for (let page = 0; page < INTEL_POLL_MAX_PAGES && eligible.length < limit; page++) {
+    const { data: cards } = await db
+      .from("review_cards")
+      .select("id, grant_id, client_id")
+      .eq("decision", "pending")
+      .is("sme_released_at", null)
+      .eq("card_type", "client")
+      .not("client_id", "is", null)
+      .not("grant_id", "is", null)
+      .order("created_at", { ascending: true })
+      .range(page * pageSize, page * pageSize + pageSize - 1)
+      .returns<{ id: string; grant_id: string; client_id: string }[]>();
+    if (!cards || cards.length === 0) break;
+
+    // Verdicts are scoped to THIS page's cards (cheap), unlike the blocked-pairs set which spans the queue.
+    const { data: verdicts } = await db
+      .from("card_intel_reviews")
+      .select("review_card_id")
+      .in("review_card_id", cards.map((c) => c.id))
+      .returns<{ review_card_id: string }[]>();
+    const qad = new Set((verdicts ?? []).map((v) => v.review_card_id));
+
+    for (const c of cards) {
+      if (!qad.has(c.id) && !blocked.has(pairKey(c.grant_id, c.client_id))) {
+        eligible.push({ id: c.id, grant_id: c.grant_id, client_id: c.client_id });
+        if (eligible.length >= limit) break;
+      }
+    }
+    if (cards.length < pageSize) break; // reached the end of the pending backlog
+  }
   if (eligible.length === 0) return 0;
 
+  // Dedup by (grant, client): a pair can have more than one pending card, and offset pages can overlap if
+  // rows shift mid-poll — Postgres rejects an upsert whose payload hits the same conflict key twice
+  // ("ON CONFLICT DO UPDATE command cannot affect row a second time").
+  const seenPairs = new Set<string>();
+  const toEnqueue = eligible.filter((c) => {
+    const k = pairKey(c.grant_id, c.client_id);
+    if (seenPairs.has(k)) return false;
+    seenPairs.add(k);
+    return true;
+  });
+
   const nowIso = new Date(now()).toISOString();
-  const rows = eligible.map((c) => ({
+  const rows = toEnqueue.map((c) => ({
     grant_id: c.grant_id,
     client_id: c.client_id,
     status: "queued",
@@ -158,7 +196,7 @@ export async function pollAndEnqueue(db: DB, opts: { now?: () => number; limit?:
     console.error("[auto-intel] enqueue failed", error);
     return 0;
   }
-  return eligible.length;
+  return toEnqueue.length;
 }
 
 // ── The drain: run QA on queued jobs, bounded by the daily cost cap + concurrency ───────────────────
