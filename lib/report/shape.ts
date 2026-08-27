@@ -294,7 +294,12 @@ export function toReportItem(card: ReportCardRow, side: ReadSide): ReportItem {
     smeReleased: !!card.sme_released_at,
     pursuitPath: card.pursuit_path ?? null,
     read: !!(side === "staff" ? card.staff_read_at : card.client_read_at),
-    qa: resolved.qa,
+    // A CLIENT surface gets ONLY an applied verdict (its badge/sources) — the internal unverified/failed
+    // states are staff-only and must never ride into a client "use client" prop (Next serializes every
+    // prop into the browser RSC payload, so even an unrendered field leaks). Mirrors the detail pages'
+    // own gate; enforcing it here means the two client list surfaces can't forget it. Staff keep the full
+    // verdict. (This is the read-side half of the same "client sees only applied" boundary as apply-write.)
+    qa: side === "client" ? (resolved.qa?.status === "applied" ? resolved.qa : null) : resolved.qa,
   };
 }
 
