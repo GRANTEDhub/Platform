@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { ExternalLink, Loader2, Sparkle } from "lucide-react";
 import type { IntelReview, IntelVerdict } from "@/lib/grants/intel-review";
 
@@ -10,11 +11,16 @@ import type { IntelReview, IntelVerdict } from "@/lib/grants/intel-review";
 // so the client portal never passes it and it can only render for staff. The verdict it shows is RAW
 // internal QA voice — deliberately never surfaced on any client-facing page.
 //
-// ANNOTATE-ONLY: running it never changes the card's score/seat/decision. It writes a QA note; the
-// score line on this card does not move. So there is nothing to refresh on the rest of the page — the
-// panel just shows the returned verdict inline. Styled for the dark ScoreCard (white-on-chrome).
+// APPLY-AWARE: running it always writes the raw verdict to card_intel_reviews, and when AUTO_INTEL_APPLY
+// is on the route ALSO projects the verdict onto the card's qa_* override columns (a grounded demote
+// lowers the displayed score; affirm/flag/unverified clear any prior override). Because the score/factors
+// are server-rendered from the coalesced qa_* columns, a successful run calls router.refresh() so the rest
+// of the page re-resolves — without it the panel would show the new verdict while the score line stayed
+// stale until a manual reload. It never touches the engine's own fit_score/seat/decision and never hides a
+// card. Styled for the dark ScoreCard (white-on-chrome).
 
 export function IntelReviewPanel({ cardId, initial }: { cardId: string; initial: IntelReview | null }) {
+  const router = useRouter();
   const [intel, setIntel] = useState<IntelReview | null>(initial);
   const [phase, setPhase] = useState<"idle" | "running" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -28,6 +34,9 @@ export function IntelReviewPanel({ cardId, initial }: { cardId: string; initial:
       if (!res.ok || !data.intel) throw new Error(data.error || "QA couldn't run");
       setIntel(data.intel);
       setPhase("idle");
+      // The apply-write may have moved the coalesced qa_* score/factors/sources, which are server-rendered.
+      // Re-resolve the rest of the page so the score line reflects the verdict without a manual reload.
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "QA couldn't run");
       setPhase("error");
@@ -52,7 +61,7 @@ export function IntelReviewPanel({ cardId, initial }: { cardId: string; initial:
         {running ? "Reviewing… (up to a few minutes)" : "Run IntellEngine Intel"}
       </button>
       <p className="text-[11px] leading-[1.45] text-white/50">
-        Opus + web check of this pair against the authoritative source. Adds a QA note — it never changes the score.
+        Opus + web check of this pair against the authoritative source. A grounded demote can lower this card&rsquo;s score.
       </p>
       {error && <p className="text-[11px] text-orange-200">{error}</p>}
     </div>
