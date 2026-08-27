@@ -29,13 +29,15 @@ import type { Grant, Client } from "@/types/database";
 //      jurisdiction on the JAG local allocation list and cannot prime a direct application. Runs discovery ON
 //      (the flag-on path), but 16.738 is a SEEDED program, so the pass FETCHES the seeded allocation URL
 //      rather than SEARCHING (0 web_searches is correct — search is for UNSEEDED programs; see VOCA).
-//      REDESIGNED GUARD (Step 3, PR A): earlier gates downgraded this well-reasoned demote to `unverified`
-//      — first for lacking a VERBATIM PDF quote, then for the phase-2 model not echoing the fetched URL in
-//      its evidence (three eval runs of "cited no page" despite reading the real FY26 table). The final
-//      guard grounds on the FETCH ITSELF (a relevant .gov page was retrieved for the refute to read) and
-//      requires the demote to SURVIVE the adversarial refute — no quote, no URL echo. So the bar: the pass
-//      must land a GROUNDED **demote** (not merely never-affirm) in the MAJORITY of runs, naming the
-//      Arkansas allocation reality. The fail-safe is unchanged and still HARD every run — no adverse verdict
+//      GUARD (Step 3, PR A, as amended by PR F): earlier gates downgraded this well-reasoned demote to
+//      `unverified` — first for lacking a VERBATIM PDF quote, then for the phase-2 model not echoing the
+//      fetched URL (three eval runs of "cited no page" despite reading the real FY26 table), then — the same
+//      class of over-strict guard — the adversarial refute over-refuting a CORRECT grounded demote (the
+//      live MS County incident). The final guard grounds on the FETCH ITSELF (a relevant .gov page was
+//      retrieved) and APPLIES a grounded demote; the refute is now an ADVISORY note, not a veto. So the bar:
+//      the pass must land a GROUNDED **demote** (not merely never-affirm) in the MAJORITY of runs, naming the
+//      Arkansas allocation reality — and with the refute veto gone this is MORE reliable, not less. The
+//      "never demote from nothing" fail-safe is unchanged and still HARD every run — no adverse verdict
 //      without a successful .gov fetch — and a run that genuinely can't reach a source still honestly falls
 //      to `unverified` (never a guess).
 //
