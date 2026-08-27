@@ -15,9 +15,16 @@ import type { Grant, Client } from "@/types/database";
 // data, whether an Opus + fetch-only pass can pull an allocation reality the engine missed. The
 // fixtures are SYNTHETIC (constructed here) but the model and the fetches are REAL, so the eval has no
 // prod-DB dependency and is reproducible — the only external dependencies are Anthropic and the live
-// .gov source. Four cases, matching the plan:
+// .gov source.
 //
-//   1. JAG-county-GROUNDED-DEMOTE (discovery ON) — Mississippi County (AR, local_government) scored a confident
+// TWO COHORTS, because apply-mode writes the verdict to the card and PR A LOOSENED the grounding guard
+// (host-grounding + refute, no verbatim quote), so the eval must prove BOTH directions before the flag
+// flips: (DEMOTE cohort) QA lowers the genuinely-wrong matches, and (AFFIRM cohort) QA leaves the
+// genuinely-good matches UNTOUCHED — the over-demote guard, which is the real risk of a looser guard.
+// Six cases — [D] = demote cohort (catches the wrong matches), [A] = affirm cohort (leaves the good
+// matches untouched — the over-demote guard), [F] = fail-safe:
+//
+//   1. [D] JAG-county-GROUNDED-DEMOTE (discovery ON) — Mississippi County (AR, local_government) scored a confident
 //      direct-recipient 3 on Byrne-JAG Local (CFDA 16.738). An AR county is a disparate / "asterisk"
 //      jurisdiction on the JAG local allocation list and cannot prime a direct application. Runs discovery ON
 //      (the flag-on path), but 16.738 is a SEEDED program, so the pass FETCHES the seeded allocation URL
@@ -31,15 +38,15 @@ import type { Grant, Client } from "@/types/database";
 //      without a grounded .gov fetch — and a run that genuinely can't reach/ground a source still honestly
 //      falls to `unverified` (never a guess).
 //
-//   2. JAG-state-AFFIRM    — the State of Arkansas (state_government, the State Administering Agency)
+//   2. [A] JAG-state-AFFIRM    — the State of Arkansas (state_government, the State Administering Agency)
 //      on the SAME program IS a direct JAG recipient. QA must NOT over-demote a genuine direct
 //      recipient. This is the carve-out that proves the pass discriminates rather than blanket-demotes.
 //
-//   3. no-source-UNVERIFIED — a card whose only "source" is unreachable (non-.gov, unseeded CFDA). An
+//   3. [F] no-source-UNVERIFIED — a card whose only "source" is unreachable (non-.gov, unseeded CFDA). An
 //      adverse verdict is STRUCTURALLY impossible without a successful fetch (finalizeIntel's grounding
 //      guard), so the verdict must NOT be demote/flag. Proves fail-safe end-to-end on the live path.
 //
-//   4. VOCA-discovery-DEMOTE (INTEL_WEB_SEARCH_ENABLED) — a nonprofit victim-services org scored a
+//   4. [D] VOCA-discovery-DEMOTE (INTEL_WEB_SEARCH_ENABLED) — a nonprofit victim-services org scored a
 //      confident direct 3 on VOCA Victim Assistance (CFDA 16.575). VOCA is a FORMULA grant to the states;
 //      local/nonprofit providers are SUBGRANTEES through the state VOCA administering agency, not direct
 //      federal applicants. 16.575 is formula-TAGGED but has NO seeded allocation URL (allocation-sources
@@ -51,8 +58,26 @@ import type { Grant, Client } from "@/types/database";
 //      so the flip gate can't false-green without exercising discovery. If case 4 comes back "unverified"
 //      or with 0 searches, that is the FINDING (discovery didn't fire / couldn't ground the subgrant page).
 //
+//   5. [A] COPS-Hiring × city-PD-AFFIRM — the City of Fayetteville Police Department (local_government) on
+//      the COPS Hiring Program (CFDA 16.710). This is the AFFIRM cohort's sharpest stressor: a local
+//      government on a DOJ justice grant, superficially identical to the JAG-county DEMOTE — but COPS
+//      Hiring is a COMPETITIVE discretionary grant where local law-enforcement agencies apply DIRECTLY (no
+//      allocation formula, no asterisk table, not in FORMULA_PROGRAMS). QA must NOT reflexively demote a
+//      local-gov-on-a-justice-grant; it must read the source and affirm the genuine direct applicant. The
+//      bar: NOT demoted in the majority of runs (a from-nothing "unverified" is acceptable — it doesn't
+//      change the score; a DEMOTE here is the over-demote failure the looser guard risks).
+//
+//   6. [A] AFG × fire-dept-AFFIRM — the Springdale Fire Department (local_government) on the Assistance to
+//      Firefighters Grants (CFDA 97.044), a COMPETITIVE FEMA grant fire departments apply to DIRECTLY.
+//      A second genuine direct applicant in a different agency/context, so the affirm cohort isn't a single
+//      program. Same bar: NOT demoted in the majority of runs.
+//
+// Cases 5-6 run discovery:false — they are not formula programs, so a formula note never fires; keeping
+// discovery off makes the affirm result flag-independent and keeps the pass to a single fetch (fast).
+//
 // Majority-of-runs assertions (expect.soft), because a single Opus run varies. The bar is the feature's
-// philosophy: adverse ONLY when web-grounded; never over-demote a clear direct recipient.
+// philosophy: adverse ONLY when web-grounded; never over-demote a clear direct recipient. The AFFIRM
+// cohort (cases 2, 5, 6) is the guard that PR A's looser grounding did not open an over-demote hole.
 
 const RUN = process.env.RUN_INTEL_EVAL === "1" && !!process.env.ANTHROPIC_API_KEY;
 const RUNS = Math.max(1, Number(process.env.INTEL_EVAL_RUNS) || 3);
@@ -245,5 +270,75 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
       expect.soft(majority(reasoned), "the summary should name the subgrant / state-administering reality").toBe(true);
     },
     RUNS * 240_000,
+  );
+
+  // ── AFFIRM cohort (the over-demote guard) ──────────────────────────────────────────────────────────
+  // Genuine direct applicants QA must LEAVE ALONE. Since PR A loosened the grounding guard (host-grounding
+  // + refute, no verbatim quote), these prove the looser guard did not open a hole where QA lowers the
+  // score on a real, directly-eligible match. The bar is NOT-demoted (over-demote is the failure); an
+  // affirm that falls to "unverified" for lack of a fetch is acceptable — it does not change the score.
+
+  it(
+    "5. COPS Hiring × city police department → AFFIRM (competitive direct applicant; must NOT over-demote a local gov on a justice grant)",
+    async () => {
+      // The sharpest over-demote stressor: a local government on a DOJ justice grant, superficially the JAG
+      // county — but COPS Hiring is COMPETITIVE and local law-enforcement agencies apply DIRECTLY (no
+      // allocation formula, not in FORMULA_PROGRAMS). QA must read the source and affirm, not reflexively
+      // demote by surface resemblance.
+      const results = await runN(RUNS, () =>
+        runIntelReview(
+          card({
+            why_this_org: ["Municipal law-enforcement agency; direct applicant to the COPS Hiring Program."],
+            reasoning_context: { fit_score_derivation: "Local law enforcement agencies are eligible direct applicants for COPS Hiring; scored as a direct applicant." },
+          }),
+          grant({
+            title: "COPS Hiring Program (CHP)",
+            funder: "Office of Community Oriented Policing Services",
+            assistance_listings: [{ number: "16.710", program_title: "Public Safety Partnership and Community Policing Grants" }],
+            program_type: "Competitive Grant",
+            eligible_entity_types: ["units of local government", "law enforcement agencies"],
+            source_url: "https://cops.usdoj.gov/chp",
+          }),
+          client({ name: "City of Fayetteville Police Department", org_type: "local_government", location_city: "Fayetteville", location_state: "AR" }),
+          { discovery: false },
+        ),
+      );
+      const notDemoted = results.map((r) => r.verdict !== "demote");
+      console.log("[intel-eval] COPS-affirm verdicts:", results.map((r) => `${r.verdict}${r.qa_fit_score != null ? `→${r.qa_fit_score}` : ""}`).join(", "));
+      console.log("[intel-eval] COPS-affirm summaries:", results.map((r) => r.summary));
+      expect.soft(majority(notDemoted), "COPS Hiring is a competitive DIRECT-applicant grant for local LEAs — QA must not over-demote a genuine direct applicant").toBe(true);
+    },
+    RUNS * 200_000,
+  );
+
+  it(
+    "6. AFG × fire department → AFFIRM (competitive direct applicant, different agency)",
+    async () => {
+      // A second genuine direct applicant in a different agency/context (FEMA, not DOJ), so the affirm
+      // cohort is not one program. Fire departments apply DIRECTLY to the Assistance to Firefighters Grants.
+      const results = await runN(RUNS, () =>
+        runIntelReview(
+          card({
+            why_this_org: ["Municipal fire department; direct applicant to the Assistance to Firefighters Grants."],
+            reasoning_context: { fit_score_derivation: "Fire departments are eligible direct applicants for AFG; scored as a direct applicant." },
+          }),
+          grant({
+            title: "Assistance to Firefighters Grants (AFG)",
+            funder: "Federal Emergency Management Agency",
+            assistance_listings: [{ number: "97.044", program_title: "Assistance to Firefighters Grants" }],
+            program_type: "Competitive Grant",
+            eligible_entity_types: ["fire departments", "nonaffiliated EMS organizations"],
+            source_url: "https://www.fema.gov/grants/preparedness/firefighters/assistance-grants",
+          }),
+          client({ name: "Springdale Fire Department", org_type: "local_government", location_city: "Springdale", location_state: "AR" }),
+          { discovery: false },
+        ),
+      );
+      const notDemoted = results.map((r) => r.verdict !== "demote");
+      console.log("[intel-eval] AFG-affirm verdicts:", results.map((r) => `${r.verdict}${r.qa_fit_score != null ? `→${r.qa_fit_score}` : ""}`).join(", "));
+      console.log("[intel-eval] AFG-affirm summaries:", results.map((r) => r.summary));
+      expect.soft(majority(notDemoted), "AFG is a competitive DIRECT-applicant grant for fire departments — QA must not over-demote a genuine direct applicant").toBe(true);
+    },
+    RUNS * 200_000,
   );
 });
