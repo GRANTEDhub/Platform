@@ -117,6 +117,23 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
           expect.soft(r.fetched.some((f) => f.ok), "adverse JAG-county verdict must rest on a grounded .gov fetch (fail-safe)").toBe(true);
         }
       }
+      // CORRELATE the adverse verdict with the ARKANSAS ALLOCATION reality it grounds on — not merely that
+      // SOME search ran and SOME page was fetched. This closes the false-green where a run could search for
+      // something unrelated and demote off the stale prior-year PDF or the generic JAG overview: an adverse
+      // summary must name Arkansas AND the allocation / disparate-jurisdiction structure. (We deliberately do
+      // NOT hard-assert the exact current-YEAR fetched URL — the fixture is evergreen and carries no NOFO
+      // year, so pinning a year would make the eval brittle and self-falsifying every fall; the actual
+      // grounded source + year is read from the eval logs when interpreting the result. In run 2 the model
+      // itself refused to ground a demote on the stale prior-year table, which is the behavior this guards.)
+      for (const r of results) {
+        if (r.verdict === "demote" || r.verdict === "flag") {
+          expect.soft(
+            /arkansas|\bAR\b/i.test(r.summary) &&
+              /alloc|disparate|asterisk|through the (state|county)|sub-?recipient|subgrant|state administering/i.test(r.summary),
+            "an adverse JAG-county verdict must name the Arkansas allocation reality it grounded on (not stale/generic evidence)",
+          ).toBe(true);
+        }
+      }
       expect.soft(majority(searchedUsed), "discovery should search for the current-year Arkansas JAG allocation table").toBe(true);
       expect.soft(majority(grounded), "should reach + ground a .gov allocation source in the majority of runs").toBe(true);
       expect.soft(majority(adverse), "should demote/flag a county that cannot prime JAG (asterisk/disparate jurisdiction)").toBe(true);
