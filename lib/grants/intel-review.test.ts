@@ -483,10 +483,12 @@ describe("runIntelReview — loop + guard + refute together, injected seams", ()
     expect(r.qa_fit_score).toBeNull();
   });
 
-  it("evidence dropped by sanitize (fetched host but no usable quote) is ungrounded in BOTH checks — refute never runs, stored honestly", async () => {
-    // The raw evidence cites a FETCHED host, but its quote is empty, so sanitizeEvidence drops it. The
-    // pre-refute gate and finalizeIntel both run groundedOnFetchedSource on the SAME sanitized array, so they
-    // agree it is ungrounded: the refute is never spent, and the record is not mislabeled as a refutation.
+  it("evidence with a fetched-host source_url but NO quote still GROUNDS (grounding is decoupled from the quote filter)", async () => {
+    // The JAG-county fix: the model cites a page it actually fetched (FETCHED host) but supplies no quotable
+    // span — the relaxed prompt says it needn't. groundingEvidence keeps it (source_url present, quote
+    // optional), so grounding PASSES, the refute runs, and a supported demote APPLIES — instead of the old
+    // "cited no page" downgrade. The DISPLAY evidence stays quote-filtered, so it's empty here; that is the
+    // accepted trade (grounding on source_url, presentation on quotes).
     let refuteRan = false;
     const r = await runIntelReview(card, grant, client, {
       now,
@@ -495,15 +497,15 @@ describe("runIntelReview — loop + guard + refute together, injected seams", ()
       structure: async () => ({ verdict: "demote" as const, confidence: "high" as const, qa_fit_score: 1, summary: "asterisk county", evidence: [ev(FETCHED, "")] }),
       refute: async () => {
         refuteRan = true;
-        return { supported: true, reason: "x" };
+        return { supported: true, reason: "the allocation table lists the county as disparate" };
       },
     });
-    expect(r.verdict).toBe("unverified");
-    expect(refuteRan).toBe(false); // sanitized evidence is ungrounded → no wasted refute call
-    expect(r.refute_survived).toBeNull(); // never ran — not a "false" refutation
-    expect(r.summary).toMatch(/cited no page/i);
-    expect(r.confidence).toBe("low");
-    expect(r.qa_fit_score).toBeNull();
+    expect(refuteRan).toBe(true); // grounded on the fetched-host source_url → refute runs
+    expect(r.verdict).toBe("demote");
+    expect(r.qa_fit_score).toBe(1);
+    expect(r.refute_survived).toBe(true);
+    expect(r.confidence).toBe("high");
+    expect(r.evidence).toHaveLength(0); // display evidence is quote-filtered; grounding was source_url-based
   });
 
   it("a demote citing a host NOT fetched fails safe to unverified (ungrounded)", async () => {

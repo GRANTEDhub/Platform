@@ -367,13 +367,9 @@ export function groundedOnFetchedSource(evidence: IntelEvidence[], audit: FetchA
   });
 }
 
-// Filter + sanitize the model's raw evidence into what actually counts as grounding: keep only items with a
-// real quote (the grounding signal) and BLANK any unsafe source_url (a `javascript:`/`data:` URL can never
-// reach the panel's anchor href — and a blanked url is not a fetched host, so it can't ground). Used in BOTH
-// the pre-refute grounding gate (runIntelReview) and finalizeIntel's grounding check, so the two decide
-// "grounded" on the SAME array — otherwise a raw item with a fetched host but no quote / an unsafe scheme
-// would pass the gate (spending the refute call) yet fail finalizeIntel's recheck, storing a misleading
-// "cited no page" (refute_survived=null) even though the refute actually ran and passed.
+// DISPLAY evidence: the sanitized list stored on the verdict and shown to staff. Keep only items with a real
+// quote (the supporting text a human reads) and BLANK any unsafe source_url (a `javascript:`/`data:` URL can
+// never reach the panel's anchor href). This is presentation, NOT the grounding signal — see groundingEvidence.
 function sanitizeEvidence(raw: unknown): IntelEvidence[] {
   return (Array.isArray(raw) ? raw : [])
     .filter((e) => e && e.quote)
@@ -382,6 +378,26 @@ function sanitizeEvidence(raw: unknown): IntelEvidence[] {
       quote: e.quote,
       source_url: isSafeHttpUrl(e.source_url ?? "") ? e.source_url : "",
     }));
+}
+
+// GROUNDING evidence: the set the host-match runs on. The grounding signal is "QA cited a page it actually
+// FETCHED" — i.e. a safe http source_url on a fetched host — NOT whether that item also carries a quotable
+// span. Requiring a quote here silently re-created the exact verbatim-quote gate the redesign removed: the
+// relaxed prompt tells the model it needn't quote a clean span, so on allocation tables it returns evidence
+// with a real fetched-host source_url but a thin/empty quote, sanitizeEvidence dropped those, and a correct,
+// fetched, refute-survivable demote was downgraded to "cited no page" (the JAG-county case). So grounding
+// keeps every item with a safe source_url, quote optional; the adversarial refute still checks the CLAIM
+// against the fetched page, so a bare source_url can't apply a demote on its own. Used in BOTH the pre-refute
+// gate (runIntelReview) and finalizeIntel, so the two decide "grounded" on the SAME set (the round-2
+// consistency fix — a divergence would waste a refute call and mislabel the stored record).
+function groundingEvidence(raw: unknown): IntelEvidence[] {
+  return (Array.isArray(raw) ? raw : [])
+    .map((e) => ({
+      claim: e?.claim ?? "",
+      quote: typeof e?.quote === "string" ? e.quote : "",
+      source_url: isSafeHttpUrl(e?.source_url ?? "") ? e.source_url : "",
+    }))
+    .filter((e) => e.source_url);
 }
 
 function clampScore(n: unknown): number | null {
@@ -472,7 +488,10 @@ export function finalizeIntel(opts: {
   //     read no source" — not a web-backed affirmation → unverified.
   const hasSuccessfulFetch = audit.some((a) => a.ok);
   if (verdict === "demote" || verdict === "flag") {
-    const grounded = hasSuccessfulFetch && groundedOnFetchedSource(evidence, audit);
+    // Grounding runs on groundingEvidence (safe source_url, quote optional), NOT the quote-filtered display
+    // `evidence` — otherwise a fetched-host citation with a thin quote is dropped and a correct demote reads
+    // as "cited no page" (the JAG-county downgrade).
+    const grounded = hasSuccessfulFetch && groundedOnFetchedSource(groundingEvidence(parsed.evidence), audit);
     if (!grounded) {
       verdict = "unverified";
       unverified = true;
@@ -787,10 +806,10 @@ export async function runIntelReview(
   // an adverse verdict, so any shortfall (no budget, thrown, refuted) fails safe to "unverified".
   let refuteSurvived: boolean | null = null;
   if (parsed && (parsed.verdict === "demote" || parsed.verdict === "flag")) {
-    // Gate on the SAME sanitized evidence finalizeIntel will recheck, so the two never disagree on
-    // "grounded" — otherwise a raw item with a fetched host but no quote / an unsafe URL would spend the
-    // refute call here yet be judged ungrounded there, storing a misleading "cited no page".
-    const grounded = audit.some((a) => a.ok) && groundedOnFetchedSource(sanitizeEvidence(parsed.evidence), audit);
+    // Gate on the SAME groundingEvidence set finalizeIntel will recheck, so the two never disagree on
+    // "grounded" (round-2 consistency). Grounding is source_url-on-a-fetched-host, quote optional — the
+    // refute below is what checks the claim against the page.
+    const grounded = audit.some((a) => a.ok) && groundedOnFetchedSource(groundingEvidence(parsed.evidence), audit);
     if (grounded) {
       const remaining = INTEL_TOTAL_BUDGET_MS - (clock() - startMs);
       if (remaining >= MIN_REFUTE_BUDGET_MS) {
