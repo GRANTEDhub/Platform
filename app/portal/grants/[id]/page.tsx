@@ -64,6 +64,7 @@ type CardRow = {
   qa_fit_score: number | null;
   qa_factor_scores: FactorScores | null;
   qa_sources: string[] | null;
+  qa_narrative: string | null;
   qa_status: string | null;
   qa_engine_fit_score: number | null;
   reasoning_context: { consortium_rationale?: string; fit_score_derivation?: string } | null;
@@ -119,7 +120,7 @@ export default async function PortalGrantDetail({
   let query: any = supabase
     .from("review_cards")
     .select(
-      "fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, qa_fit_score, qa_factor_scores, qa_sources, qa_status, qa_engine_fit_score, reasoning_context, decision, pursuit_path, card_type, grants(id, source_url, title, funder, fon, assistance_listings, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status)",
+      "fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, qa_fit_score, qa_factor_scores, qa_sources, qa_narrative, qa_status, qa_engine_fit_score, reasoning_context, decision, pursuit_path, card_type, grants(id, source_url, title, funder, fon, assistance_listings, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status)",
     )
     .eq("id", params.id)
     .eq("client_id", org.clientId)
@@ -176,6 +177,9 @@ export default async function PortalGrantDetail({
     lead: firstSentences(why[0] ?? card.concept_synopsis, 2),
     blocking: blockingReason(factors, effFit, { calibrated }),
     mitigation: firstSentences(card.reasoning_context?.consortium_rationale, 2),
+    // Step C: the QA client-safe narrative replaces the assembled paragraph on an applied+fresh demote. It
+    // is client-safe by construction (guarded at generation), so it rides to the portal exactly like console.
+    narrative: resolved.narrative,
   };
 
   const days = deadlineDaysLeft(g.submission_deadline);

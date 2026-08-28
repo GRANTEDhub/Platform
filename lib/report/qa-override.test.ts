@@ -19,14 +19,15 @@ const row = (over: Partial<QaOverrideRow> = {}): QaOverrideRow => ({
 });
 
 describe("resolveFit — QA override coalesce + staleness", () => {
-  it("no QA (all qa_* null) → engine score/factors, no badge (byte-identical to pre-0088)", () => {
+  it("no QA (all qa_* null) → engine score/factors, no badge, no narrative (byte-identical to pre-0088)", () => {
     const r = resolveFit(row());
     expect(r.fitScore).toBe(3);
     expect(r.factorScores).toBe(engineFactors);
     expect(r.qa).toBeNull();
+    expect(r.narrative).toBeNull();
   });
 
-  it("applied + fresh (snapshot === fit_score) → QA score/factors/sources shown, badge applied", () => {
+  it("applied + fresh (snapshot === fit_score) → QA score/factors/sources/narrative shown, badge applied", () => {
     const r = resolveFit(
       row({
         qa_status: "applied",
@@ -34,20 +35,29 @@ describe("resolveFit — QA override coalesce + staleness", () => {
         qa_engine_fit_score: 3,
         qa_factor_scores: qaFactors,
         qa_sources: ["https://bja.ojp.gov/x", "https://bja.ojp.gov/x", ""],
+        qa_narrative: "The county cannot apply as a standalone prime; the fundable lane is an MOU with Blytheville.",
       }),
     );
     expect(r.fitScore).toBe(2);
     expect(r.factorScores).toBe(qaFactors);
     expect(r.qa).toEqual({ status: "applied", from: 3, to: 2, sources: ["https://bja.ojp.gov/x", "https://bja.ojp.gov/x"] });
+    expect(r.narrative).toBe("The county cannot apply as a standalone prime; the fundable lane is an MOU with Blytheville.");
   });
 
-  it("applied but STALE (engine re-scored: snapshot 3 ≠ fit_score 2) → override IGNORED, engine score, no badge", () => {
+  it("applied + fresh but the narrative is empty/whitespace → null (renders the engine paragraph)", () => {
+    const r = resolveFit(row({ qa_status: "applied", qa_fit_score: 2, qa_engine_fit_score: 3, qa_narrative: "   " }));
+    expect(r.fitScore).toBe(2);
+    expect(r.narrative).toBeNull();
+  });
+
+  it("applied but STALE (engine re-scored: snapshot 3 ≠ fit_score 2) → override + narrative IGNORED, engine score, no badge", () => {
     const r = resolveFit(
-      row({ fit_score: 2, qa_status: "applied", qa_fit_score: 1, qa_engine_fit_score: 3, qa_factor_scores: qaFactors }),
+      row({ fit_score: 2, qa_status: "applied", qa_fit_score: 1, qa_engine_fit_score: 3, qa_factor_scores: qaFactors, qa_narrative: "stale demote prose" }),
     );
     expect(r.fitScore).toBe(2); // the fresh engine score, NOT the stale qa_fit_score 1
     expect(r.factorScores).toBe(engineFactors);
     expect(r.qa).toBeNull(); // no misleading "QA lowered" badge over a re-scored card
+    expect(r.narrative).toBeNull(); // a stale narrative must not sit on a freshly re-scored card
   });
 
   it("unverified → engine score stands, badge unverified (score columns are null by write-time contract)", () => {

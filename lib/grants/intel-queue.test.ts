@@ -393,6 +393,11 @@ describe("apply-the-gate — buildQaPatch + cardCfdaApplyEligible (pure)", () =>
     expect(rating(patch!.qa_factor_scores, "eligibility")).toBe("moderate"); // carried from engine
     expect(rating(patch!.qa_factor_scores, "mission")).toBe("strong"); // carried from engine
     expect(patch!.qa_sources).toEqual([JAG_PDF]);
+    // Step C: the client-safe narrative rides an applied demote verbatim (already guarded upstream).
+    expect(buildQaPatch(card, demoteReview({ narrative: "The county cannot apply as a standalone prime; the path is an MOU with Blytheville." }), "T")!.qa_narrative)
+      .toBe("The county cannot apply as a standalone prime; the path is an MOU with Blytheville.");
+    // A demote with no narrative (flag off / model omitted / guard nulled it) carries null → engine paragraph.
+    expect(patch!.qa_narrative).toBeNull();
   });
 
   it("INVARIANT: every key of the patch is qa_-prefixed — buildQaPatch can never name an engine column", () => {
@@ -410,6 +415,7 @@ describe("apply-the-gate — buildQaPatch + cardCfdaApplyEligible (pure)", () =>
     expect(patch.qa_fit_score).toBeNull();
     expect(patch.qa_factor_scores).toBeNull();
     expect(patch.qa_sources).toBeNull();
+    expect(patch.qa_narrative).toBeNull(); // reversal clears the narrative too — no stale demote-prose
     expect(patch.qa_engine_fit_score).toBeNull();
   });
 
@@ -421,6 +427,7 @@ describe("apply-the-gate — buildQaPatch + cardCfdaApplyEligible (pure)", () =>
       expect(patch.qa_fit_score).toBeNull();
       expect(patch.qa_factor_scores).toBeNull();
       expect(patch.qa_sources).toBeNull();
+      expect(patch.qa_narrative).toBeNull(); // a reversal to affirm/flag clears the demote narrative
       expect(patch.qa_engine_fit_score).toBeNull();
     }
   });

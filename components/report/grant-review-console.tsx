@@ -117,8 +117,10 @@ export function GrantReviewConsole({
   // because we DID look and the NOFO did not say. Defaults to null so a caller that
   // forgets it shows nothing rather than a half-built section.
   allowableUses?: AllowableUses | null;
-  // Prose. `blocking` is bolded inside it — see the note at the top of this file.
-  rationale: { lead: string | null; blocking: string | null; mitigation: string | null };
+  // Prose. `blocking` is bolded inside it — see the note at the top of this file. `narrative` (Step C) is
+  // the client-safe single-voice paragraph QA writes on an applied demote; when present it REPLACES the
+  // assembled lead/blocking/mitigation entirely (one paragraph, never stacked), else those three render.
+  rationale: { lead: string | null; blocking: string | null; mitigation: string | null; narrative?: string | null };
   factors: FitFactorView;
   // The backfill control for a card with no per-factor breakdown. A client component,
   // passed in, and null on any surface that should not be able to spend a scorer call.
@@ -496,13 +498,17 @@ function RationaleCard({
   footnote,
   qaVerdict,
 }: {
-  rationale: { lead: string | null; blocking: string | null; mitigation: string | null };
+  rationale: { lead: string | null; blocking: string | null; mitigation: string | null; narrative?: string | null };
   factors: FitFactorView;
   scoreFactors: React.ReactNode | null;
   footnote: string;
   qaVerdict: QaVerdictView | null;
 }) {
-  const hasProse = rationale.lead || rationale.blocking || rationale.mitigation;
+  // Step C: an applied-demote card carries a single client-safe narrative paragraph that IS the whole
+  // rationale; when present it REPLACES the assembled lead/blocking/mitigation (never stacked). Else the
+  // three engine-derived pieces render exactly as before.
+  const narrative = rationale.narrative?.trim() || null;
+  const hasProse = narrative || rationale.lead || rationale.blocking || rationale.mitigation;
   return (
     <section className={`flex min-h-0 flex-1 flex-col overflow-hidden ${CARD}`}>
       <div className="flex shrink-0 items-center gap-3 px-5 pb-3 pt-[14px]">
@@ -528,14 +534,23 @@ function RationaleCard({
       <div className="flex min-h-0 flex-1 gap-5 overflow-y-auto px-5 pb-2">
         {hasProse && (
           <p className="min-w-0 flex-[1.3] text-[13px] leading-[1.65] text-ink-muted [text-wrap:pretty]">
-            {rationale.lead && <>{rationale.lead} </>}
-            {/* The blocking sentence, in bold, in navy — the engine's own rationale string for
-                the weakest factor, not a rewrite, so the page cannot assert a cap the score does
-                not actually rest on. */}
-            {rationale.blocking && (
-              <strong className="font-semibold text-brand-navy">{rationale.blocking} </strong>
+            {narrative ? (
+              // The QA client-safe narrative IS the rationale on an applied demote — one flowing paragraph,
+              // rendered in place of the three engine pieces. It leads with the score/role shift itself, so
+              // it needs no separate bold blocking sentence.
+              narrative
+            ) : (
+              <>
+                {rationale.lead && <>{rationale.lead} </>}
+                {/* The blocking sentence, in bold, in navy — the engine's own rationale string for
+                    the weakest factor, not a rewrite, so the page cannot assert a cap the score does
+                    not actually rest on. */}
+                {rationale.blocking && (
+                  <strong className="font-semibold text-brand-navy">{rationale.blocking} </strong>
+                )}
+                {rationale.mitigation}
+              </>
             )}
-            {rationale.mitigation}
           </p>
         )}
         {hasProse && <span aria-hidden="true" className="w-px shrink-0 self-stretch bg-brand-navy/[0.08]" />}

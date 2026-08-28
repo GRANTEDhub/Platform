@@ -19,6 +19,7 @@ export interface QaOverrideRow {
   qa_fit_score?: number | null;
   qa_factor_scores?: FactorScores | null;
   qa_sources?: string[] | null;
+  qa_narrative?: string | null;
   qa_status?: string | null;
   qa_engine_fit_score?: number | null;
 }
@@ -41,6 +42,10 @@ export interface ResolvedFit {
   factorScores: FactorScores | null;
   // The QA badge, or null when QA has reached no display state (or an applied override has gone stale).
   qa: QaVerdictView | null;
+  // The client-safe integrated fit narrative to DISPLAY IN PLACE OF the assembled engine paragraph — only
+  // on a fresh applied override (Step C). Null otherwise → the card renders today's lead/blocking/mitigation.
+  // Client-safe by construction (guarded at generation time), so it rides to both console and portal.
+  narrative: string | null;
 }
 
 const asFit = (n: number | null | undefined): 1 | 2 | 3 | null => (n === 1 || n === 2 || n === 3 ? n : null);
@@ -69,11 +74,13 @@ export function resolveFit(row: QaOverrideRow): ResolvedFit {
 
   if (appliedFresh) {
     const sources = (row.qa_sources ?? []).filter((s): s is string => typeof s === "string" && s.length > 0);
+    const narrative = typeof row.qa_narrative === "string" && row.qa_narrative.trim() ? row.qa_narrative : null;
     return {
       fitScore: qaFit,
       factorScores: row.qa_factor_scores ?? engineFactors,
       // engineFit is provably 1|2|3 here: appliedFresh required snapshot === engineFit and snapshot !== null.
       qa: { status: "applied", from: engineFit as 1 | 2 | 3, to: qaFit, sources },
+      narrative,
     };
   }
 
@@ -82,5 +89,5 @@ export function resolveFit(row: QaOverrideRow): ResolvedFit {
   // A STALE applied row also falls through here → engine score, no badge (a fresh QA pass is pending).
   const qa: QaVerdictView | null =
     status === "unverified" ? { status: "unverified" } : status === "failed" ? { status: "failed" } : null;
-  return { fitScore: engineFit, factorScores: engineFactors, qa };
+  return { fitScore: engineFit, factorScores: engineFactors, qa, narrative: null };
 }
