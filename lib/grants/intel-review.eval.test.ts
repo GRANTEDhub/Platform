@@ -200,9 +200,15 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
       const clean = demoteRuns.map(
         (r) => !r.narrative || FORBIDDEN_NARRATIVE_MARKERS.every((m) => !r.narrative!.toLowerCase().includes(m)),
       );
+      // LENGTH CAP (visual): the prompt targets ~175 words / ~1,000 chars — a client card, not a memo. The
+      // eval bar allows a small overage (≤1,100) since it is a model target, and logs the actual lengths.
+      const lengths = demoteRuns.map((r) => r.narrative?.length ?? 0);
+      console.log("[intel-eval] JAG-county narrative lengths:", lengths.join(", "));
+      const withinCap = demoteRuns.map((r) => !r.narrative || r.narrative.length <= 1100);
       expect.soft(demoteRuns.length === 0 || majority(narrated), "a grounded demote should carry a client narrative in the majority of runs").toBe(true);
       expect.soft(demoteRuns.length === 0 || majority(faithful), "the narrative must preserve the grounded hard fact, not soften it (rule a)").toBe(true);
       expect.soft(clean.every(Boolean), "the narrative must carry NO internal-framing / scoring-machinery language (rule b)").toBe(true);
+      expect.soft(demoteRuns.length === 0 || majority(withinCap), "the narrative should stay within the ~1,000-char client-card cap in the majority of runs").toBe(true);
     },
     RUNS * 200_000,
   );

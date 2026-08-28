@@ -40,10 +40,11 @@ export function fitNarrativeEnabled(): boolean {
 export const NARRATIVE_TOOL_PROPERTY: JsonSchemaProperty = {
   type: "string",
   description:
-    "CLIENT-FACING. For a DEMOTE only: one integrated paragraph a client reads as the match justification — " +
-    "rationale, the grounding reality that changes the picture, the role we'd actually pursue, and the net " +
-    "score stated plainly. Written AS advice to the reader; never internal framing (no 'tell the client', " +
-    "'position as', no mention of the engine/QA/score machinery). Leave empty for affirm/flag/unverified.",
+    "CLIENT-FACING. For a DEMOTE only: one tight integrated paragraph (AT MOST ~175 words / ~1,000 chars) a " +
+    "client reads as the match justification — rationale, the grounding reality that changes the picture, the " +
+    "role we'd actually pursue, and the net score stated plainly. Economical, not exhaustive. Written AS advice " +
+    "to the reader; never internal framing (no 'tell the client', 'position as', no mention of the engine/QA/" +
+    "score machinery). Leave empty for affirm/flag/unverified.",
 };
 
 // Appended to STRUCTURE_SYSTEM_PROMPT only when the flag is on. This is the spec for the client paragraph.
@@ -51,7 +52,9 @@ export const NARRATIVE_STRUCTURE_ADDENDUM = `
 
 CLIENT NARRATIVE (the \`narrative\` field) — write this ONLY when your verdict is "demote"; otherwise leave it empty.
 
-Write ONE integrated paragraph (roughly 4-7 sentences) that a client reads as the whole justification for this match. It must flow, in this order:
+LENGTH — HARD CAP: at most ~175 words / ~1,000 characters. One tight paragraph a client can read at a glance, not a memo. Be economical: make the score/role shift and the single most important next move unmistakable, state the grounding fact and any prohibited-use limits in brief, and do NOT enumerate every sub-point, dollar figure, or caveat — name the one or two that decide the play and stop. Every sentence must earn its place. A shorter faithful paragraph beats a complete one.
+
+Write ONE integrated paragraph that a client reads as the whole justification for this match. It must flow, in this order:
   1. Rationale — why this grant genuinely fits this organization (draw on the engine's confirmed positives: entity type, registrations, track record, no cost-share, etc.).
   2. The grounding reality — the authoritative fact your analysis established that changes or confirms the picture (the allocation status, prohibited uses, whatever you verified). State it in full force.
   3. The role we'd actually pursue — prime vs. co-applicant vs. sub / fiscal-agent-by-MOU, as applicable, and what the structure means in practice (the fundable lane, what to negotiate).
@@ -59,7 +62,7 @@ Write ONE integrated paragraph (roughly 4-7 sentences) that a client reads as th
 
 TWO HARD RULES:
   (a) FAITHFULNESS OVER POLISH. Never soften or drift from a grounded fact. If the analysis found the client CANNOT prime, the paragraph says it cannot — never "may face challenges", "could be difficult", "may need to consider". Preserve every hard eligibility fact and prohibited-use fact at full strength. Introduce NO new specific claim (no dollar figures, citations, dates, or program details) beyond what the analysis and the grant context give you.
-  (b) DIRECT CLIENT VOICE, NEVER INTERNAL FRAMING. Write it as advice spoken to the reader. Say the thing directly — do NOT say "tell the client", "position this as", "we should frame", "note that they". Do NOT mention the engine, the scorer, the model, the QA pass, a "verdict", an "unverified" state, a "fit score", or any scoring machinery. No meta-commentary about your own analysis. Fold the strategic substance (the fundable lane, what the joint structure requires, what to negotiate) directly into the advice — never as a staff instruction about the client.
+  (b) DIRECT CLIENT VOICE, NEVER INTERNAL FRAMING. Write it as advice spoken to the reader. Say the thing directly — do NOT say "tell the client", "position this as", "we should frame", "note that they". Do NOT mention the engine, the scorer, the model, the QA pass, a "verdict", an "unverified" state, a "fit score", or any scoring machinery. No meta-commentary about your own analysis. Fold in the ONE or TWO most decisive strategic points (the fundable lane, the key thing to negotiate) as advice to the reader — briefly, not an exhaustive list; leave the rest for the conversation.
 
 Good: "Mississippi County is the kind of applicant Byrne JAG is built for — a county government with active SAM registration and DOJ grant history … but on the FY2026 Arkansas allocation table it carries an asterisk … so it cannot apply as a standalone prime. The path is a formal MOU with Blytheville naming a single fiscal agent …"
 Bad: "The engine scored this a 3, but QA found the county is disparate, so position this to the client as a partnership opportunity."`;
