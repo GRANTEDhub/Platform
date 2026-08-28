@@ -262,7 +262,9 @@ export function ReleaseToClientBar({
 
   // ── AWAITING RELEASE: the live send/pass control. ──
   return (
-    <div>
+    // Thin burnt-orange left accent — the "act here" cue (it replaces the old 3px orange TOP
+    // border the white card carried), on the dark panel with no card of its own.
+    <div className="border-l-2 border-brand-orange pl-3.5">
       <p className={D_EYEBROW}>Your decision</p>
       <p className={D_BODY}>
         Release to the client&apos;s Grant Alerts with the one-page PDF — edit the note before it goes — or pass to
@@ -285,7 +287,7 @@ export function ReleaseToClientBar({
           type="button"
           disabled={busy}
           onClick={() => setShowPass(true)}
-          className="mt-[9px] inline-flex h-[38px] w-full items-center justify-center rounded-sharp border border-white/25 text-[13px] font-semibold text-orange-200 transition-colors duration-[120ms] hover:border-white/40 hover:text-orange-100 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome"
+          className="mt-[9px] inline-flex h-[38px] w-full items-center justify-center rounded-sharp border border-white/40 text-[13px] font-semibold text-white/90 transition-colors duration-[120ms] hover:border-white/60 hover:bg-white/[0.08] hover:text-white disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome"
         >
           Pass
         </button>

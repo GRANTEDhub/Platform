@@ -405,9 +405,10 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
             />
           ) : isLead && isAdmin ? (
             // A prospect has no portal, so the terminal action is the cold one-pager
-            // rather than a release. Admin-only: this is BizDev outreach. Dark-themed: this
-            // renders inside the fit-score box (bg-brand-chrome), not a white card of its own.
-            <div>
+            // rather than a release. Admin-only: this is BizDev outreach. Dark-themed, with the
+            // thin burnt-orange "act here" left accent — rendered inside the fit-score box
+            // (bg-brand-chrome), not a white card of its own.
+            <div className="border-l-2 border-brand-orange pl-3.5">
               <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-white/[0.55]">Your decision</p>
               <p className="mb-3 mt-2 text-[12.5px] leading-[1.55] text-white/[0.72]">
                 Prospects have no portal — the terminal action here is the cold one-pager.
