@@ -42,6 +42,24 @@ export const ALLOCATION_SOURCES: Record<string, AllocationSource> = {
       "https://bja.ojp.gov/program/jag/overview",
     ],
   },
+  // Crime Victim Assistance (VOCA — Victim Assistance Formula). A formula grant to the STATES; the
+  // eligibility reality the NOFO's entity-type list understates is that local / nonprofit
+  // victim-services providers are SUBGRANTEES through the state VOCA administering agency, never
+  // direct federal applicants. Unlike JAG, this is a STRUCTURAL nationwide rule (no per-state
+  // allocation table to ground on), and the OVC formula-grants page STATES THE RULE ON THE LANDING
+  // PAGE ITSELF ("applications … may be submitted online only by the state agency designated by the
+  // Governor"; "the states provide subgrants to local community-based organizations"), so one
+  // national OVC page carries it — the grounding fact is on the fetched page, not a linked sub-page,
+  // so it grounds more reliably than JAG's table-in-a-PDF. VERIFIED live (2026-08-28): 200, and the
+  // subgrantee/administering-agency language is present in the page body. NOT year-stamped (a
+  // structural program page, not a cycle-specific table), so it does not rot the way JAG's FY-stamped
+  // allocations PDF does.
+  "16.575": {
+    label: "Crime Victim Assistance (VOCA Victim Assistance Formula) — states are the administering agencies; local/nonprofit providers are subgrantees through the state",
+    urls: [
+      "https://ovc.ojp.gov/funding/types-of-funding/formula-grants",
+    ],
+  },
 };
 
 // Normalize an assistance-listing number to the map key: strip a trailing letter suffix some

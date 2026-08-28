@@ -46,11 +46,17 @@ export function autoIntelApplyEnabled(): boolean {
   return process.env.AUTO_INTEL_APPLY === "true";
 }
 
-// NARROW-AND-PROVEN launch scope: apply-mode acts ONLY on the CFDAs listed here. Today that is JAG-Local
-// (16.738) alone — the case proven end-to-end (eval run #8: grounded demote→2, 3/3, affirms untouched).
-// Every OTHER program stays PROPOSAL-ONLY (its QA verdict lands in card_intel_reviews, the card is
-// untouched) until it has been watched on real cards. Widening is a one-line data change here.
-export const APPLY_ELIGIBLE_CFDAS = new Set<string>(["16.738"]);
+// NARROW-AND-PROVEN launch scope: apply-mode acts ONLY on the CFDAs listed here. Every OTHER program
+// stays PROPOSAL-ONLY (its QA verdict lands in card_intel_reviews, the card is untouched) until it has
+// an eval-proven grounded demote + no-false-demote guard AND a verified allocation seed URL. Widening
+// is a one-line data change here, GATED on a green intel eval for the added program (RUN_INTEL_EVAL):
+//   - 16.738 JAG-Local — proven end-to-end (eval run #8: grounded demote→2, 3/3, affirms untouched).
+//   - 16.575 VOCA Victim Assistance — seeded (allocation-sources: OVC formula-grants page states the
+//     state-administering-agency / local-subgrantee rule on the landing page itself) + eval cases 4
+//     (grounded demote of a subgrant-only nonprofit) and 7 (state administering agency AFFIRMED, the
+//     no-false-demote guard). GRANTED's roster carries no state VOCA administering agency, so the
+//     false-demote blast radius is minimal, but the flip still waits on the green eval.
+export const APPLY_ELIGIBLE_CFDAS = new Set<string>(["16.738", "16.575"]);
 
 // Strip a trailing letter suffix (e.g. "16.738A" → "16.738"); mirrors allocation-sources / formula-programs.
 function normalizeCfda(raw: string): string {
