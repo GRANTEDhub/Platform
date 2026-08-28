@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Mail } from "lucide-react";
-import { BRAND } from "@/lib/brand";
 import { awaitReadStamp } from "./read-stamp-queue";
 
 // Return this one card to unread. Console only — see the mark-unread route for why staff
@@ -56,7 +55,7 @@ export function MarkUnreadButton({ cardId, backHref }: { cardId: string; backHre
         type="button"
         disabled={busy}
         onClick={() => void markUnread()}
-        className="inline-flex items-center gap-[7px] text-[12px] text-ink-muted transition-colors hover:text-brand-navy disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+        className="inline-flex items-center gap-[7px] text-[12px] text-white/70 transition-colors hover:text-white disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome"
       >
         {busy ? (
           <Loader2 className="h-[13px] w-[13px] animate-spin" aria-hidden="true" />
@@ -65,11 +64,7 @@ export function MarkUnreadButton({ cardId, backHref }: { cardId: string; backHre
         )}
         Mark unread
       </button>
-      {error && (
-        <p className="text-[11.5px]" style={{ color: BRAND.reject }}>
-          {error}
-        </p>
-      )}
+      {error && <p className="text-[11.5px] text-orange-200">{error}</p>}
     </div>
   );
 }

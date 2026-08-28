@@ -5,7 +5,6 @@ import { createClient } from "@/lib/supabase/server";
 import { ReleaseToClientBar } from "@/components/report/release-bar";
 import { ConceptProposalPanel } from "@/components/report/concept-proposal-panel";
 import { ConceptCard } from "@/components/report/concept-card";
-import { ScoreFeedback } from "@/components/report/score-feedback";
 import { MarkUnreadButton } from "@/components/report/mark-unread-button";
 import { ScoreFactorsBackfill } from "@/components/report/score-factors-backfill";
 import { IntelReviewPanel } from "@/components/report/intel-review-panel";
@@ -152,7 +151,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
     intelReview = intelRow?.intel_review ?? null;
   }
 
-  const [{ count: queueCount }, attempts, feedbackRows] = await Promise.all([
+  const [{ count: queueCount }, attempts] = await Promise.all([
     // What is left after this one. Same predicate as the dashboard's pinned review row,
     // so the two surfaces cannot disagree about how much is waiting.
     supabase
@@ -175,19 +174,9 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
           .order("created_at", { ascending: true })
           .limit(1)
       : Promise.resolve({ data: null }),
-    // Whether THIS reviewer already weighed in. match_feedback is append-only, so
-    // without this read the control would stack a duplicate row on every visit.
-    supabase
-      .from("match_feedback")
-      .select("agree")
-      .eq("review_card_id", params.cardId)
-      .eq("created_by", profile.id)
-      .order("created_at", { ascending: false })
-      .limit(1),
   ]);
 
   const surfacedAt = ((attempts.data ?? []) as { created_at: string }[])[0]?.created_at ?? null;
-  const myFeedback = ((feedbackRows.data ?? []) as { agree: boolean }[])[0] ?? null;
   const remaining = queueCount ?? 0;
 
   // Concept proposal is an INTERNAL AM artifact — for a premium client (a paid deliverable
@@ -376,15 +365,14 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         }
         scoreFootnote={`Machine-scored${
           surfacedAt ? ` ${format(parseISO(surfacedAt), "MMM d")}` : ""
-        } · six factors weighted equally · your feedback tunes future scoring, not this score.`}
+        } · six factors weighted equally.`}
         // Rides in the `feedback` slot rather than earning a new prop on GrantReviewConsole:
-        // that component is shared pixel-for-pixel with the portal, and no CONTROL in this slot
-        // is ever the client's (a portal member has no profiles row to write feedback against,
-        // and marking unread is the reviewer's own action). The portal does populate the slot,
-        // but only with the invisible <MarkRead> stamp -- never anything pressable.
+        // that component is shared pixel-for-pixel with the portal. The staff score-feedback
+        // (Agree/Disagree) control was removed; what remains here is the reviewer's own
+        // "mark unread" action plus the invisible read stamp. The portal populates the slot
+        // with only the <MarkRead> stamp -- never anything pressable.
         feedback={
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <ScoreFeedback cardId={params.cardId} initial={myFeedback} />
+          <div className="mt-3 flex items-center justify-between gap-3 border-t border-white/[0.14] pt-3">
             <MarkUnreadButton cardId={params.cardId} backHref={backHref} />
             {/* Opening this page is the read. Renders nothing; the route it calls also
                 revalidates the report list, so going back shows the row already grey. */}
