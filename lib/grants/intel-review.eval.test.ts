@@ -342,9 +342,12 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
       // VOCA's mirror of JAG #2: the state administering agency IS the direct VOCA recipient, so QA must NOT
       // demote it. Runs discovery ON (the seeded flag-on path, same as #4), so the VOCA pair proves the pass
       // DISCRIMINATES — demote the subgrant-only nonprofit (#4), affirm the administering agency (here) —
-      // rather than blanket-demoting 16.575. This is the no-false-demote guard the 16.575 flip rests on. Bar:
-      // NOT demoted in the majority of runs (a from-nothing "unverified" is acceptable — it does not change
-      // the score; a DEMOTE here is the over-demote failure).
+      // rather than blanket-demoting 16.575. This is the no-false-demote guard the 16.575 flip rests on.
+      // Bar: NOT demoted in EVERY run (zero tolerance) — STRICTER than the majority bar on the non-apply
+      // affirm cases (5/6). 16.575 is apply-eligible, so a SINGLE false demote of a genuine state
+      // administering agency would lower a real recipient's LIVE score; a majority bar would pass a
+      // 1-in-3 false demote (Codex #461). A from-nothing "unverified" is still acceptable — it does not
+      // change the score; only a DEMOTE/flag is the over-demote failure this must reject outright.
       const results = await runN(RUNS, () =>
         runIntelReview(
           card({
@@ -365,7 +368,7 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
       const notDemoted = results.map((r) => r.verdict !== "demote" && r.verdict !== "flag");
       console.log("[intel-eval] VOCA-state verdicts:", results.map((r) => `${r.verdict}${r.qa_fit_score != null ? `→${r.qa_fit_score}` : ""}`).join(", "));
       console.log("[intel-eval] VOCA-state summaries:", results.map((r) => r.summary));
-      expect.soft(majority(notDemoted), "QA must NOT over-demote the state VOCA administering agency (the genuine direct recipient)").toBe(true);
+      expect.soft(notDemoted.every(Boolean), "QA must NOT over-demote the state VOCA administering agency in ANY run — 16.575 is apply-eligible, so one false demote lowers a real recipient's live score (zero-tolerance guard)").toBe(true);
     },
     RUNS * 240_000,
   );
