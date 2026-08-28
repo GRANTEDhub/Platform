@@ -28,6 +28,8 @@ export function ConceptCard({
   status,
   anchorHref,
   overdue,
+  showConcept,
+  rerun = null,
 }: {
   cardId: string;
   status: ConceptProposalStatus | null;
@@ -37,6 +39,14 @@ export function ConceptCard({
   // is the cheapest of the three gated actions to undo, but it is the one that usually
   // comes FIRST in the workflow — so catching it here is what stops the other two.
   overdue: OverdueGateConfig;
+  // Whether to render the concept-proposal content (status + description + Generate/View-Edit).
+  // The box is now the "IntellEngine" actions home, mounted whenever showConcept OR the QA
+  // re-run is available; a self-serve client's card gets the box for the re-run alone, with no
+  // concept content, so this gate hides the concept half in that case.
+  showConcept: boolean;
+  // The IntellEngine grant-match re-run control (staff, showIntel), rendered below Generate.
+  // Null when QA isn't available for this card.
+  rerun?: React.ReactNode | null;
 }) {
   const router = useRouter();
   // IN-FLIGHT POST ONLY. This used to be left true forever on purpose, on the theory
@@ -75,62 +85,70 @@ export function ConceptCard({
     >
       <div className="flex items-center gap-[9px]">
         <Sparkles className="h-3.5 w-3.5 shrink-0" style={{ color: BRAND.orangeDeep }} aria-hidden="true" />
-        <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-muted">Concept proposal</p>
-        <span className="ml-auto shrink-0 text-[11px] text-ink-muted">{statusWord}</span>
+        <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-muted">IntellEngine</p>
+        {showConcept && <span className="ml-auto shrink-0 text-[11px] text-ink-muted">{statusWord}</span>}
       </div>
 
-      <p className="mt-2 text-[12px] leading-[1.5] text-ink-muted">
-        {status === "ready"
-          ? "Scope, budget frame and named consortium partners — ready to review below."
-          : "Scope, budget frame and named consortium partners."}
-      </p>
+      {showConcept && (
+        <>
+          <p className="mt-2 text-[12px] leading-[1.5] text-ink-muted">
+            {status === "ready"
+              ? "Scope, budget frame and named consortium partners — ready to review below."
+              : "Scope, budget frame and named consortium partners."}
+          </p>
 
-      {status === "ready" ? (
-        // VIEW AND EDIT, side by side. Reading the draft and correcting it are the same
-        // errand often enough that having to scroll to the panel and find its Edit control
-        // was a step for nothing. The panel keeps its own Edit -- this adds a second door,
-        // it does not move the first one.
-        //
-        // BOTH ARE ANCHORS to the panel, so the scroll is native in both cases; Edit just
-        // also asks the panel to open its editor on arrival (see concept-edit-signal).
-        // View stays the wider of the two: it is the more common of the two intents.
-        <div className="mt-2.5 grid grid-cols-[1fr_auto] gap-[6px]">
-          <a
-            href={anchorHref}
-            className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-sharp border border-edge text-[12.5px] font-semibold text-brand-navy transition-colors hover:border-brand-navy/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
-          >
-            View the draft
-            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-          </a>
-          <a
-            href={anchorHref}
-            onClick={() => requestConceptEdit(cardId)}
-            className="inline-flex h-[34px] items-center justify-center gap-[6px] rounded-sharp border border-edge px-[11px] text-[12.5px] font-semibold text-brand-navy transition-colors hover:border-brand-navy/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
-          >
-            <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-            Edit
-          </a>
-        </div>
-      ) : (
-        <button
-          type="button"
-          disabled={generating}
-          onClick={() => guard(() => void generate())}
-          className="mt-2.5 inline-flex h-[34px] w-full items-center justify-center gap-[7px] rounded-sharp bg-brand-chrome text-[12.5px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
-        >
-          {generating ? (
-            <>
-              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-              Generating…
-            </>
+          {status === "ready" ? (
+            // VIEW AND EDIT, side by side. Reading the draft and correcting it are the same
+            // errand often enough that having to scroll to the panel and find its Edit control
+            // was a step for nothing. The panel keeps its own Edit -- this adds a second door,
+            // it does not move the first one.
+            //
+            // BOTH ARE ANCHORS to the panel, so the scroll is native in both cases; Edit just
+            // also asks the panel to open its editor on arrival (see concept-edit-signal).
+            // View stays the wider of the two: it is the more common of the two intents.
+            <div className="mt-2.5 grid grid-cols-[1fr_auto] gap-[6px]">
+              <a
+                href={anchorHref}
+                className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-sharp border border-edge text-[12.5px] font-semibold text-brand-navy transition-colors hover:border-brand-navy/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+              >
+                View the draft
+                <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+              </a>
+              <a
+                href={anchorHref}
+                onClick={() => requestConceptEdit(cardId)}
+                className="inline-flex h-[34px] items-center justify-center gap-[6px] rounded-sharp border border-edge px-[11px] text-[12.5px] font-semibold text-brand-navy transition-colors hover:border-brand-navy/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+              >
+                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                Edit
+              </a>
+            </div>
           ) : (
-            <>
-              <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-              {status === "error" ? "Retry concept proposal" : "Generate concept proposal"}
-            </>
+            <button
+              type="button"
+              disabled={generating}
+              onClick={() => guard(() => void generate())}
+              className="mt-2.5 inline-flex h-[34px] w-full items-center justify-center gap-[7px] rounded-sharp bg-brand-chrome text-[12.5px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+            >
+              {generating ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  Generating…
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+                  {status === "error" ? "Retry concept proposal" : "Generate concept proposal"}
+                </>
+              )}
+            </button>
           )}
-        </button>
+        </>
       )}
+
+      {/* The IntellEngine grant-match re-run. Under a hairline when it sits below the concept
+          content; on its own (a self-serve card with no concept half) it just gets a small gap. */}
+      {rerun && <div className={showConcept ? "mt-[13px] border-t border-edge pt-[11px]" : "mt-2.5"}>{rerun}</div>}
       {gate}
     </section>
   );

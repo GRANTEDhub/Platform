@@ -7,7 +7,7 @@ import { ConceptProposalPanel } from "@/components/report/concept-proposal-panel
 import { ConceptCard } from "@/components/report/concept-card";
 import { MarkUnreadButton } from "@/components/report/mark-unread-button";
 import { ScoreFactorsBackfill } from "@/components/report/score-factors-backfill";
-import { IntelReviewPanel } from "@/components/report/intel-review-panel";
+import { IntelRerunButton } from "@/components/report/intel-rerun-button";
 import type { IntelReview } from "@/lib/grants/intel-review";
 import { GrantReviewConsole, type ReviewKeyDetail, type ReviewMeta } from "@/components/report/grant-review-console";
 import { AlertSend } from "@/app/(app)/review/[id]/alert-send";
@@ -339,14 +339,11 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         // rather than admins only: the reviewer looking at the empty panel is the person
         // who needs the breakdown, and the route writes nothing but the six ratings.
         scoreFactors={factors.unscored ? <ScoreFactorsBackfill cardId={params.cardId} /> : null}
-        // On-demand IntellEngine QA: annotate-only (never changes the score), so it needs no
-        // processing gate — just admin + a still-pending, not-yet-released card. Raw verdict is
-        // staff-only; the portal never passes this slot.
-        intel={showIntel ? <IntelReviewPanel cardId={params.cardId} initial={intelReview} /> : null}
         // The client-safe QA badge (applied score change + grounded sources, or a "couldn't verify"
         // note) — data, not a control, so it renders on BOTH this staff page and the client portal
-        // detail. Null when no QA verdict is in effect (today). The RAW analyst note is the separate
-        // staff-only `intel` slot above; this carries only the applied projection.
+        // detail. Null when no QA verdict is in effect (today). It carries the applied projection;
+        // the RAW analyst verdict is no longer shown on the card (the on-demand QA control now lives
+        // in the IntellEngine box's re-run — see the `concept` slot below).
         qaVerdict={resolved.qa}
         fitScore={effFit}
         verdict={FIT_BAND[effFit].label}
@@ -420,13 +417,20 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
             </div>
           )
         }
+        // The IntellEngine box: home for the IntellEngine actions — Generate concept proposal
+        // (showConcept) + the grant-match re-run (showIntel). Mounted whenever EITHER applies, so
+        // a self-serve client's card (showIntel true, showConcept false) still gets the box for
+        // the re-run alone. The re-run is the on-demand QA control relocated out of the navy Fit
+        // Score box; the portal never passes this slot, so it stays staff-only.
         concept={
-          showConcept ? (
+          showConcept || showIntel ? (
             <ConceptCard
               cardId={params.cardId}
               status={conceptProposal?.status ?? null}
               anchorHref="#concept"
               overdue={overdueConfig}
+              showConcept={showConcept}
+              rerun={showIntel ? <IntelRerunButton cardId={params.cardId} hasVerdict={intelReview !== null} /> : null}
             />
           ) : null
         }

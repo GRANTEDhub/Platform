@@ -30,12 +30,12 @@ import { ALLOWABLE_USES_FALLBACK, type AllowableUses } from "@/lib/grants/allowa
 // SHARED WITH THE CLIENT PORTAL. app/portal/grants/[id] mounts this same component, by
 // deliberate instruction: the two screens are meant to be pixel-identical so a change to
 // one lands on both. Every actionable difference is already a passed-in child —
-// `decision`, `concept`, `feedback`, `scoreFactors`, `intel` — so the portal supplies its
-// own and passes null for what a client must not have (`intel` defaults to null, so the
-// portal, which never passes it, can't render the raw QA verdict). NOTHING in the frame
-// itself forks on actor, and it should stay that way: the moment
-// this file grows an `isClient` branch, the two screens start drifting and the reason for
-// sharing it is gone.
+// `decision`, `concept`, `feedback`, `scoreFactors` — so the portal supplies its own and
+// passes null (or a client-safe variant) for what a client must not have. Staff-only actions
+// (Generate concept proposal, the IntellEngine QA re-run) live in the `concept` slot, which
+// the portal populates with the client's read-only view instead. NOTHING in the frame itself
+// forks on actor, and it should stay that way: the moment this file grows an `isClient` branch,
+// the two screens start drifting and the reason for sharing it is gone.
 
 export interface ReviewMeta {
   label: string;
@@ -70,7 +70,6 @@ export function GrantReviewConsole({
   rationale,
   factors,
   scoreFactors,
-  intel = null,
   qaVerdict = null,
   fitScore,
   verdict,
@@ -125,18 +124,14 @@ export function GrantReviewConsole({
   // passed in, and null on any surface that should not be able to spend a scorer call.
   // Rendered ONLY in the unscored branch — a scored card never sees it.
   scoreFactors: React.ReactNode | null;
-  // The on-demand IntellEngine QA control + verdict, in the ScoreCard footer under the decision. Same
-  // default-null staff-only pattern. Annotate-only — it writes a QA note and never changes the score —
-  // but it is RAW internal QA voice, so it stays staff-side by construction (the portal cannot pass it,
-  // and no client-facing query selects intel_review).
-  intel?: React.ReactNode | null;
   // The APPLIED, client-safe QA projection (migration 0088), as DATA — not a control, so it renders on
   // both this staff screen and the portal without forking on actor. `fitScore`/`factors` above already
   // reflect an applied+fresh override (resolveFit on the page); this only drives the small provenance
   // note under the fit factors — the grounded .gov sources on an applied verdict, or a "couldn't verify"
-  // line. The RAW analyst voice never rides here (that is the staff-only `intel` slot / card_intel_reviews).
+  // line. The RAW analyst voice never rides on the card (it stays in the staff-only card_intel_reviews;
+  // the on-demand QA re-run control now lives in the IntellEngine box, not this screen's frame).
   // The PORTAL passes only `applied` verdicts (sources); the "couldn't verify" states are staff-passed, so
-  // a client never sees QA's internal plumbing — the same "pages decide what to pass" pattern as `intel`.
+  // a client never sees QA's internal plumbing — the same "pages decide what to pass" pattern as the other slots.
   qaVerdict?: QaVerdictView | null;
   fitScore: 1 | 2 | 3;
   verdict: string;
@@ -209,7 +204,7 @@ export function GrantReviewConsole({
           </div>
 
           <div className="flex min-h-0 flex-col gap-3.5">
-            <ScoreCard score={fitScore} verdict={verdict} consequence={consequence} feedback={feedback} decision={decision} intel={intel} />
+            <ScoreCard score={fitScore} verdict={verdict} consequence={consequence} feedback={feedback} decision={decision} />
             {concept}
             <KeyDetailsCard details={keyDetails} sourceUrl={sourceUrl} />
           </div>
@@ -710,7 +705,6 @@ function ScoreCard({
   consequence,
   feedback,
   decision,
-  intel,
 }: {
   score: 1 | 2 | 3;
   verdict: string;
@@ -718,13 +712,9 @@ function ScoreCard({
   feedback: React.ReactNode | null;
   // "Your decision" — the terminal action bar (staff release / send-alert, or the portal's
   // Pursue/Save/Pass). It lives INSIDE the fit-score box, under the feedback, so the score
-  // and the call the reviewer makes on it sit together and the box grows to fit them (the
-  // same way it already grows for the QA panel below). Its own bordered white section stands
-  // it apart from the dark chrome, so no divider rule is added above it.
+  // and the call the reviewer makes on it sit together and the box grows to fit them. It renders
+  // dark-themed content (no nested white card), under a thin rule.
   decision: React.ReactNode;
-  // Staff-only IntellEngine QA control + verdict. Null on the portal (the console defaults it
-  // to null and the portal never passes it), so this block collapses to nothing there.
-  intel?: React.ReactNode | null;
 }) {
   return (
     <section className="shrink-0 rounded-sharp bg-brand-chrome px-[19px] pb-[15px] pt-4 text-white">
@@ -746,12 +736,10 @@ function ScoreCard({
         </div>
       </div>
       {feedback}
-      {/* "Your decision" and IntellEngine Intel each sit under a thin rule as native dark-panel
-          sections (no nested white card) — the decision components render dark-themed content,
-          not their own bordered surface. Null (portal, or a card that can't be acted on)
-          collapses the block. */}
+      {/* "Your decision" sits under a thin rule as a native dark-panel section (no nested white
+          card) — the decision components render dark-themed content, not their own bordered
+          surface. Null (a card that can't be acted on) collapses the block. */}
       {decision && <div className="mt-3 border-t border-white/[0.14] pt-3">{decision}</div>}
-      {intel && <div className="mt-3 border-t border-white/[0.14] pt-3">{intel}</div>}
     </section>
   );
 }
