@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { runIntelReview, type IntelCard } from "./intel-review";
+import { FORBIDDEN_NARRATIVE_MARKERS } from "./fit-narrative";
 import type { Grant, Client } from "@/types/database";
 
 // ── IntellEngine QA eval — the on-demand Intel pass ────────────────────────────────────────────────
@@ -136,7 +137,9 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
           card(),
           grant(),
           client({ name: "Mississippi County", org_type: "local_government", location_state: "AR" }),
-          { discovery: true },
+          // narrative ON so the SAME grounded run that lands the demote also writes the client paragraph —
+          // the strongest no-regression check (the narrative field must not perturb the verdict/score).
+          { discovery: true, narrative: true },
         ),
       );
       const notAffirmed = results.map((r) => r.verdict !== "affirm");
@@ -181,6 +184,25 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
       expect.soft(majority(demoted), "the redesigned guard must APPLY a grounded demote (not downgrade to unverified for lack of a verbatim quote) in the majority of runs").toBe(true);
       expect.soft(majority(notAffirmed), "must NOT affirm a disparate/asterisk county as a clean prime").toBe(true);
       expect.soft(majority(reasoned), "the Intel summary should name the allocation reality").toBe(true);
+
+      // CLIENT NARRATIVE (Step C) — proven on the SAME runs. On a grounded demote the pass also writes ONE
+      // client-safe paragraph that will replace the engine fit-factor text. TWO-PART FAITHFULNESS GUARD:
+      //   (a) it preserves the grounded HARD fact (never softens "cannot prime" → "may face challenges");
+      //   (b) it carries NO internal-framing / scoring machinery (the runtime guard already nulls a leak,
+      //       so a present narrative is clean by construction — we assert it anyway to catch a guard hole).
+      // NO-REGRESSION is already established above: narrative:true did not stop the demote from landing.
+      const demoteRuns = results.filter((r) => r.verdict === "demote");
+      console.log("[intel-eval] JAG-county narratives:", demoteRuns.map((r) => r.narrative));
+      const narrated = demoteRuns.map((r) => !!r.narrative);
+      const faithful = demoteRuns.map(
+        (r) => !!r.narrative && /cannot|asterisk|disparate|\bMOU\b|prohibit|through the (state|county)|fiscal agent|not.*(a )?direct/i.test(r.narrative),
+      );
+      const clean = demoteRuns.map(
+        (r) => !r.narrative || FORBIDDEN_NARRATIVE_MARKERS.every((m) => !r.narrative!.toLowerCase().includes(m)),
+      );
+      expect.soft(demoteRuns.length === 0 || majority(narrated), "a grounded demote should carry a client narrative in the majority of runs").toBe(true);
+      expect.soft(demoteRuns.length === 0 || majority(faithful), "the narrative must preserve the grounded hard fact, not soften it (rule a)").toBe(true);
+      expect.soft(clean.every(Boolean), "the narrative must carry NO internal-framing / scoring-machinery language (rule b)").toBe(true);
     },
     RUNS * 200_000,
   );
@@ -193,12 +215,18 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
           card({ why_this_org: ["State administering agency; direct JAG recipient."], reasoning_context: { fit_score_derivation: "State is the direct recipient / State Administering Agency for JAG." } }),
           grant({ title: "Edward Byrne Memorial Justice Assistance Grant (JAG) Program — State", eligible_entity_types: ["states", "state administering agencies"] }),
           client({ name: "State of Arkansas", org_type: "state_government", location_state: "AR" }),
-          { discovery: false },
+          { discovery: false, narrative: true },
         ),
       );
       console.log("[intel-eval] JAG-state verdicts:", results.map((r) => r.verdict).join(", "));
       const notDemoted = results.map((r) => r.verdict !== "demote");
       expect.soft(majority(notDemoted), "a state IS a direct JAG recipient — QA must not demote it").toBe(true);
+      // Step C: the narrative rides an APPLIED DEMOTE only. A genuine affirm (or any non-demote) carries no
+      // client narrative — the card keeps its engine paragraph. (Guards against the field leaking onto a match
+      // QA did NOT change.)
+      for (const r of results) {
+        if (r.verdict !== "demote") expect.soft(r.narrative, "a non-demote verdict must carry no client narrative").toBeNull();
+      }
     },
     RUNS * 200_000,
   );

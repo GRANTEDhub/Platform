@@ -240,7 +240,7 @@ describe("finalizeIntel — the fail-safe (grounding + refute) + shaping", () =>
     });
     expect(Object.keys(r).sort()).toEqual(
       [
-        "confidence", "engine_fit_score", "evidence", "fetched", "searched", "model", "qa_factor_scores",
+        "confidence", "engine_fit_score", "evidence", "fetched", "searched", "model", "narrative", "qa_factor_scores",
         "qa_fit_score", "refute_survived", "reviewed_at", "reviewed_by", "summary", "unverified", "verdict",
       ].sort(),
     );
@@ -428,6 +428,57 @@ describe("runIntelReview — loop + guard + refute together, injected seams", ()
     expect(r.confidence).toBe("high"); // an APPLIED demote keeps the model's confidence
     expect(r.fetched.some((f) => f.ok)).toBe(true);
     expect(r.reviewed_by).toBe("staff-1");
+  });
+
+  it("narrative:true → a clean client narrative on an applied demote is kept (guarded)", async () => {
+    const clean =
+      "This program is built for county governments like this one, but the FY2026 allocation table lists it " +
+      "with an asterisk, so it cannot apply as a standalone prime — the path is a formal MOU with the named " +
+      "city as fiscal agent. This is a conditional 2, not a 3.";
+    const r = await runIntelReview(card, grant, client, {
+      now,
+      narrative: true,
+      callModel: fetchThenAnswer(),
+      fetcher: okFetcher(),
+      structure: async () => ({ ...demoteVerdict, narrative: clean }),
+      refute: async () => ({ supported: true, reason: "disparate" }),
+    });
+    expect(r.verdict).toBe("demote");
+    expect(r.narrative).toBe(clean);
+  });
+
+  it("narrative:true → a LEAKY narrative is nulled (fail-safe to the engine paragraph)", async () => {
+    const r = await runIntelReview(card, grant, client, {
+      now,
+      narrative: true,
+      callModel: fetchThenAnswer(),
+      fetcher: okFetcher(),
+      structure: async () => ({ ...demoteVerdict, narrative: "The engine scored a 3; position this as a partnership." }),
+      refute: async () => ({ supported: true, reason: "disparate" }),
+    });
+    expect(r.verdict).toBe("demote"); // the demote still applies — the narrative is additive
+    expect(r.qa_fit_score).toBe(1);
+    expect(r.narrative).toBeNull();
+  });
+
+  it("narrative rides an APPLIED demote only — an affirm carries none even if the model wrote one", async () => {
+    const r = await runIntelReview(card, grant, client, {
+      now,
+      narrative: true,
+      callModel: fetchThenAnswer(),
+      fetcher: okFetcher(),
+      structure: async () => ({
+        verdict: "affirm" as const,
+        confidence: "high" as const,
+        qa_fit_score: null,
+        summary: "holds up",
+        narrative: "A perfectly clean client paragraph.",
+        evidence: [ev(FETCHED)],
+      }),
+      refute: async () => ({ supported: true, reason: "n/a" }),
+    });
+    expect(r.verdict).toBe("affirm");
+    expect(r.narrative).toBeNull();
   });
 
   it("a grounded demote the refute does NOT confirm STILL applies (refute is advisory — PR F)", async () => {

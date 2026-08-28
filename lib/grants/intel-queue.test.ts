@@ -94,7 +94,7 @@ const now = () => NOW;
 
 const okReview = (verdict: IntelReview["verdict"] = "affirm", searches = 0): IntelReview => ({
   verdict, confidence: "high", engine_fit_score: 3, qa_fit_score: verdict === "affirm" ? 3 : null, qa_factor_scores: null,
-  summary: "s", evidence: [], fetched: [], searched: Array(searches).fill("q"), refute_survived: null,
+  summary: "s", narrative: null, evidence: [], fetched: [], searched: Array(searches).fill("q"), refute_survived: null,
   unverified: false, model: "claude-opus-5", reviewed_by: null, reviewed_at: "T",
 });
 
@@ -363,7 +363,7 @@ const JAG_PDF = "https://bja.ojp.gov/funding/fy26-jag-local-allocations-ar.pdf";
 const demoteReview = (over: Partial<IntelReview> = {}): IntelReview => ({
   verdict: "demote", confidence: "high", engine_fit_score: 3, qa_fit_score: 2,
   qa_factor_scores: { seat_role: { rating: "weak", rationale: "asterisk — cannot prime" } } as IntelReview["qa_factor_scores"],
-  summary: "asterisk county", evidence: [],
+  summary: "asterisk county", narrative: null, evidence: [],
   fetched: [{ url: JAG_PDF, ok: true, finalUrl: JAG_PDF, truncated: false, fetchedAt: "T" }],
   searched: [], refute_survived: true, unverified: false, model: "claude-opus-5", reviewed_by: null, reviewed_at: "T",
   ...over,

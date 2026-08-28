@@ -54,6 +54,7 @@ import { clientContextForJudge } from "@/lib/grants/subseat-routing";
 import { allocationSourcesFor } from "@/lib/grants/allocation-sources";
 import { formulaProgramTag } from "@/lib/grants/formula-programs";
 import { intelWebSearchEnabled, intelPhase1Config, serverSearchQueries } from "@/lib/grants/intel-web-search";
+import { fitNarrativeEnabled, structureConfig, narrativeGuard } from "@/lib/grants/fit-narrative";
 import type { Grant, Client, FactorScores } from "@/types/database";
 
 // Opus, exclusively, for this path — a low-volume verification pass where quality matters and the
@@ -116,6 +117,11 @@ export interface IntelReview {
   // verdict APPLIES — so the displayed factor bars/rationale stay consistent with the new score.
   qa_factor_scores: Partial<FactorScores> | null;
   summary: string;
+  // CLIENT-SAFE integrated match paragraph (Step C, FIT_NARRATIVE_ENABLED). Non-null ONLY on an applied
+  // demote whose narrative passed the framing guard — parallel to qa_factor_scores. Null on every other
+  // verdict, when the flag is off, or when the guard nulled a leaky one → the card shows the engine
+  // paragraph. Persisted + displayed in a later PR; today it is generated and stored on the verdict only.
+  narrative: string | null;
   evidence: IntelEvidence[];
   fetched: FetchAuditRecord[];
   // The web_search queries the pass actually issued (server-side web_search). Empty when discovery is off
@@ -155,6 +161,9 @@ interface RawVerdict {
   qa_fit_score: number | null;
   qa_factor_scores?: Partial<FactorScores> | null;
   summary: string;
+  // The client-safe narrative the phase-2 model wrote (present only when FIT_NARRATIVE_ENABLED added the
+  // field to the tool schema). Guarded + demote-gated in finalizeIntel before it reaches IntelReview.
+  narrative?: string | null;
   evidence: IntelEvidence[];
 }
 
@@ -440,6 +449,7 @@ export function finalizeIntel(opts: {
       refute_survived: null,
       unverified: true,
       summary: "QA ran but produced no usable verdict — manual check needed.",
+      narrative: null,
       evidence: [],
     };
   }
@@ -533,6 +543,12 @@ export function finalizeIntel(opts: {
   const qa_factor_scores: Partial<FactorScores> | null =
     verdict === "demote" ? sanitizeFactorScores(parsed.qa_factor_scores) : null;
 
+  // The client-safe narrative rides ONLY an applied demote (a real, displayed score change) — the same gate
+  // as qa_factor_scores — and only when it passes the framing guard. Every other verdict, an off flag, or a
+  // leaky/absent narrative → null → the card shows today's engine paragraph. Additive: never touches the
+  // verdict/score/factors, so it cannot regress the demote (the eval's no-regression property).
+  const narrative = verdict === "demote" ? narrativeGuard(parsed.narrative) : null;
+
   return {
     ...base,
     verdict,
@@ -542,6 +558,7 @@ export function finalizeIntel(opts: {
     refute_survived,
     unverified,
     summary: summary || "(no summary)",
+    narrative,
     evidence,
   };
 }
@@ -614,21 +631,29 @@ function realCallModel(discovery: boolean, searched: string[]): CallModel {
   };
 }
 
-// The real phase-2 structured call (forced tool — the generic-nexus pattern).
-async function realStructure(analysisText: string, audit: FetchAuditRecord[], timeoutMs: number): Promise<RawVerdict | null> {
+// The real phase-2 structured call (forced tool — the generic-nexus pattern). `narrativeOn`
+// (FIT_NARRATIVE_ENABLED) adds the client-safe `narrative` field to the tool + the writing spec to the
+// system; OFF is byte-identical to the pre-C call (structureConfig returns the base tool/system unchanged).
+async function realStructure(
+  analysisText: string,
+  audit: FetchAuditRecord[],
+  timeoutMs: number,
+  narrativeOn = false,
+): Promise<RawVerdict | null> {
   const anthropic = getAnthropicClient();
   const fetchedList =
     audit.map((a) => `  - ${a.ok ? "OK" : "FAILED"} ${a.finalUrl ?? a.url}${a.ok ? "" : ` (${a.reason})`}`).join("\n") ||
     "  (no fetches were made)";
+  const { tool: submitTool, system } = structureConfig(narrativeOn, SUBMIT_TOOL, STRUCTURE_SYSTEM_PROMPT);
   const res = await anthropic.messages.create(
     {
       model: INTEL_MODEL,
-      // Headroom so a rich demote (summary + changed-factor rationales) is not truncated mid-tool-call,
-      // which returns a verdict-less result and forces a needless "no usable verdict" (PR F, (d)).
+      // Headroom so a rich demote (summary + changed-factor rationales + client narrative) is not truncated
+      // mid-tool-call, which returns a verdict-less result and forces a needless "no usable verdict".
       max_tokens: INTEL_STRUCTURE_MAX_TOKENS,
       // No `temperature`: claude-opus-5 rejects it (see realCallModel).
-      system: STRUCTURE_SYSTEM_PROMPT,
-      tools: [SUBMIT_TOOL],
+      system,
+      tools: [submitTool],
       tool_choice: { type: "tool", name: SUBMIT_TOOL.name },
       messages: [
         {
@@ -712,6 +737,10 @@ export interface RunIntelOptions {
   // Web-search discovery (INTEL_WEB_SEARCH_ENABLED). Defaults to the flag; overridable in tests so the
   // flag-on/off context + tool set are asserted deterministically without touching process.env.
   discovery?: boolean;
+  // Client-safe fit narrative (FIT_NARRATIVE_ENABLED). Defaults to the flag; overridable in tests. When on,
+  // the phase-2 structuring call is asked for the `narrative` field and finalizeIntel guards + keeps it on
+  // an applied demote.
+  narrative?: boolean;
 }
 
 // Run the on-demand QA pass for one (card, grant, client). RETURNS an IntelReview; writes nothing.
@@ -729,11 +758,16 @@ export async function runIntelReview(
   // ONE flag read, threaded to both the context (formula note) and the call (web_search tool + addendum)
   // so they can't diverge. Off → today's fetch-only pass, byte-identical.
   const discovery = opts.discovery ?? intelWebSearchEnabled();
+  // Client-safe fit narrative (FIT_NARRATIVE_ENABLED). One flag read, bound into the phase-2 structure call
+  // so an injected test `structure` (3-arg) is unaffected and the real one gets the narrative toggle. Off →
+  // the field is never added to the tool schema, byte-identical to the pre-C structuring call.
+  const narrativeOn = opts.narrative ?? fitNarrativeEnabled();
   // Caller-held sink for the web_search queries the pass issues (server-side). Drives both the per-pass
   // search budget (realCallModel drops the tool once spent) and the stored `searched` list.
   const searched: string[] = [];
   const callModel = opts.callModel ?? realCallModel(discovery, searched);
-  const structure = opts.structure ?? realStructure;
+  const structure =
+    opts.structure ?? ((text: string, audit: FetchAuditRecord[], ms: number) => realStructure(text, audit, ms, narrativeOn));
   const refute = opts.refute ?? realRefute;
 
   // Phase 1: the bounded fetch loop. Audit records AND the fetched page bodies accumulate as fetches
