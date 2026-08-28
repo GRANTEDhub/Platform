@@ -8,7 +8,6 @@ import { ConceptCard } from "@/components/report/concept-card";
 import { ScoreFeedback } from "@/components/report/score-feedback";
 import { MarkUnreadButton } from "@/components/report/mark-unread-button";
 import { ScoreFactorsBackfill } from "@/components/report/score-factors-backfill";
-import { CardRematchButton } from "@/components/grants/card-rematch-button";
 import { IntelReviewPanel } from "@/components/report/intel-review-panel";
 import type { IntelReview } from "@/lib/grants/intel-review";
 import { GrantReviewConsole, type ReviewKeyDetail, type ReviewMeta } from "@/components/report/grant-review-console";
@@ -137,11 +136,6 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
     >();
 
   const isLead = isUnconvertedLead(client?.pipeline_stage);
-
-  // A roster episode is live on this grant (a re-shred or a whole-roster re-match). A per-card
-  // re-match during it would race runMatching's resume, so the button hides (the route also
-  // rejects it). Mirrors the Ledger's `processing` gate on the same three statuses.
-  const grantProcessing = g.status === "processing" || g.status === "queued" || g.status === "matching";
 
   // The on-demand QA verdict lives in the STAFF-ONLY card_intel_reviews table (migration 0086), not a
   // review_cards column — so a client member (who can read their own review_cards rows under 0055)
@@ -356,15 +350,6 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         // rather than admins only: the reviewer looking at the empty panel is the person
         // who needs the breakdown, and the route writes nothing but the six ratings.
         scoreFactors={factors.unscored ? <ScoreFactorsBackfill cardId={params.cardId} /> : null}
-        // Staff-only single-card re-match, in the ScoreCard footer. Admin-gated (a re-score can
-        // drop the card), and only on a still-pending, not-yet-released card that isn't mid-
-        // episode: a decided card is the human's call, a released one a client may be viewing.
-        // The portal never passes this prop, so it can only render for staff.
-        rematch={
-          isAdmin && card.decision === "pending" && !card.sme_released_at && !grantProcessing ? (
-            <CardRematchButton cardId={params.cardId} tone="dark" backHref={backHref} />
-          ) : null
-        }
         // On-demand IntellEngine QA: annotate-only (never changes the score), so it needs no
         // processing gate — just admin + a still-pending, not-yet-released card. Raw verdict is
         // staff-only; the portal never passes this slot.

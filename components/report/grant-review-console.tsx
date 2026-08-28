@@ -30,10 +30,10 @@ import { ALLOWABLE_USES_FALLBACK, type AllowableUses } from "@/lib/grants/allowa
 // SHARED WITH THE CLIENT PORTAL. app/portal/grants/[id] mounts this same component, by
 // deliberate instruction: the two screens are meant to be pixel-identical so a change to
 // one lands on both. Every actionable difference is already a passed-in child —
-// `decision`, `concept`, `feedback`, `scoreFactors`, `rematch` — so the portal supplies its
-// own and passes null for what a client must not have (`rematch` and `intel` default to null,
-// so the portal, which never passes them, can't render the staff re-match button or the raw QA
-// verdict). NOTHING in the frame itself forks on actor, and it should stay that way: the moment
+// `decision`, `concept`, `feedback`, `scoreFactors`, `intel` — so the portal supplies its
+// own and passes null for what a client must not have (`intel` defaults to null, so the
+// portal, which never passes it, can't render the raw QA verdict). NOTHING in the frame
+// itself forks on actor, and it should stay that way: the moment
 // this file grows an `isClient` branch, the two screens start drifting and the reason for
 // sharing it is gone.
 
@@ -70,7 +70,6 @@ export function GrantReviewConsole({
   rationale,
   factors,
   scoreFactors,
-  rematch = null,
   intel = null,
   qaVerdict = null,
   fitScore,
@@ -126,12 +125,7 @@ export function GrantReviewConsole({
   // passed in, and null on any surface that should not be able to spend a scorer call.
   // Rendered ONLY in the unscored branch — a scored card never sees it.
   scoreFactors: React.ReactNode | null;
-  // The single-card re-match control, rendered in the ScoreCard footer beside the feedback
-  // controls. Same staff-only pattern as scoreFactors/feedback, and OPTIONAL with a null
-  // default: the staff page passes the button, the client portal never passes it, so it can
-  // only ever render for staff. A re-score can drop the card, so it is an admin action.
-  rematch?: React.ReactNode | null;
-  // The on-demand IntellEngine QA control + verdict, in the ScoreCard footer beside re-match. Same
+  // The on-demand IntellEngine QA control + verdict, in the ScoreCard footer under the decision. Same
   // default-null staff-only pattern. Annotate-only — it writes a QA note and never changes the score —
   // but it is RAW internal QA voice, so it stays staff-side by construction (the portal cannot pass it,
   // and no client-facing query selects intel_review).
@@ -215,8 +209,7 @@ export function GrantReviewConsole({
           </div>
 
           <div className="flex min-h-0 flex-col gap-3.5">
-            <ScoreCard score={fitScore} verdict={verdict} consequence={consequence} feedback={feedback} rematch={rematch} intel={intel} />
-            {decision}
+            <ScoreCard score={fitScore} verdict={verdict} consequence={consequence} feedback={feedback} decision={decision} intel={intel} />
             {concept}
             <KeyDetailsCard details={keyDetails} sourceUrl={sourceUrl} />
           </div>
@@ -716,18 +709,21 @@ function ScoreCard({
   verdict,
   consequence,
   feedback,
-  rematch,
+  decision,
   intel,
 }: {
   score: 1 | 2 | 3;
   verdict: string;
   consequence: string | null;
   feedback: React.ReactNode | null;
-  // Staff-only re-match control, in the footer beside the feedback controls. Null on the
-  // portal (the console defaults it to null and the portal never passes it), so this whole
-  // block collapses to nothing there.
-  rematch?: React.ReactNode | null;
-  // Staff-only IntellEngine QA control + verdict, same null-on-portal collapse as rematch.
+  // "Your decision" — the terminal action bar (staff release / send-alert, or the portal's
+  // Pursue/Save/Pass). It lives INSIDE the fit-score box, under the feedback, so the score
+  // and the call the reviewer makes on it sit together and the box grows to fit them (the
+  // same way it already grows for the QA panel below). Its own bordered white section stands
+  // it apart from the dark chrome, so no divider rule is added above it.
+  decision: React.ReactNode;
+  // Staff-only IntellEngine QA control + verdict. Null on the portal (the console defaults it
+  // to null and the portal never passes it), so this block collapses to nothing there.
   intel?: React.ReactNode | null;
 }) {
   return (
@@ -750,9 +746,10 @@ function ScoreCard({
         </div>
       </div>
       {feedback}
-      {/* Re-match and IntellEngine Intel sit in the same staff-controls cluster, each a thin rule
-          under the feedback block. Null (portal, or a card that can't be acted on) collapses them. */}
-      {rematch && <div className="mt-3 border-t border-white/[0.14] pt-3">{rematch}</div>}
+      {/* The decision bar is a bordered white section, so it insets itself against the dark
+          chrome without a divider. IntellEngine Intel keeps its thin rule; null (portal, or a
+          card that can't be acted on) collapses it. */}
+      {decision && <div className="mt-3">{decision}</div>}
       {intel && <div className="mt-3 border-t border-white/[0.14] pt-3">{intel}</div>}
     </section>
   );
