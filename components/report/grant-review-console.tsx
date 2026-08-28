@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowLeft, Check, ExternalLink, Puzzle } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, ExternalLink, Puzzle } from "lucide-react";
 import { BRAND, INK, RATING } from "@/lib/brand";
 import { sanitizeRichText } from "@/lib/sanitize/html";
 import { RationaleHoverPopover } from "@/components/report/rationale-hover";
@@ -595,8 +595,17 @@ function QaVerdictNote({ qa }: { qa: QaVerdictView }) {
     const links = qa.sources.filter((u) => /^https?:\/\//i.test(u));
     if (links.length === 0) return null;
     return (
-      <div className="shrink-0 border-t border-hairline-strong px-5 py-[9px]">
-        <p className={EYEBROW}>Verified against</p>
+      // COLLAPSED BY DEFAULT — a native <details> with no `open` attribute, so the list starts
+      // closed on load (SSR-safe, no client JS). Expanded, the sources stacked down the left and
+      // left the right half empty, dominating the box height; the summary keeps the provenance one
+      // click away without the whitespace. `open:` rotates the chevron ▸ → ▾.
+      <details className="group shrink-0 border-t border-hairline-strong px-5 py-[9px]">
+        <summary
+          className={`flex cursor-pointer list-none items-center gap-1.5 ${EYEBROW} [&::-webkit-details-marker]:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60`}
+        >
+          Verified against ({links.length} source{links.length === 1 ? "" : "s"})
+          <ChevronRight className="h-3 w-3 shrink-0 transition-transform group-open:rotate-90" aria-hidden="true" />
+        </summary>
         <ul className="mt-1.5 flex flex-col gap-1">
           {links.map((url) => (
             <li key={url} className="min-w-0">
@@ -613,7 +622,7 @@ function QaVerdictNote({ qa }: { qa: QaVerdictView }) {
             </li>
           ))}
         </ul>
-      </div>
+      </details>
     );
   }
   // unverified | failed — staff-passed only (the portal never hands these through).
