@@ -81,6 +81,10 @@ export interface QaPatch {
   qa_fit_score?: number | null;
   qa_factor_scores?: FactorScores | null;
   qa_sources?: string[] | null;
+  // The client-safe integrated fit narrative (Step C). Non-null only on an applied demote whose narrative
+  // passed the framing guard at generation time; nulled by the clearing patch on every other verdict so a
+  // reversal can't leave a stale demote-narrative under a card that no longer demotes.
+  qa_narrative?: string | null;
   qa_status: "applied" | "unverified" | "none";
   qa_engine_fit_score?: number | null;
   qa_applied_at: string;
@@ -117,6 +121,9 @@ export function buildQaPatch(
       qa_fit_score: review.qa_fit_score,
       qa_factor_scores: mergedFactors,
       qa_sources: sources,
+      // Already guarded + demote-gated in finalizeIntel (null when the flag is off, the model omitted it, or
+      // narrativeGuard nulled a leaky one) → the display falls back to the engine paragraph. Verbatim here.
+      qa_narrative: review.narrative,
       qa_status: "applied",
       qa_engine_fit_score: card.fit_score, // snapshot: the read-layer ignores the override once fit_score moves
       qa_applied_at: nowIso,
@@ -129,6 +136,7 @@ export function buildQaPatch(
     qa_fit_score: null,
     qa_factor_scores: null,
     qa_sources: null,
+    qa_narrative: null,
     qa_status: review.verdict === "unverified" ? "unverified" : "none",
     qa_engine_fit_score: null,
     qa_applied_at: nowIso,

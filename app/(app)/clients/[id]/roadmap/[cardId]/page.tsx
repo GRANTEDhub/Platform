@@ -61,6 +61,7 @@ type CardRow = {
   qa_fit_score: number | null;
   qa_factor_scores: FactorScores | null;
   qa_sources: string[] | null;
+  qa_narrative: string | null;
   qa_status: string | null;
   qa_engine_fit_score: number | null;
   reasoning_context: { consortium_rationale?: string; fit_score_derivation?: string } | null;
@@ -108,7 +109,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   const { data } = await supabase
     .from("review_cards")
     .select(
-      "id, fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, qa_fit_score, qa_factor_scores, qa_sources, qa_status, qa_engine_fit_score, reasoning_context, decision, sme_released_at, sent_at, sent_to, grant_id, grants(id, source_url, title, funder, fon, assistance_listings, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status, status)",
+      "id, fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, qa_fit_score, qa_factor_scores, qa_sources, qa_narrative, qa_status, qa_engine_fit_score, reasoning_context, decision, sme_released_at, sent_at, sent_to, grant_id, grants(id, source_url, title, funder, fon, assistance_listings, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status, status)",
     )
     .eq("id", params.cardId)
     .eq("client_id", params.id)
@@ -233,6 +234,9 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
     lead: firstSentences(why[0] ?? card.concept_synopsis, 2),
     blocking: blockingReason(factors, effFit, { calibrated }),
     mitigation: firstSentences(card.reasoning_context?.consortium_rationale, 2),
+    // Step C: the QA client-safe narrative REPLACES the three pieces above when present (applied+fresh only,
+    // via resolveFit's staleness guard). Null otherwise → the assembled paragraph renders as today.
+    narrative: resolved.narrative,
   };
 
   const days = deadlineDaysLeft(g.submission_deadline);
