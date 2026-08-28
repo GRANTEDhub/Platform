@@ -9,6 +9,16 @@ import { BRAND } from "@/lib/brand";
 import { AlertSend } from "@/app/(app)/review/[id]/alert-send";
 import { useOverdueGate, type OverdueGateConfig } from "./overdue-gate";
 
+// Dark-panel tokens. This bar now renders INSIDE the fit-score box (bg-brand-chrome navy) as a
+// native section of it — no white card of its own — so its chrome is styled on navy, matching the
+// ScoreCard eyebrow/body (grant-review-console.tsx). Overlays it spawns (the AlertSend modal, the
+// RecallDropdown menu) are portal-rendered on their own light surface and keep the light vocabulary.
+const D_EYEBROW = "text-[10px] font-bold uppercase tracking-[0.13em] text-white/[0.55]";
+const D_BODY = "mt-2 text-[12.5px] leading-[1.55] text-white/[0.72]";
+const D_NOTE = "mt-2 text-[11.5px] leading-[1.5] text-white/[0.55]";
+const D_OUTLINE_BTN =
+  "inline-flex h-8 items-center gap-1.5 rounded-sharp border border-white/25 px-3 text-[12.5px] font-semibold text-white/85 transition-colors hover:border-white/45 hover:text-white disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome";
+
 // "Your decision" — staff's Gate-2 control for an account-managed client (0059), and the
 // terminal act of the grant review screen. The call here is "release to the client", not
 // a pursue decision: the client makes that later, on their own copy of this page.
@@ -146,13 +156,11 @@ export function ReleaseToClientBar({
   // read. Local state, so it clears the moment you navigate.
   if (recalled) {
     return (
-      <section className="shrink-0 rounded-sharp border border-edge bg-white px-[19px] pb-4 pt-[15px]">
-        <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-muted">Your decision</p>
-        <p className="mt-2 text-[12.5px] leading-[1.55] text-ink-muted">
-          Recalled — this grant is back in Awaiting release for another pass.
-        </p>
+      <div>
+        <p className={D_EYEBROW}>Your decision</p>
+        <p className={D_BODY}>Recalled — this grant is back in Awaiting release for another pass.</p>
         {recalledDraft && (
-          <p className="mt-2 text-[11.5px] leading-[1.5] text-ink-muted">
+          <p className={D_NOTE}>
             The attached {recalledDraft === "complete" ? "completed" : recalledDraft} proposal draft was
             deleted with it.
           </p>
@@ -161,11 +169,11 @@ export function ReleaseToClientBar({
             than left for the reader to wonder about. grant_alerts keeps the record; a
             null date means no alert email ever went out (a passed card that was never
             released, or a release the send gate suppressed) — never reported as a send. */}
-        <p className="mt-2 text-[11.5px] leading-[1.5] text-ink-muted">
+        <p className={D_NOTE}>
           {recalledEmailedAt ? (
             <>
               The client was emailed on{" "}
-              <strong className="font-semibold text-brand-navy">
+              <strong className="font-semibold text-white">
                 {new Date(recalledEmailedAt).toLocaleDateString("en-US", {
                   year: "numeric",
                   month: "short",
@@ -178,13 +186,10 @@ export function ReleaseToClientBar({
             "No alert email had gone out, so nothing reached them."
           )}
         </p>
-        <Link
-          href={backHref}
-          className="mt-3 inline-flex h-8 items-center rounded-sharp border border-edge px-3 text-[12.5px] font-semibold text-brand-navy transition-colors hover:border-brand-navy/30"
-        >
+        <Link href={backHref} className={`mt-3 ${D_OUTLINE_BTN}`}>
           Back to the Grant Report
         </Link>
-      </section>
+      </div>
     );
   }
 
@@ -194,24 +199,24 @@ export function ReleaseToClientBar({
   // files it under Passed -- so "Recall to review queue" (un-pass) is the honest label. ──
   if (passed || released) {
     return (
-      <section className="shrink-0 rounded-sharp border border-edge bg-white px-[19px] pb-4 pt-[15px]">
-        <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-muted">Your decision</p>
-        <p className="mt-2 text-[12.5px] leading-[1.55] text-ink-muted">
+      <div>
+        <p className={D_EYEBROW}>Your decision</p>
+        <p className={D_BODY}>
           {passed
             ? "Passed — this grant sits in the Passed tab, out of Awaiting release."
             : "Released — the client now sees this in their own Grant Alerts."}
         </p>
 
-        <div className="mt-3 border-t border-hairline-strong pt-3">
+        <div className="mt-3 border-t border-white/[0.14] pt-3">
           {draftBlock && (
             // Names the draft's STAGE on purpose. Deleting a completed proposal is a
             // different decision from deleting a scoping stub, and neither can be undone.
             <div className="mb-2.5">
-              <p className="text-[12px] leading-[1.5]" style={{ color: BRAND.reject }}>
+              <p className="text-[12px] leading-[1.5] text-orange-200">
                 A {draftBlock.status === "complete" ? "completed" : draftBlock.status} proposal draft is
                 attached to this grant in IntellEngine. Delete it to recall?
               </p>
-              <p className="mt-1 text-[11px] leading-[1.45] text-ink-muted">
+              <p className="mt-1 text-[11px] leading-[1.45] text-white/[0.55]">
                 Deleting the proposal cannot be undone.
               </p>
               <div className="mt-2 flex items-center gap-2">
@@ -229,7 +234,7 @@ export function ReleaseToClientBar({
                   type="button"
                   disabled={busy}
                   onClick={() => setDraftBlock(null)}
-                  className="inline-flex h-8 items-center rounded-sharp border border-edge px-3 text-[12.5px] font-medium text-ink-muted transition-colors hover:border-brand-navy/25 hover:text-brand-navy disabled:opacity-60"
+                  className={D_OUTLINE_BTN}
                 >
                   Keep it
                 </button>
@@ -250,23 +255,16 @@ export function ReleaseToClientBar({
             onRecall={() => void recall()}
           />
         </div>
-        {error && (
-          <p className="mt-2 text-[11.5px] leading-[1.45]" style={{ color: BRAND.reject }}>
-            {error}
-          </p>
-        )}
-      </section>
+        {error && <p className="mt-2 text-[11.5px] leading-[1.45] text-red-300">{error}</p>}
+      </div>
     );
   }
 
   // ── AWAITING RELEASE: the live send/pass control. ──
   return (
-    <section
-      className="shrink-0 rounded-sharp border border-edge bg-white px-[19px] pb-4 pt-[15px]"
-      style={{ borderTopWidth: "3px", borderTopColor: BRAND.orange }}
-    >
-      <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-muted">Your decision</p>
-      <p className="mt-2 text-[12.5px] leading-[1.55] text-ink-muted">
+    <div>
+      <p className={D_EYEBROW}>Your decision</p>
+      <p className={D_BODY}>
         Release to the client&apos;s Grant Alerts with the one-page PDF — edit the note before it goes — or pass to
         archive it now.
       </p>
@@ -276,7 +274,7 @@ export function ReleaseToClientBar({
           type="button"
           disabled={busy}
           onClick={() => guard(() => setMode("alert"))}
-          className="inline-flex h-[42px] w-full items-center justify-center gap-2 rounded-sharp bg-brand-orangeFill text-[14px] font-semibold text-white transition-colors duration-[120ms] hover:bg-brand-orangeFillHover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+          className="inline-flex h-[42px] w-full items-center justify-center gap-2 rounded-sharp bg-brand-orangeFill text-[14px] font-semibold text-white transition-colors duration-[120ms] hover:bg-brand-orangeFillHover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome"
         >
           Edit &amp; Send Alert
         </button>
@@ -287,16 +285,15 @@ export function ReleaseToClientBar({
           type="button"
           disabled={busy}
           onClick={() => setShowPass(true)}
-          className="mt-[9px] inline-flex h-[38px] w-full items-center justify-center rounded-sharp border text-[13px] font-semibold transition-colors duration-[120ms] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
-          style={{ borderColor: "rgba(180,70,47,0.3)", color: BRAND.reject }}
+          className="mt-[9px] inline-flex h-[38px] w-full items-center justify-center rounded-sharp border border-white/25 text-[13px] font-semibold text-orange-200 transition-colors duration-[120ms] hover:border-white/40 hover:text-orange-100 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome"
         >
           Pass
         </button>
       ) : (
         // #6-console: a REQUIRED reason before the pass commits. The confirm stays disabled
         // until a non-empty reason is entered; the reason is the staff calibration signal.
-        <div className="mt-[9px] space-y-2 rounded-sharp border border-edge bg-brand-cream/40 p-3">
-          <p className="text-[12px] font-medium leading-[1.5] text-brand-navy">
+        <div className="mt-[9px] space-y-2 rounded-sharp border border-white/[0.12] bg-white/[0.05] p-3">
+          <p className="text-[12px] font-medium leading-[1.5] text-white/85">
             Why pass? This tunes the client&apos;s future matches — tell us what&apos;s off so the engine sends
             fewer like it.
           </p>
@@ -306,7 +303,7 @@ export function ReleaseToClientBar({
             rows={2}
             autoFocus
             placeholder="e.g. wrong geography, no capacity this cycle, equipment-only"
-            className="w-full rounded-sharp border border-input bg-white px-3 py-2 text-[13px] outline-none focus:border-brand-navy/35"
+            className="w-full rounded-sharp border border-white/20 bg-white/10 px-3 py-2 text-[13px] text-white placeholder:text-white/40 outline-none focus:border-white/45"
           />
           <div className="flex items-center gap-2">
             <button
@@ -326,7 +323,7 @@ export function ReleaseToClientBar({
                 setShowPass(false);
                 setPassReason("");
               }}
-              className="inline-flex h-8 items-center rounded-sharp border border-edge px-3 text-[12.5px] font-medium text-ink-muted transition-colors hover:border-brand-navy/25 hover:text-brand-navy disabled:opacity-60"
+              className={D_OUTLINE_BTN}
             >
               Cancel
             </button>
@@ -334,8 +331,8 @@ export function ReleaseToClientBar({
         </div>
       )}
 
-      <p className="mt-[11px] text-[11px] leading-[1.45] text-ink-muted">{returnNote}</p>
-      {error && <p className="mt-2 text-[12px]" style={{ color: BRAND.reject }}>{error}</p>}
+      <p className="mt-[11px] text-[11px] leading-[1.45] text-white/[0.5]">{returnNote}</p>
+      {error && <p className="mt-2 text-[12px] text-red-300">{error}</p>}
 
       {gate}
 
@@ -345,7 +342,7 @@ export function ReleaseToClientBar({
       {mode === "alert" && (
         <AlertSend cardId={cardId} autoOpen onClose={() => setMode(null)} doneHref={doneHref} doneLabel={doneLabel} />
       )}
-    </section>
+    </div>
   );
 }
 
@@ -402,7 +399,7 @@ function RecallDropdown({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="inline-flex h-8 items-center gap-1.5 rounded-sharp border border-edge px-3 text-[12.5px] font-semibold text-brand-navy transition-colors hover:border-brand-navy/30 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+        className={D_OUTLINE_BTN}
       >
         {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
         Recall

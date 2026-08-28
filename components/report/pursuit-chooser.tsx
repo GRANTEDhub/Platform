@@ -92,15 +92,17 @@ export function PursuitChooser({
           {routed ? `Pursuing · ${PATH_SHORT[pursuitPath!]}` : "Decide how to pursue"}
         </button>
       ) : routed ? (
+        // The detail trigger renders inside the fit-score box (bg-brand-chrome) — dark-themed.
+        // The slide-over ChooserPanel it opens is a portal overlay on its own light surface.
         <div className="flex flex-wrap items-center gap-3">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-navy px-6 py-2.5 text-sm font-semibold text-white">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.12] px-6 py-2.5 text-sm font-semibold text-white ring-1 ring-white/25">
             <Check className="h-4 w-4" strokeWidth={3} />
             Pursuing with {PATH_SHORT[pursuitPath!]}
           </span>
           <button
             type="button"
             onClick={openBtn}
-            className="text-sm font-medium text-brand-navy underline-offset-2 hover:underline"
+            className="text-sm font-medium text-white/70 underline-offset-2 transition-colors hover:text-white hover:underline"
           >
             Change
           </button>
@@ -109,7 +111,7 @@ export function PursuitChooser({
         <button
           type="button"
           onClick={openBtn}
-          className="inline-flex items-center gap-1.5 rounded-full bg-brand-navy px-6 py-2.5 text-sm font-semibold text-white shadow-soft transition hover:bg-brand-navyDeep"
+          className="inline-flex items-center gap-1.5 rounded-full bg-brand-orangeFill px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-orangeFillHover"
         >
           Choose how to pursue
           <ChevronRight className="h-4 w-4" />

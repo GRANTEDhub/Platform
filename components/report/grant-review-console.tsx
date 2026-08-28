@@ -746,10 +746,11 @@ function ScoreCard({
         </div>
       </div>
       {feedback}
-      {/* The decision bar is a bordered white section, so it insets itself against the dark
-          chrome without a divider. IntellEngine Intel keeps its thin rule; null (portal, or a
-          card that can't be acted on) collapses it. */}
-      {decision && <div className="mt-3">{decision}</div>}
+      {/* "Your decision" and IntellEngine Intel each sit under a thin rule as native dark-panel
+          sections (no nested white card) — the decision components render dark-themed content,
+          not their own bordered surface. Null (portal, or a card that can't be acted on)
+          collapses the block. */}
+      {decision && <div className="mt-3 border-t border-white/[0.14] pt-3">{decision}</div>}
       {intel && <div className="mt-3 border-t border-white/[0.14] pt-3">{intel}</div>}
     </section>
   );
