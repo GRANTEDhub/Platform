@@ -22,7 +22,7 @@ import type { Grant, Client } from "@/types/database";
 // (host-grounding + refute, no verbatim quote), so the eval must prove BOTH directions before the flag
 // flips: (DEMOTE cohort) QA lowers the genuinely-wrong matches, and (AFFIRM cohort) QA leaves the
 // genuinely-good matches UNTOUCHED — the over-demote guard, which is the real risk of a looser guard.
-// Six cases — [D] = demote cohort (catches the wrong matches), [A] = affirm cohort (leaves the good
+// Seven cases — [D] = demote cohort (catches the wrong matches), [A] = affirm cohort (leaves the good
 // matches untouched — the over-demote guard), [F] = fail-safe:
 //
 //   1. [D] JAG-county-GROUNDED-DEMOTE (discovery ON) — Mississippi County (AR, local_government) scored a confident
@@ -50,17 +50,17 @@ import type { Grant, Client } from "@/types/database";
 //      adverse verdict is STRUCTURALLY impossible without a successful fetch (finalizeIntel's grounding
 //      guard), so the verdict must NOT be demote/flag. Proves fail-safe end-to-end on the live path.
 //
-//   4. [F] VOCA-discovery-FAIL-SAFE (INTEL_WEB_SEARCH_ENABLED) — a nonprofit victim-services org scored a
+//   4. [D] VOCA-nonprofit-GROUNDED-DEMOTE (discovery ON) — a nonprofit victim-services org scored a
 //      confident direct 3 on VOCA Victim Assistance (CFDA 16.575), a FORMULA grant to the states where
 //      local/nonprofit providers are SUBGRANTEES through the state VOCA administering agency, not direct
-//      federal applicants. The IDEAL is a web-search-discovered, grounded demote to state-subgrantee — but
-//      on a LIVE handed OVC page the model tends to fetch it and not search, and the subgrant rule lives on
-//      a sub-page the refute can't confirm from the landing page, so the demote honestly falls to
-//      `unverified`. Per the accepted call (the seed/discovery URLs rot; grounding on live formula pages is
-//      flaky), that is FINE: the bar is SAFETY — QA must never AFFIRM this subgrant-only nonprofit as a
-//      clean prime, and no adverse verdict may land without a grounded fetch. Discovery / grounded-demote
-//      are LOGGED for inspection, not gated; landing the demote on unseeded formula programs is follow-on
-//      work (the discovery nudge). The demote that MUST land is the seeded JAG case (#1).
+//      federal applicants. 16.575 is now SEEDED (allocation-sources: the OVC formula-grants page STATES
+//      the rule on the landing page itself — "submitted online only by the state agency designated by the
+//      Governor" / "the states provide subgrants to local community-based organizations"), so the pass
+//      FETCHES that page and grounds the demote on the page body rather than needing to search a sub-page.
+//      The bar now mirrors JAG (#1): a GROUNDED **demote** in the MAJORITY of runs, naming the
+//      state-administering-agency / subgrantee reality; the fail-safe (no adverse without a grounded
+//      fetch) still holds every run. This was formerly a fail-safe-only case (unseeded); the seed is what
+//      makes the demote reliable, so it is now the flip gate for adding 16.575 to APPLY_ELIGIBLE_CFDAS.
 //
 //   5. [A] COPS-Hiring × city-PD-AFFIRM — the City of Fayetteville Police Department (local_government) on
 //      the COPS Hiring Program (CFDA 16.710). This is the AFFIRM cohort's sharpest stressor: a local
@@ -76,12 +76,21 @@ import type { Grant, Client } from "@/types/database";
 //      A second genuine direct applicant in a different agency/context, so the affirm cohort isn't a single
 //      program. Same bar: NOT demoted in the majority of runs.
 //
+//   7. [A] VOCA × state-agency-AFFIRM (discovery ON) — the state VOCA administering agency
+//      (state_government) on the SAME seeded VOCA program (16.575) IS the direct recipient. QA must NOT
+//      over-demote the genuine administering agency. VOCA's mirror of the JAG state-affirm (#2): it proves
+//      the pass discriminates the subgrant-only nonprofit (#4, demote) from the administering agency
+//      (affirm) rather than blanket-demoting VOCA, and it is the no-false-demote guard the 16.575 flip
+//      rests on. Runs discovery ON (like #4) so it exercises the same seeded flag-on path as the demote.
+//
 // Cases 5-6 run discovery:false — they are not formula programs, so a formula note never fires; keeping
-// discovery off makes the affirm result flag-independent and keeps the pass to a single fetch (fast).
+// discovery off makes the affirm result flag-independent and keeps the pass to a single fetch (fast). The
+// VOCA pair (4, 7) runs discovery ON — 16.575 is a seeded formula program, so both sides take the flag-on
+// fetch-the-seed path, and the pair is what proves the flip (demote the nonprofit, affirm the state).
 //
 // Majority-of-runs assertions (expect.soft), because a single Opus run varies. The bar is the feature's
 // philosophy: adverse ONLY when web-grounded; never over-demote a clear direct recipient. The AFFIRM
-// cohort (cases 2, 5, 6) is the guard that PR A's looser grounding did not open an over-demote hole.
+// cohort (cases 2, 5, 6, 7) is the guard that PR A's looser grounding did not open an over-demote hole.
 
 const RUN = process.env.RUN_INTEL_EVAL === "1" && !!process.env.ANTHROPIC_API_KEY;
 const RUNS = Math.max(1, Number(process.env.INTEL_EVAL_RUNS) || 3);
@@ -259,15 +268,15 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
   );
 
   it(
-    "4. VOCA × nonprofit, discovery ON → fail-safe (never wrongly affirm a subgrant-only nonprofit; adverse only when grounded)",
+    "4. VOCA × nonprofit, discovery ON → GROUNDED DEMOTE (seeded OVC formula page states the subgrantee rule)",
     async () => {
-      // 16.575 is formula-tagged but UNSEEDED. The IDEAL is a web-SEARCH-discovered, grounded demote to
-      // state-subgrantee — but on a LIVE handed OVC page the model often fetches it and never searches, and
-      // the subgrant rule lives on a sub-page the refute can't confirm from the landing page, so the demote
-      // honestly falls to `unverified`. Per the accepted call, that is FINE: the bar here is the SAFETY
-      // property (never wrongly affirm this nonprofit as a clean prime; no adverse without a grounded fetch),
-      // not that the demote lands. Discovery / grounded-demote are logged for inspection, not gated —
-      // demote-landing on unseeded formula programs is follow-on work (the discovery nudge), not a flip gate.
+      // 16.575 is now SEEDED (allocation-sources → the OVC formula-grants page). That page STATES the rule
+      // on the landing page itself ("submitted online only by the state agency designated by the Governor";
+      // "the states provide subgrants to local community-based organizations"), so the pass FETCHES the
+      // seeded page and grounds the demote on the page body — no sub-page search needed, so it grounds more
+      // reliably than JAG's table-in-a-PDF. Bar mirrors JAG (#1): a GROUNDED demote in the majority of runs,
+      // naming the administering-agency / subgrantee reality; the fail-safe (no adverse without a grounded
+      // fetch) still holds every run. This is the flip gate for adding 16.575 to APPLY_ELIGIBLE_CFDAS.
       const results = await runN(RUNS, () =>
         runIntelReview(
           card({
@@ -279,32 +288,84 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
             funder: "Office for Victims of Crime",
             assistance_listings: [{ number: "16.575", program_title: "Crime Victim Assistance" }],
             eligible_entity_types: ["nonprofit organizations", "victim service organizations"],
-            // A real, live OVC .gov funding landing page (verified 200, 2026-08-27); the SUBGRANT/formula
-            // reality it must confirm lives on the program's authoritative pages, which the pass has to
-            // search for (nothing is seeded). The prior /program/victims-of-crime-act-voca/overview URL
-            // 404'd, so the pass had no fetchable starting point.
+            // A real, live OVC .gov funding landing page (NOFO-side). The AUTHORITATIVE formula/subgrant page
+            // is now the SEEDED allocation source (allocation-sources 16.575 → the OVC formula-grants page),
+            // which the pass fetches and grounds on.
             source_url: "https://ovc.ojp.gov/funding",
           }),
           client({ name: "Hope Victim Services", org_type: "nonprofit", location_state: "AR" }),
-          { discovery: true },
+          // narrative ON, mirroring JAG #1 — the same grounded run that lands the demote also writes the
+          // client paragraph (the strongest no-regression check).
+          { discovery: true, narrative: true },
         ),
       );
       const notAffirmed = results.map((r) => r.verdict !== "affirm");
-      const adverse = results.map((r) => r.verdict === "demote" || r.verdict === "flag");
-      console.log("[intel-eval] VOCA-discovery searches:", results.map((r) => r.searched.length).join(", "));
-      console.log("[intel-eval] VOCA-discovery verdicts:", results.map((r) => `${r.verdict}${r.qa_fit_score != null ? `→${r.qa_fit_score}` : ""}`).join(", "));
-      console.log("[intel-eval] VOCA-discovery grounded:", results.map((r) => r.fetched.some((f) => f.ok)).join(", "));
-      console.log("[intel-eval] VOCA-discovery summaries:", results.map((r) => r.summary));
-      // Fail-safe (HARD, every run): no adverse verdict without a grounded fetch. This is the safety gate.
+      const demoted = results.map((r) => r.verdict === "demote" || r.verdict === "flag");
+      const grounded = results.map((r) => r.fetched.some((f) => f.ok));
+      const reasoned = results.map((r) =>
+        /subgrant|sub-?recipient|through the state|state administering|administering agency|not.*(a )?direct|cannot (prime|apply)/i.test(r.summary),
+      );
+      console.log("[intel-eval] VOCA searches:", results.map((r) => r.searched.length).join(", "));
+      console.log("[intel-eval] VOCA verdicts:", results.map((r) => `${r.verdict}${r.qa_fit_score != null ? `→${r.qa_fit_score}` : ""}`).join(", "));
+      console.log("[intel-eval] VOCA grounded:", results.map((r) => r.fetched.some((f) => f.ok)).join(", "));
+      console.log("[intel-eval] VOCA summaries:", results.map((r) => r.summary));
+      // Fail-safe (HARD, every run): no adverse verdict without a grounded fetch.
       for (const r of results) {
         if (r.verdict === "demote" || r.verdict === "flag") {
           expect.soft(r.fetched.some((f) => f.ok), "adverse VOCA verdict must rest on a grounded .gov fetch (fail-safe)").toBe(true);
         }
       }
-      // SAFETY (majority): a subgrant-only nonprofit is never AFFIRMED as a clean prime — it is either
-      // demoted-when-grounded or honestly unverified, never green-lit. (Demote-landing itself is logged
-      // above, not gated — see the header: it needs the discovery nudge, follow-on work.)
-      expect.soft(majority(notAffirmed), "QA must never affirm a subgrant-only VOCA nonprofit as a clean prime").toBe(true);
+      // CORRELATE the adverse verdict with the subgrantee reality it grounds on — not merely that a page was
+      // fetched: an adverse summary must name the state administering agency / subgrantee structure.
+      for (const r of results) {
+        if (r.verdict === "demote" || r.verdict === "flag") {
+          expect.soft(
+            /subgrant|sub-?recipient|through the state|state administering|administering agency|not.*(a )?direct/i.test(r.summary),
+            "an adverse VOCA verdict must name the state-administering-agency / subgrantee reality it grounded on",
+          ).toBe(true);
+        }
+      }
+      // Seeded program → the pass FETCHES the seed (search optional). Bar mirrors JAG: a GROUNDED demote in
+      // the majority of runs; never-affirm and subgrantee-reality naming hold; the fail-safe is hard every
+      // run (above). A run that genuinely can't ground still falls honestly to `unverified`.
+      expect.soft(majority(grounded), "should reach + ground the seeded OVC formula source in the majority of runs").toBe(true);
+      expect.soft(majority(demoted), "the seeded VOCA pass must APPLY a grounded demote of a subgrant-only nonprofit in the majority of runs").toBe(true);
+      expect.soft(majority(notAffirmed), "must NOT affirm a subgrant-only VOCA nonprofit as a clean prime").toBe(true);
+      expect.soft(majority(reasoned), "the Intel summary should name the state-administering-agency / subgrantee reality").toBe(true);
+    },
+    RUNS * 240_000,
+  );
+
+  it(
+    "7. VOCA × state administering agency → AFFIRM (do NOT over-demote the genuine direct recipient)",
+    async () => {
+      // VOCA's mirror of JAG #2: the state administering agency IS the direct VOCA recipient, so QA must NOT
+      // demote it. Runs discovery ON (the seeded flag-on path, same as #4), so the VOCA pair proves the pass
+      // DISCRIMINATES — demote the subgrant-only nonprofit (#4), affirm the administering agency (here) —
+      // rather than blanket-demoting 16.575. This is the no-false-demote guard the 16.575 flip rests on. Bar:
+      // NOT demoted in the majority of runs (a from-nothing "unverified" is acceptable — it does not change
+      // the score; a DEMOTE here is the over-demote failure).
+      const results = await runN(RUNS, () =>
+        runIntelReview(
+          card({
+            why_this_org: ["State administering agency for the VOCA formula program; direct recipient."],
+            reasoning_context: { fit_score_derivation: "The state administering agency is the direct VOCA formula recipient." },
+          }),
+          grant({
+            title: "Crime Victim Assistance (VOCA) — Victim Assistance Formula Grant",
+            funder: "Office for Victims of Crime",
+            assistance_listings: [{ number: "16.575", program_title: "Crime Victim Assistance" }],
+            eligible_entity_types: ["state administering agencies"],
+            source_url: "https://ovc.ojp.gov/funding",
+          }),
+          client({ name: "Arkansas Division of Victim Services (State Administering Agency)", org_type: "state_government", location_state: "AR" }),
+          { discovery: true },
+        ),
+      );
+      const notDemoted = results.map((r) => r.verdict !== "demote" && r.verdict !== "flag");
+      console.log("[intel-eval] VOCA-state verdicts:", results.map((r) => `${r.verdict}${r.qa_fit_score != null ? `→${r.qa_fit_score}` : ""}`).join(", "));
+      console.log("[intel-eval] VOCA-state summaries:", results.map((r) => r.summary));
+      expect.soft(majority(notDemoted), "QA must NOT over-demote the state VOCA administering agency (the genuine direct recipient)").toBe(true);
     },
     RUNS * 240_000,
   );

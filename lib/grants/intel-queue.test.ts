@@ -373,10 +373,13 @@ const rating = (o: unknown, k: string): string => (o as Record<string, { rating:
 describe("apply-the-gate — buildQaPatch + cardCfdaApplyEligible (pure)", () => {
   const card = { id: "card-1", fit_score: 3, factor_scores: engineFactors as never };
 
-  it("cardCfdaApplyEligible: JAG 16.738 (+ letter suffix) → true; anything else / empty → false", () => {
+  it("cardCfdaApplyEligible: allowlisted JAG 16.738 / VOCA 16.575 (+ letter suffix) → true; anything else / empty → false", () => {
     expect(cardCfdaApplyEligible({ assistance_listings: [{ number: "16.738" }] } as never)).toBe(true);
     expect(cardCfdaApplyEligible({ assistance_listings: [{ number: "16.738A" }] } as never)).toBe(true);
-    expect(cardCfdaApplyEligible({ assistance_listings: [{ number: "16.575" }] } as never)).toBe(false);
+    expect(cardCfdaApplyEligible({ assistance_listings: [{ number: "16.575" }] } as never)).toBe(true);
+    expect(cardCfdaApplyEligible({ assistance_listings: [{ number: "16.575A" }] } as never)).toBe(true);
+    // A non-allowlisted CFDA stays false — AFG (97.044) is competitive, so it will never be allowlisted.
+    expect(cardCfdaApplyEligible({ assistance_listings: [{ number: "97.044" }] } as never)).toBe(false);
     expect(cardCfdaApplyEligible({ assistance_listings: [] } as never)).toBe(false);
     expect(cardCfdaApplyEligible({ assistance_listings: null } as never)).toBe(false);
   });
@@ -505,15 +508,15 @@ describe("drainIntelQueue — apply-the-gate flag + allowlist (AUTO_INTEL_APPLY)
     expect(card.sme_released_at ?? null).toBeNull();
   });
 
-  it("ON + NON-JAG (VOCA 16.575) demote → review_cards untouched (allowlist keeps it proposal-only)", async () => {
+  it("ON + non-allowlisted CFDA (AFG 97.044) demote → review_cards untouched (allowlist keeps it proposal-only)", async () => {
     process.env.AUTO_INTEL_APPLY = "true";
     const s = seed();
-    s.tables.grants = [{ id: "g1", title: "VOCA", assistance_listings: [{ number: "16.575" }], source_url: "https://x.gov" }];
+    s.tables.grants = [{ id: "g1", title: "AFG", assistance_listings: [{ number: "97.044" }], source_url: "https://x.gov" }];
     await drainIntelQueue(asDb(s), { now, runReview: async () => demoteReview() });
     const card = s.tables.review_cards[0];
     expect(card.qa_fit_score ?? null).toBeNull();
     expect(card.fit_score).toBe(3);
-    expect(s.tables.card_intel_reviews).toHaveLength(1); // still proposal-only for VOCA
+    expect(s.tables.card_intel_reviews).toHaveLength(1); // still proposal-only for a non-allowlisted CFDA
   });
 
   it("ON + unverified on a JAG card → qa_status 'unverified', engine fit_score left as-is (fail-safe)", async () => {
