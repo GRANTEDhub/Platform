@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { safeNextPath } from "@/lib/safe-redirect";
+import { confirmFailureTarget } from "@/lib/auth/setup-redirect";
 import type { EmailOtpType } from "@supabase/supabase-js";
 
 /**
@@ -30,7 +31,7 @@ export async function GET(request: NextRequest) {
     }
     // Deliberate logging (matches callback/route.ts): without it, an expired/
     // already-used token, a type mismatch, and everything else all look like the
-    // same silent bounce to /login -- in the browser AND our own server logs.
+    // same silent bounce -- in the browser AND our own server logs.
     console.error("auth confirm: verifyOtp failed", {
       type,
       status: error.status,
@@ -41,5 +42,9 @@ export async function GET(request: NextRequest) {
     console.error("auth confirm: missing token_hash or type", { url: request.url });
   }
 
-  return NextResponse.redirect(`${origin}/login?error=auth`);
+  // Route the failure by the link's INTENT, not blindly to /login: a spent/expired SETUP
+  // link (next -> /set-password) returns to the set-password page, whose no-session state
+  // offers a self-serve resend, so an account that hasn't set a password can't be stranded
+  // on the sign-in page. See lib/auth/setup-redirect.ts.
+  return NextResponse.redirect(`${origin}${confirmFailureTarget(next)}`);
 }

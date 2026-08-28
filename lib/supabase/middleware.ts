@@ -36,6 +36,14 @@ export async function updateSession(request: NextRequest) {
   // business of creating a new one -- so it must never touch Supabase here.
   const isPublicAsset =
     pathname.startsWith("/auth") ||
+    // The set-password page must be reachable WITHOUT a session. A spent/expired setup
+    // link redirects here from /auth/confirm with no session set (the token failed to
+    // verify), and the page's own no-session state offers a self-serve resend. Without
+    // this, the auth guard below would bounce that session-less request straight back to
+    // /login -- re-creating the exact dead end this whole change removes. The page exposes
+    // no admin data: session-less it shows only the resend form. A valid setup link still
+    // arrives here WITH a session (verifyOtp set it), and the page lets them set a password.
+    pathname === "/set-password" ||
     pathname.startsWith("/go") ||
     // The alert email's one-click decision landing. Same contract as /go: tokenized,
     // service-role, exposes no admin data -- and the whole point is that the client

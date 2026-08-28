@@ -343,6 +343,51 @@ export async function sendClientInviteEmail(opts: {
   return { to, subject, id: data?.id ?? null };
 }
 
+// Emails a self-serve SIGN-IN LINK -- the recovery path a client (or staff member) can
+// request themselves when a setup link has been spent, so a single-use link is no longer a
+// dead end. NEUTRAL wording on purpose: unlike sendClientInviteEmail's "Welcome ... starting
+// the grant search for <org>" copy, this reads correctly whether it's a first-time setup OR a
+// re-request from someone who already has an account, and it needs no org context (the
+// unauthenticated requester is only known by email). The link itself is the SAME one-time
+// /auth/confirm recovery link (lib/clients/portal-login.ts), so it lands on the set-password
+// page and the system stays unambiguously password-based. Same identity/gating contract as the
+// other senders -- callers MUST pre-check canSendOutreach(); the allowlist is hard-backstopped
+// here so a request from a test deploy never reaches a real inbox.
+export async function sendSignInLinkEmail(opts: { to: string; url: string }): Promise<SentResult> {
+  const to = (opts.to ?? "").trim();
+  if (!isDeliverableEmail(to)) throw new Error(`No deliverable recipient: "${opts.to ?? "(null)"}"`);
+  if (!isRecipientAllowed(to)) {
+    throw new Error(`Recipient not on send allowlist (testing mode): ${to}`);
+  }
+  if (!opts.url?.trim()) throw new Error("No sign-in link configured");
+
+  const subject = "Your GRANTED sign-in link";
+  const text = [
+    "Hello,",
+    "",
+    "Here's your sign-in link for the GRANTED portal. It signs you in and lets you set a password:",
+    opts.url.trim(),
+    "",
+    "For your security this link can be used once and expires. If it has expired by the time you open it, request a new one from the sign-in page.",
+    "",
+    "If you didn't request this, you can safely ignore this email.",
+    "",
+    "Best,",
+    "GRANTED",
+  ].join("\n");
+
+  // Same derived-CTA contract as sendClientInviteEmail: the button names the URL line already
+  // in `text`, so the two parts can't drift, and the raw URL renders under it as a fallback.
+  const html = plainTextToHtml(text, {
+    cta: { url: opts.url.trim(), label: "Sign in" } satisfies CtaButton,
+  });
+
+  const resend = new Resend(process.env.RESEND_PLATFORM_API);
+  const { data, error } = await resend.emails.send({ from: FROM, to, replyTo: REPLY_TO, subject, text, html });
+  if (error) throw new Error(`Resend send failed: ${error.message}`);
+  return { to, subject, id: data?.id ?? null };
+}
+
 // ── Staff / contractor login invite ──────────────────────────────────────────
 //
 // Sent when an admin creates a login in /settings/users. Before this, nothing was
