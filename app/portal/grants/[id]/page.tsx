@@ -298,9 +298,12 @@ export default async function PortalGrantDetail({
         // touch staff's column even though the two pages mount the same component.
         feedback={<MarkRead cardId={params.id} />}
         decision={
-          <section className="shrink-0 rounded-sharp border border-edge bg-white px-[19px] pb-4 pt-[15px]">
-            <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-muted">Your decision</p>
-            <p className="mt-2 text-[12.5px] leading-[1.55] text-ink-muted">
+          // Dark-themed, with the thin burnt-orange "act here" left accent: renders inside the
+          // fit-score box (bg-brand-chrome) as a native section, not a white card. DecisionBar
+          // carries its own dark styling for this surface.
+          <div className="border-l-2 border-brand-orange pl-3.5">
+            <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-white/[0.55]">Your decision</p>
+            <p className="mt-2 text-[12.5px] leading-[1.55] text-white/[0.72]">
               Pursue it, save it for later, or pass. Passing tells us why so we stop sending
               you ones like it.
             </p>
@@ -315,7 +318,7 @@ export default async function PortalGrantDetail({
                 intellEngineComingSoon={intellEngineComingSoon()}
               />
             </div>
-          </section>
+          </div>
         }
         concept={
           // Read-only pointer, mirroring the staff ConceptCard's shape without its generate

@@ -80,7 +80,9 @@ export function DecisionBar({
   const passed = decision === "passed";
 
   return (
-    <div className="mt-6 border-t border-brand-navy/[0.06] pt-6">
+    // Renders inside the fit-score box (bg-brand-chrome) — dark-themed, and no top divider of
+    // its own (the ScoreCard already rules off the whole "Your decision" section).
+    <div>
       <div>
         <div className="flex flex-wrap items-center gap-3">
           {tier ? (
@@ -98,8 +100,8 @@ export function DecisionBar({
               onClick={() => decide("approved")}
               className={`rounded-full px-6 py-2.5 text-sm font-semibold transition disabled:opacity-50 ${
                 pursuing
-                  ? "bg-brand-navy text-white shadow-soft"
-                  : "border border-brand-navy/25 text-brand-navy hover:bg-brand-navy/5"
+                  ? "bg-white/[0.12] text-white ring-1 ring-white/25"
+                  : "border border-white/25 text-white/85 hover:bg-white/[0.06]"
               }`}
             >
               {pursuing ? "✓ Pursuing" : "Pursue this grant"}
@@ -110,8 +112,8 @@ export function DecisionBar({
             onClick={() => decide("pending")}
             className={`rounded-full px-6 py-2.5 text-sm font-medium transition disabled:opacity-50 ${
               decision === "pending"
-                ? "bg-brand-navy/[0.07] text-brand-navy ring-1 ring-brand-navy/15"
-                : "border border-brand-navy/25 text-muted-foreground hover:text-brand-navy"
+                ? "bg-white/[0.1] text-white ring-1 ring-white/20"
+                : "border border-white/25 text-white/70 hover:text-white"
             }`}
           >
             Save for later
@@ -120,7 +122,7 @@ export function DecisionBar({
             disabled={busy}
             onClick={() => (passed ? decide("pending") : setShowPass((v) => !v))}
             className={`px-3 py-2 text-sm font-medium transition disabled:opacity-50 ${
-              passed ? "text-destructive underline" : "text-destructive/80 hover:text-destructive hover:underline"
+              passed ? "text-orange-200 underline" : "text-orange-200/80 hover:text-orange-200 hover:underline"
             }`}
           >
             {passed ? "Passed — undo" : "Pass"}
@@ -131,8 +133,8 @@ export function DecisionBar({
             server-side), and the server records a datapoint only when a reason is present.
             So the confirm button stays disabled until a non-empty reason is entered. */}
         {showPass && !passed && (
-          <div className="mt-3 space-y-2 rounded-xl border border-brand-navy/10 bg-brand-cream/50 p-3">
-            <p className="text-xs font-medium text-brand-navy">
+          <div className="mt-3 space-y-2 rounded-xl border border-white/[0.12] bg-white/[0.05] p-3">
+            <p className="text-xs font-medium text-white/85">
               Why pass? This is how we tune your matches — tell us what&apos;s off and we&apos;ll send fewer like it.
             </p>
             <textarea
@@ -141,7 +143,7 @@ export function DecisionBar({
               rows={2}
               autoFocus
               placeholder="e.g. we don't want equipment grants, wrong geography, no capacity this cycle"
-              className="w-full rounded-lg border border-input bg-white px-3 py-2 text-sm outline-none focus:border-brand-navy/35"
+              className="w-full rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-white/40 outline-none focus:border-white/45"
             />
             <button
               disabled={busy || !passReason.trim()}
@@ -154,13 +156,13 @@ export function DecisionBar({
         )}
 
         {deciderLabel && (
-          <p className="mt-3 text-[13px] text-muted-foreground">
+          <p className="mt-3 text-[13px] text-white/60">
             {pursuing ? "Pursuing" : passed ? "Passed" : "Saved"} · decided by {deciderLabel}
           </p>
         )}
       </div>
 
-      {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+      {error && <p className="mt-3 text-sm text-red-300">{error}</p>}
     </div>
   );
 }

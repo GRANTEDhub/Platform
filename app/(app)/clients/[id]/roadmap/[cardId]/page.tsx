@@ -8,7 +8,6 @@ import { ConceptCard } from "@/components/report/concept-card";
 import { ScoreFeedback } from "@/components/report/score-feedback";
 import { MarkUnreadButton } from "@/components/report/mark-unread-button";
 import { ScoreFactorsBackfill } from "@/components/report/score-factors-backfill";
-import { CardRematchButton } from "@/components/grants/card-rematch-button";
 import { IntelReviewPanel } from "@/components/report/intel-review-panel";
 import type { IntelReview } from "@/lib/grants/intel-review";
 import { GrantReviewConsole, type ReviewKeyDetail, type ReviewMeta } from "@/components/report/grant-review-console";
@@ -137,11 +136,6 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
     >();
 
   const isLead = isUnconvertedLead(client?.pipeline_stage);
-
-  // A roster episode is live on this grant (a re-shred or a whole-roster re-match). A per-card
-  // re-match during it would race runMatching's resume, so the button hides (the route also
-  // rejects it). Mirrors the Ledger's `processing` gate on the same three statuses.
-  const grantProcessing = g.status === "processing" || g.status === "queued" || g.status === "matching";
 
   // The on-demand QA verdict lives in the STAFF-ONLY card_intel_reviews table (migration 0086), not a
   // review_cards column — so a client member (who can read their own review_cards rows under 0055)
@@ -356,15 +350,6 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         // rather than admins only: the reviewer looking at the empty panel is the person
         // who needs the breakdown, and the route writes nothing but the six ratings.
         scoreFactors={factors.unscored ? <ScoreFactorsBackfill cardId={params.cardId} /> : null}
-        // Staff-only single-card re-match, in the ScoreCard footer. Admin-gated (a re-score can
-        // drop the card), and only on a still-pending, not-yet-released card that isn't mid-
-        // episode: a decided card is the human's call, a released one a client may be viewing.
-        // The portal never passes this prop, so it can only render for staff.
-        rematch={
-          isAdmin && card.decision === "pending" && !card.sme_released_at && !grantProcessing ? (
-            <CardRematchButton cardId={params.cardId} tone="dark" backHref={backHref} />
-          ) : null
-        }
         // On-demand IntellEngine QA: annotate-only (never changes the score), so it needs no
         // processing gate — just admin + a still-pending, not-yet-released card. Raw verdict is
         // staff-only; the portal never passes this slot.
@@ -420,28 +405,31 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
             />
           ) : isLead && isAdmin ? (
             // A prospect has no portal, so the terminal action is the cold one-pager
-            // rather than a release. Admin-only: this is BizDev outreach.
-            <section className="shrink-0 rounded-sharp border border-edge bg-white px-[19px] pb-4 pt-[15px]">
-              <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-muted">Your decision</p>
-              <p className="mb-3 mt-2 text-[12.5px] leading-[1.55] text-ink-muted">
+            // rather than a release. Admin-only: this is BizDev outreach. Dark-themed, with the
+            // thin burnt-orange "act here" left accent — rendered inside the fit-score box
+            // (bg-brand-chrome), not a white card of its own.
+            <div className="border-l-2 border-brand-orange pl-3.5">
+              <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-white/[0.55]">Your decision</p>
+              <p className="mb-3 mt-2 text-[12.5px] leading-[1.55] text-white/[0.72]">
                 Prospects have no portal — the terminal action here is the cold one-pager.
               </p>
               <AlertSend
                 cardId={params.cardId}
+                tone="dark"
                 sentAt={card.sent_at ?? null}
                 sentTo={card.sent_to ?? null}
                 recalledFrom={card.sent_at === null && sentAlert ? sentAlert : null}
                 contactName={client?.name ?? null}
                 overdue={overdueConfig}
               />
-            </section>
+            </div>
           ) : (
-            <section className="shrink-0 rounded-sharp border border-edge bg-white px-[19px] pb-4 pt-[15px]">
-              <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-muted">Your decision</p>
-              <p className="mt-2 text-[12.5px] leading-[1.55] text-ink-muted">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-white/[0.55]">Your decision</p>
+              <p className="mt-2 text-[12.5px] leading-[1.55] text-white/[0.72]">
                 This client makes the pursuit call on their own copy of this grant. Nothing to release from here.
               </p>
-            </section>
+            </div>
           )
         }
         concept={

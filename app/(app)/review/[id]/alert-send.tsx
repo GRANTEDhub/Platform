@@ -28,6 +28,7 @@ export function AlertSend({
   overdue,
   doneHref,
   doneLabel,
+  tone = "light",
 }: {
   cardId: string;
   sentAt?: string | null;
@@ -51,6 +52,11 @@ export function AlertSend({
   // ReleaseConfirmation keeps its /matches default.
   doneHref?: string;
   doneLabel?: string;
+  // The INLINE trigger's surface. "dark" renders it on the fit-score box (bg-brand-chrome) —
+  // used by the prospect path in the grant review console. The modal it opens is a portal
+  // overlay on its own light surface, so tone never touches it. Defaults "light" (the /review
+  // worklist and every other caller).
+  tone?: "light" | "dark";
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -245,6 +251,9 @@ export function AlertSend({
   const sentDate = alerted && sentAt ? new Date(sentAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : null;
   // A cold re-contact must resolve the gate (pick a path) before Send unlocks.
   const coldReContact = isColdSend && !!priorEmailedAt;
+  // The inline trigger's surface. Only the inline block (below) branches on it; the modal is a
+  // portal overlay and stays light regardless.
+  const dark = tone === "dark";
 
   // Rendered inline inside the DecisionPanel (as its primary action, above
   // Pass) -- no outer card of its own.
@@ -257,30 +266,66 @@ export function AlertSend({
         <>
           {alerted ? (
             <>
-              <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
-                <span className="font-bold text-emerald-700">✓</span>
-                <p className="text-xs leading-relaxed text-emerald-800">
+              <div
+                className={`flex items-start gap-2 rounded-md border px-3 py-2 ${
+                  dark ? "border-emerald-400/30 bg-emerald-400/10" : "border-emerald-200 bg-emerald-50"
+                }`}
+              >
+                <span className={`font-bold ${dark ? "text-emerald-300" : "text-emerald-700"}`}>✓</span>
+                <p className={`text-xs leading-relaxed ${dark ? "text-emerald-100/90" : "text-emerald-800"}`}>
                   <b>Alert sent{sentDate ? ` ${sentDate}` : ""}</b>
                   <br />
                   to {contactName ? `${contactName} · ` : ""}{sentTo}
                 </p>
               </div>
               <div className="mt-2 flex gap-2">
-                <Button className="flex-1" disabled title="Already alerted">
-                  ✓ Alerted
-                </Button>
-                <Button variant="outline" onClick={() => guard(openModal)} disabled={busy}>
-                  ↻ Regenerate
-                </Button>
+                {dark ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled
+                      title="Already alerted"
+                      className="inline-flex h-9 flex-1 items-center justify-center rounded-sharp border border-white/15 bg-white/[0.06] text-[13px] font-semibold text-white/50"
+                    >
+                      ✓ Alerted
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => guard(openModal)}
+                      disabled={busy}
+                      className="inline-flex h-9 items-center justify-center rounded-sharp border border-white/25 px-3 text-[13px] font-semibold text-white/85 transition-colors hover:border-white/45 hover:text-white disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome"
+                    >
+                      ↻ Regenerate
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <Button className="flex-1" disabled title="Already alerted">
+                      ✓ Alerted
+                    </Button>
+                    <Button variant="outline" onClick={() => guard(openModal)} disabled={busy}>
+                      ↻ Regenerate
+                    </Button>
+                  </>
+                )}
               </div>
             </>
+          ) : dark ? (
+            <button
+              type="button"
+              onClick={() => guard(openModal)}
+              disabled={busy}
+              className="inline-flex h-[42px] w-full items-center justify-center gap-2 rounded-sharp bg-brand-orangeFill text-[14px] font-semibold text-white transition-colors hover:bg-brand-orangeFillHover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-chrome"
+            >
+              Send grant alert
+            </button>
           ) : (
             <Button className="w-full" onClick={() => guard(openModal)} disabled={busy}>
               Send grant alert
             </Button>
           )}
-          {status && <p className="mt-2 text-xs text-muted-foreground">{status}</p>}
-          {error && !open && <p className="mt-2 text-xs text-destructive">{error}</p>}
+          {status && <p className={`mt-2 text-xs ${dark ? "text-white/60" : "text-muted-foreground"}`}>{status}</p>}
+          {error && !open && <p className={`mt-2 text-xs ${dark ? "text-red-300" : "text-destructive"}`}>{error}</p>}
         </>
       )}
 

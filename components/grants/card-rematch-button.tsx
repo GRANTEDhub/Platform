@@ -4,13 +4,14 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Loader2, RotateCw } from "lucide-react";
 
-// Re-score ONE matched (grant, client) pair on demand. Mounted on TWO staff surfaces from
-// the SAME component so their behaviour can't drift — only chrome and the drop-nav differ:
-//   - the Ledger's "Matched clients" list  (tone="light", drop -> refresh the list)
-//   - the console ScoreCard, beside the feedback controls (tone="dark", drop -> back to the
-//     Grant Report, since a drop deletes the card the reviewer is standing on)
-// The single-card companion to the grant-level "Re-match clients" (whole roster). See
-// app/api/review/[id]/rematch for what the route does and what it refuses.
+// Re-score ONE matched (grant, client) pair on demand. Staff/admin only, and today mounted on
+// ONE surface: the Ledger's "Matched clients" list (tone="light", drop -> refresh the list).
+// The console ScoreCard footer carried it too (tone="dark", drop -> back to the Grant Report,
+// since a drop deletes the card the reviewer was standing on) until the decision bar moved into
+// the fit-score box and that mount was removed — so the "dark" tone and the `backHref` drop-nav
+// below are retained but currently have no caller (kept so a dark mount can return without
+// re-deriving the white-on-chrome vocabulary). The single-card companion to the grant-level
+// "Re-match clients" (whole roster). See app/api/review/[id]/rematch for what the route does.
 //
 // IT SAYS WHAT IT CAN DO. It runs the full matcher (slow, not free) and, because a re-score
 // can drop a card that no longer qualifies, it takes a confirm before it runs.
@@ -20,8 +21,7 @@ import { Loader2, RotateCw } from "lucide-react";
 // click — reload, or back to the report — the reviewer's own, rather than silently
 // re-rendering out from under them. A no-op (unchanged / now pre-filtered) just says so.
 //
-// STAFF/ADMIN SURFACES ONLY. On the console it rides the default-null `rematch` slot (like
-// scoreFactors / feedback), so the client portal never passes it and it never renders there.
+// STAFF/ADMIN SURFACES ONLY — the client portal never mounts it.
 
 type RematchResult =
   | { kind: "refreshed"; storedFitScore: number | null; freshFitScore: number | null; drifted: boolean }
