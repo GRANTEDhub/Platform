@@ -76,27 +76,23 @@ export function ConceptCard({
     }
   }
 
-  const statusWord = generating ? "Drafting" : status === "ready" ? "Drafted" : status === "error" ? "Failed" : "Not started";
-
   return (
     <section
       className="shrink-0 rounded-sharp border border-edge bg-white px-[17px] pb-[13px] pt-3"
       style={{ borderLeftWidth: "3px", borderLeftColor: BRAND.chrome }}
     >
+      {/* Box TITLE — it spans BOTH actions below (Generate concept proposal + the grant-match
+          re-run), like the FIT SCORE / KEY DETAILS box titles. No status word beside it: the
+          buttons carry their own state ("Generating…" / "View the draft" / "Retry"), and a status
+          here read as the title of the concept action rather than of the box. */}
       <div className="flex items-center gap-[9px]">
         <Sparkles className="h-3.5 w-3.5 shrink-0" style={{ color: BRAND.orangeDeep }} aria-hidden="true" />
         <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-muted">IntellEngine</p>
-        {showConcept && <span className="ml-auto shrink-0 text-[11px] text-ink-muted">{statusWord}</span>}
       </div>
 
+      {/* Action 1 — Generate concept proposal (boxed button, caption UNDER it). */}
       {showConcept && (
-        <>
-          <p className="mt-2 text-[12px] leading-[1.5] text-ink-muted">
-            {status === "ready"
-              ? "Scope, budget frame and named consortium partners — ready to review below."
-              : "Scope, budget frame and named consortium partners."}
-          </p>
-
+        <div className="mt-[11px]">
           {status === "ready" ? (
             // VIEW AND EDIT, side by side. Reading the draft and correcting it are the same
             // errand often enough that having to scroll to the panel and find its Edit control
@@ -106,7 +102,7 @@ export function ConceptCard({
             // BOTH ARE ANCHORS to the panel, so the scroll is native in both cases; Edit just
             // also asks the panel to open its editor on arrival (see concept-edit-signal).
             // View stays the wider of the two: it is the more common of the two intents.
-            <div className="mt-2.5 grid grid-cols-[1fr_auto] gap-[6px]">
+            <div className="grid grid-cols-[1fr_auto] gap-[6px]">
               <a
                 href={anchorHref}
                 className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-sharp border border-edge text-[12.5px] font-semibold text-brand-navy transition-colors hover:border-brand-navy/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
@@ -128,7 +124,7 @@ export function ConceptCard({
               type="button"
               disabled={generating}
               onClick={() => guard(() => void generate())}
-              className="mt-2.5 inline-flex h-[34px] w-full items-center justify-center gap-[7px] rounded-sharp bg-brand-chrome text-[12.5px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+              className="inline-flex h-[34px] w-full items-center justify-center gap-[7px] rounded-sharp bg-brand-chrome text-[12.5px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
             >
               {generating ? (
                 <>
@@ -143,12 +139,18 @@ export function ConceptCard({
               )}
             </button>
           )}
-        </>
+          <p className="mt-2 text-[12px] leading-[1.5] text-ink-muted">
+            {status === "ready"
+              ? "Scope, budget frame and named consortium partners — ready to review below."
+              : "Scope, budget frame and named consortium partners."}
+          </p>
+        </div>
       )}
 
-      {/* The IntellEngine grant-match re-run. Under a hairline when it sits below the concept
-          content; on its own (a self-serve card with no concept half) it just gets a small gap. */}
-      {rerun && <div className={showConcept ? "mt-[13px] border-t border-edge pt-[11px]" : "mt-2.5"}>{rerun}</div>}
+      {/* Action 2 — the IntellEngine grant-match re-run (peer boxed button + caption under). Under a
+          hairline when it sits below the concept action; on its own (a self-serve card with no
+          concept half) it just gets a small gap under the title. */}
+      {rerun && <div className={showConcept ? "mt-3 border-t border-edge pt-3" : "mt-[11px]"}>{rerun}</div>}
       {gate}
     </section>
   );

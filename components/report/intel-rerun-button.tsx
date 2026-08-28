@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Sparkles } from "lucide-react";
+import { Loader2, RotateCw } from "lucide-react";
 import { BRAND } from "@/lib/brand";
 
 // The IntellEngine grant-match re-run, living in the (light) IntellEngine box below "Generate
@@ -41,24 +41,25 @@ export function IntelRerunButton({ cardId, hasVerdict }: { cardId: string; hasVe
   const running = phase === "running";
 
   return (
-    <div className="flex flex-col items-start gap-1">
+    <div>
+      {/* A boxed, centered, full-width button — the PEER of "Generate concept proposal" above, with
+          its caption UNDER it (not over), so the IntellEngine box reads as one title over two equal
+          actions. A different icon (RotateCw vs Sparkles) keeps the two navy buttons distinct. */}
       <button
         type="button"
         disabled={running}
         onClick={() => void run()}
-        className="inline-flex items-center gap-[7px] text-[12.5px] font-semibold text-brand-navy transition-colors hover:opacity-80 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
+        className="inline-flex h-[34px] w-full items-center justify-center gap-[7px] rounded-sharp bg-brand-chrome text-[12.5px] font-semibold text-white transition-opacity duration-[120ms] hover:opacity-90 disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
       >
         {running ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
         ) : (
-          <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+          <RotateCw className="h-3.5 w-3.5" aria-hidden="true" />
         )}
-        {running ? "Re-running… (up to a few minutes)" : hasVerdict ? "Re-run grant match" : "Run grant match review"}
+        {running ? "Re-running…" : hasVerdict ? "Re-run grant match" : "Run grant match"}
       </button>
-      <p className="text-[11px] leading-[1.45] text-ink-muted">
-        Opus + web re-check of this pair against the authoritative source. A grounded demote can lower this card&rsquo;s score.
-      </p>
-      {error && <p className="text-[11px]" style={{ color: BRAND.reject }}>{error}</p>}
+      <p className="mt-2 text-[12px] leading-[1.5] text-ink-muted">Re-run IntellEngine match analysis.</p>
+      {error && <p className="mt-1 text-[11px]" style={{ color: BRAND.reject }}>{error}</p>}
     </div>
   );
 }
