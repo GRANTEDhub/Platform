@@ -17,14 +17,25 @@ import { Button } from "@/components/ui/button";
 // scripts are blocked. Public route (middleware treats /auth/* as public).
 export const dynamic = "force-dynamic";
 
+// Next.js delivers each searchParam as string | string[] | undefined — a DUPLICATED query key
+// (?next=/x&next=/x), which a link-rewriting email proxy (the very thing this page defends
+// against) can easily produce, yields an array. Take the first value so nothing downstream
+// gets an array: safeNextPath() would throw calling .startsWith on an array, and with no
+// error.tsx that surfaces as a raw crash page instead of the graceful Continue/routing this
+// page exists to provide. (The server action reads single values from formData, so it needs
+// no equivalent.)
+function firstParam(v: string | string[] | undefined): string {
+  return (Array.isArray(v) ? v[0] : v) ?? "";
+}
+
 export default function ConfirmPage({
   searchParams,
 }: {
-  searchParams: { token_hash?: string; type?: string; next?: string };
+  searchParams: { token_hash?: string | string[]; type?: string | string[]; next?: string | string[] };
 }) {
-  const tokenHash = searchParams.token_hash ?? "";
-  const type = searchParams.type ?? "";
-  const next = safeNextPath(searchParams.next);
+  const tokenHash = firstParam(searchParams.token_hash);
+  const type = firstParam(searchParams.type);
+  const next = safeNextPath(firstParam(searchParams.next));
 
   return (
     <div
