@@ -4,10 +4,15 @@ import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Eye, EyeOff } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { requestSignInLink } from "../actions";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 
-type Mode = "password" | "magic";
+// The system is PASSWORD-based. The "link" mode is a fallback/recovery: it emails a one-time
+// sign-in link that lands on the set-password page (set or reset a password, then continue) --
+// NOT a passwordless alternative. Kept deliberately un-"magic" in wording so a client never
+// thinks they don't have a password.
+type Mode = "password" | "link";
 
 export default function LoginPage() {
   return (
@@ -50,34 +55,24 @@ function LoginForm() {
     router.refresh();
   }
 
-  async function handleMagic(e: React.FormEvent) {
+  async function handleSignInLink(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError(null);
-    const supabase = createClient();
-    const origin =
-      process.env.NEXT_PUBLIC_SITE_URL ||
-      (typeof window !== "undefined" ? window.location.origin : "");
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      // No self-registration: only provisioned accounts (staff + invited clients)
-      // may sign in. shouldCreateUser:false means a non-existent email never gets
-      // an account created — closing the "email yourself a link → become staff" hole.
-      options: {
-        shouldCreateUser: false,
-        emailRedirectTo: `${origin}/auth/callback?next=${redirectedFrom}`,
-      },
-    });
-    setLoading(false);
-    if (error) {
-      setError(
-        /signups? not allowed|not authorized|not found/i.test(error.message)
-          ? "No account found for that email. Ask your GRANTED contact to set you up."
-          : error.message,
-      );
-      return;
+    try {
+      // A shared server action mints a one-time recovery link (-> /auth/confirm ->
+      // /set-password) and emails it. It NEVER creates an account and returns the same
+      // generic result whether or not the email has one, so it's safe to call
+      // unauthenticated and reveals nothing about who is a member.
+      await requestSignInLink(email);
+      setSent(true);
+    } catch {
+      // A throw here is a transport failure, not an "account not found" (the action
+      // swallows that): keep the message neutral and non-revealing.
+      setError("Something went wrong sending your link. Please try again in a moment.");
+    } finally {
+      setLoading(false);
     }
-    setSent(true);
   }
 
   return (
@@ -105,12 +100,13 @@ function LoginForm() {
           <div className="text-center text-sm">
             <p className="font-medium">Check your email</p>
             <p className="mt-1 text-muted-foreground">
-              We sent a sign-in link to <span className="font-medium">{email}</span>.
+              If an account exists for <span className="font-medium">{email}</span>, we&apos;ve sent a
+              sign-in link. It signs you in and lets you set your password.
             </p>
           </div>
         ) : (
           <form
-            onSubmit={mode === "password" ? handlePassword : handleMagic}
+            onSubmit={mode === "password" ? handlePassword : handleSignInLink}
             className="space-y-4"
           >
             <div className="space-y-2">
@@ -166,19 +162,19 @@ function LoginForm() {
                 ? "Working…"
                 : mode === "password"
                   ? "Sign in"
-                  : "Send magic link"}
+                  : "Send sign-in link"}
             </Button>
 
             <button
               type="button"
               onClick={() => {
-                setMode(mode === "password" ? "magic" : "password");
+                setMode(mode === "password" ? "link" : "password");
                 setError(null);
               }}
               className="w-full text-center text-xs text-muted-foreground hover:text-foreground"
             >
               {mode === "password"
-                ? "Email me a magic link instead"
+                ? "Can't sign in? Email me a sign-in link"
                 : "Use a password instead"}
             </button>
           </form>

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { notifyAccountSetupComplete } from "./actions";
+import { requestSignInLink } from "../actions";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { SpinningMark } from "@/components/ui/spinning-mark";
@@ -73,10 +74,11 @@ export default function SetPasswordPage() {
     // continue" button with no sign anything was happening, and re-clicking it
     // doubled the attempt. The overlay stays up until the new page replaces us.
     setSaved(true);
-    // Into the portal. The portal layout redirects first-time clients (whose
-    // profile isn't confirmed yet) to /welcome for the profile review (#16);
-    // returning clients land straight on the dashboard.
-    router.push("/portal");
+    // Into the app via the ROLE ROUTER at "/", not a hardcoded "/portal". A client is
+    // routed on to /portal (then /welcome for the first-login profile review, #16);
+    // a staff member who used the sign-in-link recovery lands on /clients instead of
+    // being bounced by requireClient. One extra server hop for clients, correct for both.
+    router.push("/");
     router.refresh();
   }
 
@@ -117,14 +119,21 @@ export default function SetPasswordPage() {
         {phase === "checking" ? (
           <p className="text-center text-sm text-muted-foreground">Loading…</p>
         ) : phase === "nosession" ? (
-          <div className="text-center text-sm">
-            <p className="font-medium">This setup link has expired</p>
-            <p className="mt-1 text-muted-foreground">
-              Ask your GRANTED contact to resend your welcome email, or{" "}
+          <div className="text-sm">
+            <div className="text-center">
+              <p className="font-medium">This link has expired</p>
+              <p className="mt-1 text-muted-foreground">
+                Setup links can be used once. Enter your email and we&apos;ll send a fresh one that
+                brings you right back here to finish setting up.
+              </p>
+            </div>
+            <RequestNewLink />
+            <p className="mt-4 text-center text-muted-foreground">
+              Already have a password?{" "}
               <a href="/login" className="font-medium text-brand-navy hover:underline">
-                sign in
-              </a>{" "}
-              if you already have a password.
+                Sign in
+              </a>
+              .
             </p>
           </div>
         ) : (
@@ -164,5 +173,54 @@ export default function SetPasswordPage() {
         )}
       </div>
     </div>
+  );
+}
+
+// The self-serve resend shown when a client arrives on a spent/expired link (no session).
+// Closes the first-login dead end: rather than "ask your GRANTED contact", they mint a fresh
+// one-time link themselves. Calls the shared server action, which never creates an account
+// and returns the same generic result either way -- so the confirmation below reveals nothing
+// about whether that email is a member.
+function RequestNewLink() {
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    try {
+      await requestSignInLink(email);
+      setSent(true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (sent) {
+    return (
+      <p className="mt-4 rounded-lg bg-brand-navy/[0.04] px-3 py-2.5 text-center text-muted-foreground">
+        If an account exists for that email, a fresh sign-in link is on its way. Check your inbox.
+      </p>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-4 space-y-2 text-left">
+      <Label htmlFor="resend-email">Email</Label>
+      <Input
+        id="resend-email"
+        type="email"
+        autoComplete="email"
+        required
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        placeholder="you@organization.org"
+      />
+      <Button type="submit" className="w-full" disabled={busy}>
+        {busy ? "Working…" : "Email me a new link"}
+      </Button>
+    </form>
   );
 }
