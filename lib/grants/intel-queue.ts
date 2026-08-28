@@ -46,16 +46,32 @@ export function autoIntelApplyEnabled(): boolean {
   return process.env.AUTO_INTEL_APPLY === "true";
 }
 
-// NARROW-AND-PROVEN launch scope: apply-mode acts ONLY on the CFDAs listed here. Every OTHER program
-// stays PROPOSAL-ONLY (its QA verdict lands in card_intel_reviews, the card is untouched) until it has
-// an eval-proven grounded demote + no-false-demote guard AND a verified allocation seed URL. Widening
-// is a one-line data change here, GATED on a green intel eval for the added program (RUN_INTEL_EVAL):
-//   - 16.738 JAG-Local — proven end-to-end (eval run #8: grounded demote→2, 3/3, affirms untouched).
-//   - 16.575 VOCA Victim Assistance — seeded (allocation-sources: OVC formula-grants page states the
-//     state-administering-agency / local-subgrantee rule on the landing page itself) + eval cases 4
-//     (grounded demote of a subgrant-only nonprofit) and 7 (state administering agency AFFIRMED, the
-//     no-false-demote guard). GRANTED's roster carries no state VOCA administering agency, so the
-//     false-demote blast radius is minimal, but the flip still waits on the green eval.
+// BROAD apply (Step 3, the widening): a THIRD flag, layered under AUTO_INTEL_APPLY. When OFF, apply is
+// gated to APPLY_ELIGIBLE_CFDAS (the narrow, per-program allowlist below). When ON, the CFDA allowlist STOPS
+// being the trust boundary — a grounded demote AUTO-APPLIES regardless of CFDA, and the gate becomes
+// grounding + a clean adversarial refute:
+//   - grounded demote + refute_survived === true  → AUTO-APPLY  (the refute-clean set).
+//   - grounded demote + refute_survived false/null → STAFF-FLAG, never auto-applied — the verdict stays
+//     durable in card_intel_reviews (staff-visible) and a human applies it via the manual Re-run route.
+// Grounding is already guaranteed upstream: a "demote" verdict only survives finalizeIntel if it FETCHED a
+// relevant .gov page (hasSuccessfulFetch), so the added gate here is refute-clean alone. The refute split is
+// the real backstop beyond the eval sample — auto only ever touches a demote that survived an adversarial
+// re-read. AUTO_INTEL_APPLY_BROAD OFF is byte-identical to the narrow allowlist path (the ternary in the
+// drain gate collapses to cardCfdaApplyEligible, and buildQaPatch's requireRefuteClean stays false).
+export function autoIntelApplyBroadEnabled(): boolean {
+  return process.env.AUTO_INTEL_APPLY_BROAD === "true";
+}
+
+// The per-program allowlist. Under NARROW apply (AUTO_INTEL_APPLY_BROAD OFF) it is the apply trust boundary:
+// apply-mode acts ONLY on the CFDAs listed here; every OTHER program stays PROPOSAL-ONLY. Under BROAD apply
+// it is NO LONGER the trust boundary (grounding + refute-clean is) — it is retained as (a) the narrow-mode
+// gate, the instant fallback if broad is flipped off, and (b) a scrutiny / pre-tag HINT: these are the
+// programs whose allocation reality the NOFO understates, seeded in allocation-sources so QA fetches the
+// authoritative page. Members (proven end-to-end before they were added):
+//   - 16.738 JAG-Local — eval run #8: grounded demote→2, 3/3, affirms untouched.
+//   - 16.575 VOCA Victim Assistance — seeded (OVC formula-grants page states the state-administering-agency /
+//     local-subgrantee rule on the landing page itself) + eval cases 4 (grounded demote of a subgrant-only
+//     nonprofit) and 7 (state administering agency AFFIRMED, the no-false-demote guard).
 export const APPLY_ELIGIBLE_CFDAS = new Set<string>(["16.738", "16.575"]);
 
 // Strip a trailing letter suffix (e.g. "16.738A" → "16.738"); mirrors allocation-sources / formula-programs.
@@ -113,8 +129,19 @@ export function buildQaPatch(
   review: IntelReview,
   nowIso: string,
   reviewedBy: string | null = null,
+  // BROAD apply only (the auto drain passes autoIntelApplyBroadEnabled()): when true, a grounded demote
+  // AUTO-APPLIES only if the adversarial refute confirmed it (refute_survived === true). A grounded demote
+  // whose refute was genuinely refuted (false) or couldn't complete (null) falls through to the clearing
+  // patch = STAFF-FLAG: no score change, the card shows the engine score, and the demote verdict stays
+  // durable in card_intel_reviews for a human to apply via Re-run. Defaults FALSE so the narrow drain and
+  // the manual Re-run route (a human is the fan-out gate there) are byte-identical — grounding alone gates.
+  requireRefuteClean = false,
 ): QaPatch {
-  if (review.verdict === "demote" && review.qa_fit_score != null) {
+  const demoteApplies =
+    review.verdict === "demote" &&
+    review.qa_fit_score != null &&
+    (!requireRefuteClean || review.refute_survived === true);
+  if (demoteApplies) {
     // Merge QA's CHANGED factor(s) onto the engine's REAL factors — never store the model's fabricated five.
     const mergedFactors: FactorScores | null = review.qa_factor_scores
       ? ({ ...(card.factor_scores ?? {}), ...review.qa_factor_scores } as FactorScores)
@@ -518,10 +545,16 @@ async function processOne(
     return "error";
   }
 
-  // APPLY-THE-GATE (flag + allowlist gated): project the verdict onto the card's qa_* OVERRIDE columns.
-  // OFF or off-allowlist → this whole block is skipped, so the flag-off path is exactly the proposal-only
-  // write above and nothing more (byte-identical to today; the extra read + write below never run).
-  if (autoIntelApplyEnabled() && cardCfdaApplyEligible(grant)) {
+  // APPLY-THE-GATE: project the verdict onto the card's qa_* OVERRIDE columns.
+  // NARROW (AUTO_INTEL_APPLY_BROAD off): gated to the CFDA allowlist, and a grounded demote applies whatever
+  // the refute said (refute advisory). BROAD (on): the allowlist is bypassed (any CFDA is authorized to
+  // enter the block) and buildQaPatch's requireRefuteClean gate takes over — a grounded demote applies only
+  // when refute_survived === true; a refute-unclean demote falls to the clearing patch (staff-flag). Either
+  // way, AUTO_INTEL_APPLY OFF skips the whole block, so the master-flag-off path is byte-identical to the
+  // proposal-only write above and nothing more.
+  const applyAuthorized =
+    autoIntelApplyEnabled() && (autoIntelApplyBroadEnabled() || cardCfdaApplyEligible(grant));
+  if (applyAuthorized) {
     // Project the DURABLE verdict, and ONLY when it is an AUTO one. A human on-demand verdict can win the
     // upsert race above — it lands during runReview and ignoreDuplicates then no-ops our write, so the
     // durable record is the human's and our in-memory `review` was discarded. Projecting `review` here
@@ -536,9 +569,15 @@ async function processOne(
       .eq("review_card_id", card.id)
       .maybeSingle<{ intel_review: IntelReview; created_by: string | null }>();
     if (persisted && persisted.created_by === null) {
-      // Every verdict yields a patch now: a demote applies, and affirm/flag/unverified CLEAR any prior
-      // applied override (so an auto re-QA that reverses a demote no longer leaves a stale score).
-      await applyQaPatch(db, card.id, buildQaPatch(card, persisted.intel_review, new Date(now()).toISOString()));
+      // Every verdict yields a patch now: a demote applies (refute-clean under broad), and affirm/flag/
+      // unverified — plus a refute-unclean demote under broad — CLEAR any prior applied override (so an auto
+      // re-QA that reverses a demote, or downgrades a refute-clean demote to refute-unclean, leaves no stale
+      // score). requireRefuteClean rides autoIntelApplyBroadEnabled(): false under narrow (byte-identical).
+      await applyQaPatch(
+        db,
+        card.id,
+        buildQaPatch(card, persisted.intel_review, new Date(now()).toISOString(), null, autoIntelApplyBroadEnabled()),
+      );
     }
   }
 

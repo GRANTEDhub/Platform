@@ -445,6 +445,39 @@ describe("apply-the-gate — buildQaPatch + cardCfdaApplyEligible (pure)", () =>
         .qa_reviewed_by,
     ).toBe("staff-9");
   });
+
+  // BROAD apply refute split (requireRefuteClean = the 5th arg the auto drain passes under
+  // AUTO_INTEL_APPLY_BROAD). buildQaPatch itself is CFDA-agnostic — "regardless of CFDA" lives in the drain
+  // gate; here we lock the refute half: refute-clean demotes apply, refute-unclean demotes staff-flag.
+  it("requireRefuteClean=true: refute_survived TRUE demote → APPLIES (the refute-clean 23-pattern)", () => {
+    const patch = buildQaPatch(card, demoteReview({ refute_survived: true }), "T", null, true);
+    expect(patch.qa_status).toBe("applied");
+    expect(patch.qa_fit_score).toBe(2);
+  });
+
+  it("requireRefuteClean=true: refute_survived FALSE demote → CLEARING patch = staff-flag, never auto-applied", () => {
+    const patch = buildQaPatch(card, demoteReview({ refute_survived: false }), "T", null, true);
+    // Not applied: the score columns are nulled so coalesce shows the engine score. The demote verdict is
+    // still durable in card_intel_reviews (the drain wrote it) — that IS the staff-flag a human acts on.
+    expect(patch.qa_status).toBe("none");
+    expect(patch.qa_fit_score).toBeNull();
+    expect(patch.qa_factor_scores).toBeNull();
+    expect(patch.qa_engine_fit_score).toBeNull();
+  });
+
+  it("requireRefuteClean=true: refute_survived NULL demote (refute couldn't complete) → staff-flag, not applied", () => {
+    const patch = buildQaPatch(card, demoteReview({ refute_survived: null }), "T", null, true);
+    expect(patch.qa_status).toBe("none");
+    expect(patch.qa_fit_score).toBeNull();
+  });
+
+  it("requireRefuteClean=false (narrow / manual): a refute-FALSE demote STILL applies — refute advisory, byte-identical to today", () => {
+    // The narrow drain and the manual Re-run route never pass requireRefuteClean, so grounding alone gates
+    // and the refute is advisory (PR F). Flipping broad on must not change that path.
+    const patch = buildQaPatch(card, demoteReview({ refute_survived: false }), "T");
+    expect(patch.qa_status).toBe("applied");
+    expect(patch.qa_fit_score).toBe(2);
+  });
 });
 
 describe("applyQaPatch — writes the patch, returns whether it landed", () => {
@@ -609,5 +642,80 @@ describe("drainIntelQueue — apply-the-gate flag + allowlist (AUTO_INTEL_APPLY)
     expect(card.qa_fit_score ?? null).toBeNull(); // never-hide: card shows the engine score, still surfaced
     expect(card.fit_score).toBe(3);
     expect(s.tables.card_intel_reviews).toHaveLength(1); // verdict durably recorded for staff regardless
+  });
+});
+
+describe("drainIntelQueue — BROAD apply (AUTO_INTEL_APPLY_BROAD): refute split, any CFDA", () => {
+  const prevApply = process.env.AUTO_INTEL_APPLY;
+  const prevBroad = process.env.AUTO_INTEL_APPLY_BROAD;
+  afterEach(() => {
+    if (prevApply === undefined) delete process.env.AUTO_INTEL_APPLY; else process.env.AUTO_INTEL_APPLY = prevApply;
+    if (prevBroad === undefined) delete process.env.AUTO_INTEL_APPLY_BROAD; else process.env.AUTO_INTEL_APPLY_BROAD = prevBroad;
+  });
+
+  // A NON-allowlisted, competitive CFDA (Urban Forestry 10.675, from the real inert-demote sample) on the
+  // queued pair — under narrow this stays proposal-only; under broad a refute-clean demote applies.
+  const seedNonAllowlisted = () => {
+    const s = db(); seedPairData(s);
+    s.tables.grants = [{ id: "g1", title: "Urban & Community Forestry", assistance_listings: [{ number: "10.675" }], source_url: "https://x.gov" }];
+    s.tables.review_cards = [pendingCard({ factor_scores: engineFactors })];
+    s.tables.intel_review_queue = [{ id: "q1", grant_id: "g1", client_id: "c1", status: "queued", attempts: 0, enqueued_at: "2026-08-27T11:00:00Z" }];
+    return s;
+  };
+
+  it("BROAD ON + non-allowlisted CFDA + refute-CLEAN demote → APPLIES (allowlist is no longer the trust boundary)", async () => {
+    process.env.AUTO_INTEL_APPLY = "true";
+    process.env.AUTO_INTEL_APPLY_BROAD = "true";
+    const s = seedNonAllowlisted();
+    await drainIntelQueue(asDb(s), { now, runReview: async () => demoteReview({ refute_survived: true }) });
+    const card = s.tables.review_cards[0];
+    expect(card.qa_fit_score).toBe(2); // applied on a CFDA that narrow mode would never touch
+    expect(card.qa_status).toBe("applied");
+    expect(card.fit_score).toBe(3); // engine column untouched
+  });
+
+  it("BROAD ON + non-allowlisted CFDA + refute-UNCLEAN demote (false) → STAFF-FLAG: card untouched, verdict durable", async () => {
+    process.env.AUTO_INTEL_APPLY = "true";
+    process.env.AUTO_INTEL_APPLY_BROAD = "true";
+    const s = seedNonAllowlisted();
+    await drainIntelQueue(asDb(s), { now, runReview: async () => demoteReview({ refute_survived: false }) });
+    const card = s.tables.review_cards[0];
+    expect(card.qa_fit_score ?? null).toBeNull(); // NEVER auto-applied — a human decides these
+    expect(card.fit_score).toBe(3);
+    expect(s.tables.card_intel_reviews).toHaveLength(1); // the demote verdict IS the staff-flag
+  });
+
+  it("BROAD ON + non-allowlisted CFDA + refute NULL demote (couldn't complete) → STAFF-FLAG, not applied", async () => {
+    process.env.AUTO_INTEL_APPLY = "true";
+    process.env.AUTO_INTEL_APPLY_BROAD = "true";
+    const s = seedNonAllowlisted();
+    await drainIntelQueue(asDb(s), { now, runReview: async () => demoteReview({ refute_survived: null }) });
+    const card = s.tables.review_cards[0];
+    expect(card.qa_fit_score ?? null).toBeNull();
+    expect(s.tables.card_intel_reviews).toHaveLength(1);
+  });
+
+  it("BROAD ON is UNIFORM: even an allowlisted JAG card's refute-unclean demote is held for staff (not auto-applied)", async () => {
+    process.env.AUTO_INTEL_APPLY = "true";
+    process.env.AUTO_INTEL_APPLY_BROAD = "true";
+    const s = db(); seedPairData(s); // g1 = JAG 16.738 (allowlisted)
+    s.tables.review_cards = [pendingCard({ factor_scores: engineFactors })];
+    s.tables.intel_review_queue = [{ id: "q1", grant_id: "g1", client_id: "c1", status: "queued", attempts: 0, enqueued_at: "2026-08-27T11:00:00Z" }];
+    await drainIntelQueue(asDb(s), { now, runReview: async () => demoteReview({ refute_survived: false }) });
+    const card = s.tables.review_cards[0];
+    // Under narrow, this JAG demote would auto-apply (refute advisory); under broad the refute split governs
+    // uniformly, so it goes to staff-flag instead. The allowlist is a hint, not an apply authorization.
+    expect(card.qa_fit_score ?? null).toBeNull();
+    expect(card.fit_score).toBe(3);
+  });
+
+  it("BROAD OFF (narrow) + non-allowlisted CFDA + demote → still proposal-only (byte-identical fallback)", async () => {
+    process.env.AUTO_INTEL_APPLY = "true";
+    delete process.env.AUTO_INTEL_APPLY_BROAD; // narrow: allowlist is the trust boundary
+    const s = seedNonAllowlisted();
+    await drainIntelQueue(asDb(s), { now, runReview: async () => demoteReview({ refute_survived: true }) });
+    const card = s.tables.review_cards[0];
+    expect(card.qa_fit_score ?? null).toBeNull(); // 10.675 is not allowlisted → not applied under narrow
+    expect(s.tables.card_intel_reviews).toHaveLength(1);
   });
 });
