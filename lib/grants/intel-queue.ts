@@ -611,6 +611,145 @@ export async function applyQaPatch(db: DB, cardId: string, patch: QaPatch): Prom
   return false;
 }
 
+// ── One-time BROAD backfill: project the already-computed inert demotes (the flip's companion) ────────
+// Flipping AUTO_INTEL_APPLY_BROAD only changes NEW demotes: the poller skips cards that already carry a
+// verdict, so the inert grounded demotes already sitting in card_intel_reviews never re-project on their
+// own. This is the one-time backfill that projects them, applying the SAME broad rule the drain uses
+// (grounded + refute-clean, via requireRefuteClean=true) — so it can NEVER apply a refute-unclean demote:
+// those stay staff-flag exactly as the live gate leaves them. It re-projects EXISTING verdicts (no model
+// call — buildQaPatch is pure), so it is COST-NEUTRAL, and IDEMPOTENT: a card whose override is already
+// live is counted, never rewritten. Dry-run (apply:false) writes nothing and returns BOTH lists — the
+// refute-clean set it would apply and the refute-unclean staff-flag set for a human — so staff can
+// spot-check before committing. Reuses buildQaPatch/applyQaPatch (the one apply path, no drift). The route
+// gates the APPLY on autoIntelApplyEnabled() (the master flag), same as the manual Re-run path; it does
+// NOT read AUTO_INTEL_APPLY_BROAD — the broad rule is baked in here as requireRefuteClean=true.
+export interface BackfillCardInfo {
+  cardId: string;
+  grantTitle: string | null;
+  clientName: string | null;
+  engineFit: number | null;
+  qaFit: number | null; // the demote's proposed (lower) score
+  refuteSurvived: boolean | null;
+  alreadyLive: boolean; // the override is already applied AND fresh (a re-apply would be a no-op)
+}
+
+export interface BackfillResult {
+  dryRun: boolean;
+  eligible: BackfillCardInfo[]; // grounded refute-CLEAN demotes — the backfill applies these
+  staffFlag: BackfillCardInfo[]; // grounded refute-UNCLEAN demotes — NEVER auto-applied; a human decides
+  applied: { cardId: string; engineFit: number | null; qaFit: number | null }[]; // what THIS run wrote
+}
+
+interface BackfillCardRow {
+  id: string;
+  fit_score: number | null;
+  factor_scores: FactorScores | null;
+  qa_status: string | null;
+  qa_engine_fit_score: number | null;
+  grant_id: string | null;
+  client_id: string | null;
+}
+
+export async function backfillBroadApply(
+  db: DB,
+  opts: { apply?: boolean; limit?: number; cardId?: string } = {},
+): Promise<BackfillResult> {
+  const dryRun = opts.apply !== true;
+
+  // The AUTO verdicts only (created_by null) — a human on-demand verdict is applied by its own route and is
+  // never re-projected here (matches the drain's created_by-null reconciliation).
+  const { data: reviews } = await db
+    .from("card_intel_reviews")
+    .select("review_card_id, intel_review, created_by")
+    .is("created_by", null);
+  const demotes = ((reviews ?? []) as { review_card_id: string; intel_review: IntelReview }[]).filter(
+    (r) => r.intel_review?.verdict === "demote" && r.intel_review?.qa_fit_score != null,
+  );
+  if (demotes.length === 0) return { dryRun, eligible: [], staffFlag: [], applied: [] };
+
+  // The cards behind those demotes: the engine score + factors for the patch, the qa_* columns for the
+  // already-live check. GATED to pending + unreleased, the SAME invariant processOne enforces before any
+  // apply-write — so the backfill can never retroactively rewrite the score/factors/narrative shown on a
+  // card a staffer already DECIDED on or that was already RELEASED / sent to a client (the "preview == sent"
+  // / decision-integrity invariant). A decided/released card has no row here → it drops out of eligible and
+  // is never applied. A demote whose card was deleted / re-scored away is likewise absent and skipped.
+  const cardIds = demotes.map((d) => d.review_card_id);
+  const { data: cardRows } = await db
+    .from("review_cards")
+    .select("id, fit_score, factor_scores, qa_status, qa_engine_fit_score, grant_id, client_id")
+    .in("id", cardIds)
+    .eq("decision", "pending")
+    .is("sme_released_at", null);
+  const cards = new Map(((cardRows ?? []) as BackfillCardRow[]).map((c) => [c.id, c]));
+
+  // Grant title + client name so a reviewer can recognize the card in the dry-run list.
+  const grantIds = [...new Set([...cards.values()].map((c) => c.grant_id).filter((x): x is string => !!x))];
+  const clientIds = [...new Set([...cards.values()].map((c) => c.client_id).filter((x): x is string => !!x))];
+  const [{ data: grantRows }, { data: clientRows }] = await Promise.all([
+    grantIds.length
+      ? db.from("grants").select("id, title").in("id", grantIds)
+      : Promise.resolve({ data: [] as { id: string; title: string | null }[] }),
+    clientIds.length
+      ? db.from("clients").select("id, name").in("id", clientIds)
+      : Promise.resolve({ data: [] as { id: string; name: string | null }[] }),
+  ]);
+  const grantTitle = new Map(((grantRows ?? []) as { id: string; title: string | null }[]).map((g) => [g.id, g.title]));
+  const clientName = new Map(((clientRows ?? []) as { id: string; name: string | null }[]).map((c) => [c.id, c.name]));
+
+  const eligible: BackfillCardInfo[] = [];
+  const staffFlag: BackfillCardInfo[] = [];
+  for (const d of demotes) {
+    const card = cards.get(d.review_card_id);
+    if (!card) continue;
+    const info: BackfillCardInfo = {
+      cardId: d.review_card_id,
+      grantTitle: card.grant_id ? grantTitle.get(card.grant_id) ?? null : null,
+      clientName: card.client_id ? clientName.get(card.client_id) ?? null : null,
+      engineFit: card.fit_score,
+      qaFit: d.intel_review.qa_fit_score,
+      refuteSurvived: d.intel_review.refute_survived,
+      alreadyLive: card.qa_status === "applied" && card.qa_engine_fit_score === card.fit_score,
+    };
+    (d.intel_review.refute_survived === true ? eligible : staffFlag).push(info);
+  }
+
+  const applied: BackfillResult["applied"] = [];
+  if (!dryRun) {
+    const limit = opts.limit ?? eligible.length;
+    for (const info of eligible) {
+      if (applied.length >= limit) break;
+      if (opts.cardId && info.cardId !== opts.cardId) continue;
+      if (info.alreadyLive) continue; // idempotent: a live override is never rewritten
+      const card = cards.get(info.cardId);
+      if (!card) continue;
+      // RE-READ the verdict at WRITE time (mirrors processOne + the on-demand route, PR G): a staff Re-run
+      // could have landed on this card since the initial fetch and written a HUMAN verdict — never overwrite
+      // it with our now-stale AUTO one. Apply only while the row is STILL the auto (created_by null),
+      // refute-clean demote we captured; otherwise skip and leave the human's verdict standing.
+      const { data: persisted } = await db
+        .from("card_intel_reviews")
+        .select("intel_review, created_by")
+        .eq("review_card_id", info.cardId)
+        .maybeSingle<{ intel_review: IntelReview; created_by: string | null }>();
+      if (!persisted || persisted.created_by !== null) continue;
+      const review = persisted.intel_review;
+      if (review?.verdict !== "demote" || review?.refute_survived !== true) continue;
+      const patch = buildQaPatch(
+        { id: card.id, fit_score: card.fit_score, factor_scores: card.factor_scores },
+        review,
+        new Date().toISOString(),
+        null,
+        true, // requireRefuteClean — the broad rule; the re-read verdict is refute-clean, so this applies
+      );
+      if (await applyQaPatch(db, info.cardId, patch)) {
+        applied.push({ cardId: info.cardId, engineFit: info.engineFit, qaFit: info.qaFit });
+      }
+    }
+  }
+
+  return { dryRun, eligible, staffFlag, applied };
+}
+
 // Reserve the estimated cost in the run log BEFORE the killable model call, returning the row id. This is
 // what makes the daily cap hold against OUT-OF-PROCESS kills: a Vercel maxDuration=300s timeout (or OOM /
 // crash) during runReview never reaches processOne's catch, so a log written only AFTER the pass would miss

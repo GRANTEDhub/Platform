@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { pollAndEnqueue, drainIntelQueue, runAutoIntel, INTEL_MAX_ATTEMPTS, buildQaPatch, applyQaPatch, cardCfdaApplyEligible } from "./intel-queue";
+import { pollAndEnqueue, drainIntelQueue, runAutoIntel, INTEL_MAX_ATTEMPTS, buildQaPatch, applyQaPatch, cardCfdaApplyEligible, backfillBroadApply } from "./intel-queue";
 import type { IntelReview } from "./intel-review";
 
 // Deterministic — NO model, NO network, NO real Supabase. A tiny in-memory fake DB implements just the
@@ -717,5 +717,110 @@ describe("drainIntelQueue — BROAD apply (AUTO_INTEL_APPLY_BROAD): refute split
     const card = s.tables.review_cards[0];
     expect(card.qa_fit_score ?? null).toBeNull(); // 10.675 is not allowlisted → not applied under narrow
     expect(s.tables.card_intel_reviews).toHaveLength(1);
+  });
+});
+
+describe("backfillBroadApply — one-time re-projection of the inert demotes", () => {
+  // Three AUTO (created_by null) grounded demotes on distinct cards: one refute-clean, one refute-false,
+  // one refute-null; plus a human (created_by set) demote that must be ignored entirely.
+  const seedBackfill = () => {
+    const s = db();
+    s.tables.grants = [
+      { id: "g-clean", title: "Urban Forestry", assistance_listings: [{ number: "10.675" }] },
+      { id: "g-false", title: "AmeriCorps State", assistance_listings: [{ number: "94.006" }] },
+      { id: "g-null", title: "HRSA RCORP", assistance_listings: [{ number: "93.912" }] },
+    ];
+    s.tables.clients = [{ id: "cl1", name: "NWACC" }];
+    // decision 'pending' + sme_released_at null — the backfill only touches undecided, unreleased cards.
+    const base = { fit_score: 3, factor_scores: engineFactors, qa_status: null, qa_engine_fit_score: null, decision: "pending", sme_released_at: null, client_id: "cl1" };
+    s.tables.review_cards = [
+      { id: "rc-clean", ...base, grant_id: "g-clean" },
+      { id: "rc-false", ...base, grant_id: "g-false" },
+      { id: "rc-null", ...base, grant_id: "g-null" },
+      { id: "rc-human", ...base, grant_id: "g-clean" },
+    ];
+    s.tables.card_intel_reviews = [
+      { review_card_id: "rc-clean", created_by: null, intel_review: demoteReview({ refute_survived: true }) },
+      { review_card_id: "rc-false", created_by: null, intel_review: demoteReview({ refute_survived: false }) },
+      { review_card_id: "rc-null", created_by: null, intel_review: demoteReview({ refute_survived: null }) },
+      { review_card_id: "rc-human", created_by: "staff-1", intel_review: demoteReview({ refute_survived: true }) },
+    ];
+    return s;
+  };
+
+  it("DRY-RUN splits refute-clean (eligible) vs refute-unclean (staff-flag), ignores human verdicts, writes NOTHING", async () => {
+    const s = seedBackfill();
+    const r = await backfillBroadApply(asDb(s), { apply: false });
+    expect(r.dryRun).toBe(true);
+    expect(r.eligible.map((e) => e.cardId)).toEqual(["rc-clean"]); // refute true only; human verdict excluded
+    expect(r.staffFlag.map((e) => e.cardId).sort()).toEqual(["rc-false", "rc-null"]); // false + null
+    // display context attached so a reviewer can recognize the card
+    expect(r.eligible[0]).toMatchObject({ grantTitle: "Urban Forestry", clientName: "NWACC", engineFit: 3, qaFit: 2, alreadyLive: false });
+    // nothing written
+    expect(r.applied).toEqual([]);
+    for (const c of s.tables.review_cards) expect(c.qa_fit_score ?? null).toBeNull();
+  });
+
+  it("APPLY projects ONLY the refute-clean demote; the staff-flag cards are left untouched (a human decides those)", async () => {
+    const s = seedBackfill();
+    const r = await backfillBroadApply(asDb(s), { apply: true });
+    expect(r.applied).toEqual([{ cardId: "rc-clean", engineFit: 3, qaFit: 2 }]);
+    const byId = (id: string) => s.tables.review_cards.find((c) => c.id === id)!;
+    expect(byId("rc-clean").qa_fit_score).toBe(2);
+    expect(byId("rc-clean").qa_status).toBe("applied");
+    expect(byId("rc-clean").fit_score).toBe(3); // engine column untouched
+    // refute-unclean + human cards never rewritten
+    expect(byId("rc-false").qa_fit_score ?? null).toBeNull();
+    expect(byId("rc-null").qa_fit_score ?? null).toBeNull();
+    expect(byId("rc-human").qa_fit_score ?? null).toBeNull();
+  });
+
+  it("IDEMPOTENT: a card whose override is already live is counted (alreadyLive) but NOT rewritten", async () => {
+    const s = seedBackfill();
+    Object.assign(s.tables.review_cards.find((c) => c.id === "rc-clean")!, {
+      qa_fit_score: 2, qa_status: "applied", qa_engine_fit_score: 3,
+    });
+    const r = await backfillBroadApply(asDb(s), { apply: true });
+    expect(r.eligible[0].alreadyLive).toBe(true);
+    expect(r.applied).toEqual([]); // nothing re-written
+  });
+
+  // Two refute-clean demotes, so cardId / limit have something to bound.
+  const seedTwoClean = () => {
+    const s = seedBackfill();
+    s.tables.review_cards.push({ id: "rc-clean2", fit_score: 3, factor_scores: engineFactors, qa_status: null, qa_engine_fit_score: null, decision: "pending", sme_released_at: null, grant_id: "g-clean", client_id: "cl1" });
+    s.tables.card_intel_reviews.push({ review_card_id: "rc-clean2", created_by: null, intel_review: demoteReview({ refute_survived: true }) });
+    return s;
+  };
+
+  it("EXCLUDES a DECIDED card (decision != 'pending') — a refute-clean demote on it is never in eligible or applied", async () => {
+    const s = seedBackfill();
+    // rc-clean was already approved by a staffer; the backfill must not rewrite its score.
+    Object.assign(s.tables.review_cards.find((c) => c.id === "rc-clean")!, { decision: "approved" });
+    const r = await backfillBroadApply(asDb(s), { apply: true });
+    expect(r.eligible.map((e) => e.cardId)).toEqual([]); // decided card dropped out
+    expect(r.applied).toEqual([]);
+    expect(s.tables.review_cards.find((c) => c.id === "rc-clean")!.qa_fit_score ?? null).toBeNull();
+  });
+
+  it("EXCLUDES a RELEASED card (sme_released_at set) — a demote on an already-sent card is never rewritten", async () => {
+    const s = seedBackfill();
+    Object.assign(s.tables.review_cards.find((c) => c.id === "rc-clean")!, { sme_released_at: "2026-08-20T00:00:00Z" });
+    const r = await backfillBroadApply(asDb(s), { apply: true });
+    expect(r.eligible.map((e) => e.cardId)).toEqual([]);
+    expect(r.applied).toEqual([]);
+  });
+
+  it("cardId targets a single card (the canary) — only that card is applied", async () => {
+    const s = seedTwoClean();
+    const r = await backfillBroadApply(asDb(s), { apply: true, cardId: "rc-clean" });
+    expect(r.applied.map((a) => a.cardId)).toEqual(["rc-clean"]);
+    expect(s.tables.review_cards.find((c) => c.id === "rc-clean2")!.qa_fit_score ?? null).toBeNull();
+  });
+
+  it("limit bounds the batch even though two are eligible", async () => {
+    const s = seedTwoClean();
+    const r = await backfillBroadApply(asDb(s), { apply: true, limit: 1 });
+    expect(r.applied).toHaveLength(1);
   });
 });
