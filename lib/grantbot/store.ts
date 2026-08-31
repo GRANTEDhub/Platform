@@ -224,6 +224,34 @@ export async function touchConversation(db: SupabaseClient, conversationId: stri
   if (error) console.error("GrantBot conversation touch failed", error.message);
 }
 
+// Rename a conversation. This edits ONLY the conversation title -- a metadata field on
+// grantbot_conversations -- and never a stored message, so the append-only-TRANSCRIPT invariant
+// (0080: "what the transcript says GrantBot said is what GrantBot said") is untouched: the thing
+// that must not be rewritable is a model answer, not the label on a thread. Service-role, exactly
+// like touchConversation above -- 0080 gives these tables no UPDATE policy, so the write bypasses
+// RLS and the staff-gated route is the authorization boundary (0080's "a policy plus a route"
+// note; the service-role route IS that route). Scoped by client_id as well as id so a
+// (conversationId, wrong-clientId) pair updates zero rows -- defence in depth behind the route's
+// own mislabel guard. The title is normalised the same way conversationTitle normalises the
+// auto-title, so a hand-typed name cannot introduce runaway whitespace or exceed the column budget.
+export async function updateConversationTitle(
+  db: SupabaseClient,
+  opts: { conversationId: string; clientId: string; title: string },
+): Promise<boolean> {
+  const title = opts.title.replace(/\s+/g, " ").trim().slice(0, TITLE_CHARS);
+  if (!title) return false;
+  const { error } = await db
+    .from("grantbot_conversations")
+    .update({ title })
+    .eq("id", opts.conversationId)
+    .eq("client_id", opts.clientId);
+  if (error) {
+    console.error("GrantBot conversation rename failed", error.message);
+    return false;
+  }
+  return true;
+}
+
 export async function nextSeq(db: SupabaseClient, conversationId: string): Promise<number> {
   const { data } = await db
     .from("grantbot_messages")
