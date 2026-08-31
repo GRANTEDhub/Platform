@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ContextBlockRecord } from "@/lib/grantbot/prompt";
+import { truncateSafely } from "@/lib/grantbot/label";
 
 // The conversation store. I/O only, the same split as gather.ts over context-pack.ts: nothing
 // here decides what a message SAYS, and nothing in the pure modules touches a database.
@@ -232,13 +233,16 @@ export async function touchConversation(db: SupabaseClient, conversationId: stri
 // RLS and the staff-gated route is the authorization boundary (0080's "a policy plus a route"
 // note; the service-role route IS that route). Scoped by client_id as well as id so a
 // (conversationId, wrong-clientId) pair updates zero rows -- defence in depth behind the route's
-// own mislabel guard. The title is normalised the same way conversationTitle normalises the
-// auto-title, so a hand-typed name cannot introduce runaway whitespace or exceed the column budget.
+// own mislabel guard. The title is whitespace-collapsed and hard-capped so a hand-typed name cannot
+// introduce runaway whitespace or exceed the column budget -- the cap goes through truncateSafely,
+// the module's ONE surrogate-safe char-cap (label.ts), so an emoji straddling the 80th char can't
+// be cut mid-pair into a dangling lone surrogate, the same discipline as web-fetch and the attach cap.
 export async function updateConversationTitle(
   db: SupabaseClient,
   opts: { conversationId: string; clientId: string; title: string },
 ): Promise<boolean> {
-  const title = opts.title.replace(/\s+/g, " ").trim().slice(0, TITLE_CHARS);
+  const normalized = opts.title.replace(/\s+/g, " ").trim();
+  const title = truncateSafely(normalized, TITLE_CHARS).text;
   if (!title) return false;
   const { error } = await db
     .from("grantbot_conversations")

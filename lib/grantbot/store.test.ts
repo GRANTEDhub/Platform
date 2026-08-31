@@ -56,6 +56,18 @@ describe("updateConversationTitle", () => {
     expect((capture.update?.title as string).length).toBe(80);
   });
 
+  it("caps via truncateSafely, so an emoji on the boundary can't leave a lone surrogate", async () => {
+    const capture: Capture = { eqs: [] };
+    // 79 chars then an astral emoji: a plain slice(0, 80) would cut the surrogate pair in half.
+    await updateConversationTitle(fakeDb(capture), {
+      conversationId: "conv1",
+      clientId: "c1",
+      title: "y".repeat(79) + "📄" + "z".repeat(20),
+    });
+    const title = capture.update?.title as string;
+    expect(title).toBe(title.toWellFormed()); // no dangling lone surrogate
+  });
+
   it("refuses an empty / whitespace-only title WITHOUT writing (never blanks a row)", async () => {
     const capture: Capture = { eqs: [] };
     const ok = await updateConversationTitle(fakeDb(capture), {
