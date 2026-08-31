@@ -34,12 +34,15 @@ interface StashedDraft {
   draft: string;
   pasted: string;
   pasteLabel: string;
+  // The file-vs-paste discriminator has to ride the stash too, else a file attachment restores as a
+  // manual paste on the other surface and dumps its raw body back into the panel (it's a chip, not text).
+  attachedFile: { name: string; type: string } | null;
 }
 
 function stashDraft(clientId: string, d: StashedDraft) {
   if (typeof window === "undefined") return;
   try {
-    if (!d.draft && !d.pasted && !d.pasteLabel) {
+    if (!d.draft && !d.pasted && !d.pasteLabel && !d.attachedFile) {
       window.sessionStorage.removeItem(draftKey(clientId));
       return;
     }
@@ -58,10 +61,15 @@ function takeDraft(clientId: string): StashedDraft | null {
     if (!raw) return null;
     window.sessionStorage.removeItem(draftKey(clientId));
     const parsed = JSON.parse(raw) as Partial<StashedDraft>;
+    const af = parsed.attachedFile;
     return {
       draft: typeof parsed.draft === "string" ? parsed.draft : "",
       pasted: typeof parsed.pasted === "string" ? parsed.pasted : "",
       pasteLabel: typeof parsed.pasteLabel === "string" ? parsed.pasteLabel : "",
+      attachedFile:
+        af && typeof af.name === "string" && typeof af.type === "string"
+          ? { name: af.name, type: af.type }
+          : null,
     };
   } catch {
     return null;
@@ -277,15 +285,17 @@ export function GrantBotChat({
     setDraft(stashed.draft);
     setPasted(stashed.pasted);
     setPasteLabel(stashed.pasteLabel);
-    if (stashed.pasted || stashed.pasteLabel) setShowPaste(true);
+    setAttachedFile(stashed.attachedFile);
+    // A file restores as its chip (attachedFile); only a MANUAL paste reopens the editable panel.
+    if (!stashed.attachedFile && (stashed.pasted || stashed.pasteLabel)) setShowPaste(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Mirror the composer into sessionStorage so a route change cannot swallow it. Cheap enough
   // to do on every keystroke, and it self-clears when the fields go empty.
   useEffect(() => {
-    stashDraft(clientId, { draft, pasted, pasteLabel });
-  }, [clientId, draft, pasted, pasteLabel]);
+    stashDraft(clientId, { draft, pasted, pasteLabel, attachedFile });
+  }, [clientId, draft, pasted, pasteLabel, attachedFile]);
 
   // ONE fetch of the context route, both callers. They differ only in what they do with the
   // result, so the query-param spelling and the error shape live here rather than in two
