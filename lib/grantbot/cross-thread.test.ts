@@ -8,6 +8,7 @@ import {
   LIST_CONVERSATIONS_TOOL_NAME,
   READ_CONVERSATION_TOOL,
   READ_CONVERSATION_TOOL_NAME,
+  MAX_TRANSCRIPT_CHARS,
 } from "./cross-thread";
 
 // A minimal fake of the three read chains the executor uses:
@@ -166,5 +167,31 @@ describe("executeCrossThreadTool — read", () => {
   it("refuses a missing conversation_id without a read", async () => {
     const { audit } = await executeCrossThreadTool({ name: READ_CONVERSATION_TOOL_NAME, input: {} }, CTX);
     expect(audit).toEqual({ action: "read", ok: false, reason: "no_id" });
+  });
+
+  it("caps the transcript even when the newest message alone exceeds the budget", async () => {
+    // A single message far larger than the cap (reachable via the 200k-char attach path). The cap is
+    // absolute: the returned transcript must not carry the whole oversized message.
+    const huge = "Z".repeat(MAX_TRANSCRIPT_CHARS * 2);
+    const fx = {
+      conversations: [
+        FIXTURE.conversations[0],
+        { id: "conv-big", client_id: "c1", title: "Big thread", last_message_at: "2026-08-19T10:00:00Z", created_at: "2026-08-01", started_by_email: null },
+      ] as Row[],
+      messages: { "conv-big": [{ role: "user", content: [{ type: "text", text: huge }], seq: 1 }] },
+    };
+    const ctx = { db: fakeDb(fx), clientId: "c1", currentConversationId: "conv-current" };
+    const { resultText, audit } = await executeCrossThreadTool(
+      { name: READ_CONVERSATION_TOOL_NAME, input: { conversation_id: "conv-big" } },
+      ctx,
+    );
+    expect(audit).toEqual({ action: "read", ok: true, conversationId: "conv-big", count: 1 });
+    // The Z-run is bounded by the cap: the whole message (label + body) is truncated to
+    // MAX_TRANSCRIPT_CHARS, so the Z count is the cap minus the short "Staff: " label -- NOT the
+    // full 2× cap the message actually held.
+    const zCount = (resultText.match(/Z/g) ?? []).length;
+    expect(zCount).toBeLessThanOrEqual(MAX_TRANSCRIPT_CHARS);
+    expect(zCount).toBeGreaterThan(MAX_TRANSCRIPT_CHARS - 20);
+    expect(resultText).toMatch(/truncated to fit/i);
   });
 });
