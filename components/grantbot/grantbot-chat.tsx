@@ -174,14 +174,14 @@ export function GrantBotChat({
   // never a stored message -- so it does not break the append-only transcript.
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
-  // The id of the row a commit is in flight for (null = none). Keyed to the id, not a bare
-  // boolean, so it blocks the Enter-then-blur double-write of the SAME row without blocking a
-  // commit for a DIFFERENT row the user switched to mid-request.
-  const renameInFlight = useRef<string | null>(null);
-  // Mirrors renamingId for reads inside the async commit closure (state would be stale there):
-  // the finally must only close the editor if the user is STILL editing this row, not one they
-  // switched to while the request was pending.
-  const renamingIdRef = useRef<string | null>(null);
+  // A monotonic token for the CURRENT rename attempt, bumped every time an edit opens (startRename)
+  // or ends (cancelRename). It is how a commit tells "this attempt" from a later one on the same
+  // row: keying the guards on the conversation id alone couldn't distinguish an Escape-and-reopen
+  // (or a row switch) from the still-pending original. Same shape as epochRef for a send.
+  const renameEpoch = useRef(0);
+  // The attempt epoch a commit is in flight for (null = none). Blocks the Enter-then-blur
+  // double-write of the SAME attempt, while a fresh attempt (a new epoch) is never blocked.
+  const renameInFlight = useRef<number | null>(null);
   // Lets Escape cancel without a trailing blur re-saving the abandoned draft.
   const skipBlurCommit = useRef(false);
   const [sending, setSending] = useState(false);
@@ -504,31 +504,29 @@ export function GrantBotChat({
 
   function startRename(c: GrantBotThread) {
     skipBlurCommit.current = false;
-    renamingIdRef.current = c.id;
+    renameEpoch.current += 1; // a fresh edit attempt -- any in-flight commit is now for an old epoch
     setRenamingId(c.id);
     setRenameDraft(c.title ?? "");
   }
   function cancelRename() {
-    renamingIdRef.current = null;
+    renameEpoch.current += 1; // ends this attempt: a commit still in flight can no longer touch state
     setRenamingId(null);
     setRenameDraft("");
   }
-  // Close the editor only if it is still open ON this row -- if a slow request finishes after the
-  // user has switched to renaming another row, that row's editor and draft are left untouched.
-  function closeIfStillEditing(id: string) {
-    if (renamingIdRef.current === id) cancelRename();
-  }
   async function commitRename(c: GrantBotThread) {
-    // Per-row re-entrancy guard: Enter + the trailing blur must not both write THIS row, but a
-    // commit for a row the user just switched to must not be blocked by an in-flight one.
-    if (renameInFlight.current === c.id) return;
+    const epoch = renameEpoch.current;
+    // Re-entrancy guard for THIS attempt (Enter + a trailing blur). Keyed to the epoch, so a fresh
+    // attempt on the same row -- e.g. Escape then reopen -- is a new epoch and is never blocked by
+    // the stale in-flight one (the bug: an id-keyed guard silently swallowed the reopened edit).
+    if (renameInFlight.current === epoch) return;
     const title = renameDraft.replace(/\s+/g, " ").trim();
-    // No change (or emptied) is a cancel, not a write -- an empty title would blank the row.
+    // No change (or emptied) is a cancel, not a write -- an empty title would blank the row. This is
+    // synchronous with the epoch capture, so we are still on this attempt: cancel it outright.
     if (!title || title === (c.title ?? "")) {
-      closeIfStillEditing(c.id);
+      cancelRename();
       return;
     }
-    renameInFlight.current = c.id;
+    renameInFlight.current = epoch;
     try {
       const res = await fetch("/api/grantbot/rename", {
         method: "POST",
@@ -545,8 +543,14 @@ export function GrantBotChat({
     } catch {
       setError("Could not reach the server.");
     } finally {
-      if (renameInFlight.current === c.id) renameInFlight.current = null;
-      closeIfStillEditing(c.id);
+      // Only clear tracking + close the editor if we are STILL on this attempt. A request that
+      // finishes after the user Escaped or switched rows (a newer epoch) must clobber neither the
+      // newer editor nor the newer in-flight marker; the stale renameInFlight is harmless since
+      // epochs are monotonic and never re-match a future attempt.
+      if (renameEpoch.current === epoch) {
+        renameInFlight.current = null;
+        cancelRename();
+      }
     }
   }
 
