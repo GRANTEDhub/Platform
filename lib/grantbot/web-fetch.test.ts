@@ -40,6 +40,12 @@ describe("FETCH_INSTRUCTION_BLOCK", () => {
     expect(FETCH_INSTRUCTION_BLOCK.text).toMatch(/could not retrieve/i);
     expect(FETCH_INSTRUCTION_BLOCK.text).toMatch(/never infer|do not fetch idly|untrusted/i);
   });
+  it("tells the model to keep the fetch/retry mechanics out of its reply (no play-by-play)", () => {
+    // The narration fix (#7): the staffer must not see "404 on that URL, let me try X" — the model
+    // should retry silently and surface only the result or a clean could-not-reach line.
+    expect(FETCH_INSTRUCTION_BLOCK.text).toMatch(/plumbing/i);
+    expect(FETCH_INSTRUCTION_BLOCK.text).toMatch(/play-by-play|narrat/i);
+  });
 });
 
 describe("frameFetchResult", () => {
