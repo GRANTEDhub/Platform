@@ -12,6 +12,7 @@ import {
   Paperclip,
   Plus,
   Sparkles,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { BRAND } from "@/lib/brand";
@@ -33,12 +34,15 @@ interface StashedDraft {
   draft: string;
   pasted: string;
   pasteLabel: string;
+  // The file-vs-paste discriminator has to ride the stash too, else a file attachment restores as a
+  // manual paste on the other surface and dumps its raw body back into the panel (it's a chip, not text).
+  attachedFile: { name: string; type: string } | null;
 }
 
 function stashDraft(clientId: string, d: StashedDraft) {
   if (typeof window === "undefined") return;
   try {
-    if (!d.draft && !d.pasted && !d.pasteLabel) {
+    if (!d.draft && !d.pasted && !d.pasteLabel && !d.attachedFile) {
       window.sessionStorage.removeItem(draftKey(clientId));
       return;
     }
@@ -57,10 +61,15 @@ function takeDraft(clientId: string): StashedDraft | null {
     if (!raw) return null;
     window.sessionStorage.removeItem(draftKey(clientId));
     const parsed = JSON.parse(raw) as Partial<StashedDraft>;
+    const af = parsed.attachedFile;
     return {
       draft: typeof parsed.draft === "string" ? parsed.draft : "",
       pasted: typeof parsed.pasted === "string" ? parsed.pasted : "",
       pasteLabel: typeof parsed.pasteLabel === "string" ? parsed.pasteLabel : "",
+      attachedFile:
+        af && typeof af.name === "string" && typeof af.type === "string"
+          ? { name: af.name, type: af.type }
+          : null,
     };
   } catch {
     return null;
@@ -154,6 +163,10 @@ export function GrantBotChat({
   const [pasted, setPasted] = useState("");
   const [pasteLabel, setPasteLabel] = useState("");
   const [showPaste, setShowPaste] = useState(false);
+  // Non-null when the current attachment came from a FILE upload (vs a manual paste): it renders as a
+  // chip (filename + type) instead of dumping the raw text into an editable panel, and the discriminator
+  // keeps a file and a manual paste from being shown the same way (they share the one `pasted` slot).
+  const [attachedFile, setAttachedFile] = useState<{ name: string; type: string } | null>(null);
   const [showThreads, setShowThreads] = useState(false);
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(!initial);
@@ -197,9 +210,15 @@ export function GrantBotChat({
       // is the same helper framePastedContent uses server-side, so the editable label the staffer sees
       // matches exactly what is sent.
       const name = stripControlChars(file.name) || "attached file";
+      // A short type badge for the chip, from the extension (preferred) or the MIME subtype.
+      const ext = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1).toUpperCase() : "";
+      const typeLabel = ext || (file.type ? (file.type.split("/").pop() ?? "").toUpperCase() : "") || "FILE";
       setPasted(body);
       setPasteLabel(name);
-      setShowPaste(true);
+      // A FILE renders as a chip (#5/#6), not the raw-text paste panel; close the manual panel so the
+      // two never show at once over the shared `pasted` slot.
+      setShowPaste(false);
+      setAttachedFile({ name, type: typeLabel });
     };
     reader.onerror = () =>
       setError("Couldn't read that file. Text files only for now — or paste the text in instead.");
@@ -266,15 +285,17 @@ export function GrantBotChat({
     setDraft(stashed.draft);
     setPasted(stashed.pasted);
     setPasteLabel(stashed.pasteLabel);
-    if (stashed.pasted || stashed.pasteLabel) setShowPaste(true);
+    setAttachedFile(stashed.attachedFile);
+    // A file restores as its chip (attachedFile); only a MANUAL paste reopens the editable panel.
+    if (!stashed.attachedFile && (stashed.pasted || stashed.pasteLabel)) setShowPaste(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Mirror the composer into sessionStorage so a route change cannot swallow it. Cheap enough
   // to do on every keystroke, and it self-clears when the fields go empty.
   useEffect(() => {
-    stashDraft(clientId, { draft, pasted, pasteLabel });
-  }, [clientId, draft, pasted, pasteLabel]);
+    stashDraft(clientId, { draft, pasted, pasteLabel, attachedFile });
+  }, [clientId, draft, pasted, pasteLabel, attachedFile]);
 
   // ONE fetch of the context route, both callers. They differ only in what they do with the
   // result, so the query-param spelling and the error shape live here rather than in two
@@ -380,6 +401,7 @@ export function GrantBotChat({
       setPasted("");
       setPasteLabel("");
       setShowPaste(false);
+      setAttachedFile(null);
     };
 
     // Optimistic: the question appears immediately, marked pending by the spinner below rather
@@ -648,6 +670,15 @@ export function GrantBotChat({
     </>
   );
 
+  // Clear the current attachment — the chip's × button, and the mode-switch when the reader opens
+  // manual paste while a file chip is up (the two share the one `pasted` slot).
+  const removeAttachment = () => {
+    setPasted("");
+    setPasteLabel("");
+    setAttachedFile(null);
+    setShowPaste(false);
+  };
+
   const errorBanner = error && (
     <div className="flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-[13px] text-amber-900 ring-1 ring-amber-200">
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
@@ -655,7 +686,31 @@ export function GrantBotChat({
     </div>
   );
 
-  const pastePanel = showPaste && (
+  // An uploaded FILE shows as a clean chip (filename + type + remove), never a raw-text dump (#5). The
+  // body still rides the `pasted` slot to the server unchanged; only the presentation differs. Because
+  // it is a chip from the moment of attach, it never "hangs around as raw text" during a turn (#6) — it
+  // simply clears on a successful send like the manual paste does.
+  const attachmentChip = attachedFile && (
+    <div className="flex items-center gap-2 rounded-xl border border-edge bg-white px-3 py-2 shadow-card">
+      <FileText className="h-4 w-4 shrink-0 text-ink-subtle" aria-hidden="true" />
+      <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-ink">{attachedFile.name}</span>
+      <span className="shrink-0 rounded bg-surface-sunken px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-subtle">
+        {attachedFile.type}
+      </span>
+      <button
+        type="button"
+        onClick={removeAttachment}
+        aria-label="Remove attachment"
+        className="shrink-0 rounded p-0.5 text-ink-subtle transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+
+  // Manual paste keeps the editable label + textarea — a hand-typed paste is text the reader wants to
+  // see and reword, not a discrete file. Gated on `!attachedFile` so it never renders over a file chip.
+  const manualPastePanel = showPaste && !attachedFile && (
     <div className="space-y-2 rounded-2xl border border-brand-navy/[0.08] bg-white p-4 shadow-card">
       <p className="text-[12.5px] text-muted-foreground">
         Pasted content is framed as untrusted third-party text and dated today. Any instruction
@@ -678,6 +733,15 @@ export function GrantBotChat({
         className="w-full rounded-xl border border-edge bg-surface-sunken px-3 py-2 text-[13px]"
       />
     </div>
+  );
+
+  // The chip and the manual panel are mutually exclusive; render whichever is active in the same slot
+  // both surfaces already reserve for the paste panel.
+  const attachmentArea = (
+    <>
+      {attachmentChip}
+      {manualPastePanel}
+    </>
   );
 
   // ── ONE COMPOSER, BOTH SURFACES ──
@@ -725,17 +789,35 @@ export function GrantBotChat({
         }`}
       />
       <div className="flex items-center justify-between">
-        <button
-          type="button"
-          onClick={() => setShowPaste((s) => !s)}
-          aria-pressed={showPaste}
-          className={`inline-flex items-center gap-1.5 rounded-lg border border-edge bg-white font-semibold text-ink-muted transition-colors hover:text-ink ${
-            isCorner ? "h-7 px-2.5 text-[11.5px]" : "h-8 px-3 text-[12.5px]"
-          }`}
-        >
-          <ClipboardPaste className={isCorner ? "h-3 w-3" : "h-3.5 w-3.5"} />
-          {pasted.trim() ? "Paste attached" : "Paste"}
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Attach lives in the SHARED composer, so it is present in BOTH the corner and the full
+              surface (#4) — it used to be a page-only starter. Icon-only to fit the 404px corner. */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="Attach a file"
+            className={`inline-flex items-center justify-center rounded-lg border border-edge bg-white text-ink-muted transition-colors hover:text-ink ${
+              isCorner ? "h-7 w-7" : "h-8 w-8"
+            }`}
+          >
+            <Paperclip className={isCorner ? "h-3 w-3" : "h-3.5 w-3.5"} />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              // Manual paste and a file chip share the one slot; opening manual paste drops any file.
+              if (attachedFile) removeAttachment();
+              setShowPaste((s) => !s);
+            }}
+            aria-pressed={showPaste}
+            className={`inline-flex items-center gap-1.5 rounded-lg border border-edge bg-white font-semibold text-ink-muted transition-colors hover:text-ink ${
+              isCorner ? "h-7 px-2.5 text-[11.5px]" : "h-8 px-3 text-[12.5px]"
+            }`}
+          >
+            <ClipboardPaste className={isCorner ? "h-3 w-3" : "h-3.5 w-3.5"} />
+            {pasted.trim() && !attachedFile ? "Paste attached" : "Paste"}
+          </button>
+        </div>
         <button
           type="button"
           onClick={() => void send()}
@@ -752,18 +834,27 @@ export function GrantBotChat({
           <ArrowUp className={isCorner ? "h-3.5 w-3.5" : "h-4 w-4"} /> Send
         </button>
       </div>
+      {/* Hidden picker driven by the composer's attach button — present in BOTH surfaces (#4),
+          unlike the page-only starter it replaces. Text-based files only for now (issue #465
+          tracks .docx/.pdf binary parsing). */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".txt,.md,.eml,.csv,.json,.html,.htm,text/*"
+        onChange={handleFileUpload}
+        className="hidden"
+      />
     </div>
   );
 
-  // Quick actions, page only (no room at 404px), mapped to GrantBot's actual capabilities. Two
+  // Quick actions, page only (no room at 404px), mapped to GrantBot's actual capabilities. They
   // PREFILL the composer and nothing else -- no route, no send, no model call until the staffer
   // reads what was typed and presses Send (putting words in someone's mouth on a grant surface is
-  // different from offering them). "Attach a file" opens the file picker straight away, since it is
-  // an attachment action, not a phrasing. The draft/assess capabilities activate their tools
-  // server-side only when GRANTBOT_ARTIFACTS_ENABLED / GRANTBOT_WEB_FETCH_ENABLED are on; the
-  // prompt is real either way, and the model answers in text when a flag is off.
+  // different from offering them). Attach is no longer here — it moved into the shared composer so
+  // both surfaces have it (#4). The draft/assess capabilities activate their tools server-side only
+  // when GRANTBOT_ARTIFACTS_ENABLED / GRANTBOT_WEB_FETCH_ENABLED are on; the prompt is real either
+  // way, and the model answers in text when a flag is off.
   const starters: { icon: LucideIcon; label: string; action: () => void }[] = [
-    { icon: Paperclip, label: "Attach a file", action: () => fileInputRef.current?.click() },
     {
       icon: FileText,
       label: "Draft a document",
@@ -809,7 +900,7 @@ export function GrantBotChat({
 
         <div className="flex-shrink-0 space-y-2 border-t border-hairline-strong bg-white px-4 pb-3.5 pt-3">
           {errorBanner}
-          {pastePanel}
+          {attachmentArea}
           {composer}
         </div>
       </div>
@@ -858,18 +949,10 @@ export function GrantBotChat({
               {s.label}
             </button>
           ))}
-          {/* Hidden picker driven by the "Attach a file" action. Text-based files only for now. */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".txt,.md,.eml,.csv,.json,.html,.htm,text/*"
-            onChange={handleFileUpload}
-            className="hidden"
-          />
         </div>
 
         {errorBanner}
-        {pastePanel}
+        {attachmentArea}
         {composer}
       </div>
     </div>
