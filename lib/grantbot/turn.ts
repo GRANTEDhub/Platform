@@ -37,6 +37,16 @@ import {
   EDIT_ARTIFACT_TOOL,
   type ArtifactAuditRecord,
 } from "@/lib/grantbot/artifacts";
+import {
+  grantbotCrossThreadEnabled,
+  executeCrossThreadTool,
+  CROSS_THREAD_INSTRUCTION_BLOCK,
+  LIST_CONVERSATIONS_TOOL,
+  LIST_CONVERSATIONS_TOOL_NAME,
+  READ_CONVERSATION_TOOL,
+  READ_CONVERSATION_TOOL_NAME,
+  type CrossThreadAuditRecord,
+} from "@/lib/grantbot/cross-thread";
 
 // One conversational turn: assemble, call, store. The orchestrator between the pure renderer and
 // the store, and the only place that knows anything about the model.
@@ -140,15 +150,17 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
   // it was, so `system` and the manifest are byte-identical to before.
   const webFetchEnabled = grantbotWebFetchEnabled();
   const artifactsEnabled = grantbotArtifactsEnabled();
-  const toolsEnabled = webFetchEnabled || artifactsEnabled;
+  const crossThreadEnabled = grantbotCrossThreadEnabled();
+  const toolsEnabled = webFetchEnabled || artifactsEnabled || crossThreadEnabled;
   // Each instruction block is cacheable:false and appended ONLY when its flag is on, so it never
   // enters the shared cached prefix -- the flag-off system prompt is unchanged and existing caches
-  // are not busted. When BOTH flags are off, effectiveTurnBlocks equals input.turnBlocks and the
+  // are not busted. When ALL flags are off, effectiveTurnBlocks equals input.turnBlocks and the
   // assembled system + manifest are byte-identical to the pre-tools turn.
   const effectiveTurnBlocks = [
     ...(input.turnBlocks ?? []),
     ...(webFetchEnabled ? [FETCH_INSTRUCTION_BLOCK] : []),
     ...(artifactsEnabled ? [ARTIFACT_INSTRUCTION_BLOCK] : []),
+    ...(crossThreadEnabled ? [CROSS_THREAD_INSTRUCTION_BLOCK] : []),
   ];
 
   const system = assembleSystem(prompt, effectiveTurnBlocks);
@@ -171,6 +183,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
   // the audit of tools already executed is still written on the (failed) turn's row, not discarded.
   const fetches: FetchAuditRecord[] = [];
   const artifacts: ArtifactAuditRecord[] = [];
+  const crossThreadReads: CrossThreadAuditRecord[] = [];
 
   try {
     const anthropic = getAnthropicClient();
@@ -184,6 +197,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
     const toolSet = [
       ...(webFetchEnabled ? [WEB_FETCH_TOOL] : []),
       ...(artifactsEnabled ? [CREATE_ARTIFACT_TOOL, EDIT_ARTIFACT_TOOL] : []),
+      ...(crossThreadEnabled ? [LIST_CONVERSATIONS_TOOL, READ_CONVERSATION_TOOL] : []),
     ] as unknown as Anthropic.Tool[];
 
     const callModel: CallModel = async ({ messages: msgs, tools, remainingMs }) => {
@@ -244,6 +258,14 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
         artifacts.push(audit);
         return { resultText };
       }
+      if (tu.name === LIST_CONVERSATIONS_TOOL_NAME || tu.name === READ_CONVERSATION_TOOL_NAME) {
+        const { resultText, audit } = await executeCrossThreadTool(
+          { name: tu.name, input: tu.input },
+          { db: input.db, clientId: input.clientId, currentConversationId: input.conversationId },
+        );
+        crossThreadReads.push(audit);
+        return { resultText };
+      }
       return { resultText: `Unknown tool "${tu.name}". Nothing was done.` };
     };
 
@@ -277,9 +299,10 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
     usage,
     stopReason,
     error: failure,
-    // Both empty on the all-flags-off path -> appendAssistant writes the same content as before.
+    // All empty on the all-flags-off path -> appendAssistant writes the same content as before.
     fetches,
     artifacts,
+    crossThreadReads,
   });
   await touchConversation(input.db, input.conversationId);
 

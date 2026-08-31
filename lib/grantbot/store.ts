@@ -190,6 +190,10 @@ export async function appendAssistant(
     // NON-TEXT-block mechanism as fetches (normalizeContent drops it on read, so render/replay are
     // unchanged); omitted when empty, so an artifact-free turn is byte-identical to before.
     artifacts?: unknown[] | null;
+    // Cross-thread reads for this turn -- which of the client's other conversations the model listed
+    // or read. Same NON-TEXT-block mechanism (normalizeContent drops it on read); omitted when empty,
+    // so a turn that read no other thread is byte-identical to before.
+    crossThreadReads?: unknown[] | null;
   },
 ): Promise<void> {
   const content: unknown[] = [{ type: "text", text: opts.text }];
@@ -198,6 +202,9 @@ export async function appendAssistant(
   }
   if (opts.artifacts && opts.artifacts.length > 0) {
     content.push({ type: "artifact_ref", artifacts: opts.artifacts });
+  }
+  if (opts.crossThreadReads && opts.crossThreadReads.length > 0) {
+    content.push({ type: "cross_thread_audit", reads: opts.crossThreadReads });
   }
   const { error } = await db.from("grantbot_messages").insert({
     conversation_id: opts.conversationId,

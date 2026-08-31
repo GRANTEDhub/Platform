@@ -70,6 +70,7 @@ export type PromptBlockKind =
   | "skill"
   | "web-fetch"
   | "artifacts"
+  | "cross-thread"
   | "closing";
 
 export interface PromptBlock {
