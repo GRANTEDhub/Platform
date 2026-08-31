@@ -10,6 +10,7 @@ import {
   Loader2,
   MessagesSquare,
   Paperclip,
+  Pencil,
   Plus,
   Sparkles,
   X,
@@ -168,6 +169,21 @@ export function GrantBotChat({
   // keeps a file and a manual paste from being shown the same way (they share the one `pasted` slot).
   const [attachedFile, setAttachedFile] = useState<{ name: string; type: string } | null>(null);
   const [showThreads, setShowThreads] = useState(false);
+  // Inline thread rename. renamingId is the thread whose title is being edited (null = none);
+  // renameDraft is the in-progress text. A rename edits only the conversation title (metadata) --
+  // never a stored message -- so it does not break the append-only transcript.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  // The id of the row a commit is in flight for (null = none). Keyed to the id, not a bare
+  // boolean, so it blocks the Enter-then-blur double-write of the SAME row without blocking a
+  // commit for a DIFFERENT row the user switched to mid-request.
+  const renameInFlight = useRef<string | null>(null);
+  // Mirrors renamingId for reads inside the async commit closure (state would be stale there):
+  // the finally must only close the editor if the user is STILL editing this row, not one they
+  // switched to while the request was pending.
+  const renamingIdRef = useRef<string | null>(null);
+  // Lets Escape cancel without a trailing blur re-saving the abandoned draft.
+  const skipBlurCommit = useRef(false);
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(!initial);
   const [error, setError] = useState<string | null>(null);
@@ -486,14 +502,111 @@ export function GrantBotChat({
     setShowThreads(false);
   }
 
-  // THREADS. No rename and no delete in v1 -- 0080 gives these tables no UPDATE or DELETE
-  // policy, so the transcript is append-only by construction.
+  function startRename(c: GrantBotThread) {
+    skipBlurCommit.current = false;
+    renamingIdRef.current = c.id;
+    setRenamingId(c.id);
+    setRenameDraft(c.title ?? "");
+  }
+  function cancelRename() {
+    renamingIdRef.current = null;
+    setRenamingId(null);
+    setRenameDraft("");
+  }
+  // Close the editor only if it is still open ON this row -- if a slow request finishes after the
+  // user has switched to renaming another row, that row's editor and draft are left untouched.
+  function closeIfStillEditing(id: string) {
+    if (renamingIdRef.current === id) cancelRename();
+  }
+  async function commitRename(c: GrantBotThread) {
+    // Per-row re-entrancy guard: Enter + the trailing blur must not both write THIS row, but a
+    // commit for a row the user just switched to must not be blocked by an in-flight one.
+    if (renameInFlight.current === c.id) return;
+    const title = renameDraft.replace(/\s+/g, " ").trim();
+    // No change (or emptied) is a cancel, not a write -- an empty title would blank the row.
+    if (!title || title === (c.title ?? "")) {
+      closeIfStillEditing(c.id);
+      return;
+    }
+    renameInFlight.current = c.id;
+    try {
+      const res = await fetch("/api/grantbot/rename", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientId, conversationId: c.id, title }),
+      });
+      if (res.ok) {
+        // The server owns the title; refetch the list to pick it up (never router.refresh()).
+        // refreshThreads (not loadThreadsOnly) so the transcript does not flash a loading state.
+        await refreshThreads();
+      } else {
+        setError("Could not rename the conversation.");
+      }
+    } catch {
+      setError("Could not reach the server.");
+    } finally {
+      if (renameInFlight.current === c.id) renameInFlight.current = null;
+      closeIfStillEditing(c.id);
+    }
+  }
+
+  // THREADS. A thread can be RENAMED (a hover pencil → an inline input) but not deleted: rename
+  // edits only the conversation TITLE, which is metadata, so the append-only TRANSCRIPT is intact
+  // -- no stored answer is rewritable. Delete stays out (0080 gives no DELETE policy).
   //
   // Two presentations of one list. On the page it is a RAIL: a filled New button, a Recent
   // eyebrow, and cards whose active state is a 3px orange left edge rather than a navy fill --
   // a rail that inverts a whole row competes with the transcript beside it. In the corner it
   // stays the compact stack, because it occupies the transcript's space while open and has to
-  // give it straight back.
+  // give it straight back. Either way a row is now a wrapper holding a load button + a rename
+  // pencil (siblings, never nested -- a button in a button is invalid), or the rename input.
+  const renameInput = (c: GrantBotThread) => (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        void commitRename(c);
+      }}
+      className="px-3 py-2"
+    >
+      <input
+        autoFocus
+        value={renameDraft}
+        onChange={(e) => setRenameDraft(e.target.value)}
+        onFocus={(e) => e.currentTarget.select()}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            // Neutralise the blur that unmounting the input would otherwise fire as a commit.
+            skipBlurCommit.current = true;
+            cancelRename();
+          }
+        }}
+        onBlur={() => {
+          if (skipBlurCommit.current) {
+            skipBlurCommit.current = false;
+            return;
+          }
+          void commitRename(c);
+        }}
+        maxLength={80}
+        aria-label="Conversation title"
+        className="w-full rounded-lg border border-edge bg-white px-2 py-1 text-[12px] text-brand-navy focus:outline-none focus:ring-1 focus:ring-brand-orange"
+      />
+    </form>
+  );
+  const renamePencil = (c: GrantBotThread, active: boolean) => (
+    <button
+      type="button"
+      onClick={() => startRename(c)}
+      aria-label="Rename conversation"
+      title="Rename"
+      className={`absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-lg opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${
+        active ? "text-white/70 hover:bg-white/15" : "text-ink-subtle hover:bg-brand-navy/5 hover:text-brand-navy"
+      }`}
+    >
+      <Pencil className="h-3.5 w-3.5" />
+    </button>
+  );
   const threadList = isCorner ? (
     <div className="space-y-2">
       <button
@@ -503,24 +616,38 @@ export function GrantBotChat({
       >
         <Plus className="h-3.5 w-3.5" /> New conversation
       </button>
-      {conversations.map((c) => (
-        <button
-          key={c.id}
-          type="button"
-          onClick={() => void loadThread(c.id)}
-          className={`block w-full rounded-xl px-3 py-2 text-left text-[12.5px] leading-snug transition-colors ${
-            c.id === convId
-              ? "bg-brand-navy text-white"
-              : // The corner's transcript ground is white, so a white row has no edge to it.
-                "bg-surface-sunken text-brand-navy/80 hover:bg-white hover:text-brand-navy"
-          }`}
-        >
-          <span className="line-clamp-2">{c.title ?? "Untitled"}</span>
-          <span className={c.id === convId ? "text-white/60" : "text-ink-subtle"}>
-            {c.lastMessageAt.slice(0, 10)}
-          </span>
-        </button>
-      ))}
+      {conversations.map((c) => {
+        const active = c.id === convId;
+        return (
+          <div
+            key={c.id}
+            className={`group relative rounded-xl transition-colors ${
+              active
+                ? "bg-brand-navy text-white"
+                : // The corner's transcript ground is white, so a white row has no edge to it.
+                  "bg-surface-sunken text-brand-navy/80 hover:bg-white hover:text-brand-navy"
+            }`}
+          >
+            {renamingId === c.id ? (
+              renameInput(c)
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void loadThread(c.id)}
+                  className="block w-full px-3 py-2 pr-8 text-left text-[12.5px] leading-snug"
+                >
+                  <span className="line-clamp-2">{c.title ?? "Untitled"}</span>
+                  <span className={active ? "text-white/60" : "text-ink-subtle"}>
+                    {c.lastMessageAt.slice(0, 10)}
+                  </span>
+                </button>
+                {renamePencil(c, active)}
+              </>
+            )}
+          </div>
+        );
+      })}
       {conversations.length === 0 && (
         <p className="px-1 text-[12px] text-ink-subtle">No conversations yet.</p>
       )}
@@ -537,21 +664,35 @@ export function GrantBotChat({
       <p className="mb-0.5 mt-1.5 shrink-0 text-[10px] font-bold uppercase tracking-[0.1em] text-ink-subtle">
         Recent
       </p>
-      {conversations.map((c) => (
-        <button
-          key={c.id}
-          type="button"
-          onClick={() => void loadThread(c.id)}
-          className={`w-full shrink-0 rounded-lg border border-hairline-strong bg-white px-3 py-2.5 text-left transition-colors hover:border-brand-navy/20 ${
-            c.id === convId ? "border-l-[3px] border-l-brand-orange" : ""
-          }`}
-        >
-          <p className="truncate text-[12px] font-semibold text-brand-navy">
-            {c.title ?? "Untitled"}
-          </p>
-          <p className="mt-1 text-[10.5px] text-ink-subtle">{c.lastMessageAt.slice(0, 10)}</p>
-        </button>
-      ))}
+      {conversations.map((c) => {
+        const active = c.id === convId;
+        return (
+          <div
+            key={c.id}
+            className={`group relative w-full shrink-0 rounded-lg border border-hairline-strong bg-white transition-colors hover:border-brand-navy/20 ${
+              active ? "border-l-[3px] border-l-brand-orange" : ""
+            }`}
+          >
+            {renamingId === c.id ? (
+              renameInput(c)
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void loadThread(c.id)}
+                  className="block w-full px-3 py-2.5 pr-8 text-left"
+                >
+                  <p className="truncate text-[12px] font-semibold text-brand-navy">
+                    {c.title ?? "Untitled"}
+                  </p>
+                  <p className="mt-1 text-[10.5px] text-ink-subtle">{c.lastMessageAt.slice(0, 10)}</p>
+                </button>
+                {renamePencil(c, false)}
+              </>
+            )}
+          </div>
+        );
+      })}
       {/* A dashed placeholder rather than nothing: the rail is built for threads that do not
           exist yet, and an empty column reads as a rendering failure. */}
       <div className="shrink-0 rounded-lg border border-dashed border-edge p-3.5 text-center">
