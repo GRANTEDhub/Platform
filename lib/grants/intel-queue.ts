@@ -668,12 +668,18 @@ export async function backfillBroadApply(
   if (demotes.length === 0) return { dryRun, eligible: [], staffFlag: [], applied: [] };
 
   // The cards behind those demotes: the engine score + factors for the patch, the qa_* columns for the
-  // already-live check. A demote whose card was deleted / re-scored away simply has no row and is skipped.
+  // already-live check. GATED to pending + unreleased, the SAME invariant processOne enforces before any
+  // apply-write — so the backfill can never retroactively rewrite the score/factors/narrative shown on a
+  // card a staffer already DECIDED on or that was already RELEASED / sent to a client (the "preview == sent"
+  // / decision-integrity invariant). A decided/released card has no row here → it drops out of eligible and
+  // is never applied. A demote whose card was deleted / re-scored away is likewise absent and skipped.
   const cardIds = demotes.map((d) => d.review_card_id);
   const { data: cardRows } = await db
     .from("review_cards")
     .select("id, fit_score, factor_scores, qa_status, qa_engine_fit_score, grant_id, client_id")
-    .in("id", cardIds);
+    .in("id", cardIds)
+    .eq("decision", "pending")
+    .is("sme_released_at", null);
   const cards = new Map(((cardRows ?? []) as BackfillCardRow[]).map((c) => [c.id, c]));
 
   // Grant title + client name so a reviewer can recognize the card in the dry-run list.
@@ -715,14 +721,25 @@ export async function backfillBroadApply(
       if (opts.cardId && info.cardId !== opts.cardId) continue;
       if (info.alreadyLive) continue; // idempotent: a live override is never rewritten
       const card = cards.get(info.cardId);
-      const review = demotes.find((d) => d.review_card_id === info.cardId)?.intel_review;
-      if (!card || !review) continue;
+      if (!card) continue;
+      // RE-READ the verdict at WRITE time (mirrors processOne + the on-demand route, PR G): a staff Re-run
+      // could have landed on this card since the initial fetch and written a HUMAN verdict — never overwrite
+      // it with our now-stale AUTO one. Apply only while the row is STILL the auto (created_by null),
+      // refute-clean demote we captured; otherwise skip and leave the human's verdict standing.
+      const { data: persisted } = await db
+        .from("card_intel_reviews")
+        .select("intel_review, created_by")
+        .eq("review_card_id", info.cardId)
+        .maybeSingle<{ intel_review: IntelReview; created_by: string | null }>();
+      if (!persisted || persisted.created_by !== null) continue;
+      const review = persisted.intel_review;
+      if (review?.verdict !== "demote" || review?.refute_survived !== true) continue;
       const patch = buildQaPatch(
         { id: card.id, fit_score: card.fit_score, factor_scores: card.factor_scores },
         review,
         new Date().toISOString(),
         null,
-        true, // requireRefuteClean — the broad rule; eligible is already refute-clean, so this always applies
+        true, // requireRefuteClean — the broad rule; the re-read verdict is refute-clean, so this applies
       );
       if (await applyQaPatch(db, info.cardId, patch)) {
         applied.push({ cardId: info.cardId, engineFit: info.engineFit, qaFit: info.qaFit });

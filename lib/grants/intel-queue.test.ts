@@ -731,11 +731,13 @@ describe("backfillBroadApply — one-time re-projection of the inert demotes", (
       { id: "g-null", title: "HRSA RCORP", assistance_listings: [{ number: "93.912" }] },
     ];
     s.tables.clients = [{ id: "cl1", name: "NWACC" }];
+    // decision 'pending' + sme_released_at null — the backfill only touches undecided, unreleased cards.
+    const base = { fit_score: 3, factor_scores: engineFactors, qa_status: null, qa_engine_fit_score: null, decision: "pending", sme_released_at: null, client_id: "cl1" };
     s.tables.review_cards = [
-      { id: "rc-clean", fit_score: 3, factor_scores: engineFactors, qa_status: null, qa_engine_fit_score: null, grant_id: "g-clean", client_id: "cl1" },
-      { id: "rc-false", fit_score: 3, factor_scores: engineFactors, qa_status: null, qa_engine_fit_score: null, grant_id: "g-false", client_id: "cl1" },
-      { id: "rc-null", fit_score: 3, factor_scores: engineFactors, qa_status: null, qa_engine_fit_score: null, grant_id: "g-null", client_id: "cl1" },
-      { id: "rc-human", fit_score: 3, factor_scores: engineFactors, qa_status: null, qa_engine_fit_score: null, grant_id: "g-clean", client_id: "cl1" },
+      { id: "rc-clean", ...base, grant_id: "g-clean" },
+      { id: "rc-false", ...base, grant_id: "g-false" },
+      { id: "rc-null", ...base, grant_id: "g-null" },
+      { id: "rc-human", ...base, grant_id: "g-clean" },
     ];
     s.tables.card_intel_reviews = [
       { review_card_id: "rc-clean", created_by: null, intel_review: demoteReview({ refute_survived: true }) },
@@ -786,10 +788,28 @@ describe("backfillBroadApply — one-time re-projection of the inert demotes", (
   // Two refute-clean demotes, so cardId / limit have something to bound.
   const seedTwoClean = () => {
     const s = seedBackfill();
-    s.tables.review_cards.push({ id: "rc-clean2", fit_score: 3, factor_scores: engineFactors, qa_status: null, qa_engine_fit_score: null, grant_id: "g-clean", client_id: "cl1" });
+    s.tables.review_cards.push({ id: "rc-clean2", fit_score: 3, factor_scores: engineFactors, qa_status: null, qa_engine_fit_score: null, decision: "pending", sme_released_at: null, grant_id: "g-clean", client_id: "cl1" });
     s.tables.card_intel_reviews.push({ review_card_id: "rc-clean2", created_by: null, intel_review: demoteReview({ refute_survived: true }) });
     return s;
   };
+
+  it("EXCLUDES a DECIDED card (decision != 'pending') — a refute-clean demote on it is never in eligible or applied", async () => {
+    const s = seedBackfill();
+    // rc-clean was already approved by a staffer; the backfill must not rewrite its score.
+    Object.assign(s.tables.review_cards.find((c) => c.id === "rc-clean")!, { decision: "approved" });
+    const r = await backfillBroadApply(asDb(s), { apply: true });
+    expect(r.eligible.map((e) => e.cardId)).toEqual([]); // decided card dropped out
+    expect(r.applied).toEqual([]);
+    expect(s.tables.review_cards.find((c) => c.id === "rc-clean")!.qa_fit_score ?? null).toBeNull();
+  });
+
+  it("EXCLUDES a RELEASED card (sme_released_at set) — a demote on an already-sent card is never rewritten", async () => {
+    const s = seedBackfill();
+    Object.assign(s.tables.review_cards.find((c) => c.id === "rc-clean")!, { sme_released_at: "2026-08-20T00:00:00Z" });
+    const r = await backfillBroadApply(asDb(s), { apply: true });
+    expect(r.eligible.map((e) => e.cardId)).toEqual([]);
+    expect(r.applied).toEqual([]);
+  });
 
   it("cardId targets a single card (the canary) — only that card is applied", async () => {
     const s = seedTwoClean();
