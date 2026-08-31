@@ -174,9 +174,15 @@ export function GrantBotChat({
   // never a stored message -- so it does not break the append-only transcript.
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
-  // Guards the blur-commit against firing a second write after Enter already committed, and lets
-  // Escape cancel without a trailing blur re-saving the abandoned draft.
-  const renameInFlight = useRef(false);
+  // The id of the row a commit is in flight for (null = none). Keyed to the id, not a bare
+  // boolean, so it blocks the Enter-then-blur double-write of the SAME row without blocking a
+  // commit for a DIFFERENT row the user switched to mid-request.
+  const renameInFlight = useRef<string | null>(null);
+  // Mirrors renamingId for reads inside the async commit closure (state would be stale there):
+  // the finally must only close the editor if the user is STILL editing this row, not one they
+  // switched to while the request was pending.
+  const renamingIdRef = useRef<string | null>(null);
+  // Lets Escape cancel without a trailing blur re-saving the abandoned draft.
   const skipBlurCommit = useRef(false);
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(!initial);
@@ -498,22 +504,31 @@ export function GrantBotChat({
 
   function startRename(c: GrantBotThread) {
     skipBlurCommit.current = false;
+    renamingIdRef.current = c.id;
     setRenamingId(c.id);
     setRenameDraft(c.title ?? "");
   }
   function cancelRename() {
+    renamingIdRef.current = null;
     setRenamingId(null);
     setRenameDraft("");
   }
+  // Close the editor only if it is still open ON this row -- if a slow request finishes after the
+  // user has switched to renaming another row, that row's editor and draft are left untouched.
+  function closeIfStillEditing(id: string) {
+    if (renamingIdRef.current === id) cancelRename();
+  }
   async function commitRename(c: GrantBotThread) {
-    if (renameInFlight.current) return;
+    // Per-row re-entrancy guard: Enter + the trailing blur must not both write THIS row, but a
+    // commit for a row the user just switched to must not be blocked by an in-flight one.
+    if (renameInFlight.current === c.id) return;
     const title = renameDraft.replace(/\s+/g, " ").trim();
     // No change (or emptied) is a cancel, not a write -- an empty title would blank the row.
     if (!title || title === (c.title ?? "")) {
-      cancelRename();
+      closeIfStillEditing(c.id);
       return;
     }
-    renameInFlight.current = true;
+    renameInFlight.current = c.id;
     try {
       const res = await fetch("/api/grantbot/rename", {
         method: "POST",
@@ -530,8 +545,8 @@ export function GrantBotChat({
     } catch {
       setError("Could not reach the server.");
     } finally {
-      renameInFlight.current = false;
-      cancelRename();
+      if (renameInFlight.current === c.id) renameInFlight.current = null;
+      closeIfStillEditing(c.id);
     }
   }
 

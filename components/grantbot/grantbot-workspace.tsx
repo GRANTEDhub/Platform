@@ -34,7 +34,11 @@ export function GrantBotWorkspace({ artifactsEnabled, ...chatProps }: ChatProps 
       </div>
 
       {docsOpen ? (
-        <div className="flex min-h-0 flex-1 basis-1/2 flex-col overflow-hidden rounded-lg border border-hairline-strong bg-white">
+        // Both columns are flex-1 with the default 0 basis, so the row splits evenly (50/50) when
+        // the pane is open. (A basis-1/2 here while the chat column has none would hand the pane
+        // ~75% of the row.) When the pane is closed the chat column takes all the space the slim
+        // tab leaves.
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-hairline-strong bg-white">
           <div className="flex shrink-0 items-center justify-between border-b border-hairline-strong px-4 py-2">
             <span className="text-[12.5px] font-semibold text-brand-navy">Documents</span>
             <button
