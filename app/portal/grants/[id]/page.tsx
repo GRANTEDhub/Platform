@@ -19,7 +19,7 @@ import { fitNarrativeEnabled } from "@/lib/grants/fit-narrative";
 import { MarkRead } from "@/components/report/mark-read";
 import { formatAwardRange, compactCostShare } from "@/lib/grants/format";
 import { BRAND } from "@/lib/brand";
-import { allowableUsesClientVisible, readAllowableUses } from "@/lib/grants/allowable-uses";
+import { clientAllowableUses } from "@/lib/grants/allowable-uses";
 import type { Client, FactorScores, Grant, CardDecision, PursuitPath } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -287,11 +287,12 @@ export default async function PortalGrantDetail({
         // agency's own prose. Same fallback on the console detail, so the two sides
         // cannot describe the same grant differently.
         summary={g.description_brief || g.description}
-        // Gated for the staff-only first week. NULL, not an empty value: null renders
-        // no section at all, where an empty value would render the "Ask our team"
-        // sentinel and tell the client we looked and found nothing -- which would be
-        // false while the real reason is that we have not shown them the feature yet.
-        allowableUses={allowableUsesClientVisible() ? readAllowableUses(g.allowable_uses) : null}
+        // Flag-gated AND empty-hidden for the client: clientAllowableUses returns the
+        // parsed list only when ALLOWABLE_USES_CLIENT_VISIBLE is on and it actually has
+        // items, else null (render nothing). A verified-empty NOFO -- reference-style,
+        // costs governed by 2 CFR 200 rather than itemized -- shows NO section here rather
+        // than the "Ask our team" sentinel, which stays a staff-only signal on the roadmap.
+        allowableUses={clientAllowableUses(g.allowable_uses)}
         meta={meta}
         eligibility={eligibility}
         rationale={rationaleForRender}

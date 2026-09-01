@@ -775,3 +775,23 @@ export function readAllowableUses(value: unknown): AllowableUses | null {
     v.reason === "no_section" || v.reason === "no_raw_text" || v.reason === "all_dropped" ? v.reason : null;
   return { items, reason };
 }
+
+// Client visibility, RESOLVED. What the portal's grant detail passes to the shared review console
+// for a CLIENT: the parsed allowable-uses list to render, or null to omit the section entirely.
+//
+// TWO GATES, both must pass -- the ALLOWABLE_USES_CLIENT_VISIBLE flag is on AND the list actually
+// has items. A verified-empty result (a reference-style NOFO that governs costs by 2 CFR 200 /
+// uniform-guidance reference rather than itemizing them -- the ONLY empty that reaches the
+// client-visible Grant Report today) returns null here, so a client sees NO section rather than the
+// "Ask our team" sentinel that draws the eye to a gap the funder simply did not itemize.
+//
+// STAFF KEEP THE SENTINEL. The staff roadmap calls readAllowableUses() directly and unconditionally,
+// because "we looked, the NOFO did not itemize" is a useful staff signal. Only the client side hides
+// the empty. This is the client half of the client/staff split that already lives at the two call
+// sites -- encapsulated here so the "client sees only a real list" rule is one testable source and
+// cannot drift back into the sentinel.
+export function clientAllowableUses(value: unknown): AllowableUses | null {
+  if (!allowableUsesClientVisible()) return null;
+  const parsed = readAllowableUses(value);
+  return parsed && parsed.items.length > 0 ? parsed : null;
+}
