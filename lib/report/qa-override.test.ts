@@ -60,6 +60,32 @@ describe("resolveFit — QA override coalesce + staleness", () => {
     expect(r.narrative).toBeNull(); // a stale narrative must not sit on a freshly re-scored card
   });
 
+  it("affirm/flag clearing patch (status 'none', qa_fit_score null) with a FRESH narrative → narrative shown, engine score, no badge", () => {
+    // The verdict narrative is decoupled from the score override: an affirm/flag carries reasoning with NO
+    // score change. Snapshot is fresh (3 === 3), qa_fit_score null → engine score stands, no applied badge,
+    // but the reasoning paragraph renders in place of the engine one.
+    const r = resolveFit(
+      row({
+        qa_status: "none",
+        qa_fit_score: null,
+        qa_engine_fit_score: 3,
+        qa_narrative: "Genuinely in the workforce lane; the real hurdle is a HAZWOPER track the college does not run.",
+      }),
+    );
+    expect(r.fitScore).toBe(3); // engine score — no score override
+    expect(r.factorScores).toBe(engineFactors);
+    expect(r.qa).toBeNull(); // 'none' status carries no badge
+    expect(r.narrative).toBe("Genuinely in the workforce lane; the real hurdle is a HAZWOPER track the college does not run.");
+  });
+
+  it("affirm/flag narrative goes STALE on an engine re-score (snapshot 3 ≠ fit_score 2) → engine paragraph", () => {
+    const r = resolveFit(
+      row({ fit_score: 2, qa_status: "none", qa_fit_score: null, qa_engine_fit_score: 3, qa_narrative: "stale affirm prose" }),
+    );
+    expect(r.fitScore).toBe(2);
+    expect(r.narrative).toBeNull(); // a stale narrative must not sit on a freshly re-scored card
+  });
+
   it("unverified → engine score stands, badge unverified (score columns are null by write-time contract)", () => {
     const r = resolveFit(row({ qa_status: "unverified", qa_fit_score: null, qa_factor_scores: null, qa_engine_fit_score: null }));
     expect(r.fitScore).toBe(3);

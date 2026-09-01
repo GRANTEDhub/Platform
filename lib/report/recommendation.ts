@@ -30,6 +30,77 @@
 // demote (unconfirmed program history), or a calibration demote, so the line marks it conditional but
 // NEVER names the fix — the specific condition lives in the prose above it.
 
+// ── The verdict LEAD — the go/no-go call that OPENS the IntellEngine Intel paragraph ────────────────
+//
+// The Send/Pass line above is the closing LABEL; this is the OPENING CALL of the verdict paragraph. Same
+// principle, same source: DETERMINISTIC, pinned to the displayed score (Shannon's decision, 2026-09-01 —
+// "the score sets the directional call; the prose writes the reasoning under a call it can't override").
+// The model writes the reasoning that FOLLOWS this lead; it never authors the call, so prose and score
+// cannot disagree by construction — no guard, no fallback.
+//
+// HARD-KILL LEAD. Two certain disqualifiers lead DETERMINISTICALLY as facts, not model judgments:
+//   - `closed`     — the submission deadline has passed (reliable today: it's a date we hold). Orthogonal
+//                    to fit, so it does NOT pin the score — it forces the CALL to no-go ("strong fit, but
+//                    the deadline passed" is coherent), and the page still shows the engine's fit bars.
+//   - `ineligible` — computeEligibility returned a structural limit (an eligibility CLAIM). The page pins
+//                    the DISPLAYED score to 1 for this, so the score bars, this lead, and the Send/Pass
+//                    line all read no-go together — killing the "3 above 'ineligible'" contradiction.
+// (Archived-at-source is deliberately NOT here — that signal is what the freshness bug corrupts; it lands
+// when the freshness gate does. Shannon, 2026-09-01.)
+export type VerdictCall = "no-go" | "marginal" | "go";
+
+// A deterministic threshold kill the page detected. `detail` (ineligible only) is the eligibility gate's
+// own short reason — never fabricated.
+export interface HardKill {
+  kind: "closed" | "ineligible";
+  detail?: string | null;
+}
+
+export interface VerdictLead {
+  call: VerdictCall;
+  // The ready-to-render lead phrase, side-appropriate. The model's reasoning (or the engine paragraph)
+  // renders immediately after it as ONE paragraph — e.g. "No-go for NWACC. This is a fossil-energy R&D
+  // grant…". Client-safe by construction (a go/marginal is advice; a no-go never reaches the client side).
+  text: string;
+}
+
+// Derive the verdict lead from the DISPLAYED score + any hard kill. `side` gates client visibility of a
+// no-go (staff-only, like a PASS) and picks the phrasing (a client reads their own card, so a go is advice
+// — "Worth pursuing" — not "Go for {them}"). Returns null when there is nothing to state (no score, or a
+// no-go on the client side).
+export function buildVerdict(
+  fitScore: 1 | 2 | 3 | null,
+  hardKill: HardKill | null,
+  clientName: string,
+  side: "staff" | "client",
+): VerdictLead | null {
+  const name = clientName.trim() || "this client";
+
+  if (hardKill) {
+    // A hard kill is a no-go, deterministically, with the disqualifier stated. No-go is staff-only.
+    if (side === "client") return null;
+    const reason =
+      hardKill.kind === "closed"
+        ? "the deadline has passed"
+        : `ineligible${hardKill.detail?.trim() ? ` — ${hardKill.detail.trim()}` : " for this program"}`;
+    return { call: "no-go", text: `No-go for ${name}: ${reason}.` };
+  }
+
+  if (fitScore == null) return null;
+
+  if (fitScore === 1) {
+    // No-go — staff-only (a "not a fit" verdict is never client advice; the client sees no lead).
+    return side === "client" ? null : { call: "no-go", text: `No-go for ${name}.` };
+  }
+  if (fitScore === 2) {
+    return side === "client"
+      ? { call: "marginal", text: "Marginal — worth a look." }
+      : { call: "marginal", text: `Marginal for ${name}.` };
+  }
+  // fitScore === 3 → go.
+  return side === "client" ? { call: "go", text: "Worth pursuing." } : { call: "go", text: `Go for ${name}.` };
+}
+
 export type RecommendationCall = "SEND" | "PASS";
 
 export interface Recommendation {
@@ -51,15 +122,26 @@ export interface Recommendation {
 }
 
 // Derive the recommendation from the DISPLAYED (QA-coalesced) fit score + the card's proposed role.
-// `side` gates client visibility of a PASS AND picks the client-safe verb. Returns null when there is
-// nothing to state (no score, or a PASS on the client side).
+// `side` gates client visibility of a PASS AND picks the client-safe verb. A `hardKill` forces PASS
+// regardless of score — the `closed` case is NOT score-pinned (a strong-fit-but-closed card keeps its
+// fit bars), so without this a fit-3 whose deadline passed would still read "Send", contradicting the
+// no-go verdict lead. (An `ineligible` kill is already score-pinned to 1 by the page, so it lands on
+// PASS anyway; passing the kill here keeps the two paths uniform and self-documenting.) Returns null
+// when there is nothing to state (no score, or a PASS/hard-kill on the client side).
 export function buildRecommendation(
   fitScore: 1 | 2 | 3 | null,
   proposedRole: string | null,
   side: "staff" | "client",
+  hardKill?: HardKill | null,
 ): Recommendation | null {
-  if (fitScore == null) return null;
   const capacity = proposedRole?.trim() || null;
+
+  if (hardKill) {
+    // A hard kill is a walk-away, deterministically — PASS, staff-only (never the client "Pursue" verb).
+    return side === "client" ? null : { call: "PASS", verb: "Pass", capacity, conditional: false };
+  }
+
+  if (fitScore == null) return null;
 
   if (fitScore === 1) {
     // PASS is the platform's call to walk away; it is staff-only (see the client-visibility note above).

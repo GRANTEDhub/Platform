@@ -103,9 +103,11 @@ export interface QaPatch {
   qa_fit_score?: number | null;
   qa_factor_scores?: FactorScores | null;
   qa_sources?: string[] | null;
-  // The client-safe integrated fit narrative (Step C). Non-null only on an applied demote whose narrative
-  // passed the framing guard at generation time; nulled by the clearing patch on every other verdict so a
-  // reversal can't leave a stale demote-narrative under a card that no longer demotes.
+  // The client-safe verdict narrative (the go/no-go reasoning body). Rides EVERY resolved verdict whose
+  // narrative passed the framing guard at generation time — a demote, an affirm, or a flag — carried verbatim
+  // from finalizeIntel (null for unverified / a guarded-away leak). The score column still clears on a
+  // non-demote (qa_fit_score: null); only the reasoning paragraph is preserved, freshness-gated by the
+  // snapshot below, so a reversal shows the NEW verdict's reasoning, never a stale demote paragraph.
   qa_narrative?: string | null;
   qa_status: "applied" | "unverified" | "none";
   qa_engine_fit_score?: number | null;
@@ -163,15 +165,24 @@ export function buildQaPatch(
       qa_reviewed_by: reviewedBy,
     };
   }
-  // Every non-demote verdict CLEARS the override (see the header note): unverified surfaces "couldn't
-  // verify"; affirm/flag agree the engine score stands. Same clearing patch, different status.
+  // Every non-demote verdict CLEARS the SCORE override (qa_fit_score: null) — the load-bearing reversal
+  // safety: the read-layer coalesce is `qa_fit_score ?? fit_score`, so a null score column ALWAYS shows the
+  // engine score, independent of the freshness snapshot below. So a demote → affirm re-run correctly drops
+  // the demoted number even though we now keep a snapshot.
+  //
+  // BUT the verdict NARRATIVE (the go/no-go reasoning body) rides EVERY resolved verdict now, not just a
+  // demote — an affirm/flag carries its own grounded reasoning. So the clearing patch KEEPS `qa_narrative`
+  // (verbatim from finalizeIntel — null for unverified or a guarded-away leak) and, when there IS a narrative
+  // to honor, sets the freshness snapshot so the read layer displays it while fresh and drops it on an engine
+  // re-score (same staleness rule as a score override). No narrative → snapshot stays null (nothing to gate).
+  // The score still coalesces to the engine number regardless; only the reasoning paragraph is carried.
   return {
     qa_fit_score: null,
     qa_factor_scores: null,
     qa_sources: null,
-    qa_narrative: null,
+    qa_narrative: review.narrative,
     qa_status: review.verdict === "unverified" ? "unverified" : "none",
-    qa_engine_fit_score: null,
+    qa_engine_fit_score: review.narrative ? card.fit_score : null,
     qa_applied_at: nowIso,
     qa_reviewed_by: reviewedBy,
   };

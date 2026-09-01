@@ -14,7 +14,8 @@ import { wasCalibrated } from "@/lib/grants/calibration";
 import { computeEligibility } from "@/lib/intellengine/eligibility";
 import { FIT_BAND, deadlineDaysLeft, isOverdue } from "@/lib/report/shape";
 import { resolveFit } from "@/lib/report/qa-override";
-import { buildRecommendation } from "@/lib/report/recommendation";
+import { buildRecommendation, buildVerdict, type HardKill } from "@/lib/report/recommendation";
+import { fitNarrativeEnabled } from "@/lib/grants/fit-narrative";
 import { MarkRead } from "@/components/report/mark-read";
 import { formatAwardRange, compactCostShare } from "@/lib/grants/format";
 import { BRAND } from "@/lib/brand";
@@ -186,6 +187,21 @@ export default async function PortalGrantDetail({
   const days = deadlineDaysLeft(g.submission_deadline);
   const deadlineLabel = fmtDate(g.submission_deadline);
 
+  // The go/no-go VERDICT LEAD — CLIENT side (flag-gated: FIT_NARRATIVE_ENABLED). Identical derivation to
+  // the staff page (same pin, same hard kills), so the same card reads the same number on both sides. side
+  // "client" gates the phrasing: a go/marginal renders as the client's own advice, a no-go returns null
+  // (never shown to the client, like a PASS). Flag OFF → no pin, no lead, byte-identical to today.
+  const verdictEnabled = fitNarrativeEnabled();
+  const hardKill: HardKill | null = verdictEnabled
+    ? eligibility.level === "ineligible"
+      ? { kind: "ineligible", detail: eligibility.structuralNote }
+      : days !== null && days < 0
+        ? { kind: "closed" }
+        : null
+    : null;
+  const displayFit: 1 | 2 | 3 = hardKill?.kind === "ineligible" ? 1 : effFit;
+  const verdictLead = verdictEnabled ? buildVerdict(displayFit, hardKill, org.clientName, "client") : null;
+
   const meta: ReviewMeta[] = [
     { label: "Award range", value: formatAwardRange(g.award_range_min, g.award_range_max) },
     {
@@ -278,10 +294,16 @@ export default async function PortalGrantDetail({
         // staff-side (the staff page passes them; here we pass null for them). Null today (no verdict).
         qaVerdict={resolved.qa?.status === "applied" ? resolved.qa : null}
         // The closing recommendation — CLIENT side, so a SEND reads as "Pursue" (their action word) and a
-        // PASS yields null (a client never sees "Pass", even on a never-hide override that sent a low-fit card).
-        recommendation={buildRecommendation(effFit, card.proposed_role, "client")}
-        fitScore={effFit}
-        verdict={FIT_BAND[effFit].label}
+        // PASS yields null (a client never sees "Pass", even on a never-hide override that sent a low-fit
+        // card). Fed the DISPLAYED score + any hard kill; null hardKill when the flag is off → identical.
+        recommendation={buildRecommendation(displayFit, card.proposed_role, "client", hardKill)}
+        // The go/no-go verdict LEAD — client side, so only a go/marginal renders (a no-go returns null,
+        // never shown to the client). Null when the flag is off.
+        verdictLead={verdictLead}
+        // Displayed score: the ineligible hard kill pins it to 1 (same as staff, so both sides agree);
+        // otherwise the coalesced engine/QA score. Byte-identical to effFit when the flag is off.
+        fitScore={displayFit}
+        verdict={FIT_BAND[displayFit].label}
         consequence={
           // When calibration drove the score, the Fit-factors sentence already states that as
           // the reason; a factor-based next-step here would point at a second, different cause

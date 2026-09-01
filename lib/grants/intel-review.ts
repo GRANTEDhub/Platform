@@ -55,6 +55,7 @@ import { allocationSourcesFor } from "@/lib/grants/allocation-sources";
 import { formulaProgramTag } from "@/lib/grants/formula-programs";
 import { intelWebSearchEnabled, intelPhase1Config, serverSearchQueries } from "@/lib/grants/intel-web-search";
 import { fitNarrativeEnabled, structureConfig, narrativeGuard } from "@/lib/grants/fit-narrative";
+import { deadlineDaysLeft } from "@/lib/report/shape";
 import type { Grant, Client, FactorScores } from "@/types/database";
 
 // Opus, exclusively, for this path — a low-volume verification pass where quality matters and the
@@ -314,6 +315,16 @@ export function intelContext(card: IntelCard, grant: Grant, client: Client, disc
       ? `FORMULA / ALLOCATION PROGRAM — CFDA ${formula.cfda} (${formula.program.label}): here ENTITY-TYPE eligibility is NOT application eligibility. ${formula.program.allocationNote} Verify the client against this allocation reality (the allocation table / State Administering Agency structure), not just the entity-type list. If the authoritative allocation page is not among the sources above, SEARCH for it, then fetch and read it.\n\n`
       : "";
 
+  // Deadline signal (a date we hold, so it's deterministic and reliable). A PASSED deadline (strictly
+  // past — a due-today grant is still winnable) makes the whole card a no-go elsewhere; the model does not
+  // author that call, but knowing it keeps the reasoning coherent — it must NOT describe partners to line up
+  // or steps to take "before the deadline" that has already gone. Fed as advisory context, never a gate here.
+  const days = deadlineDaysLeft(grant.submission_deadline);
+  const deadlineStatus =
+    days !== null && days < 0
+      ? "  ⚠ This submission deadline has ALREADY PASSED — the opportunity is closed; do not describe any step as still available before it."
+      : "";
+
   return (
     `GRANT\n` +
     `  Title: ${grant.title ?? "(untitled)"}\n` +
@@ -322,6 +333,7 @@ export function intelContext(card: IntelCard, grant: Grant, client: Client, disc
     `  Program type: ${grant.program_type ?? "(unknown)"}\n` +
     `  Eligible entity types (as extracted): ${(grant.eligible_entity_types ?? []).join("; ") || "(none stated)"}\n` +
     `  Geographic eligibility: ${grant.geographic_eligibility ?? "(none stated)"}\n` +
+    `  Submission deadline: ${grant.submission_deadline ?? "(none stated)"}\n${deadlineStatus ? deadlineStatus + "\n" : ""}` +
     `  NOFO source URL: ${grant.source_url ?? "(none)"}\n\n` +
     formulaNote +
     `AUTHORITATIVE SOURCES TO CHECK (fetch these; follow .gov links to the specific table):\n${authoritative}\n\n` +
@@ -543,11 +555,13 @@ export function finalizeIntel(opts: {
   const qa_factor_scores: Partial<FactorScores> | null =
     verdict === "demote" ? sanitizeFactorScores(parsed.qa_factor_scores) : null;
 
-  // The client-safe narrative rides ONLY an applied demote (a real, displayed score change) — the same gate
-  // as qa_factor_scores — and only when it passes the framing guard. Every other verdict, an off flag, or a
-  // leaky/absent narrative → null → the card shows today's engine paragraph. Additive: never touches the
-  // verdict/score/factors, so it cannot regress the demote (the eval's no-regression property).
-  const narrative = verdict === "demote" ? narrativeGuard(parsed.narrative) : null;
+  // The client-safe verdict narrative is the REASONING body under the card's directional call. It now rides
+  // EVERY resolved verdict — affirm and flag as well as demote — so a go/marginal card carries its own
+  // grounded reasoning, not just a demote. It is gated only by the framing guard; an unverified verdict (QA
+  // couldn't ground) writes no narrative → the card shows today's engine paragraph, and a leaky/absent one
+  // falls back the same way. Additive: it never touches the verdict/score/factors, so it cannot move the
+  // number (the pin holds — the model writes reasoning under a call it cannot override).
+  const narrative = verdict !== "unverified" ? narrativeGuard(parsed.narrative) : null;
 
   return {
     ...base,

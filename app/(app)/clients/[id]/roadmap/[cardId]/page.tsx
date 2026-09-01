@@ -18,7 +18,8 @@ import { wasCalibrated } from "@/lib/grants/calibration";
 import { computeEligibility } from "@/lib/intellengine/eligibility";
 import { FIT_BAND, deadlineDaysLeft, isOverdue } from "@/lib/report/shape";
 import { resolveFit } from "@/lib/report/qa-override";
-import { buildRecommendation } from "@/lib/report/recommendation";
+import { buildRecommendation, buildVerdict, type HardKill } from "@/lib/report/recommendation";
+import { fitNarrativeEnabled } from "@/lib/grants/fit-narrative";
 import { MarkRead } from "@/components/report/mark-read";
 import { formatAwardRange, compactCostShare } from "@/lib/grants/format";
 import { isUnconvertedLead } from "@/lib/leads/stage";
@@ -227,6 +228,29 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   const overdue = isOverdue(days);
   const deadlineLabel = fmtDate(g.submission_deadline);
 
+  // ── The go/no-go VERDICT LEAD (flag-gated: FIT_NARRATIVE_ENABLED) ───────────────────────────
+  // A deterministic directional call that OPENS the IntellEngine Intel paragraph, PINNED to the
+  // displayed score so the prose and the score can't disagree (Shannon, 2026-09-01). Two hard kills
+  // lead as FACTS, not model judgments:
+  //   - ineligible: computeEligibility returned a structural limitation (an eligibility CLAIM) → PIN
+  //     the displayed score to 1 so the score bars, the lead, and the Send/Pass line all read no-go.
+  //     (computeEligibility only ever reports `ineligible` on a genuine structural note / skip_reason —
+  //     never a keyword miss — so this can't false-block an eligible org, per the PR #24 discipline.)
+  //   - closed: the submission deadline has strictly PASSED (a due-today grant is still winnable, so
+  //     `< 0`, not isOverdue) → forces the no-go CALL without pinning the score (fit is orthogonal).
+  // Flag OFF → no hard kill, no pin, no lead: displayFit === effFit and buildRecommendation's 4th arg
+  // is null, so fitScore / verdict / recommendation stay byte-identical to today.
+  const verdictEnabled = fitNarrativeEnabled();
+  const hardKill: HardKill | null = verdictEnabled
+    ? eligibility.level === "ineligible"
+      ? { kind: "ineligible", detail: eligibility.structuralNote }
+      : days !== null && days < 0
+        ? { kind: "closed" }
+        : null
+    : null;
+  const displayFit: 1 | 2 | 3 = hardKill?.kind === "ineligible" ? 1 : effFit;
+  const verdictLead = verdictEnabled ? buildVerdict(displayFit, hardKill, client?.name ?? "Client", "staff") : null;
+
   const meta: ReviewMeta[] = [
     { label: "Award range", value: formatAwardRange(g.award_range_min, g.award_range_max) },
     {
@@ -346,11 +370,17 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         // the RAW analyst verdict is no longer shown on the card (the on-demand QA control now lives
         // in the IntellEngine box's re-run — see the `concept` slot below).
         qaVerdict={resolved.qa}
-        // The closing Send/Pass call — deterministic from the coalesced score + proposed role. Staff side,
-        // so a PASS is included; the portal passes "client" and gets SEND-or-null.
-        recommendation={buildRecommendation(effFit, card.proposed_role, "staff")}
-        fitScore={effFit}
-        verdict={FIT_BAND[effFit].label}
+        // The closing Send/Pass call — deterministic from the DISPLAYED score + proposed role + any hard
+        // kill (a closed/ineligible card lands on PASS). Staff side, so a PASS is included; the portal
+        // passes "client" and gets SEND-or-null. hardKill is null when the flag is off → byte-identical.
+        recommendation={buildRecommendation(displayFit, card.proposed_role, "staff", hardKill)}
+        // The go/no-go verdict LEAD that opens the paragraph (flag-gated; null when off). Staff side gets
+        // the full call including a no-go; the portal passes "client" and gets go/marginal-or-null.
+        verdictLead={verdictLead}
+        // Displayed score: the ineligible hard kill pins it to 1 so bars + lead + Send/Pass read no-go
+        // together; otherwise the coalesced engine/QA score. Byte-identical to effFit when the flag is off.
+        fitScore={displayFit}
+        verdict={FIT_BAND[displayFit].label}
         // What the score MEANS for the next step, derived from the lit factor rather than
         // from three canned sentences keyed off the number.
         consequence={

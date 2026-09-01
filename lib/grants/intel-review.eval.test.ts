@@ -18,12 +18,21 @@ import type { Grant, Client } from "@/types/database";
 // prod-DB dependency and is reproducible — the only external dependencies are Anthropic and the live
 // .gov source.
 //
+// THE VERDICT-NARRATIVE WIDENING (2026-09-01). The client-safe narrative is now the REASONING BODY under a
+// deterministic go/no-go LEAD, and it rides EVERY resolved verdict (affirm / demote / flag), not just a
+// demote. The deterministic LEAD itself — the "No-go / Marginal / Go for <client>" call, its pin to the
+// displayed score, and the closed/ineligible hard kills — is DETERMINISTIC and unit-tested in
+// lib/report/recommendation.test.ts (no model), so this eval owns only the MODEL half: that the narrative is
+// faithful, clean, and VERDICT-SHAPED (leads with the decisive reason, distinguishes eligible-vs-competitive,
+// names the hurdle, restates neither the call word nor a numeric score). Case 2 proves an AFFIRM now carries
+// its own go-reasoning (the widening); case 8 proves the eligible-but-functionally-wrong voice (both halves).
+//
 // TWO COHORTS, because apply-mode writes the verdict to the card and PR A LOOSENED the grounding guard
 // (host-grounding + refute, no verbatim quote), so the eval must prove BOTH directions before the flag
 // flips: (DEMOTE cohort) QA lowers the genuinely-wrong matches, and (AFFIRM cohort) QA leaves the
 // genuinely-good matches UNTOUCHED — the over-demote guard, which is the real risk of a looser guard.
-// Seven cases — [D] = demote cohort (catches the wrong matches), [A] = affirm cohort (leaves the good
-// matches untouched — the over-demote guard), [F] = fail-safe:
+// Eight cases — [D] = demote cohort (catches the wrong matches), [A] = affirm cohort (leaves the good
+// matches untouched — the over-demote guard), [F] = fail-safe, [N] = narrative voice:
 //
 //   1. [D] JAG-county-GROUNDED-DEMOTE (discovery ON) — Mississippi County (AR, local_government) scored a confident
 //      direct-recipient 3 on Byrne-JAG Local (CFDA 16.738). An AR county is a disparate / "asterisk"
@@ -83,6 +92,13 @@ import type { Grant, Client } from "@/types/database";
 //      (affirm) rather than blanket-demoting VOCA, and it is the no-false-demote guard the 16.575 flip
 //      rests on. Runs discovery ON (like #4) so it exercises the same seeded flag-on path as the demote.
 //
+//   8. [N] DOE-fossil-energy × two-year college — NorthWest Arkansas Community College (higher_education) on a
+//      DOE fossil-energy R&D program. Entity-eligible as an IHE, but a teaching college with no research
+//      faculty — Shannon's target voice. Tests the NARRATIVE, not the verdict direction (a grounded demote on
+//      the NOFO's PI/research requirement AND an affirm-of-the-conditional-2 are both defensible): the
+//      fail-safe holds, and any narrative written must be clean, verdict-shaped, AND name BOTH the higher-ed
+//      eligibility and the research-capacity gap (the eligible-vs-competitive distinction).
+//
 // Cases 5-6 run discovery:false — they are not formula programs, so a formula note never fires; keeping
 // discovery off makes the affirm result flag-independent and keeps the pass to a single fetch (fast). The
 // VOCA pair (4, 7) runs discovery ON — 16.575 is a seeded formula program, so both sides take the flag-on
@@ -129,6 +145,18 @@ async function runN<T>(n: number, fn: () => Promise<T>): Promise<T[]> {
 }
 
 const majority = (bools: boolean[]) => bools.filter(Boolean).length > bools.length / 2;
+
+// The verdict narrative is the REASONING body under a directional call the card states deterministically.
+// Two model-dependent shape properties the eval gates (the deterministic lead/pin/bands are unit-tested in
+// lib/report/recommendation.test.ts, not here):
+//   - CLEAN: no internal-framing / scoring-machinery language (the runtime narrativeGuard already nulls a
+//     leak, so a present narrative is clean by construction — asserted anyway to catch a guard hole).
+//   - VERDICT-SHAPED: it does NOT restate the "go / no-go / marginal" call word (the card owns that), and it
+//     carries NO bare numeric fit score ("a 2/3", "scored a 3", "conditional 2") — the new spec is prose only.
+const narrativeClean = (n: string) => FORBIDDEN_NARRATIVE_MARKERS.every((m) => !n.toLowerCase().includes(m));
+const narrativeVerdictShaped = (n: string) =>
+  !/^\s*(no-?go|go for|marginal)\b/i.test(n.trim()) &&
+  !/\b[123]\s*\/\s*3\b|\bfit score\b|\bscored (?:a )?[123]\b|\bconditional [123]\b/i.test(n);
 
 describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
   it(
@@ -206,9 +234,10 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
       const faithful = demoteRuns.map(
         (r) => !!r.narrative && /cannot|asterisk|disparate|\bMOU\b|prohibit|through the (state|county)|fiscal agent|not.*(a )?direct/i.test(r.narrative),
       );
-      const clean = demoteRuns.map(
-        (r) => !r.narrative || FORBIDDEN_NARRATIVE_MARKERS.every((m) => !r.narrative!.toLowerCase().includes(m)),
-      );
+      const clean = demoteRuns.map((r) => !r.narrative || narrativeClean(r.narrative));
+      // VERDICT-SHAPED: even a demote narrative must not restate the "no-go" call the card states, and must
+      // carry no bare numeric fit score — it is the reasoning body, prose only.
+      const shaped = demoteRuns.map((r) => !r.narrative || narrativeVerdictShaped(r.narrative));
       // LENGTH CAP (visual): the prompt targets ~175 words / ~1,000 chars — a client card, not a memo. The
       // eval bar allows a small overage (≤1,100) since it is a model target, and logs the actual lengths.
       const lengths = demoteRuns.map((r) => r.narrative?.length ?? 0);
@@ -217,6 +246,7 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
       expect.soft(demoteRuns.length === 0 || majority(narrated), "a grounded demote should carry a client narrative in the majority of runs").toBe(true);
       expect.soft(demoteRuns.length === 0 || majority(faithful), "the narrative must preserve the grounded hard fact, not soften it (rule a)").toBe(true);
       expect.soft(clean.every(Boolean), "the narrative must carry NO internal-framing / scoring-machinery language (rule b)").toBe(true);
+      expect.soft(shaped.every(Boolean), "the narrative must not restate the no-go call or a numeric fit score (verdict-shaped)").toBe(true);
       expect.soft(demoteRuns.length === 0 || majority(withinCap), "the narrative should stay within the ~1,000-char client-card cap in the majority of runs").toBe(true);
     },
     RUNS * 200_000,
@@ -234,13 +264,26 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
         ),
       );
       console.log("[intel-eval] JAG-state verdicts:", results.map((r) => r.verdict).join(", "));
+      console.log("[intel-eval] JAG-state narratives:", results.map((r) => r.narrative));
       const notDemoted = results.map((r) => r.verdict !== "demote");
       expect.soft(majority(notDemoted), "a state IS a direct JAG recipient — QA must not demote it").toBe(true);
-      // Step C: the narrative rides an APPLIED DEMOTE only. A genuine affirm (or any non-demote) carries no
-      // client narrative — the card keeps its engine paragraph. (Guards against the field leaking onto a match
-      // QA did NOT change.)
+      // VERDICT NARRATIVE WIDENING: the reasoning body now rides EVERY resolved verdict, so a genuine AFFIRM
+      // carries its OWN go-reasoning paragraph (not just a demote). The bar:
+      //   - a non-unverified verdict CARRIES a narrative in the majority of runs (the widening works);
+      //   - an UNVERIFIED verdict carries NONE (finalizeIntel nulls it — the card keeps the engine paragraph);
+      //   - every present narrative is CLEAN (no framing/machinery) and VERDICT-SHAPED (does not restate the
+      //     "go/no-go" call the card states deterministically, and carries no bare numeric fit score).
+      const resolvedRuns = results.filter((r) => r.verdict !== "unverified");
+      const narratedAffirm = resolvedRuns.map((r) => !!r.narrative);
+      expect.soft(resolvedRuns.length === 0 || majority(narratedAffirm), "a resolved (affirm/flag) verdict should carry a go-reasoning narrative in the majority of runs").toBe(true);
       for (const r of results) {
-        if (r.verdict !== "demote") expect.soft(r.narrative, "a non-demote verdict must carry no client narrative").toBeNull();
+        if (r.verdict === "unverified") {
+          expect.soft(r.narrative, "an unverified verdict carries no narrative — the card keeps the engine paragraph").toBeNull();
+        }
+        if (r.narrative) {
+          expect.soft(narrativeClean(r.narrative), "an affirm narrative must carry NO internal-framing / scoring-machinery language").toBe(true);
+          expect.soft(narrativeVerdictShaped(r.narrative), "the narrative must not restate the go/no-go call or a numeric fit score — the card states the call").toBe(true);
+        }
       }
     },
     RUNS * 200_000,
@@ -439,6 +482,68 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
       console.log("[intel-eval] AFG-affirm verdicts:", results.map((r) => `${r.verdict}${r.qa_fit_score != null ? `→${r.qa_fit_score}` : ""}`).join(", "));
       console.log("[intel-eval] AFG-affirm summaries:", results.map((r) => r.summary));
       expect.soft(majority(notDemoted), "AFG is a competitive DIRECT-applicant grant for fire departments — QA must not over-demote a genuine direct applicant").toBe(true);
+    },
+    RUNS * 200_000,
+  );
+
+  it(
+    "8. DOE fossil-energy R&D × two-year college → ELIGIBLE-BUT-FUNCTIONALLY-WRONG narrative (both halves present)",
+    async () => {
+      // Shannon's target voice: "Entity-eligible as an IHE, but this is a fossil-energy R&D grant and NWACC
+      // has no research faculty, so it's a no-go." This tests the NARRATIVE, not the verdict direction — the
+      // verdict here is defensibly EITHER a grounded demote (the NOFO page states a PI / research-capacity
+      // requirement) OR an affirm-of-the-conditional-2 (entity-eligible; the capacity gap is a fit stretch, not
+      // an allocation bar). So we do NOT assert the direction. We assert the FAIL-SAFE (no adverse without a
+      // grounded fetch) and, whenever a narrative is written, that it is clean, verdict-shaped, AND draws the
+      // ELIGIBLE-vs-COMPETITIVE distinction Shannon wants — it names the higher-ed eligibility AND the
+      // research/faculty/R&D capacity gap. The deterministic no-go LEAD itself is unit-tested (recommendation.
+      // test.ts); here we prove the model's reasoning body carries both halves.
+      const results = await runN(RUNS, () =>
+        runIntelReview(
+          card({
+            fit_score: 2,
+            proposed_role: "Prime",
+            why_this_org: ["Institution of higher education; entity-eligible for the program."],
+            reasoning_context: { fit_score_derivation: "IHEs are eligible; scored a conditional 2 on entity eligibility." },
+          }),
+          grant({
+            title: "Fossil Energy Research and Development — University Coal Research",
+            funder: "Department of Energy",
+            assistance_listings: [{ number: "81.089", program_title: "Fossil Energy Research and Development" }],
+            program_type: "Competitive Grant",
+            eligible_entity_types: ["institutions of higher education", "universities"],
+            source_url: "https://www.energy.gov/fecm/science-innovation/office-fossil-energy",
+          }),
+          client({
+            name: "NorthWest Arkansas Community College",
+            org_type: "higher_education",
+            location_state: "AR",
+            known_constraints: "Two-year, teaching-focused community college. No research faculty, no sponsored-research office, no principal investigators, and no federal R&D track record.",
+          }),
+          { discovery: false, narrative: true },
+        ),
+      );
+      console.log("[intel-eval] fossil-energy verdicts:", results.map((r) => `${r.verdict}${r.qa_fit_score != null ? `→${r.qa_fit_score}` : ""}`).join(", "));
+      console.log("[intel-eval] fossil-energy narratives:", results.map((r) => r.narrative));
+      // Fail-safe: no adverse verdict without a grounded fetch.
+      for (const r of results) {
+        if (r.verdict === "demote" || r.verdict === "flag") {
+          expect.soft(r.fetched.some((f) => f.ok), "an adverse fossil-energy verdict must rest on a grounded .gov fetch (fail-safe)").toBe(true);
+        }
+      }
+      const narrated = results.filter((r) => !!r.narrative);
+      // Both halves of the eligible-vs-competitive distinction: names the higher-ed eligibility AND the
+      // research/faculty/R&D capacity gap. This is the crux of Shannon's target voice.
+      const bothHalves = narrated.map(
+        (r) =>
+          /higher ed|institution|university|college|\bIHE\b|two-?year|community college|eligible/i.test(r.narrative!) &&
+          /research|faculty|\bR&D\b|principal investigator|\bPI\b|capacity|laborator/i.test(r.narrative!),
+      );
+      for (const r of narrated) {
+        expect.soft(narrativeClean(r.narrative!), "the fossil-energy narrative must carry no framing/machinery language").toBe(true);
+        expect.soft(narrativeVerdictShaped(r.narrative!), "the fossil-energy narrative must not restate the call or a numeric fit score").toBe(true);
+      }
+      expect.soft(narrated.length === 0 || majority(bothHalves), "the narrative should distinguish entity-eligibility from the research-capacity gap (both halves) in the majority of narrated runs").toBe(true);
     },
     RUNS * 200_000,
   );
