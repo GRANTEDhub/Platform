@@ -58,7 +58,11 @@ export async function POST(req: NextRequest) {
   if (error) return error;
 
   const body = (await req.json().catch(() => ({}))) as { limit?: number };
-  const limit = typeof body.limit === "number" && body.limit > 0 ? Math.floor(body.limit) : undefined;
+  // Distinguish an explicit 0 (archive NOTHING — a safe zero-cap smoke test) from absent (no cap). A
+  // falsy `> 0` check coerced {limit:0} to undefined, which runClosedSweep reads as "no cap" and
+  // archives the FULL eligible set — the opposite of the intent, on a destructive all-client route.
+  // runClosedSweep clamps with Math.max(0, …), so passing 0 straight through correctly archives none.
+  const limit = typeof body.limit === "number" && body.limit >= 0 ? Math.floor(body.limit) : undefined;
 
   const result = await runClosedSweep(createServiceClient(), {
     includeReleased: true,

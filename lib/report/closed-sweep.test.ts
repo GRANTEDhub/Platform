@@ -286,6 +286,16 @@ describe("runClosedSweep — dry-run vs apply, cap, split", () => {
     expect(s.tables.review_cards.find((r) => r.id === "released")!.decision).toBe("pending");
   });
 
+  it("limit 0 archives NOTHING (a safe zero-cap smoke test; the core clamps via Math.max)", async () => {
+    const s = new Store();
+    seed(s);
+    const res = await runClosedSweep(asDb(s), { includeReleased: true, apply: true, limit: 0, decidedBy: null });
+    expect(res.archived).toBe(0);
+    expect(res.remaining).toBe(3);
+    expect(s.tables.review_cards.filter((r) => r.decision === "passed")).toHaveLength(0);
+    expect(s.updateCalls).toHaveLength(0);
+  });
+
   it("pages the pending scan to completeness — a small page size still finds every closed card", async () => {
     const s = new Store();
     seed(s); // 5 pending non-prospect rows; 3 are closed
