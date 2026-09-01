@@ -8,7 +8,7 @@ import { collapseDuplicatedBlock, previewHtml } from "@/lib/grants/description";
 import { splitTrailingParenthetical } from "@/lib/report/title";
 import type { FitFactorView, ReviewFactor } from "@/lib/report/fit-factors";
 import type { QaVerdictView } from "@/lib/report/qa-override";
-import type { Recommendation } from "@/lib/report/recommendation";
+import type { Recommendation, VerdictLead } from "@/lib/report/recommendation";
 import type { EligibilityVerdict } from "@/lib/intellengine/eligibility";
 import { ALLOWABLE_USES_FALLBACK, type AllowableUses } from "@/lib/grants/allowable-uses";
 
@@ -73,6 +73,7 @@ export function GrantReviewConsole({
   scoreFactors,
   qaVerdict = null,
   recommendation = null,
+  verdictLead = null,
   fitScore,
   verdict,
   consequence,
@@ -141,6 +142,13 @@ export function GrantReviewConsole({
   // staff-only — the PAGE passes null for it on the client side (`buildRecommendation(..., "client")`),
   // the same "pages decide what to pass" gate as qaVerdict. Null when there is no call to state.
   recommendation?: Recommendation | null;
+  // The go/no-go VERDICT LEAD — the directional call that OPENS the IntellEngine Intel paragraph, ahead of
+  // the reasoning. DETERMINISTIC data (a projection of the displayed score + any hard kill; see
+  // lib/report/recommendation.ts buildVerdict), not a control, so it renders on both surfaces. A no-go is
+  // STAFF-ONLY — the PAGE passes null for it on the client side (`buildVerdict(..., "client")`), the same
+  // "pages decide what to pass" gate as the PASS recommendation. Null when there is no call to state.
+  // (Distinct from the `verdict` STRING prop above, which is the ScoreCard's one-word fit label.)
+  verdictLead?: VerdictLead | null;
   fitScore: 1 | 2 | 3;
   verdict: string;
   consequence: string | null;
@@ -209,6 +217,7 @@ export function GrantReviewConsole({
               footnote={scoreFootnote}
               qaVerdict={qaVerdict}
               recommendation={recommendation}
+              verdictLead={verdictLead}
             />
           </div>
 
@@ -495,6 +504,7 @@ function RationaleCard({
   footnote,
   qaVerdict,
   recommendation,
+  verdictLead,
 }: {
   rationale: { lead: string | null; blocking: string | null; mitigation: string | null; narrative?: string | null };
   factors: FitFactorView;
@@ -502,18 +512,24 @@ function RationaleCard({
   footnote: string;
   qaVerdict: QaVerdictView | null;
   recommendation: Recommendation | null;
+  verdictLead: VerdictLead | null;
 }) {
   // Step C: an applied-demote card carries a single client-safe narrative paragraph that IS the whole
   // rationale; when present it REPLACES the assembled lead/blocking/mitigation (never stacked). Else the
   // three engine-derived pieces render exactly as before.
   const narrative = rationale.narrative?.trim() || null;
   const hasProse = narrative || rationale.lead || rationale.blocking || rationale.mitigation;
+  // The VERDICT LEAD opens the paragraph — the go/no-go call, ahead of the reasoning. Deterministic, pinned
+  // to the displayed score (the model never authors it), so prose and score can't disagree. It leads the
+  // same <p> as the reasoning; the reasoning body (the QA narrative, written NOT to restate the call) flows
+  // straight on from it, matching the target voice "No-go for NWACC. This is a fossil-energy R&D grant…".
+  const lead = verdictLead?.text?.trim() || null;
   // The recommendation closes the paragraph as its final line. It states the CALL only; the specific
   // reason is the prose directly above it — the bold blocking sentence (which is authoritative for BOTH a
   // factor-blocked and a calibration-driven pass), or the QA narrative. The line never derives its own
   // reason, so it can't assert a cap the score doesn't actually rest on. Left column shows whenever there
-  // is prose OR a recommendation to state.
-  const showLeft = hasProse || recommendation;
+  // is a lead, prose, OR a recommendation to state.
+  const showLeft = lead || hasProse || recommendation;
   return (
     <section className={`flex min-h-0 flex-1 flex-col overflow-hidden ${CARD}`}>
       <div className="flex shrink-0 items-center gap-3 px-5 pb-3 pt-[14px]">
@@ -539,14 +555,25 @@ function RationaleCard({
       <div className="flex min-h-0 flex-1 gap-5 overflow-y-auto px-5 pb-2">
         {showLeft && (
           <div className="min-w-0 flex-[1.3]">
-            {hasProse && (
+            {(lead || hasProse) && (
               <p className="text-[13px] leading-[1.65] text-ink-muted [text-wrap:pretty]">
+                {/* THE VERDICT LEAD opens the paragraph — the go/no-go call, bold, ahead of the reasoning.
+                    Hue is REDUNDANT (the word "No-go/Marginal/Go" carries the meaning), so the no-go orange
+                    is safe under the colour-blind rule: it matches the PASS line's orangeDeep, go/marginal
+                    stay navy. The reasoning that follows was written NOT to restate the call. */}
+                {lead &&
+                  (verdictLead!.call === "no-go" ? (
+                    <strong className="font-bold" style={{ color: BRAND.orangeDeep }}>
+                      {lead}{" "}
+                    </strong>
+                  ) : (
+                    <strong className="font-bold text-brand-navy">{lead} </strong>
+                  ))}
                 {narrative ? (
-                  // The QA client-safe narrative IS the rationale on an applied demote — one flowing paragraph,
-                  // rendered in place of the three engine pieces. It leads with the score/role shift itself, so
-                  // it needs no separate bold blocking sentence.
+                  // The QA client-safe narrative IS the reasoning body — one flowing paragraph after the
+                  // lead, rendered in place of the three engine pieces. It does not restate the call.
                   narrative
-                ) : (
+                ) : hasProse ? (
                   <>
                     {rationale.lead && <>{rationale.lead} </>}
                     {/* The blocking sentence, in bold, in navy — the engine's own rationale string for
@@ -557,14 +584,14 @@ function RationaleCard({
                     )}
                     {rationale.mitigation}
                   </>
-                )}
+                ) : null}
               </p>
             )}
             {/* The closing CALL — the final line of the paragraph, not a box. Deterministic from the
                 coalesced score (see lib/report/recommendation.ts); the prose above is the argument, this
                 is the verdict. A PASS is staff-only and never reaches here on the client side (the page
                 passes null). */}
-            {recommendation && <RecommendationLine rec={recommendation} spaced={!!hasProse} />}
+            {recommendation && <RecommendationLine rec={recommendation} spaced={!!(lead || hasProse)} />}
           </div>
         )}
         {showLeft && <span aria-hidden="true" className="w-px shrink-0 self-stretch bg-brand-navy/[0.08]" />}

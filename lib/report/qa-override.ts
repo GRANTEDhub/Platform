@@ -42,9 +42,12 @@ export interface ResolvedFit {
   factorScores: FactorScores | null;
   // The QA badge, or null when QA has reached no display state (or an applied override has gone stale).
   qa: QaVerdictView | null;
-  // The client-safe integrated fit narrative to DISPLAY IN PLACE OF the assembled engine paragraph — only
-  // on a fresh applied override (Step C). Null otherwise → the card renders today's lead/blocking/mitigation.
-  // Client-safe by construction (guarded at generation time), so it rides to both console and portal.
+  // The client-safe verdict narrative (the go/no-go reasoning body) to DISPLAY IN PLACE OF the assembled
+  // engine paragraph. Rides EVERY resolved verdict now — an affirm or flag carries its reasoning too, not
+  // just a demote — so it is decoupled from a SCORE override: it shows whenever qa_narrative is present AND
+  // fresh (its engine-score snapshot still matches), regardless of whether qa_fit_score is set. Null when
+  // absent or stale → the card renders today's lead/blocking/mitigation. Client-safe by construction
+  // (guarded at generation time), so it rides to both console and portal.
   narrative: string | null;
 }
 
@@ -70,11 +73,20 @@ export function resolveFit(row: QaOverrideRow): ResolvedFit {
 
   const qaFit = asFit(row.qa_fit_score);
   const snapshot = asFit(row.qa_engine_fit_score);
-  const appliedFresh = status === "applied" && qaFit !== null && snapshot !== null && snapshot === engineFit;
+  // The freshness snapshot is shared: it gates a SCORE override AND, independently, the verdict narrative.
+  // Both are honored only while the engine score QA judged still matches the current one.
+  const snapshotFresh = snapshot !== null && snapshot === engineFit;
+  const appliedFresh = status === "applied" && qaFit !== null && snapshotFresh;
+
+  // The narrative is DECOUPLED from the score override: an affirm/flag carries a reasoning body with no
+  // score change (qa_fit_score null, status 'none'), and it must still render. So it keys on qa_narrative
+  // present + the snapshot fresh, NOT on appliedFresh — a fresh demote, affirm, or flag narrative all show;
+  // an absent one, or a stale one (engine re-scored), falls back to the engine paragraph.
+  const narrative =
+    snapshotFresh && typeof row.qa_narrative === "string" && row.qa_narrative.trim() ? row.qa_narrative : null;
 
   if (appliedFresh) {
     const sources = (row.qa_sources ?? []).filter((s): s is string => typeof s === "string" && s.length > 0);
-    const narrative = typeof row.qa_narrative === "string" && row.qa_narrative.trim() ? row.qa_narrative : null;
     return {
       fitScore: qaFit,
       factorScores: row.qa_factor_scores ?? engineFactors,
@@ -84,10 +96,11 @@ export function resolveFit(row: QaOverrideRow): ResolvedFit {
     };
   }
 
-  // No fresh applied override → the engine score stands. Surface a soft "couldn't complete" badge when QA
-  // reached that state (unverified nulls its own score columns at write time, so nothing is stale to guard).
-  // A STALE applied row also falls through here → engine score, no badge (a fresh QA pass is pending).
+  // No fresh applied SCORE override → the engine score stands. Surface a soft "couldn't complete" badge when
+  // QA reached that state (unverified nulls its own score columns at write time, so nothing is stale to
+  // guard). A STALE applied row also falls through here → engine score, no badge (a fresh QA pass pending).
+  // The narrative still rides through when it is fresh (an affirm/flag, or a not-yet-stale demote reasoning).
   const qa: QaVerdictView | null =
     status === "unverified" ? { status: "unverified" } : status === "failed" ? { status: "failed" } : null;
-  return { fitScore: engineFit, factorScores: engineFactors, qa, narrative: null };
+  return { fitScore: engineFit, factorScores: engineFactors, qa, narrative };
 }

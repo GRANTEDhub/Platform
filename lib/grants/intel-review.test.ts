@@ -286,6 +286,26 @@ describe("intelContext", () => {
     const ctx = intelContext(baseCard, competitive, client, true);
     expect(ctx).not.toMatch(/FORMULA \/ ALLOCATION PROGRAM/);
   });
+
+  it("a PAST submission deadline adds the ⚠ CLOSED signal (so the reasoning stays coherent)", () => {
+    const closed = { ...grant, submission_deadline: "2020-01-15" } as unknown as Grant;
+    const ctx = intelContext(baseCard, closed, client);
+    expect(ctx).toMatch(/Submission deadline: 2020-01-15/);
+    expect(ctx).toMatch(/ALREADY PASSED/);
+  });
+
+  it("a FUTURE (or a due-today) deadline adds no PASSED signal — only a strictly-past date is closed", () => {
+    const future = { ...grant, submission_deadline: "2099-12-31" } as unknown as Grant;
+    const ctx = intelContext(baseCard, future, client);
+    expect(ctx).toMatch(/Submission deadline: 2099-12-31/);
+    expect(ctx).not.toMatch(/ALREADY PASSED/);
+  });
+
+  it("a missing deadline reads '(none stated)' and adds no PASSED signal", () => {
+    const ctx = intelContext(baseCard, grant, client); // grant has no submission_deadline
+    expect(ctx).toMatch(/Submission deadline: \(none stated\)/);
+    expect(ctx).not.toMatch(/ALREADY PASSED/);
+  });
 });
 
 describe("intelPhase1Config — flag-gated tool set + system (the byte-identical-off guarantee)", () => {
@@ -461,7 +481,8 @@ describe("runIntelReview — loop + guard + refute together, injected seams", ()
     expect(r.narrative).toBeNull();
   });
 
-  it("narrative rides an APPLIED demote only — an affirm carries none even if the model wrote one", async () => {
+  it("narrative rides EVERY resolved verdict — an affirm now carries its own reasoning body (guarded)", async () => {
+    const clean = "Genuinely in the workforce-development lane with no formal match required, and there are real regional partners to line up.";
     const r = await runIntelReview(card, grant, client, {
       now,
       narrative: true,
@@ -472,12 +493,37 @@ describe("runIntelReview — loop + guard + refute together, injected seams", ()
         confidence: "high" as const,
         qa_fit_score: null,
         summary: "holds up",
-        narrative: "A perfectly clean client paragraph.",
+        narrative: clean,
         evidence: [ev(FETCHED)],
       }),
       refute: async () => ({ supported: true, reason: "n/a" }),
     });
     expect(r.verdict).toBe("affirm");
+    // The narrative is the reasoning body under the card's directional call — kept for a go/marginal, not
+    // just a demote. The pin is elsewhere (buildVerdict), so this additive text never moves the score.
+    expect(r.narrative).toBe(clean);
+    expect(r.qa_fit_score).toBe(3); // affirm carries the engine score forward; the narrative is additive
+  });
+
+  it("an UNVERIFIED verdict carries NO narrative (QA couldn't ground → the card keeps today's engine paragraph)", async () => {
+    const clean = "A perfectly clean client paragraph the model wrote anyway.";
+    const r = await runIntelReview(card, grant, client, {
+      now,
+      narrative: true,
+      callModel: fetchThenAnswer(),
+      // no successful .gov fetch → an affirm/adverse can't ground → unverified
+      fetcher: async () => ({ ok: false, reason: "fetch_error", detail: "unreachable" }) as FetchResult,
+      structure: async () => ({
+        verdict: "affirm" as const,
+        confidence: "high" as const,
+        qa_fit_score: null,
+        summary: "holds up",
+        narrative: clean,
+        evidence: [],
+      }),
+      refute: async () => ({ supported: true, reason: "n/a" }),
+    });
+    expect(r.verdict).toBe("unverified");
     expect(r.narrative).toBeNull();
   });
 

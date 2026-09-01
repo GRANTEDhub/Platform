@@ -1,19 +1,27 @@
-// ── Client-safe fit narrative (Step C) ───────────────────────────────────────────────────────────
+// ── Client-safe verdict narrative (the go/no-go REASONING body) ──────────────────────────────────
 //
-// WHAT THIS IS. When the IntellEngine QA pass APPLIES a demote, the card's fit-factor paragraph is today
-// assembled from three engine-derived pieces (lead / a templated blocking sentence / consortium prose),
-// which reads as two voices — the engine's optimistic "why it fits" over a demote it never rewrote. This
-// module lets the SAME grounded QA structuring call emit ONE additional field, `narrative`: a single
-// client-safe paragraph that IS the match justification — rationale → grounding reality → proposed role →
-// net score, one voice. It is NOT a second synthesizer (no extra model call, no re-reading of two finished
-// texts): it is one more field on the phase-2 tool schema, written by the model that just read the .gov
-// sources, so it can't drift from a fact it didn't have.
+// WHAT THIS IS. Every matched grant leads with a one-line directional VERDICT — "Go for NWACC." /
+// "Marginal for NWACC." / "No-go for NWACC." — and this paragraph is the REASONING that follows it. The
+// verdict LABEL is deterministic and lives elsewhere (`buildVerdict`, pinned to the displayed score, so
+// prose and score can NEVER disagree by construction). This module is only the reasoning body: the SAME
+// grounded QA structuring call emits ONE extra field, `narrative` — 2–5 sentences of plain prose that open
+// with the single most decisive reason and, for a go/marginal, name the real hurdle honestly. It is NOT a
+// second synthesizer (no extra model call, no re-reading of finished texts): it is one field on the phase-2
+// tool schema, written by the model that just read the .gov sources, so it can't drift from a fact it
+// didn't have. Written for EVERY verdict it reaches (affirm / demote / flag), not just a demote.
+//
+// THE MODEL NEVER AUTHORS THE CALL. The card states the directional label; the narrative writes reasoning
+// UNDER a call it cannot override (Shannon, 2026-09-01 — "the score sets the directional call; the prose
+// writes the reasoning"). So the paragraph does not restate "Go/No-go", does not open with the org name,
+// and carries no numeric score — it starts with the reason. That is the pin: no guard, no fallback, no way
+// for the body to flip the verdict.
 //
 // TWO-PART FAITHFULNESS GUARD (the whole point):
 //   (a) Never drift from or soften a grounded fact — "cannot prime" never becomes "may face challenges".
 //       The prompt pins it to the analysis; the eval is the trust gate; and structurally the narrative
-//       never touches qa_fit_score, so a drifted paragraph can under-explain a demote but never un-demote
-//       it (the number stays authoritative).
+//       never touches qa_fit_score, so a drifted paragraph can under-explain a call but never move the
+//       number (the score stays authoritative). Distinguish entity-eligibility from competitive fit — an
+//       IHE can be entity-eligible yet functionally wrong, and the paragraph must say both.
 //   (b) Never internal-framing / machinery language — it reads as advice spoken TO the client, never
 //       "tell the client X", "position as Y", "the engine", "QA", "unverified", "verdict". The prompt
 //       forbids it AND `narrativeGuard` is a deterministic runtime net: on any forbidden token it NULLS the
@@ -22,7 +30,7 @@
 //
 // FLAG-OFF IS BYTE-IDENTICAL. `FIT_NARRATIVE_ENABLED` gates whether the field is even added to the tool
 // schema and whether the addendum is appended, so off → the phase-2 request/system are exactly today's and
-// no narrative is generated, stored, or displayed. Persistence + display are a separate, later PR.
+// no narrative is generated, stored, or displayed.
 
 // The tool-schema property shape (a plain JSON-schema object). Anthropic tool input_schema `properties`.
 export interface JsonSchemaProperty {
@@ -40,32 +48,37 @@ export function fitNarrativeEnabled(): boolean {
 export const NARRATIVE_TOOL_PROPERTY: JsonSchemaProperty = {
   type: "string",
   description:
-    "CLIENT-FACING. For a DEMOTE only: one tight integrated paragraph (AT MOST ~175 words / ~1,000 chars) a " +
-    "client reads as the match justification — rationale, the grounding reality that changes the picture, the " +
-    "role we'd actually pursue, and the net score stated plainly. Economical, not exhaustive. Written AS advice " +
-    "to the reader; never internal framing (no 'tell the client', 'position as', no mention of the engine/QA/" +
-    "score machinery). Leave empty for affirm/flag/unverified.",
+    "CLIENT-FACING reasoning body for the go/no-go verdict. Write it for EVERY verdict you reach (affirm, " +
+    "demote, or flag); leave empty only for an unverified verdict. Two to five sentences of plain prose — NO " +
+    "bullets, NO numeric score. The card ITSELF states the directional call ('Go for X' / 'Marginal for X' / " +
+    "'No-go for X'), so do NOT open with that label or the org name — open with the single most DECISIVE reason. " +
+    "If a hard disqualifier drives the call, lead with it (never geography). Distinguish entity-eligibility from " +
+    "competitive fit. For a go or marginal, name the real hurdle honestly. Decisive, not hedged. Written AS " +
+    "advice to the reader; never internal framing (no 'tell the client', 'position as', no engine/QA/score " +
+    "machinery).",
 };
 
-// Appended to STRUCTURE_SYSTEM_PROMPT only when the flag is on. This is the spec for the client paragraph.
+// Appended to STRUCTURE_SYSTEM_PROMPT only when the flag is on. This is the spec for the reasoning paragraph.
 export const NARRATIVE_STRUCTURE_ADDENDUM = `
 
-CLIENT NARRATIVE (the \`narrative\` field) — write this ONLY when your verdict is "demote"; otherwise leave it empty.
+VERDICT NARRATIVE (the \`narrative\` field) — write this for EVERY verdict you reach (affirm, demote, or flag). Leave it empty ONLY when your verdict is "unverified".
 
-LENGTH — HARD CAP: at most ~175 words / ~1,000 characters. One tight paragraph a client can read at a glance, not a memo. Be economical: make the score/role shift and the single most important next move unmistakable, state the grounding fact and any prohibited-use limits in brief, and do NOT enumerate every sub-point, dollar figure, or caveat — name the one or two that decide the play and stop. Every sentence must earn its place. A shorter faithful paragraph beats a complete one.
+WHAT IT IS: the plain-language REASONING body under a one-line directional verdict the card already states for you — "Go for <client>." / "Marginal for <client>." / "No-go for <client>.". You do NOT write that label. You do NOT open with the client's name or a "go/no-go" word. You write the reasoning that JUSTIFIES the call, opening with the reason itself. The number is set elsewhere and is authoritative — never state a numeric score and never argue the call up or down; explain it.
 
-Write ONE integrated paragraph that a client reads as the whole justification for this match. It must flow, in this order:
-  1. Rationale — why this grant genuinely fits this organization (draw on the engine's confirmed positives: entity type, registrations, track record, no cost-share, etc.).
-  2. The grounding reality — the authoritative fact your analysis established that changes or confirms the picture (the allocation status, prohibited uses, whatever you verified). State it in full force.
-  3. The role we'd actually pursue — prime vs. co-applicant vs. sub / fiscal-agent-by-MOU, as applicable, and what the structure means in practice (the fundable lane, what to negotiate).
-  4. The net score, stated plainly — where the score or role shifted, that shift IS the justification, so make it the point, not a footnote.
+LENGTH: two to five sentences, one paragraph, prose only. No bullet lists, no headings, no dollar tables. A client reads it at a glance. Be economical — name the one or two facts that decide the play and stop.
+
+WRITE IT IN THIS SHAPE:
+  1. The single most DECISIVE reason FIRST. If a hard disqualifier drives the call — wrong entity type, missing designation, wrong applicant door, deadline passed, too few awards, no genuine match — lead with THAT and you can stop there. Lead with the disqualifier, never with geography.
+  2. ELIGIBLE vs. COMPETITIVE are different things — say both when they diverge. "Entity-eligible as an IHE, but this is a fossil-energy R&D grant and <client> has no research faculty or federal R&D history, so it's functionally wrong." Do not let entity-eligibility read as a go, and do not let a competitive weakness read as an eligibility bar.
+  3. For a go or a marginal, name the REAL hurdle honestly — the mandatory track they lack, the partner or match to lock before the deadline, the structure to negotiate. A marginal that hides its hurdle is worse than useless.
 
 TWO HARD RULES:
-  (a) FAITHFULNESS OVER POLISH. Never soften or drift from a grounded fact. If the analysis found the client CANNOT prime, the paragraph says it cannot — never "may face challenges", "could be difficult", "may need to consider". Preserve every hard eligibility fact and prohibited-use fact at full strength. Introduce NO new specific claim (no dollar figures, citations, dates, or program details) beyond what the analysis and the grant context give you.
-  (b) DIRECT CLIENT VOICE, NEVER INTERNAL FRAMING. Write it as advice spoken to the reader. Say the thing directly — do NOT say "tell the client", "position this as", "we should frame", "note that they". Do NOT mention the engine, the scorer, the model, the QA pass, a "verdict", an "unverified" state, a "fit score", or any scoring machinery. No meta-commentary about your own analysis. Fold in the ONE or TWO most decisive strategic points (the fundable lane, the key thing to negotiate) as advice to the reader — briefly, not an exhaustive list; leave the rest for the conversation.
+  (a) FAITHFULNESS OVER POLISH. Never soften or drift from a grounded fact. If <client> CANNOT prime, say it cannot — never "may face challenges", "could be difficult", "may need to consider". Preserve every hard eligibility fact and prohibited-use fact at full strength. Introduce NO new specific claim (no dollar figures, citations, dates, or program details) beyond what the analysis and the grant context give you.
+  (b) DIRECT CLIENT VOICE, NEVER INTERNAL FRAMING. Write it as advice spoken to the reader. Say the thing directly — do NOT say "tell the client", "position this as", "we should frame", "note that they". Do NOT mention the engine, the scorer, the model, the QA pass, a "verdict", an "unverified" state, a "fit score", or any scoring machinery. No meta-commentary about your own analysis.
 
-Good: "Mississippi County is the kind of applicant Byrne JAG is built for — a county government with active SAM registration and DOJ grant history … but on the FY2026 Arkansas allocation table it carries an asterisk … so it cannot apply as a standalone prime. The path is a formal MOU with Blytheville naming a single fiscal agent …"
-Bad: "The engine scored this a 3, but QA found the county is disparate, so position this to the client as a partnership opportunity."`;
+Good (no-go): "This is a fossil-energy R&D program that expects a principal investigator and research faculty. NWACC is a two-year teaching college with no research capacity, no federal R&D history, and no energy-research program — entity-eligible as an institution of higher education, but functionally wrong for the work this funds."
+Good (marginal): "Genuinely in the workforce-development lane and no formal match is required, and there are real regional water utilities to partner with. But the strongest fit is a narrower project area than it first appears, and the two real hurdles are a mandatory HAZWOPER training track NWACC does not currently run and locking an employer and school-district partner before the deadline."
+Bad: "The engine scored this a 3, but QA found the college is disparate, so position this to the client as a workforce opportunity."`;
 
 // Build the phase-2 structuring config: the tool (with or without the narrative property) and the system
 // prompt (with or without the addendum). OFF returns the base tool/system UNCHANGED (referential identity

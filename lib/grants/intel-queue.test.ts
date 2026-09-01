@@ -422,16 +422,31 @@ describe("apply-the-gate — buildQaPatch + cardCfdaApplyEligible (pure)", () =>
     expect(patch.qa_engine_fit_score).toBeNull();
   });
 
-  it("affirm and flag → a CLEARING patch (qa_status 'none', score columns nulled) so a reversal clears a prior demote", () => {
+  it("affirm and flag with NO narrative → a CLEARING patch (qa_status 'none', score + narrative columns nulled)", () => {
     for (const v of ["affirm", "flag"] as const) {
       const patch = buildQaPatch(card, demoteReview({ verdict: v, qa_fit_score: v === "affirm" ? 3 : null, qa_factor_scores: null }), "T");
-      expect(patch.qa_status).toBe("none"); // agrees / concern-only — no override in effect
-      // A demoted-then-reversed card must clear, else the stale demoted score keeps showing under coalesce.
+      expect(patch.qa_status).toBe("none"); // agrees / concern-only — no score override in effect
+      // A demoted-then-reversed card must clear the score, else the stale demoted score keeps showing.
       expect(patch.qa_fit_score).toBeNull();
       expect(patch.qa_factor_scores).toBeNull();
       expect(patch.qa_sources).toBeNull();
-      expect(patch.qa_narrative).toBeNull(); // a reversal to affirm/flag clears the demote narrative
+      // This review carries no narrative → nothing to project, and no snapshot to gate.
+      expect(patch.qa_narrative).toBeNull();
       expect(patch.qa_engine_fit_score).toBeNull();
+    }
+  });
+
+  it("affirm / flag WITH a narrative → keeps the reasoning body + freshness snapshot, but the SCORE still clears", () => {
+    // The verdict narrative rides EVERY resolved verdict now. An affirm/flag projects its reasoning paragraph
+    // onto qa_narrative (freshness-gated by the engine-score snapshot) WITHOUT re-scoring — qa_fit_score stays
+    // null so the read coalesce shows the engine score. Score clears; reasoning is preserved.
+    for (const v of ["affirm", "flag"] as const) {
+      const narrative = "Genuinely in the workforce lane and no formal match is required, but the real hurdle is a HAZWOPER track the college does not run.";
+      const patch = buildQaPatch(card, demoteReview({ verdict: v, qa_fit_score: v === "affirm" ? 3 : null, qa_factor_scores: null, narrative }), "T");
+      expect(patch.qa_status).toBe("none"); // no SCORE override — the number is the engine's
+      expect(patch.qa_fit_score).toBeNull(); // score clears (load-bearing reversal safety)
+      expect(patch.qa_narrative).toBe(narrative); // the reasoning body IS carried
+      expect(patch.qa_engine_fit_score).toBe(3); // snapshot present so the read layer honors it while fresh
     }
   });
 
