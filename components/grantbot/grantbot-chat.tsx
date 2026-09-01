@@ -253,6 +253,10 @@ export function GrantBotChat({
       e.target.value = ""; // allow re-picking the same file
       if (!file) return;
       setError(null); // a new pick clears any prior "too large" / "couldn't read" banner
+      // A fresh pick supersedes any extraction still in flight (its late result will be dropped by the
+      // token check below), so the last file the reader chose is the one that attaches.
+      const token = (attachTokenRef.current += 1);
+      const isCurrent = () => attachTokenRef.current === token;
       if (file.size > MAX_ATTACH_BYTES) {
         setError("That file is too large to attach (limit 5 MB). Paste the relevant section instead.");
         return;
@@ -269,20 +273,28 @@ export function GrantBotChat({
         fetch("/api/grantbot/extract", { method: "POST", body: fd })
           .then((r) => r.json().catch(() => null))
           .then((res: { ok?: boolean; text?: string; truncated?: boolean; reason?: unknown } | null) => {
+            if (!isCurrent()) return; // superseded by a newer pick / cancel / thread switch — drop it
             if (res?.ok && typeof res.text === "string") {
               finalizeAttachment(res.text, !!res.truncated, file.name, file.type);
             } else {
               setError(extractFailureMessage(res?.reason, kind));
             }
           })
-          .catch(() => setError("Couldn't read that file — try again, or paste the text in instead."))
-          .finally(() => setAttaching(false));
+          .catch(() => {
+            if (isCurrent()) setError("Couldn't read that file — try again, or paste the text in instead.");
+          })
+          // Only the CURRENT request owns the busy flag; a superseded one clearing it would unstick a
+          // newer pick's spinner (thread switches also clear it directly).
+          .finally(() => {
+            if (isCurrent()) setAttaching(false);
+          });
         return;
       }
 
       // Text-based file: read it in the browser, no round-trip.
       const reader = new FileReader();
       reader.onload = () => {
+        if (!isCurrent()) return; // a thread switch / newer pick during the read supersedes this one
         const text = typeof reader.result === "string" ? reader.result : "";
         const { text: sliced, truncated } = truncateSafely(text, MAX_ATTACH_CHARS);
         finalizeAttachment(sliced, truncated, file.name, file.type);
@@ -306,6 +318,12 @@ export function GrantBotChat({
   // length of an LLM call would be the worse trade -- so instead every send captures the epoch
   // it belongs to and drops its UI updates if the transcript moved on.
   const epochRef = useRef(0);
+  // The attachment epoch, same shape as epochRef but for the async file-extract round-trip: bumped on
+  // every new pick, on removeAttachment, and on a thread switch. A binary extraction that resolves
+  // after its token is stale (a newer pick, a cancel, or a thread change happened while it was in
+  // flight) drops its result instead of clobbering the composer or landing the document in the wrong
+  // thread. Without it, `attaching` guarding only the current pick is not enough.
+  const attachTokenRef = useRef(0);
 
   // The composer's attachment as it is RIGHT NOW, readable from an async handler.
   //
@@ -390,6 +408,10 @@ export function GrantBotChat({
   const loadThread = useCallback(
     async (conversationId: string | null) => {
       epochRef.current += 1;
+      // A file extracting when the reader switches threads must not land in the new one; supersede it
+      // and clear the busy state so the destination thread starts clean.
+      attachTokenRef.current += 1;
+      setAttaching(false);
       setLoading(true);
       setError(null);
       try {
@@ -450,7 +472,10 @@ export function GrantBotChat({
 
   async function send() {
     const text = draft.trim();
-    if (!text || sending) return;
+    // No-op while a file is still extracting (matching the Send button + Enter's disabled state): a
+    // send here would snapshot the pre-extraction `pasted` and submit the question WITHOUT the
+    // document, then the late finalizeAttachment would strand the result on a later turn.
+    if (!text || sending || attaching) return;
     setSending(true);
     setError(null);
     // The transcript this question belongs to. Every UI write below checks it first -- see the
@@ -549,6 +574,10 @@ export function GrantBotChat({
     // Same epoch bump as a thread switch: an in-flight answer must not land in the blank
     // transcript this creates.
     epochRef.current += 1;
+    // Likewise supersede an in-flight extraction and clear the busy state — a document being read
+    // when the reader starts a new conversation belongs to neither.
+    attachTokenRef.current += 1;
+    setAttaching(false);
     setConvId(null);
     setMessages([]);
     setError(null);
@@ -871,6 +900,9 @@ export function GrantBotChat({
   // Clear the current attachment — the chip's × button, and the mode-switch when the reader opens
   // manual paste while a file chip is up (the two share the one `pasted` slot).
   const removeAttachment = () => {
+    // Supersede any in-flight extraction so a late result cannot re-attach a document the reader just
+    // cleared.
+    attachTokenRef.current += 1;
     setPasted("");
     setPasteLabel("");
     setAttachedFile(null);
@@ -1013,8 +1045,11 @@ export function GrantBotChat({
               if (attachedFile) removeAttachment();
               setShowPaste((s) => !s);
             }}
+            // Disabled while a file is extracting: opening paste mid-extraction would have its content
+            // silently overwritten by the late finalizeAttachment (both write the one `pasted` slot).
+            disabled={attaching}
             aria-pressed={showPaste}
-            className={`inline-flex items-center gap-1.5 rounded-lg border border-edge bg-white font-semibold text-ink-muted transition-colors hover:text-ink ${
+            className={`inline-flex items-center gap-1.5 rounded-lg border border-edge bg-white font-semibold text-ink-muted transition-colors hover:text-ink disabled:opacity-60 ${
               isCorner ? "h-7 px-2.5 text-[11.5px]" : "h-8 px-3 text-[12.5px]"
             }`}
           >
@@ -1025,7 +1060,9 @@ export function GrantBotChat({
         <button
           type="button"
           onClick={() => void send()}
-          disabled={sending || !draft.trim()}
+          // Also disabled while a file is extracting — sending then would submit the question without
+          // the document (send() guards this too; the disabled state makes it visible).
+          disabled={sending || attaching || !draft.trim()}
           // orangeFill, NOT orange: this is white type on a solid orange field, which is
           // 3.04:1 on #E4761F and fails AA -- the exact case lib/brand.ts adds orangeFill
           // for. Both mocks specify #E4761F here; both surfaces depart from it the same way,
