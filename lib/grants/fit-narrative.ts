@@ -158,20 +158,21 @@ export const FORBIDDEN_NARRATIVE_MARKERS: readonly string[] = [
 // for already-stored narratives) and the factor rationales (viewFitFactors) — so no render path surfaces
 // a code no matter which paragraph shows.
 //
-// SAFE ON CLEAN PROSE. The parenthetical form ("(S0_2)", "(S0_6, e.g. …)", or a truncation-dangling
-// "(S0_6, e.") is the observed leak and is removed whole. A BARE token is stripped ONLY in the
-// unambiguous underscore form ("S0_2"); a bare "P2"/"S3" in running prose could be legitimate content (a
-// bill, a phase, "S.1234"), so it is left alone outside a parenthetical. Idempotent — a no-op on text
-// with no codes.
-const SEAT_CODE = String.raw`P\d+|S\d+_\d+`;
-
+// SCOPED TO THE SUPPORTING-SEAT FORM ONLY — the unambiguous "S<n>_<m>". That underscore shape is never
+// anything but a seat label, and it is the observed leak (the enumerated supporting seats S0_2, S0_3,
+// S0_6…). A PRIME code "P<n>" is deliberately NOT stripped, parenthesised or bare: it collides with
+// legitimate client-facing grant identifiers — NIH activity codes ("(P30)", "(P01)"; the repo handles the
+// R01/P30 mechanism prefixes, forecast-relevance.ts) and project phases ("(P2)") — so stripping it could
+// silently DELETE real content (Codex #480 P2). The prompt still tells the model to emit no code at all
+// (P0 included); a stray prime code is a generation miss caught by the eval/eyeball, not something this
+// deterministic net can safely remove. A bare "P2"/"S.1234" (a phase, a bill) is likewise left untouched.
+// Idempotent — a no-op on text with no supporting-seat codes.
 export function stripSeatCodes(text: string): string {
   return text
-    // A parenthetical that OPENS with a seat code — closed "(S0_2)" / "(S0_6, e.g. town halls)" or left
-    // dangling by a truncated generation "(S0_6, e." — remove the whole group and its leading space.
-    .replace(new RegExp(String.raw`\s*\((?:${SEAT_CODE})\b[^)]*(?:\)|$)`, "g"), "")
-    // A bare supporting-seat token in prose ("…fills S0_2 and…"). The underscore form is never anything
-    // but a seat label, so it is safe to strip unparenthesised.
+    // A parenthetical that OPENS with a supporting-seat code — closed "(S0_2)" / "(S0_6, e.g. town halls)"
+    // or dangling from a truncated generation "(S0_6, e." — remove the whole group and its leading space.
+    .replace(/\s*\(\s*S\d+_\d+\b[^)]*(?:\)|$)/g, "")
+    // A bare supporting-seat token in prose ("…fills S0_2 and…").
     .replace(/\s*\bS\d+_\d+\b/g, "")
     // Tidy the seams the removals leave: an emptied "()", a space now before punctuation, doubled spaces.
     .replace(/\(\s*\)/g, "")

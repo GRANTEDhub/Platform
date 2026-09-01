@@ -157,11 +157,12 @@ const narrativeClean = (n: string) => FORBIDDEN_NARRATIVE_MARKERS.every((m) => !
 const narrativeVerdictShaped = (n: string) =>
   !/^\s*(no-?go|go for|marginal)\b/i.test(n.trim()) &&
   !/\b[123]\s*\/\s*3\b|\bfit score\b|\bscored (?:a )?[123]\b|\bconditional [123]\b/i.test(n);
-// NO SEAT CODES: the matcher's internal seat labels (S0_2, P0) must never reach a client paragraph. This
-// is an end-to-end invariant lock — the prompt discourages emitting them AND narrativeGuard strips any that
-// slip — so it fails loudly if BOTH regress. (Deterministic strip behaviour is unit-tested in
-// fit-narrative.test.ts; this proves it holds through the real generation path.)
-const narrativeNoSeatCodes = (n: string) => !/\bS\d+_\d+\b|\(\s*P\d+\s*\)/.test(n);
+// NO SUPPORTING-SEAT CODES: the matcher's unambiguous "S<n>_<m>" labels must never reach a client
+// paragraph. End-to-end invariant lock — the prompt discourages emitting them AND narrativeGuard strips
+// any that slip — so it fails loudly if BOTH regress. (Only the underscore form is asserted: a prime
+// "P<n>" is NOT stripped because it collides with real identifiers — NIH P30, phase P2 — Codex #480;
+// deterministic behaviour is unit-tested in fit-narrative.test.ts.)
+const narrativeNoSeatCodes = (n: string) => !/\bS\d+_\d+\b/.test(n);
 
 describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
   it(

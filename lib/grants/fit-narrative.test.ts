@@ -72,18 +72,25 @@ describe("narrativeGuard", () => {
       "community engagement (S0_6). It cannot prime.";
     const out = narrativeGuard(coded);
     expect(out).not.toBeNull();
-    expect(out).not.toMatch(/S\d+_\d+|\(P\d+\)/); // no code survives
+    expect(out).not.toMatch(/S\d+_\d+/); // no supporting-seat code survives
     expect(out).toContain("qualitative research unit"); // the plain-language reasoning is kept
     expect(out).toContain("It cannot prime.");
   });
 });
 
 describe("stripSeatCodes", () => {
-  it("removes a bare parenthetical code and its leading space", () => {
+  it("removes a bare parenthetical supporting-seat code and its leading space", () => {
     expect(stripSeatCodes("a qualitative research unit (S0_2), and more")).toBe(
       "a qualitative research unit, and more",
     );
-    expect(stripSeatCodes("the prime seat (P0) is unfilled")).toBe("the prime seat is unfilled");
+  });
+
+  it("PRESERVES a prime code — it collides with NIH mechanisms / project phases (Codex #480)", () => {
+    // "P<n>" is NOT stripped: (P30)/(P01) are NIH activity codes and (P2) is a project phase, all real
+    // client-facing grant content. Only the unambiguous underscore form is machinery.
+    expect(stripSeatCodes("a P30 center grant (P30) supports cores")).toBe("a P30 center grant (P30) supports cores");
+    expect(stripSeatCodes("the phase-2 trial (P2) is funded")).toBe("the phase-2 trial (P2) is funded");
+    expect(stripSeatCodes("the prime seat (P0) is unfilled")).toBe("the prime seat (P0) is unfilled");
   });
 
   it("removes a parenthetical that opens with a code but carries a description", () => {
