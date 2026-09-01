@@ -17,7 +17,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { BRAND } from "@/lib/brand";
-import { stripControlChars, truncateSafely } from "@/lib/grantbot/label";
+import { stripControlChars, truncateSafely, attachKindFor, isTextAttachable, MAX_ATTACH_CHARS, MAX_ATTACH_BYTES } from "@/lib/grantbot/label";
 import { BLANK_CONVERSATION } from "@/lib/grantbot/wire";
 import type { GrantBotMsg, GrantBotThread } from "@/lib/grantbot/wire";
 
@@ -187,59 +187,146 @@ export function GrantBotChat({
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(!initial);
   const [error, setError] = useState<string | null>(null);
+  // A binary (PDF/.docx) attach round-trips to the server extractor, so the picker is busy while it
+  // parses — the attach button shows a spinner and refuses a second pick until it resolves.
+  const [attaching, setAttaching] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // "Attach a file" quick action: read a TEXT-based file (an exported email thread, notes, a NOFO
-  // pasted to .txt) into the SAME paste-attachment channel the paste panel uses -- the server frames
-  // it as untrusted pasted content (framePastedContent), so this adds no new trust surface. Text only
-  // for now; binary .pdf/.docx parsing is a follow-on (it would garble as raw text). Bounded so a
-  // huge file can't blow the model's context window.
-  const MAX_ATTACH_CHARS = 200_000;
-  // Generous for the declared use (email threads, notes, a NOFO saved to .txt), while still bounding
-  // the READ itself -- readAsText buffers the whole file into memory before truncateSafely ever caps
-  // the string, and accept="" is only a picker hint (a staffer can pick "All files"), so a size guard
-  // here mirrors fetch.ts's MAX_RESPONSE_BYTES on the wire.
-  const MAX_ATTACH_BYTES = 5 * 1024 * 1024;
-  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = ""; // allow re-picking the same file
-    if (!file) return;
-    setError(null); // a new pick clears any prior "too large" / "couldn't read" banner
-    if (file.size > MAX_ATTACH_BYTES) {
-      setError("That file is too large to attach (limit 5 MB). Paste the relevant section instead.");
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = typeof reader.result === "string" ? reader.result : "";
-      const { text: sliced, truncated } = truncateSafely(text, MAX_ATTACH_CHARS);
-      // Bake the truncation note into the BODY, not the label: the paste label is an editable field a
-      // staffer may reword, so a note living only there can be edited away, leaving the model to answer
-      // from a partial document believing it complete. In the body it survives -- mirrors web-fetch.ts's
-      // frameFetchResult, which appends its note to the text the model reads.
-      const body = truncated
-        ? `${sliced}\n\n[The attachment was longer than the limit and was truncated -- treat it as partial, and say so if the answer might depend on the rest.]`
-        : sliced;
-      // The label rides the untrusted-content frame's marker line, so strip every line-breaking char a
-      // crafted filename could carry (POSIX allows them) before it could forge a fence -- stripControlChars
-      // is the same helper framePastedContent uses server-side, so the editable label the staffer sees
-      // matches exactly what is sent.
-      const name = stripControlChars(file.name) || "attached file";
-      // A short type badge for the chip, from the extension (preferred) or the MIME subtype.
-      const ext = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1).toUpperCase() : "";
-      const typeLabel = ext || (file.type ? (file.type.split("/").pop() ?? "").toUpperCase() : "") || "FILE";
-      setPasted(body);
-      setPasteLabel(name);
-      // A FILE renders as a chip (#5/#6), not the raw-text paste panel; close the manual panel so the
-      // two never show at once over the shared `pasted` slot.
-      setShowPaste(false);
-      setAttachedFile({ name, type: typeLabel });
-    };
-    reader.onerror = () =>
-      setError("Couldn't read that file. Text files only for now — or paste the text in instead.");
-    reader.readAsText(file);
+  // Finalize an attachment once its TEXT exists — whether read client-side (a text file) or extracted
+  // server-side (a PDF/.docx via /api/grantbot/extract). ONE finalize site so the two sources produce
+  // an identical chip + framed body and cannot drift.
+  const finalizeAttachment = useCallback((text: string, truncated: boolean, rawName: string, mime: string) => {
+    // Bake the truncation note into the BODY, not the label: the paste label is an editable field a
+    // staffer may reword, so a note living only there can be edited away, leaving the model to answer
+    // from a partial document believing it complete. In the body it survives -- mirrors web-fetch.ts's
+    // frameFetchResult, which appends its note to the text the model reads.
+    const body = truncated
+      ? `${text}\n\n[The attachment was longer than the limit and was truncated -- treat it as partial, and say so if the answer might depend on the rest.]`
+      : text;
+    // The label rides the untrusted-content frame's marker line, so strip every line-breaking char a
+    // crafted filename could carry (POSIX allows them) before it could forge a fence -- stripControlChars
+    // is the same helper framePastedContent uses server-side, so the editable label the staffer sees
+    // matches exactly what is sent.
+    const name = stripControlChars(rawName) || "attached file";
+    // A short type badge for the chip, from the extension (preferred) or the MIME subtype.
+    const ext = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1).toUpperCase() : "";
+    const typeLabel = ext || (mime ? (mime.split("/").pop() ?? "").toUpperCase() : "") || "FILE";
+    setPasted(body);
+    setPasteLabel(name);
+    // A FILE renders as a chip (#5/#6), not the raw-text paste panel; close the manual panel so the
+    // two never show at once over the shared `pasted` slot.
+    setShowPaste(false);
+    setAttachedFile({ name, type: typeLabel });
   }, []);
+
+  // Map a server extract failure to a plain-language banner. Never shows a guessed body: a scanned
+  // PDF / unreadable file becomes advice to paste instead, not an invented answer.
+  function extractFailureMessage(reason: unknown, kind: "pdf" | "docx"): string {
+    switch (reason) {
+      case "pdf_no_text":
+        return "That PDF has no selectable text — it looks scanned. Paste the text in, or attach a text export.";
+      case "pdf_form_unreadable":
+        return "That looks like a fillable form (XFA/LiveCycle) whose data couldn't be read. Paste the text in instead.";
+      case "docx_no_text":
+        return "That Word document had no readable text. Paste the text in instead.";
+      case "docx_too_large":
+        return "That Word file expands too large to read safely — paste the text in instead.";
+      case "pdf_parse_failed":
+        return "Couldn't read that PDF (it may be corrupt or password-protected). Paste the text in instead.";
+      case "docx_parse_failed":
+        return "Couldn't read that file — only modern .docx works (not the older .doc). Save as .docx or paste the text in.";
+      case "too_large":
+        return "That file is too large to attach (limit 5 MB). Paste the relevant section instead.";
+      case "empty":
+        return "That file looks empty.";
+      default:
+        return `Couldn't read that ${kind === "pdf" ? "PDF" : "Word document"} — try again, or paste the text in instead.`;
+    }
+  }
+
+  // "Attach a file" quick action: turn a file into text and drop it into the SAME paste-attachment
+  // channel the paste panel uses -- the server frames it as untrusted pasted content (framePastedContent),
+  // so this adds no new trust surface. TEXT files (email threads, notes, a NOFO saved to .txt) are read
+  // client-side; PDF / .docx are extracted server-side (the parsers are node-only) via
+  // /api/grantbot/extract and come back as text. Images (PNG/JPG) are the next follow-on (issue #465) —
+  // they need the vision path, not text extraction. Bounded so a huge file can't blow the context window.
+  const handleFileUpload = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = ""; // allow re-picking the same file
+      if (!file) return;
+      setError(null); // a new pick clears any prior "too large" / "couldn't read" banner
+      // A fresh pick supersedes any extraction still in flight (its late result will be dropped by the
+      // token check below), so the last file the reader chose is the one that attaches.
+      const token = (attachTokenRef.current += 1);
+      const isCurrent = () => attachTokenRef.current === token;
+      if (file.size > MAX_ATTACH_BYTES) {
+        setError("That file is too large to attach (limit 5 MB). Paste the relevant section instead.");
+        return;
+      }
+
+      // PDF / .docx: the client can't parse these (readAsText garbles them), so send the bytes to the
+      // staff-gated node extractor and finalize with the TEXT it returns. The frame + caps + failure
+      // handling are identical to the text path — only the source of the text differs.
+      const kind = attachKindFor(file.name, file.type);
+      if (kind) {
+        setAttaching(true);
+        const fd = new FormData();
+        fd.append("file", file);
+        fetch("/api/grantbot/extract", { method: "POST", body: fd })
+          .then((r) => r.json().catch(() => null))
+          .then((res: { ok?: boolean; text?: string; truncated?: boolean; reason?: unknown } | null) => {
+            if (!isCurrent()) return; // superseded by a newer pick / cancel / thread switch — drop it
+            if (res?.ok && typeof res.text === "string") {
+              finalizeAttachment(res.text, !!res.truncated, file.name, file.type);
+            } else {
+              setError(extractFailureMessage(res?.reason, kind));
+            }
+          })
+          .catch(() => {
+            if (isCurrent()) setError("Couldn't read that file — try again, or paste the text in instead.");
+          })
+          // Only the CURRENT request owns the busy flag; a superseded one clearing it would unstick a
+          // newer pick's spinner (thread switches also clear it directly).
+          .finally(() => {
+            if (isCurrent()) setAttaching(false);
+          });
+        return;
+      }
+
+      // Not a document (pdf/docx) — it must be genuinely TEXT to read client-side. readAsText never
+      // throws on binary; it silently yields mojibake, so a non-text binary (a legacy .doc, an image
+      // picked via "All files", anything else) is REFUSED with a typed banner rather than attached as
+      // garbage — the same "never a guessed body" contract the server extractor holds.
+      if (!isTextAttachable(file.name, file.type)) {
+        setError("Couldn't read that file — attach a PDF, a Word .docx, or a text file (a legacy .doc isn't supported), or paste the text in.");
+        return;
+      }
+
+      // Text-based file: read it in the browser, no round-trip. readAsText is async, so this path
+      // ALSO sets `attaching` (like the binary branch) — otherwise Send/Enter/Paste, gated on
+      // `attaching`, would stay live during the read and a quick send would go out before onload,
+      // stranding the file's text on a later turn. Only the current read clears the flag (isCurrent);
+      // a superseded read leaves it to whoever superseded it (a new pick, removeAttachment, a switch).
+      setAttaching(true);
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (!isCurrent()) return; // a thread switch / newer pick during the read supersedes this one
+        setAttaching(false);
+        const text = typeof reader.result === "string" ? reader.result : "";
+        const { text: sliced, truncated } = truncateSafely(text, MAX_ATTACH_CHARS);
+        finalizeAttachment(sliced, truncated, file.name, file.type);
+      };
+      reader.onerror = () => {
+        if (!isCurrent()) return; // a superseded read's error must not overwrite the current context
+        setAttaching(false);
+        setError("Couldn't read that file. Try a PDF, Word .docx, or a text file — or paste the text in instead.");
+      };
+      reader.readAsText(file);
+    },
+    [finalizeAttachment],
+  );
 
   // WHICH TRANSCRIPT IS ON SCREEN, as a number that changes whenever it is replaced.
   //
@@ -253,6 +340,12 @@ export function GrantBotChat({
   // length of an LLM call would be the worse trade -- so instead every send captures the epoch
   // it belongs to and drops its UI updates if the transcript moved on.
   const epochRef = useRef(0);
+  // The attachment epoch, same shape as epochRef but for the async file-extract round-trip: bumped on
+  // every new pick, on removeAttachment, and on a thread switch. A binary extraction that resolves
+  // after its token is stale (a newer pick, a cancel, or a thread change happened while it was in
+  // flight) drops its result instead of clobbering the composer or landing the document in the wrong
+  // thread. Without it, `attaching` guarding only the current pick is not enough.
+  const attachTokenRef = useRef(0);
 
   // The composer's attachment as it is RIGHT NOW, readable from an async handler.
   //
@@ -337,6 +430,10 @@ export function GrantBotChat({
   const loadThread = useCallback(
     async (conversationId: string | null) => {
       epochRef.current += 1;
+      // A file extracting when the reader switches threads must not land in the new one; supersede it
+      // and clear the busy state so the destination thread starts clean.
+      attachTokenRef.current += 1;
+      setAttaching(false);
       setLoading(true);
       setError(null);
       try {
@@ -397,7 +494,10 @@ export function GrantBotChat({
 
   async function send() {
     const text = draft.trim();
-    if (!text || sending) return;
+    // No-op while a file is still extracting (matching the Send button + Enter's disabled state): a
+    // send here would snapshot the pre-extraction `pasted` and submit the question WITHOUT the
+    // document, then the late finalizeAttachment would strand the result on a later turn.
+    if (!text || sending || attaching) return;
     setSending(true);
     setError(null);
     // The transcript this question belongs to. Every UI write below checks it first -- see the
@@ -496,6 +596,10 @@ export function GrantBotChat({
     // Same epoch bump as a thread switch: an in-flight answer must not land in the blank
     // transcript this creates.
     epochRef.current += 1;
+    // Likewise supersede an in-flight extraction and clear the busy state — a document being read
+    // when the reader starts a new conversation belongs to neither.
+    attachTokenRef.current += 1;
+    setAttaching(false);
     setConvId(null);
     setMessages([]);
     setError(null);
@@ -818,6 +922,12 @@ export function GrantBotChat({
   // Clear the current attachment — the chip's × button, and the mode-switch when the reader opens
   // manual paste while a file chip is up (the two share the one `pasted` slot).
   const removeAttachment = () => {
+    // Supersede any in-flight extraction so a late result cannot re-attach a document the reader just
+    // cleared — AND clear the busy flag, like loadThread/newConversation. Without the reset, clearing
+    // the chip while a *second* pick is extracting would strand `attaching` true (its request's
+    // isCurrent() finally now fails), soft-locking the composer.
+    attachTokenRef.current += 1;
+    setAttaching(false);
     setPasted("");
     setPasteLabel("");
     setAttachedFile(null);
@@ -940,12 +1050,18 @@ export function GrantBotChat({
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            aria-label="Attach a file"
-            className={`inline-flex items-center justify-center rounded-lg border border-edge bg-white text-ink-muted transition-colors hover:text-ink ${
+            disabled={attaching}
+            aria-label={attaching ? "Reading file…" : "Attach a file"}
+            aria-busy={attaching}
+            className={`inline-flex items-center justify-center rounded-lg border border-edge bg-white text-ink-muted transition-colors hover:text-ink disabled:opacity-60 ${
               isCorner ? "h-7 w-7" : "h-8 w-8"
             }`}
           >
-            <Paperclip className={isCorner ? "h-3 w-3" : "h-3.5 w-3.5"} />
+            {attaching ? (
+              <Loader2 className={`animate-spin ${isCorner ? "h-3 w-3" : "h-3.5 w-3.5"}`} />
+            ) : (
+              <Paperclip className={isCorner ? "h-3 w-3" : "h-3.5 w-3.5"} />
+            )}
           </button>
           <button
             type="button"
@@ -954,8 +1070,11 @@ export function GrantBotChat({
               if (attachedFile) removeAttachment();
               setShowPaste((s) => !s);
             }}
+            // Disabled while a file is extracting: opening paste mid-extraction would have its content
+            // silently overwritten by the late finalizeAttachment (both write the one `pasted` slot).
+            disabled={attaching}
             aria-pressed={showPaste}
-            className={`inline-flex items-center gap-1.5 rounded-lg border border-edge bg-white font-semibold text-ink-muted transition-colors hover:text-ink ${
+            className={`inline-flex items-center gap-1.5 rounded-lg border border-edge bg-white font-semibold text-ink-muted transition-colors hover:text-ink disabled:opacity-60 ${
               isCorner ? "h-7 px-2.5 text-[11.5px]" : "h-8 px-3 text-[12.5px]"
             }`}
           >
@@ -966,7 +1085,9 @@ export function GrantBotChat({
         <button
           type="button"
           onClick={() => void send()}
-          disabled={sending || !draft.trim()}
+          // Also disabled while a file is extracting — sending then would submit the question without
+          // the document (send() guards this too; the disabled state makes it visible).
+          disabled={sending || attaching || !draft.trim()}
           // orangeFill, NOT orange: this is white type on a solid orange field, which is
           // 3.04:1 on #E4761F and fails AA -- the exact case lib/brand.ts adds orangeFill
           // for. Both mocks specify #E4761F here; both surfaces depart from it the same way,
@@ -980,12 +1101,13 @@ export function GrantBotChat({
         </button>
       </div>
       {/* Hidden picker driven by the composer's attach button — present in BOTH surfaces (#4),
-          unlike the page-only starter it replaces. Text-based files only for now (issue #465
-          tracks .docx/.pdf binary parsing). */}
+          unlike the page-only starter it replaces. Text files read client-side; PDF / .docx are
+          extracted server-side (/api/grantbot/extract). Images (PNG/JPG) are the next follow-on
+          (issue #465) — they need the vision path, not text extraction. */}
       <input
         ref={fileInputRef}
         type="file"
-        accept=".txt,.md,.eml,.csv,.json,.html,.htm,text/*"
+        accept=".pdf,.docx,.txt,.md,.eml,.csv,.json,.html,.htm,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/*"
         onChange={handleFileUpload}
         className="hidden"
       />
