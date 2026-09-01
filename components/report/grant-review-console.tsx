@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowLeft, Check, ChevronRight, ExternalLink, Puzzle } from "lucide-react";
+import { ArrowLeft, Ban, Check, ChevronRight, ExternalLink, Puzzle } from "lucide-react";
 import { BRAND, INK, RATING } from "@/lib/brand";
 import { sanitizeRichText } from "@/lib/sanitize/html";
 import { RationaleHoverPopover } from "@/components/report/rationale-hover";
@@ -449,6 +449,12 @@ function ProgrammeSummary({ raw }: { raw: string | null }) {
 function AllowableUsesBlock({ value }: { value: AllowableUses | null }) {
   if (!value) return null;
 
+  // Two lists off the one column: what funds MAY be spent on (navy checks) and what they may NOT
+  // (muted bans). A row written before the two-list change has kind "allowed", so a legacy list is
+  // all-allowed and renders exactly as before.
+  const allowed = value.items.filter((i) => i.kind !== "not_allowed");
+  const notAllowed = value.items.filter((i) => i.kind === "not_allowed");
+
   return (
     <div className="mt-[13px] border-t border-hairline-strong pt-3">
       {/* orange rule + orangeDeep label, matching the mock. The check icons are navy, not the
@@ -456,27 +462,50 @@ function AllowableUsesBlock({ value }: { value: AllowableUses | null }) {
       <div className="flex items-center gap-3">
         <span aria-hidden="true" className="h-[3px] w-9 shrink-0 bg-brand-orange" />
         <h2 className="text-[10px] font-bold uppercase tracking-[0.12em]" style={{ color: BRAND.orangeDeep }}>
-          Allowable uses of funds
+          Uses of funds
         </h2>
       </div>
       {value.items.length === 0 ? (
         <p className="mt-2 text-[13px] leading-[1.6] text-ink-muted">{ALLOWABLE_USES_FALLBACK}</p>
       ) : (
-        <ul className="mt-[9px] space-y-[5px]">
-          {value.items.map((item) => (
-            <li
-              key={item.line}
-              className="flex items-start gap-2.5 text-[13px] leading-[1.45] text-ink-muted [text-wrap:pretty]"
-              // The verbatim NOFO span this line came from. Absent only on rows written
-              // before quotes were stored, so the attribute is conditional rather than an
-              // empty tooltip.
-              title={item.quote || undefined}
-            >
-              <Check className="mt-[2px] h-3.5 w-3.5 shrink-0 text-brand-navy" aria-hidden="true" />
-              <span className="min-w-0">{item.line}</span>
-            </li>
-          ))}
-        </ul>
+        <>
+          {allowed.length > 0 && (
+            <ul className="mt-[9px] space-y-[5px]">
+              {allowed.map((item) => (
+                <li
+                  key={`allowed:${item.line}`}
+                  className="flex items-start gap-2.5 text-[13px] leading-[1.45] text-ink-muted [text-wrap:pretty]"
+                  // The verbatim NOFO span this line came from. Absent only on rows written
+                  // before quotes were stored, so the attribute is conditional rather than an
+                  // empty tooltip.
+                  title={item.quote || undefined}
+                >
+                  <Check className="mt-[2px] h-3.5 w-3.5 shrink-0 text-brand-navy" aria-hidden="true" />
+                  <span className="min-w-0">{item.line}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {notAllowed.length > 0 && (
+            <>
+              <h3 className="mt-3 text-[10px] font-semibold uppercase tracking-[0.1em] text-ink-muted">
+                Not allowed
+              </h3>
+              <ul className="mt-[6px] space-y-[5px]">
+                {notAllowed.map((item) => (
+                  <li
+                    key={`not-allowed:${item.line}`}
+                    className="flex items-start gap-2.5 text-[13px] leading-[1.45] text-ink-muted [text-wrap:pretty]"
+                    title={item.quote || undefined}
+                  >
+                    <Ban className="mt-[2px] h-3.5 w-3.5 shrink-0 text-ink-muted" aria-hidden="true" />
+                    <span className="min-w-0">{item.line}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </>
       )}
     </div>
   );

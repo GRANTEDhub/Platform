@@ -60,13 +60,31 @@ const RECUT_MIN_RAW_CHARS = 20000;
 // GLOBAL, because the scorer needs EVERY occurrence, not the first. The first version took
 // the first match of the first pattern that hit anywhere in the document, which let a
 // table-of-contents line beat the real section by forty thousand characters.
-const SECTION_PATTERNS = [
+export const SECTION_PATTERNS = [
   /allowable\s+(?:costs?|uses?|activities|expenses?)/gi,
   /unallowable\s+(?:costs?|uses?|activities|expenses?)/gi,
   /funding\s+restrictions?/gi,
   /use\s+of\s+(?:grant\s+)?funds?/gi,
   /eligible\s+(?:costs?|uses?|activities|expenses?)/gi,
   /cost\s+principles?/gi,
+  // The phrasings a modern federal NOFO actually uses, none of which contain "allowable" -- the gap
+  // that made the finder fall back to the document head and report no_section on notices that DO
+  // carry cost rules. Verified verbatim against three 2026 HHS-ACF NOFOs (the cost rules live under
+  // "Program-specific limitations and policies" / "We do not allow the following costs" / "Indirect
+  // costs" in Step 1, and the "necessary, reasonable, allocable" budget standard + "funding policies
+  // and limitations" / "restrictions on spending" in the Step 3 budget instructions -- pages apart,
+  // which the density + second-window selection already handles).
+  /funding\s+policies\s+and\s+limitations/gi,
+  /program-specific\s+limitations/gi,
+  /we\s+do\s+not\s+allow/gi,
+  /do\s+not\s+allow\s+the\s+following/gi,
+  /not\s+allowable/gi,
+  /restrictions?\s+on\s+spending/gi,
+  /indirect\s+costs?/gi,
+  /de\s+minimis/gi,
+  /necessary,?\s+reasonable,?\s+allocable/gi,
+  /object\s+class\s+categories/gi,
+  /line-item\s+budget/gi,
 ];
 
 // THE SENTINEL, and it is deliberately not an empty render. A blank section reads as "we
@@ -78,20 +96,42 @@ export const ALLOWABLE_USES_FALLBACK = "Not clearly specified in the NOFO — As
 // these three, and they are three different problems: the NOFO's, the model's, and ours.
 export type AllowableUsesReason = "no_section" | "no_raw_text" | "all_dropped";
 
+// Allowed = what funds MAY be spent on. Not-allowed = a prohibited or restricted cost. A NOFO's
+// cost rules are BOTH -- ACF notices, for one, carry the spend rules almost entirely as a "we do
+// not allow the following costs" list plus indirect-rate caps, with no "allowable" heading at all,
+// so extracting only allowable uses returned nothing on them.
+export type UseKind = "allowed" | "not_allowed";
+
+// For a not-allowed item ONLY. BUDGET = a spending restriction a client needs to plan a budget
+// (construction, real property, renovation caps, acquisition, fundraising, pre-award, indirect /
+// de-minimis caps, salary caps, supplanting). STATUTORY = a whole-award ideological / appropriations
+// -rider condition that is NOT budget guidance (bans tied to abortion, gender ideology, sexual
+// orientation / gender identity, conversion therapy, and the like). BOTH are extracted and STORED;
+// only the CLIENT surface drops STATUTORY -- see clientAllowableUses. Null / absent on allowed items.
+export type RestrictionClass = "budget" | "statutory";
+
 export interface AllowableUseItem {
   // The rendered line -- a budget category in plain language.
   line: string;
   // The verbatim NOFO span this line came from. Present in raw_text under normalization, or
   // the item is not here at all.
   quote: string;
+  // "allowed" (the default, and the shape of every row written before this field existed) or
+  // "not_allowed". readAllowableUses defaults a missing value to "allowed" for back-compat.
+  kind: UseKind;
+  // Only meaningful when kind === "not_allowed"; null on allowed items and when the model did not
+  // classify. The client filter shows a not-allowed item only when this is explicitly "budget".
+  restriction_class?: RestrictionClass | null;
 }
 
 export interface AllowableUses {
   items: AllowableUseItem[];
   // Null when items is non-empty. Non-null and items empty when there is nothing to show.
   reason: AllowableUsesReason | null;
-  // Which pass produced this row. Absent on rows written by the original sweep; 1 once the
-  // anchoring recut has looked at it.
+  // The GENERATION of the finder/extraction that last processed this row (ALLOWABLE_USES_GENERATION).
+  // Absent on rows written by the original sweep; a number once a recut has re-processed it. The recut
+  // re-runs any no_section row BELOW the current generation, so a finder improvement re-touches the
+  // whole no_section corpus simply by bumping the generation constant.
   //
   // A MARKER RATHER THAN A TIMESTAMP CUTOFF, which is where this departs from brief.ts's
   // THIN_BRIEF_CUTOFF. That constant had to be the moment the new code reached production --
@@ -109,22 +149,26 @@ export interface AllowableUsesGrant {
   raw_text?: string | null;
 }
 
-const SYSTEM = `You extract ALLOWABLE USES OF FUNDS from U.S. federal and state grant notices for GRANTED, a grant-consulting firm.
+const SYSTEM = `You extract the USES OF FUNDS from U.S. federal and state grant notices for GRANTED, a grant-consulting firm.
 
-You are given an excerpt of a notice of funding opportunity. Your job is to list what the money may be spent on, and to prove every line by quoting the notice.
+You are given an excerpt of a notice of funding opportunity (NOFO). List (a) what the money MAY be spent on and (b) what it may NOT be spent on, and prove every line by quoting the notice.
 
-For each allowable use, return:
+Federal NOFOs rarely use the heading "Allowable Costs". The cost rules usually live under headings like "Funding policies and limitations", "Program-specific limitations and policies", "We do not allow the following costs", "Indirect costs", or in the budget instructions ("necessary, reasonable, allocable ..."). Read those as the cost section -- they are exactly what establishes what funds may and may not be spent on.
+
+For each item, return:
 - "line": the spending category in plain language, at most ${MAX_LINE_WORDS} words. No hype, no bullets, no headings, no trailing punctuation.
 - "quote": a VERBATIM span copied character-for-character from the excerpt that establishes that line. Between ${MIN_QUOTE_CHARS} and ${MAX_QUOTE_CHARS} characters.
+- "kind": "allowed" if funds MAY be used for this; "not_allowed" if the notice prohibits or restricts it.
+- "restriction_class": ONLY for a "not_allowed" item. "budget" for a spending restriction a client needs to plan a budget (construction, real property, renovation caps, acquisition, fundraising, pre-award costs, indirect-cost / de-minimis caps, salary caps, supplanting). "statutory" for a whole-award ideological or appropriations-rider condition that is NOT budget guidance (e.g. bans tied to abortion, gender ideology, sexual orientation / gender identity change, conversion therapy, or similar policy conditions). Omit for "allowed" items.
 
 Rules, in order of importance:
 1. THE QUOTE MUST BE COPIED, NOT RECONSTRUCTED. Do not fix spelling, expand abbreviations, change punctuation, join lines, or tidy spacing. If you cannot copy a span exactly, omit that line entirely. A line without a real quote is worse than a missing line.
 2. Every quote must come from the excerpt you were given. Never quote from memory of similar programs.
-3. Only ALLOWABLE uses. Do not list what is prohibited, unallowable, or restricted, even though the excerpt may describe those alongside.
-4. At most ${MAX_ITEMS} items. Prefer the distinct, substantive categories over exhaustive subdivision.
-5. Do not state dollar amounts, caps, percentages, deadlines, or match requirements. Those are rendered separately from verified fields.
-6. Do not name any applicant organization or assess anyone's fit. This list is shown to every client matched to the grant.
-7. Set has_section to false when the excerpt contains no passage that actually establishes what funds may be spent on. An excerpt that only describes program goals is NOT an allowable-costs section. Returning has_section false is a correct and useful answer -- guessing is not.
+3. Classify honestly. An allowed use is something funds MAY pay for -- a funded activity, an allowable cost category, or an allowable indirect rate. A not_allowed item is a prohibition or a cap. When a not_allowed item is an ideological / policy condition rather than a budget rule, mark it "statutory" -- do not omit it, mark it.
+4. At most ${MAX_ITEMS} items total across both kinds. Prefer the distinct, substantive categories over exhaustive subdivision.
+5. Do not state dollar amounts, deadlines, or match requirements. A percentage CAP that itself defines the restriction (e.g. an indirect de-minimis rate) may be named as part of the line.
+6. Do not name any applicant organization or assess anyone's fit. These lists are shown to every client matched to the grant.
+7. Set has_section to false ONLY when the excerpt contains no passage establishing what funds may or may not be spent on. A "we do not allow ..." list, an indirect-cost rule, or a "necessary, reasonable, allocable" budget standard all COUNT as a cost section -- returning items for them is the correct answer. An excerpt that only describes program goals, with no cost or spending language at all, is not a cost section.
 
 Call the tool exactly once.`;
 
@@ -164,7 +208,7 @@ Call the tool exactly once.`;
 // to look. And because verification runs against the FULL raw_text rather than the excerpt, a
 // window that lands badly can only ever cost lines -- it can never admit a quote that is not
 // in the document.
-function allowableSource(raw: string): { excerpt: string; anchored: boolean } {
+export function allowableSource(raw: string): { excerpt: string; anchored: boolean } {
   const hits = sectionHits(raw, SECTION_PATTERNS);
   if (hits.length === 0) return { excerpt: raw.slice(0, HEAD_CHARS), anchored: false };
 
@@ -180,9 +224,14 @@ function allowableSource(raw: string): { excerpt: string; anchored: boolean } {
     }
   }
 
-  // Start a little BEFORE the heading: the heading line itself is often the strongest
-  // evidence a section exists, and a window that begins after it throws that away.
-  const start = Math.max(0, best - 500);
+  // Anchor the window on the START of the winning cluster, not on `best`. The >= tie rule above puts
+  // `best` at the cluster's LAST hit (later beats earlier), so a tight cluster smaller than the window
+  // -- e.g. an ACF cost section whose "we do not allow ..." list, indirect-cost rule and budget
+  // standard all fall within ~2k chars -- would anchor at its tail and clip the opening list, handing
+  // the model only the budget standard at the end. Take the earliest hit within one window of `best`
+  // and start a little before it, so the whole cluster (heading included) is in view.
+  const clusterStart = Math.min(...hits.filter((h) => Math.abs(h - best) <= WINDOW_CHARS));
+  const start = Math.max(0, clusterStart - 500);
   const end = start + WINDOW_CHARS;
   let excerpt = raw.slice(start, end);
 
@@ -249,13 +298,18 @@ export function verifyAllowableUses(raw: string, items: AllowableUseItem[]): Ver
   for (const item of items.slice(0, MAX_ITEMS)) {
     const line = tidyLine(String(item?.line ?? ""));
     const quote = String(item?.quote ?? "").trim();
+    const kind = normalizeKind(item?.kind);
+    const restriction_class = normalizeRestrictionClass(kind, item?.restriction_class);
     if (!line || line.split(/\s+/).length > MAX_LINE_WORDS) continue;
     if (quote.length < MIN_QUOTE_CHARS || quote.length > MAX_QUOTE_CHARS) continue;
 
-    const key = line.toLowerCase();
+    // Keyed on kind + line so the same phrasing can appear once as allowed and once as not-allowed
+    // (rare, but a legitimate "indirect costs allowed up to X / may not charge indirect as direct").
+    const key = `${kind}:${line.toLowerCase()}`;
     if (seen.has(key)) continue;
 
-    // The gate. Both sides folded the same way, then exact containment.
+    // The gate. Both sides folded the same way, then exact containment. Unchanged by the two lists --
+    // a not-allowed line is quote-verified exactly like an allowed one.
     if (!haystackNormalized.includes(normalizeForMatch(quote))) {
       droppedNormalized++;
       continue;
@@ -264,7 +318,7 @@ export function verifyAllowableUses(raw: string, items: AllowableUseItem[]): Ver
     if (raw.includes(quote)) keptStrict++;
 
     seen.add(key);
-    kept.push({ line, quote });
+    kept.push({ line, quote, kind, restriction_class });
   }
 
   return { kept, returned: items.length, droppedNormalized, keptStrict };
@@ -272,7 +326,19 @@ export function verifyAllowableUses(raw: string, items: AllowableUseItem[]): Ver
 
 interface ToolPayload {
   has_section?: boolean;
-  items?: { line?: string; quote?: string }[];
+  items?: { line?: string; quote?: string; kind?: string; restriction_class?: string }[];
+}
+
+// Normalize the model's kind / restriction_class into the stored shape. A missing/unknown kind is
+// "allowed" (the pre-two-list default); restriction_class is kept only for a not_allowed item and
+// only when the model actually classified it -- an unclassified not_allowed stays null, which the
+// client filter treats as "do not surface" (fail toward hiding a possibly-statutory item).
+function normalizeKind(k: unknown): UseKind {
+  return k === "not_allowed" ? "not_allowed" : "allowed";
+}
+function normalizeRestrictionClass(kind: UseKind, rc: unknown): RestrictionClass | null {
+  if (kind !== "not_allowed") return null;
+  return rc === "statutory" ? "statutory" : rc === "budget" ? "budget" : null;
 }
 
 // Generate and verify. Returns the value to STORE, or null meaning "leave the column alone
@@ -302,13 +368,14 @@ export async function generateAllowableUses(
       tools: [
         {
           name: "submit_allowable_uses",
-          description: "Return the allowable uses of funds, each with a verbatim supporting quote. Call exactly once.",
+          description: "Return the uses of funds (allowed and not-allowed), each with a verbatim supporting quote. Call exactly once.",
           input_schema: {
             type: "object",
             properties: {
               has_section: {
                 type: "boolean",
-                description: "True only if the excerpt contains a passage establishing what funds may be spent on.",
+                description:
+                  "True if the excerpt contains any passage establishing what funds may or may not be spent on.",
               },
               items: {
                 type: "array",
@@ -317,8 +384,19 @@ export async function generateAllowableUses(
                   properties: {
                     line: { type: "string" },
                     quote: { type: "string" },
+                    kind: {
+                      type: "string",
+                      enum: ["allowed", "not_allowed"],
+                      description: "allowed = funds may be used for this; not_allowed = prohibited or restricted.",
+                    },
+                    restriction_class: {
+                      type: "string",
+                      enum: ["budget", "statutory"],
+                      description:
+                        "Only for not_allowed items. budget = a spending restriction for budgeting; statutory = an ideological / appropriations-rider condition.",
+                    },
                   },
-                  required: ["line", "quote"],
+                  required: ["line", "quote", "kind"],
                 },
               },
             },
@@ -370,7 +448,15 @@ export async function generateAllowableUses(
     return null;
   }
 
-  const raws = payload.items.map((i) => ({ line: String(i?.line ?? ""), quote: String(i?.quote ?? "") }));
+  const raws: AllowableUseItem[] = payload.items.map((i) => {
+    const kind = normalizeKind(i?.kind);
+    return {
+      line: String(i?.line ?? ""),
+      quote: String(i?.quote ?? ""),
+      kind,
+      restriction_class: normalizeRestrictionClass(kind, i?.restriction_class),
+    };
+  });
   const audit = verifyAllowableUses(raw, raws);
 
   // The model claimed a section and produced lines, and not one of them survived. Recorded
@@ -429,6 +515,19 @@ const RECUT_SCAN_BATCH = 100;
 // URL, so this bounds the request line rather than anything about the work itself.
 const RETIRE_CHUNK = 50;
 
+// The generation of this file's finder + extraction, STORED on each row as `recut`. Bumped to 2 when
+// SECTION_PATTERNS were widened to the ACF-style headings ("we do not allow", "funding policies and
+// limitations", "indirect costs", "necessary, reasonable, allocable") and extraction began returning
+// not-allowed items -- so every no_section row a v1 build wrote (recut null or 1) is re-run once under
+// v2 and re-stamped. Bump again for any future finder/prompt change that should re-touch the
+// already-processed no_section corpus. Kept single-digit: the recut scan compares `recut` as TEXT
+// (PostgREST `.lt`), and "1" < "2" holds lexically only while the numbers are single digits.
+const ALLOWABLE_USES_GENERATION = 2;
+
+// The recut scan predicate: a no_section row whose generation is BELOW the current one -- absent
+// (never recut) OR an older generation number. Shared by the probe and the scan so they can't drift.
+const RECUT_STALE_OR = `allowable_uses->>recut.is.null,allowable_uses->>recut.lt.${ALLOWABLE_USES_GENERATION}`;
+
 // Cheap head-only probe. No rows, and critically no raw_text -- the largest column on the
 // table. Runs before the main claim because the answer changes its size.
 async function countRecutCandidates(db: SupabaseClient): Promise<number> {
@@ -436,7 +535,7 @@ async function countRecutCandidates(db: SupabaseClient): Promise<number> {
     .from("grants")
     .select("id", { count: "exact", head: true })
     .filter("allowable_uses->>reason", "eq", "no_section")
-    .filter("allowable_uses->>recut", "is", null);
+    .or(RECUT_STALE_OR);
   if (error) throw new Error(`Recut probe failed: ${error.message}`);
   return count ?? 0;
 }
@@ -460,7 +559,7 @@ async function recutNoSection(db: SupabaseClient, apiBudget: number): Promise<Re
     .from("grants")
     .select("id, title, funder, raw_text")
     .filter("allowable_uses->>reason", "eq", "no_section")
-    .filter("allowable_uses->>recut", "is", null)
+    .or(RECUT_STALE_OR)
     .order("allowable_uses_at", { ascending: true })
     .limit(RECUT_SCAN_BATCH);
   if (error) throw new Error(`Recut scan failed: ${error.message}`);
@@ -487,7 +586,7 @@ async function recutNoSection(db: SupabaseClient, apiBudget: number): Promise<Re
     const { error: bulkErr } = await db
       .from("grants")
       .update({
-        allowable_uses: { items: [], reason: "no_section", recut: 1 },
+        allowable_uses: { items: [], reason: "no_section", recut: ALLOWABLE_USES_GENERATION },
         allowable_uses_at: new Date().toISOString(),
       })
       .in("id", chunk);
@@ -524,7 +623,7 @@ async function recutNoSection(db: SupabaseClient, apiBudget: number): Promise<Re
 
     const improved = result.value.items.length > 0;
     try {
-      await saveAllowableUses(db, g.id, { ...result.value, recut: 1 });
+      await saveAllowableUses(db, g.id, { ...result.value, recut: ALLOWABLE_USES_GENERATION });
     } catch (e) {
       console.error(`[allowable-uses] recut save failed grant=${g.id}:`, e instanceof Error ? e.message : e);
       out.failed++;
@@ -767,31 +866,67 @@ export function readAllowableUses(value: unknown): AllowableUses | null {
   const items: AllowableUseItem[] = [];
   for (const raw of v.items) {
     if (!raw || typeof raw !== "object") continue;
-    const { line, quote } = raw as { line?: unknown; quote?: unknown };
+    const { line, quote, kind, restriction_class } = raw as {
+      line?: unknown;
+      quote?: unknown;
+      kind?: unknown;
+      restriction_class?: unknown;
+    };
     if (typeof line !== "string" || !line.trim()) continue;
-    items.push({ line: line.trim(), quote: typeof quote === "string" ? quote : "" });
+    // A row written before the two-list change has no kind -> "allowed", so every legacy list keeps
+    // rendering exactly as it did (all-allowed).
+    const k = normalizeKind(kind);
+    items.push({
+      line: line.trim(),
+      quote: typeof quote === "string" ? quote : "",
+      kind: k,
+      restriction_class: normalizeRestrictionClass(k, restriction_class),
+    });
   }
   const reason =
     v.reason === "no_section" || v.reason === "no_raw_text" || v.reason === "all_dropped" ? v.reason : null;
   return { items, reason };
 }
 
-// Client visibility, RESOLVED. What the portal's grant detail passes to the shared review console
-// for a CLIENT: the parsed allowable-uses list to render, or null to omit the section entirely.
+// Ideological / policy wording that must never surface on a CLIENT card, even if the model tagged the
+// item "budget". A whole-award statutory condition (no abortion, no gender-ideology work, etc.) is not
+// budget guidance and is jarring on a client deliverable. This deterministic net sits UNDER the model's
+// restriction_class so a single mistag can't leak one through. Staff/console are unaffected -- they
+// read the full stored list. Kept deliberately narrow (the recurring federal-rider terms), matched
+// against BOTH the plain line and its quote.
 //
-// TWO GATES, both must pass -- the ALLOWABLE_USES_CLIENT_VISIBLE flag is on AND the list actually
-// has items. A verified-empty result (a reference-style NOFO that governs costs by 2 CFR 200 /
-// uniform-guidance reference rather than itemizing them -- the ONLY empty that reaches the
-// client-visible Grant Report today) returns null here, so a client sees NO section rather than the
-// "Ask our team" sentinel that draws the eye to a gap the funder simply did not itemize.
+// STEMS, and NO trailing `\b` (the #483 fix): a trailing word boundary after a stem never fires on the
+// real inflected forms -- `ideolog\b` can't match "ideology" (the `g` is followed by a letter, so no
+// boundary exists), and likewise "abortions" / "gender identities" / "conversion therapies". Matching a
+// stem with no trailing boundary catches every inflection, and over-matching only ever HIDES more from
+// the client, which is the safe direction for this net. The leading `\b` still anchors each term to a
+// word start.
+const STATUTORY_CLIENT_HIDE =
+  /\b(abortion|gender\s+ideolog|sexual\s+orientation|gender\s+identit|conversion\s+therap|transgender)/i;
+
+// Client visibility, RESOLVED. What the portal's grant detail passes to the shared review console for
+// a CLIENT: the parsed uses-of-funds list, FILTERED to what is client-appropriate, or null to omit the
+// section entirely.
 //
-// STAFF KEEP THE SENTINEL. The staff roadmap calls readAllowableUses() directly and unconditionally,
-// because "we looked, the NOFO did not itemize" is a useful staff signal. Only the client side hides
-// the empty. This is the client half of the client/staff split that already lives at the two call
-// sites -- encapsulated here so the "client sees only a real list" rule is one testable source and
-// cannot drift back into the sentinel.
+// TWO GATES, both must pass -- the ALLOWABLE_USES_CLIENT_VISIBLE flag is on AND, after filtering, the
+// list still has items. A verified-empty result (a NOFO that truly established no cost rules) returns
+// null here, so a client sees NO section rather than the "Ask our team" sentinel.
+//
+// CLIENT-SURFACE FILTER, NOT A DELETION. Every allowed item is client-safe. A not-allowed item shows
+// to a client ONLY as an explicit BUDGET restriction (what they need to plan a budget) and NEVER when
+// it is a STATUTORY / ideological condition -- those stay in the stored column for staff and any other
+// use, but are dropped from the client card here (Shannon's call: budget-planning info, not policy
+// riders). Two layers: the model's restriction_class, then the deterministic STATUTORY_CLIENT_HIDE net
+// beneath it. STAFF keep the full list -- the roadmap calls readAllowableUses() unconditionally.
 export function clientAllowableUses(value: unknown): AllowableUses | null {
   if (!allowableUsesClientVisible()) return null;
   const parsed = readAllowableUses(value);
-  return parsed && parsed.items.length > 0 ? parsed : null;
+  if (!parsed) return null;
+  const items = parsed.items.filter((it) => {
+    if (it.kind !== "not_allowed") return true;
+    if (it.restriction_class !== "budget") return false;
+    if (STATUTORY_CLIENT_HIDE.test(it.line) || STATUTORY_CLIENT_HIDE.test(it.quote)) return false;
+    return true;
+  });
+  return items.length > 0 ? { ...parsed, items } : null;
 }
