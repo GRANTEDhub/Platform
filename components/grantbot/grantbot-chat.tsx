@@ -17,7 +17,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { BRAND } from "@/lib/brand";
-import { stripControlChars, truncateSafely, attachKindFor, MAX_ATTACH_CHARS, MAX_ATTACH_BYTES } from "@/lib/grantbot/label";
+import { stripControlChars, truncateSafely, attachKindFor, isTextAttachable, MAX_ATTACH_CHARS, MAX_ATTACH_BYTES } from "@/lib/grantbot/label";
 import { BLANK_CONVERSATION } from "@/lib/grantbot/wire";
 import type { GrantBotMsg, GrantBotThread } from "@/lib/grantbot/wire";
 
@@ -288,6 +288,15 @@ export function GrantBotChat({
           .finally(() => {
             if (isCurrent()) setAttaching(false);
           });
+        return;
+      }
+
+      // Not a document (pdf/docx) — it must be genuinely TEXT to read client-side. readAsText never
+      // throws on binary; it silently yields mojibake, so a non-text binary (a legacy .doc, an image
+      // picked via "All files", anything else) is REFUSED with a typed banner rather than attached as
+      // garbage — the same "never a guessed body" contract the server extractor holds.
+      if (!isTextAttachable(file.name, file.type)) {
+        setError("Couldn't read that file — attach a PDF, a Word .docx, or a text file (a legacy .doc isn't supported), or paste the text in.");
         return;
       }
 

@@ -56,3 +56,22 @@ export function attachKindFor(fileName: string, mime?: string): "pdf" | "docx" |
   return null;
 }
 
+// Genuinely plain-text formats the client may read with FileReader.readAsText. This is a WHITELIST,
+// not "anything not pdf/docx": readAsText NEVER throws on binary input — it silently produces
+// replacement-character mojibake — so a file that is neither a document (pdf/docx, extracted
+// server-side) nor recognised text must be REFUSED with a typed "couldn't read" banner, not decoded
+// as garbage and attached as if it were content (the "every outcome is a typed result, never a guess"
+// invariant). A legacy binary `.doc` (application/msword) matches nothing here and is refused, not
+// mojibake'd. Extension OR a text/* MIME — the extension leads because `accept` is only a picker hint.
+const TEXT_ATTACH_EXTS = [
+  "txt", "text", "md", "markdown", "eml", "csv", "tsv", "json", "html", "htm", "xml", "yaml", "yml", "log",
+];
+export function isTextAttachable(fileName: string, mime?: string): boolean {
+  const lower = fileName.toLowerCase();
+  const dot = lower.lastIndexOf(".");
+  const ext = dot >= 0 ? lower.slice(dot + 1) : "";
+  if (ext && TEXT_ATTACH_EXTS.includes(ext)) return true;
+  // A text/* MIME with no (or an unknown) extension is still text — but application/msword etc. are not.
+  return typeof mime === "string" && mime.startsWith("text/");
+}
+

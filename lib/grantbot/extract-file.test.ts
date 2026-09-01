@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { extractFileText, type PdfExtract, type DocxExtract } from "./extract-file";
-import { attachKindFor } from "./label";
+import { attachKindFor, isTextAttachable } from "./label";
 
 // Deterministic — the real pdf-parse / mammoth are injected as seams, so the branch, typed-reason,
 // cap, and truncation logic is proven without shipping a binary fixture (the same pattern fetch.ts
@@ -22,6 +22,23 @@ describe("attachKindFor — which files route to the server extractor", () => {
     expect(attachKindFor("notes.txt")).toBeNull();
     expect(attachKindFor("old.doc")).toBeNull(); // legacy binary .doc is NOT OOXML
     expect(attachKindFor("photo.png", "image/png")).toBeNull();
+  });
+});
+
+describe("isTextAttachable — the client readAsText whitelist (never mojibake a binary)", () => {
+  it("accepts genuinely-text extensions and text/* MIME", () => {
+    for (const n of ["a.txt", "a.md", "thread.eml", "data.csv", "x.json", "page.html", "p.htm", "d.xml", "c.yaml", "l.log"]) {
+      expect(isTextAttachable(n)).toBe(true);
+    }
+    expect(isTextAttachable("noext", "text/plain")).toBe(true);
+  });
+
+  it("REFUSES a legacy .doc and other binaries (they must not read as text)", () => {
+    expect(isTextAttachable("resume.doc", "application/msword")).toBe(false);
+    expect(isTextAttachable("photo.png", "image/png")).toBe(false);
+    expect(isTextAttachable("form.pdf", "application/pdf")).toBe(false); // handled by the extractor, not readAsText
+    expect(isTextAttachable("archive.zip")).toBe(false);
+    expect(isTextAttachable("noext")).toBe(false); // unknown ext + no text MIME → refuse, don't guess
   });
 });
 
