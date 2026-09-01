@@ -26,7 +26,8 @@ export type ExtractReason =
   | "pdf_no_text" // the PDF parsed but has no text layer (a scanned image) — refuse to guess its content
   | "docx_parse_failed" // mammoth could not read the bytes (corrupt / not a real .docx / legacy .doc)
   | "docx_no_text" // the .docx parsed but yielded no text
-  | "docx_too_large"; // the .docx's DECOMPRESSED content exceeds the safe cap (zip-bomb guard)
+  | "docx_too_large" // the .docx's DECOMPRESSED content exceeds the safe cap (zip-bomb guard)
+  | "pdf_form_unreadable"; // an XFA/LiveCycle form whose page layer is Adobe's placeholder and whose data layer could not be extracted
 
 // A .docx is a ZIP. The 5MB input cap bounds the COMPRESSED bytes; it does NOT bound what they inflate
 // to, and mammoth (via JSZip) decompresses the whole archive into memory before the char cap ever
@@ -77,6 +78,9 @@ export type ExtractResult =
 // without shipping a binary fixture — the same pattern fetch.ts uses for its PdfExtract.
 export type PdfExtract = (bytes: Uint8Array) => Promise<string>;
 export type DocxExtract = (bytes: Uint8Array) => Promise<string>;
+// XFA/LiveCycle form data-layer extraction: returns the form's text, or null when the PDF has no
+// usable XFA datasets. Never throws to the caller (a pdf-lib error is caught → null).
+export type XfaExtract = (bytes: Uint8Array) => Promise<string | null>;
 
 const defaultPdfExtract: PdfExtract = async (bytes) => {
   // Import the LIB entry, not the package index: pdf-parse's index.js runs a debug-mode fixture read
@@ -99,10 +103,108 @@ const defaultDocxExtract: DocxExtract = async (bytes) => {
   return value ?? "";
 };
 
+// ── XFA / LiveCycle form PDFs ────────────────────────────────────────────────────────────────────
+//
+// An XFA (dynamic form) PDF — the format of the federal SF-424 family and most agency application
+// packages — carries NO real text in its page content stream. That stream holds only Adobe's
+// "Please wait… if this message is not eventually replaced… upgrade your reader" PLACEHOLDER, so
+// pdf-parse returns exactly that boilerplate. The real content lives in the AcroForm's `/XFA` packets
+// (an array of name/stream pairs): `datasets` holds the filled field values (and, in the FTA/LiveCycle
+// convention, their captions as sibling `lbl_hidden_*` fields). pdf-lib (already a dependency) reads
+// those packets without a new dep; we decode `datasets` and flatten its leaf text.
+
+// Detect Adobe's XFA render-fallback placeholder — the string pdf-parse returns for a dynamic form.
+// This both TRIGGERS the XFA path and is the safety net: if XFA extraction then finds nothing, the
+// result is a typed failure, never this boilerplate handed to the model as if it were the document.
+export function looksLikeAdobeXfaFallback(text: string): boolean {
+  const t = text.toLowerCase();
+  return (
+    t.includes("please wait") &&
+    (t.includes("if this message is not eventually replaced") ||
+      t.includes("your pdf viewer may not be able to display"))
+  );
+}
+
+function decodeXmlEntities(s: string): string {
+  return s.replace(/&(#x?[0-9a-fA-F]+|amp|lt|gt|quot|apos);/g, (m, e: string) => {
+    if (e === "amp") return "&";
+    if (e === "lt") return "<";
+    if (e === "gt") return ">";
+    if (e === "quot") return '"';
+    if (e === "apos") return "'";
+    if (e[0] === "#") {
+      const n = e[1] === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+      return Number.isFinite(n) ? String.fromCodePoint(n) : m;
+    }
+    return m;
+  });
+}
+
+// Flatten an XFA `datasets` XML packet to text: the trimmed text of every LEAF element (one whose
+// content has no nested element), one per line, entities decoded. Because the datasets carry both the
+// filled values AND their `lbl_hidden_*` caption siblings, the output reads as interleaved
+// label/value lines — enough for the model to read a filled form. Empty structural nodes (dataGroups,
+// focus markers) have no text and are skipped. Deliberately a lightweight leaf extractor, not a full
+// XML parse: no new dependency, and robust to the (schema-varying) datasets shape.
+export function xfaDatasetsToText(datasetsXml: string): string {
+  const re = /<([\w.:-]+)[^>]*>([^<]*)<\/\1\s*>/g;
+  const lines: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(datasetsXml))) {
+    const val = decodeXmlEntities(m[2]).replace(/\s+/g, " ").trim();
+    if (val) lines.push(val);
+  }
+  return lines.join("\n");
+}
+
+const defaultXfaExtract: XfaExtract = async (bytes) => {
+  const { PDFDocument, PDFName, PDFArray, PDFRawStream, PDFStream, decodePDFRawStream } = await import("pdf-lib");
+  const doc = await PDFDocument.load(bytes, { updateMetadata: false, throwOnInvalidObject: false });
+  const acro = doc.catalog.lookup(PDFName.of("AcroForm"));
+  if (!acro || !("lookup" in acro)) return null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const xfa = (acro as any).lookup(PDFName.of("XFA"));
+  if (!xfa) return null;
+
+  const streamText = (s: unknown): string => {
+    try {
+      if (s instanceof PDFRawStream || s instanceof PDFStream) {
+        return Buffer.from(decodePDFRawStream(s as import("pdf-lib").PDFRawStream).decode()).toString("utf8");
+      }
+    } catch {
+      /* undecodable stream — treated as no datasets */
+    }
+    return "";
+  };
+
+  // Locate the `datasets` packet. Array form (the standard): alternating (name, stream) pairs — find
+  // the pair whose NAME contains "datasets". Single-stream form: the whole XDP — slice out its
+  // <xfa:datasets>…</xfa:datasets> block.
+  let datasetsXml = "";
+  if (xfa instanceof PDFArray) {
+    const n = xfa.size();
+    for (let i = 0; i + 1 < n; i += 2) {
+      const name = xfa.lookup(i);
+      if (name && name.toString().includes("datasets")) {
+        datasetsXml = streamText(xfa.lookup(i + 1));
+        break;
+      }
+    }
+  } else {
+    const whole = streamText(xfa);
+    const match = whole.match(/<xfa:datasets[\s\S]*?<\/xfa:datasets\s*>/);
+    if (match) datasetsXml = match[0];
+  }
+  if (!datasetsXml) return null;
+  const text = xfaDatasetsToText(datasetsXml);
+  return text.trim() ? text : null;
+};
+
 export interface ExtractOptions {
   mime?: string;
   pdfExtract?: PdfExtract;
   docxExtract?: DocxExtract;
+  xfaExtract?: XfaExtract; // seam for the XFA form data-layer extractor (default defaultXfaExtract)
   // Seam for the zip-bomb pre-check (default sumZipUncompressedSize) — injectable so the guard's
   // branch logic is tested without crafting a real bomb.
   docxSize?: (bytes: Uint8Array) => number | null;
@@ -129,13 +231,42 @@ export async function extractFileText(
 
   let raw: string;
   if (kind === "pdf") {
+    // First the page text layer (pdf-parse). For a normal PDF this is the content; for an XFA form it
+    // is only Adobe's "please wait…" placeholder, and a scanned PDF yields nothing.
+    let pageText = "";
+    let parseError: string | null = null;
     try {
-      raw = await (opts.pdfExtract ?? defaultPdfExtract)(bytes);
+      pageText = await (opts.pdfExtract ?? defaultPdfExtract)(bytes);
     } catch (err) {
-      return { ok: false, reason: "pdf_parse_failed", detail: err instanceof Error ? err.message : String(err) };
+      parseError = err instanceof Error ? err.message : String(err);
     }
-    if (!raw.trim()) {
-      return { ok: false, reason: "pdf_no_text", detail: "no extractable text layer (likely a scanned PDF)" };
+    const isFallback = looksLikeAdobeXfaFallback(pageText);
+
+    if (pageText.trim() && !isFallback) {
+      raw = pageText; // real page content
+    } else {
+      // Adobe XFA placeholder, empty, or a parse failure → try the XFA data layer (a filled SF-424 /
+      // agency form). tryXfa never throws; a pdf-lib error becomes null.
+      let xfaText: string | null = null;
+      try {
+        xfaText = await (opts.xfaExtract ?? defaultXfaExtract)(bytes);
+      } catch {
+        xfaText = null;
+      }
+      if (xfaText && xfaText.trim()) {
+        raw = xfaText;
+      } else if (isFallback) {
+        // An XFA form we could not read — NEVER return Adobe's placeholder as if it were the document.
+        return {
+          ok: false,
+          reason: "pdf_form_unreadable",
+          detail: "XFA/LiveCycle form: the page layer is Adobe's placeholder and the data layer could not be extracted",
+        };
+      } else if (parseError !== null) {
+        return { ok: false, reason: "pdf_parse_failed", detail: parseError };
+      } else {
+        return { ok: false, reason: "pdf_no_text", detail: "no extractable text layer (likely a scanned PDF)" };
+      }
     }
   } else {
     // Zip-bomb guard: bound the DECLARED uncompressed size before mammoth decompresses the archive

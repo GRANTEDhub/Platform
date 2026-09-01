@@ -1,6 +1,19 @@
 import { describe, it, expect } from "vitest";
-import { extractFileText, sumZipUncompressedSize, type PdfExtract, type DocxExtract } from "./extract-file";
+import { existsSync, readFileSync } from "node:fs";
+import {
+  extractFileText,
+  sumZipUncompressedSize,
+  looksLikeAdobeXfaFallback,
+  xfaDatasetsToText,
+  type PdfExtract,
+  type DocxExtract,
+  type XfaExtract,
+} from "./extract-file";
 import { attachKindFor, isTextAttachable } from "./label";
+
+const ADOBE_FALLBACK =
+  "Please wait... \n\nIf this message is not eventually replaced by the proper contents of the document, your PDF viewer may not be able to display this type of document.";
+const xfa = (text: string | null): XfaExtract => async () => text;
 
 // Deterministic — the real pdf-parse / mammoth are injected as seams, so the branch, typed-reason,
 // cap, and truncation logic is proven without shipping a binary fixture (the same pattern fetch.ts
@@ -49,18 +62,74 @@ describe("extractFileText — PDF", () => {
   });
 
   it("a PDF with no text layer (scanned) is a typed pdf_no_text — never a guess", async () => {
-    const r = await extractFileText(bytes(), "scan.pdf", { pdfExtract: pdf("   ") });
+    const r = await extractFileText(bytes(), "scan.pdf", { pdfExtract: pdf("   "), xfaExtract: xfa(null) });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe("pdf_no_text");
   });
 
-  it("a PDF the parser can't read is a typed pdf_parse_failed with the error detail", async () => {
-    const r = await extractFileText(bytes(), "broken.pdf", { pdfExtract: boom() });
+  it("a PDF the parser can't read (and no XFA) is a typed pdf_parse_failed with the error detail", async () => {
+    const r = await extractFileText(bytes(), "broken.pdf", { pdfExtract: boom(), xfaExtract: xfa(null) });
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.reason).toBe("pdf_parse_failed");
       expect(r.detail).toContain("kaboom");
     }
+  });
+});
+
+describe("looksLikeAdobeXfaFallback — the XFA render placeholder", () => {
+  it("detects Adobe's 'please wait' boilerplate, not real content", () => {
+    expect(looksLikeAdobeXfaFallback(ADOBE_FALLBACK)).toBe(true);
+    expect(looksLikeAdobeXfaFallback("The applicant, Ozark Regional Transit, requests $1M.")).toBe(false);
+    expect(looksLikeAdobeXfaFallback("")).toBe(false);
+  });
+});
+
+describe("xfaDatasetsToText — leaf-flatten the XFA datasets packet", () => {
+  it("emits each leaf's text (values AND lbl_hidden captions), skips empties, decodes entities", () => {
+    const datasets = `<xfa:datasets xmlns:xfa="x"><xfa:data><form1>
+      <txt_orgLegalName>Acme Transit</txt_orgLegalName>
+      <lbl_hidden_txt_orgLegalName>Organization Legal Name</lbl_hidden_txt_orgLegalName>
+      <cFocus/>
+      <sfSpacer xfa:dataNode="dataGroup"/>
+      <amount>1,000 &amp; up</amount>
+    </form1></xfa:data></xfa:datasets>`;
+    expect(xfaDatasetsToText(datasets)).toBe("Acme Transit\nOrganization Legal Name\n1,000 & up");
+  });
+
+  it("returns empty string when there are no leaf values", () => {
+    expect(xfaDatasetsToText(`<xfa:data><a xfa:dataNode="dataGroup"/><b/></xfa:data>`)).toBe("");
+  });
+});
+
+describe("extractFileText — XFA form flow (Adobe fallback → data layer, never a guessed body)", () => {
+  it("normal PDF (real page text, not the placeholder) is returned; XFA is NOT consulted", async () => {
+    let xfaCalled = false;
+    const r = await extractFileText(bytes(), "normal.pdf", {
+      pdfExtract: pdf("The applicant requests $1M for buses."),
+      xfaExtract: async () => { xfaCalled = true; return "should not be used"; },
+    });
+    expect(r).toMatchObject({ ok: true, text: "The applicant requests $1M for buses.", kind: "pdf" });
+    expect(xfaCalled).toBe(false);
+  });
+
+  it("Adobe placeholder + a real XFA data layer → returns the XFA text", async () => {
+    const r = await extractFileText(bytes(), "form.pdf", {
+      pdfExtract: pdf(ADOBE_FALLBACK),
+      xfaExtract: xfa("Organization Legal Name\nAcme Transit"),
+    });
+    expect(r).toMatchObject({ ok: true, kind: "pdf", text: "Organization Legal Name\nAcme Transit" });
+  });
+
+  it("Adobe placeholder + NO usable XFA → typed pdf_form_unreadable, NEVER the placeholder text", async () => {
+    const r = await extractFileText(bytes(), "form.pdf", { pdfExtract: pdf(ADOBE_FALLBACK), xfaExtract: xfa(null) });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("pdf_form_unreadable");
+  });
+
+  it("pdf-parse threw but the XFA data layer is readable → recovers with the XFA text", async () => {
+    const r = await extractFileText(bytes(), "form.pdf", { pdfExtract: boom(), xfaExtract: xfa("Recovered form text") });
+    expect(r).toMatchObject({ ok: true, kind: "pdf", text: "Recovered form text" });
   });
 });
 
@@ -167,6 +236,24 @@ describe("extractFileText — truncation uses the shared cap", () => {
     if (r.ok) {
       expect(r.text).toBe("01234");
       expect(r.truncated).toBe(true);
+    }
+  });
+});
+
+// End-to-end proof against a REAL XFA form PDF (a filled FTA SF-424-family supplemental form), using
+// the DEFAULT pdf-parse + pdf-lib path — no seams. Guarded by existsSync so it runs locally against
+// the sample and SKIPS in CI (the file is not committed — it carries client data). This is the real
+// path Shannon hit: pdf-parse returns Adobe's placeholder, and the XFA datasets layer is extracted.
+const REAL_XFA_SAMPLE =
+  "/root/.claude/uploads/53c9e874-77f4-5818-906a-30fb2ff5eabe/a136083d-FY26LowNoBUSFACSupplementalForm.pdf";
+describe("extractFileText — real XFA form (local-only, skipped in CI)", () => {
+  it.skipIf(!existsSync(REAL_XFA_SAMPLE))("extracts the data layer, not Adobe's placeholder", async () => {
+    const r = await extractFileText(new Uint8Array(readFileSync(REAL_XFA_SAMPLE)), "form.pdf", { mime: "application/pdf" });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.kind).toBe("pdf");
+      expect(r.text.length).toBeGreaterThan(1000);
+      expect(looksLikeAdobeXfaFallback(r.text)).toBe(false);
     }
   });
 });

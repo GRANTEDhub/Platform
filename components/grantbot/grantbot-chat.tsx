@@ -226,6 +226,8 @@ export function GrantBotChat({
     switch (reason) {
       case "pdf_no_text":
         return "That PDF has no selectable text — it looks scanned. Paste the text in, or attach a text export.";
+      case "pdf_form_unreadable":
+        return "That looks like a fillable form (XFA/LiveCycle) whose data couldn't be read. Paste the text in instead.";
       case "docx_no_text":
         return "That Word document had no readable text. Paste the text in instead.";
       case "docx_too_large":
