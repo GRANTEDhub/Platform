@@ -42,21 +42,34 @@ interface StashedDraft {
   // The vision image rides the stash too, so expanding the corner (which unmounts this component and
   // remounts the full page) doesn't silently drop an attached screenshot — the same unsent-work the
   // stash exists to preserve. It carries a few MB of base64, so the write can hit the sessionStorage
-  // quota; the try/catch in stashDraft already degrades to "draft not stashed", the same best-effort
-  // contract as every other field (never a thrown error, never a broken panel).
+  // quota; stashDraft retries WITHOUT the image on overflow (below) so the cheap fields still survive.
   attachedImage: { previewUrl: string; data: string; mediaType: ImageMime; name: string } | null;
 }
 
 function stashDraft(clientId: string, d: StashedDraft) {
   if (typeof window === "undefined") return;
-  try {
-    if (!d.draft && !d.pasted && !d.pasteLabel && !d.attachedFile && !d.attachedImage) {
+  if (!d.draft && !d.pasted && !d.pasteLabel && !d.attachedFile && !d.attachedImage) {
+    try {
       window.sessionStorage.removeItem(draftKey(clientId));
-      return;
+    } catch {
+      // Private mode. Nothing to remove is harmless.
     }
+    return;
+  }
+  try {
     window.sessionStorage.setItem(draftKey(clientId), JSON.stringify(d));
   } catch {
-    // Private mode / quota. Losing a draft is the status quo, not a reason to break the panel.
+    // The image (base64, up to ~4 MB) can overflow the ~5 MB per-origin quota. Rather than lose the
+    // WHOLE composer (the cheap, important text draft + pasted email + file chip) to the image, retry
+    // WITHOUT the image so those survive the surface switch — only the image is dropped. A second
+    // failure (private mode, or the text alone over quota) is the pre-existing "draft not stashed".
+    try {
+      if (d.attachedImage) {
+        window.sessionStorage.setItem(draftKey(clientId), JSON.stringify({ ...d, attachedImage: null }));
+      }
+    } catch {
+      // Losing the draft is the status quo, not a reason to break the panel.
+    }
   }
 }
 
