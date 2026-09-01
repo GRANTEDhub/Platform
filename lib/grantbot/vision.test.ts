@@ -57,8 +57,8 @@ describe("validateTurnImage — the server backstop; never throws", () => {
     expect(validateTurnImage({ data: eight, mediaType: "image/png" }, 6)).toEqual({ data: eight, mediaType: "image/png" });
   });
 
-  it("the real cap is the shared attach cap (one source, no drift)", () => {
-    expect(MAX_IMAGE_BYTES).toBe(5 * 1024 * 1024);
+  it("the image cap sits below the file-attach cap so base64 fits the turn body", () => {
+    expect(MAX_IMAGE_BYTES).toBe(3 * 1024 * 1024); // ~4 MB base64, under Vercel's ~4.5 MB body limit
     expect([...ALLOWED_IMAGE_MIME]).toEqual(["image/png", "image/jpeg"]);
   });
 });

@@ -39,12 +39,18 @@ interface StashedDraft {
   // The file-vs-paste discriminator has to ride the stash too, else a file attachment restores as a
   // manual paste on the other surface and dumps its raw body back into the panel (it's a chip, not text).
   attachedFile: { name: string; type: string } | null;
+  // The vision image rides the stash too, so expanding the corner (which unmounts this component and
+  // remounts the full page) doesn't silently drop an attached screenshot — the same unsent-work the
+  // stash exists to preserve. It carries a few MB of base64, so the write can hit the sessionStorage
+  // quota; the try/catch in stashDraft already degrades to "draft not stashed", the same best-effort
+  // contract as every other field (never a thrown error, never a broken panel).
+  attachedImage: { previewUrl: string; data: string; mediaType: ImageMime; name: string } | null;
 }
 
 function stashDraft(clientId: string, d: StashedDraft) {
   if (typeof window === "undefined") return;
   try {
-    if (!d.draft && !d.pasted && !d.pasteLabel && !d.attachedFile) {
+    if (!d.draft && !d.pasted && !d.pasteLabel && !d.attachedFile && !d.attachedImage) {
       window.sessionStorage.removeItem(draftKey(clientId));
       return;
     }
@@ -64,6 +70,7 @@ function takeDraft(clientId: string): StashedDraft | null {
     window.sessionStorage.removeItem(draftKey(clientId));
     const parsed = JSON.parse(raw) as Partial<StashedDraft>;
     const af = parsed.attachedFile;
+    const ai = parsed.attachedImage;
     return {
       draft: typeof parsed.draft === "string" ? parsed.draft : "",
       pasted: typeof parsed.pasted === "string" ? parsed.pasted : "",
@@ -71,6 +78,14 @@ function takeDraft(clientId: string): StashedDraft | null {
       attachedFile:
         af && typeof af.name === "string" && typeof af.type === "string"
           ? { name: af.name, type: af.type }
+          : null,
+      attachedImage:
+        ai &&
+        typeof ai.previewUrl === "string" &&
+        typeof ai.data === "string" &&
+        (ai.mediaType === "image/png" || ai.mediaType === "image/jpeg") &&
+        typeof ai.name === "string"
+          ? { previewUrl: ai.previewUrl, data: ai.data, mediaType: ai.mediaType, name: ai.name }
           : null,
     };
   } catch {
@@ -260,20 +275,24 @@ export function GrantBotChat({
   // Unlike a document it is NOT extracted to text and does NOT ride the paste channel — it goes to the
   // turn route as a base64 image block and is never stored. Reads the blob as a data: URL (async, so it
   // sets `attaching` + uses the isCurrent token guard exactly like the doc/text paths) and keeps the raw
-  // base64 for the wire plus the whole data URL for the thumbnail. Same 5 MB cap and typed refusal —
-  // never a silent bad attach.
+  // base64 for the wire plus the whole data URL for the thumbnail. 3 MB cap (base64 fits the turn body)
+  // and typed refusal — never a silent bad attach.
   const attachImageFile = useCallback((file: File) => {
     setError(null);
-    const token = (attachTokenRef.current += 1);
-    const isCurrent = () => attachTokenRef.current === token;
+    // Validate BEFORE bumping the token / taking the busy flag: a rejected paste must NOT supersede an
+    // in-flight doc extraction (whose finally would then see a stale token and refuse to clear
+    // `attaching`, soft-locking the composer). An invalid image just errors and leaves any live op alone.
     if (!isAttachableImage(file.type)) {
       setError("That image type isn't supported — attach a PNG or JPEG, or describe what it shows.");
       return;
     }
     if (file.size > MAX_IMAGE_BYTES) {
-      setError("That image is too large to attach (limit 5 MB). Try a smaller crop, or describe what it shows.");
+      setError("That image is too large to attach (limit 3 MB). Try a smaller crop, or describe what it shows.");
       return;
     }
+    // Now supersede any in-flight op and take the busy flag — the image is going to attach.
+    const token = (attachTokenRef.current += 1);
+    const isCurrent = () => attachTokenRef.current === token;
     const mediaType = file.type as ImageMime;
     setAttaching(true);
     const reader = new FileReader();
@@ -473,6 +492,7 @@ export function GrantBotChat({
     setPasted(stashed.pasted);
     setPasteLabel(stashed.pasteLabel);
     setAttachedFile(stashed.attachedFile);
+    setAttachedImage(stashed.attachedImage);
     // A file restores as its chip (attachedFile); only a MANUAL paste reopens the editable panel.
     if (!stashed.attachedFile && (stashed.pasted || stashed.pasteLabel)) setShowPaste(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -481,8 +501,8 @@ export function GrantBotChat({
   // Mirror the composer into sessionStorage so a route change cannot swallow it. Cheap enough
   // to do on every keystroke, and it self-clears when the fields go empty.
   useEffect(() => {
-    stashDraft(clientId, { draft, pasted, pasteLabel, attachedFile });
-  }, [clientId, draft, pasted, pasteLabel, attachedFile]);
+    stashDraft(clientId, { draft, pasted, pasteLabel, attachedFile, attachedImage });
+  }, [clientId, draft, pasted, pasteLabel, attachedFile, attachedImage]);
 
   // ONE fetch of the context route, both callers. They differ only in what they do with the
   // result, so the query-param spelling and the error shape live here rather than in two
