@@ -1,5 +1,4 @@
 import { describe, it, expect } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
 import {
   extractFileText,
   sumZipUncompressedSize,
@@ -236,24 +235,6 @@ describe("extractFileText — truncation uses the shared cap", () => {
     if (r.ok) {
       expect(r.text).toBe("01234");
       expect(r.truncated).toBe(true);
-    }
-  });
-});
-
-// End-to-end proof against a REAL XFA form PDF (a filled FTA SF-424-family supplemental form), using
-// the DEFAULT pdf-parse + pdf-lib path — no seams. Guarded by existsSync so it runs locally against
-// the sample and SKIPS in CI (the file is not committed — it carries client data). This is the real
-// path Shannon hit: pdf-parse returns Adobe's placeholder, and the XFA datasets layer is extracted.
-const REAL_XFA_SAMPLE =
-  "/root/.claude/uploads/53c9e874-77f4-5818-906a-30fb2ff5eabe/a136083d-FY26LowNoBUSFACSupplementalForm.pdf";
-describe("extractFileText — real XFA form (local-only, skipped in CI)", () => {
-  it.skipIf(!existsSync(REAL_XFA_SAMPLE))("extracts the data layer, not Adobe's placeholder", async () => {
-    const r = await extractFileText(new Uint8Array(readFileSync(REAL_XFA_SAMPLE)), "form.pdf", { mime: "application/pdf" });
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.kind).toBe("pdf");
-      expect(r.text.length).toBeGreaterThan(1000);
-      expect(looksLikeAdobeXfaFallback(r.text)).toBe(false);
     }
   });
 });

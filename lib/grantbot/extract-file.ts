@@ -259,9 +259,13 @@ export async function extractFileText(
 
     if (pageText.trim() && !isFallback) {
       raw = pageText; // real page content
-    } else {
-      // Adobe XFA placeholder, empty, or a parse failure → try the XFA data layer (a filled SF-424 /
-      // agency form). tryXfa never throws; a pdf-lib error becomes null.
+    } else if (isFallback || parseError !== null) {
+      // Only NOW consult the XFA data layer — either the page layer is Adobe's "please wait…"
+      // placeholder (a filled SF-424 / agency form whose real content lives in the AcroForm /XFA
+      // datasets packet) or pdf-parse threw and pdf-lib might still recover the form. This is the ONLY
+      // path that runs pdf-lib; a blank, non-fallback page (a scanned PDF with no text and no XFA
+      // signal) skips it below, so pdf-lib never runs a second full parse on a PDF with nothing to
+      // recover. tryXfa never throws; a pdf-lib error becomes null.
       let xfaText: string | null = null;
       try {
         xfaText = await (opts.xfaExtract ?? defaultXfaExtract)(bytes);
@@ -277,11 +281,14 @@ export async function extractFileText(
           reason: "pdf_form_unreadable",
           detail: "XFA/LiveCycle form: the page layer is Adobe's placeholder and the data layer could not be extracted",
         };
-      } else if (parseError !== null) {
-        return { ok: false, reason: "pdf_parse_failed", detail: parseError };
       } else {
-        return { ok: false, reason: "pdf_no_text", detail: "no extractable text layer (likely a scanned PDF)" };
+        // parseError !== null (isFallback is false here) — pdf-parse threw and XFA didn't recover it.
+        return { ok: false, reason: "pdf_parse_failed", detail: parseError ?? "PDF parse failed" };
       }
+    } else {
+      // Blank, non-fallback page text and no parse error → a scanned PDF with no text layer and no XFA
+      // signal. pdf-lib is never consulted; there is nothing to recover.
+      return { ok: false, reason: "pdf_no_text", detail: "no extractable text layer (likely a scanned PDF)" };
     }
   } else {
     // Zip-bomb guard: bound the DECLARED uncompressed size before mammoth decompresses the archive
