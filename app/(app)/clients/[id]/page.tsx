@@ -4,6 +4,7 @@ import { format, parseISO } from "date-fns";
 import { Clock, Layers, Loader2, Mail, MessageSquareText, Plug, Play, type LucideIcon } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { GrantBotLauncher } from "@/components/grantbot/grantbot-launcher";
+import { grantbotVisionEnabled } from "@/lib/grantbot/vision";
 import { BLANK_CONVERSATION } from "@/lib/grantbot/wire";
 import { createClient } from "@/lib/supabase/server";
 import { AutoRefresh } from "@/components/ui/auto-refresh";
@@ -820,6 +821,7 @@ export default async function ClientDashboardPage({
       startOpen={grantbotParam !== undefined}
       startConversationId={grantbotConversationId}
       startBlank={grantbotBlank}
+      visionEnabled={grantbotVisionEnabled()}
     />
     </>
   );

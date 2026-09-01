@@ -75,3 +75,24 @@ export function isTextAttachable(fileName: string, mime?: string): boolean {
   return typeof mime === "string" && mime.startsWith("text/");
 }
 
+// ── PER-TURN IMAGE (vision) bounds, in the same client-safe place so the composer (grantbot-chat.tsx)
+// and the server (vision.ts) enforce the SAME limits and cannot drift. An image is NOT extracted to
+// text; it rides the turn as a base64 image content block the vision model reads directly, per turn,
+// never stored. The byte cap mirrors the attach cap (MAX_ATTACH_BYTES) as a memory guard on the raw
+// file before it is base64-encoded into the request.
+export const MAX_IMAGE_BYTES = MAX_ATTACH_BYTES;
+
+// A WHITELIST of image media types Claude vision accepts that we allow — PNG and JPEG cover every
+// screenshot / snip / phone photo staff attach. Kept narrow on purpose: GIF/WebP are declined with a
+// typed banner rather than sent and rejected by the API (the "never a guess" contract, on the image
+// side). Extension is only a picker hint, so the MIME leads here.
+export const ALLOWED_IMAGE_MIME = ["image/png", "image/jpeg"] as const;
+export type ImageMime = (typeof ALLOWED_IMAGE_MIME)[number];
+
+// Is this a paste/upload the composer should treat as a vision image (vs. route to text/doc extraction)?
+// MIME only — an image on the clipboard has no filename, and a picked file's type is authoritative for
+// png/jpeg. A .jpg with a wrong/blank MIME falls through to the doc/text paths, which refuse it typed.
+export function isAttachableImage(mime?: string): mime is ImageMime {
+  return typeof mime === "string" && (ALLOWED_IMAGE_MIME as readonly string[]).includes(mime);
+}
+

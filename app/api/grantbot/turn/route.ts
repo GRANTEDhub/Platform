@@ -3,6 +3,7 @@ import { getProfile } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import { conversationTitle, createConversation, getConversation } from "@/lib/grantbot/store";
 import { runTurn } from "@/lib/grantbot/turn";
+import { validateTurnImage } from "@/lib/grantbot/vision";
 
 // One GrantBot turn. STAFF ONLY, read-only, one client per conversation.
 //
@@ -26,7 +27,7 @@ export async function POST(req: NextRequest) {
   const profile = await getProfile();
   if (!profile) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
-  let body: { clientId?: unknown; conversationId?: unknown; message?: unknown; pasted?: unknown };
+  let body: { clientId?: unknown; conversationId?: unknown; message?: unknown; pasted?: unknown; image?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -47,6 +48,11 @@ export async function POST(req: NextRequest) {
           describedAs: typeof pastedRaw.describedAs === "string" ? pastedRaw.describedAs : undefined,
         }
       : null;
+
+  // One optional per-turn image (vision). validateTurnImage never throws — a malformed / oversized /
+  // disallowed-type payload becomes null and the turn proceeds text-only. runTurn additionally drops it
+  // unless GRANTBOT_VISION_ENABLED is on, so an image sent while the flag is off has no effect.
+  const image = validateTurnImage(body.image);
 
   const db = createServiceClient();
 
@@ -80,6 +86,7 @@ export async function POST(req: NextRequest) {
     conversationId,
     message,
     pasted,
+    image,
     actorEmail: profile.email ?? "unknown",
     actorRole: profile.role === "admin" ? "admin" : "contractor",
     // turnBlocks intentionally omitted -- see the header. Nothing produces them yet, and when
