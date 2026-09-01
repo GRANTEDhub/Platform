@@ -110,7 +110,7 @@ export async function applyClosedSweep(
   let archived = 0;
   for (const g of groups) {
     if (g.ids.length === 0) continue;
-    const { error } = await db
+    const { data, error } = await db
       .from("review_cards")
       .update({
         decision: "passed",
@@ -121,9 +121,16 @@ export async function applyClosedSweep(
         decided_by_actor: "staff",
         decided_at: decidedAt,
       })
-      .in("id", g.ids);
+      // OPTIMISTIC-CONCURRENCY GUARD: the write re-asserts `decision = 'pending'` in its own WHERE, so
+      // a staff or client decision made between the eligibility read and this write (the hourly
+      // all-client cron makes that race real with no human in the loop) is PRESERVED, never clobbered
+      // with 'passed'. `archived` counts the rows ACTUALLY updated (the returning select), not the ids
+      // we asked for — a card decided out from under us is silently skipped, not miscounted.
+      .eq("decision", "pending")
+      .in("id", g.ids)
+      .select("id");
     if (error) throw new Error(error.message);
-    archived += g.ids.length;
+    archived += Array.isArray(data) ? data.length : 0;
   }
   return archived;
 }
@@ -135,6 +142,34 @@ export interface SweepResult {
   archived: number; // 0 on a dry run; capped by `limit` on an apply
   remaining: number; // eligible not archived this run (a cap will catch them next run)
   sample: EligibleCard[]; // a bounded, most-overdue-first preview for the dry-run "look"
+}
+
+// Default page size for the pending-card scan. PostgREST caps rows per request (Supabase's default
+// max-rows), so an unpaginated SELECT would silently return only the first page — and since the
+// deadline is free-text (JS-parsed, not SQL-filterable) and future/undated pending cards stay pending
+// forever, those could fill page one while closed cards beyond it are never discovered. We page to
+// completeness instead.
+const PENDING_PAGE = 1000;
+
+// Read EVERY pending non-prospect card (+ its grant deadline), paged to completeness. Ordered by a
+// stable key (id) so the ranges don't skip/duplicate across pages. The deadline can't be filtered in
+// SQL (free text), so eligibility is derived in JS by the caller from the full set.
+async function fetchPendingCards(db: DB, pageSize: number): Promise<SweepCardRow[]> {
+  const all: SweepCardRow[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await db
+      .from("review_cards")
+      .select("id, client_id, decision, sme_released_at, card_type, grants(title, submission_deadline)")
+      .eq("decision", "pending")
+      .neq("card_type", "prospect")
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(error.message);
+    const page = (data ?? []) as unknown as SweepCardRow[];
+    all.push(...page);
+    if (page.length < pageSize) break; // a short page is the last page
+  }
+  return all;
 }
 
 // The all-clients driver. Reads every pending non-prospect card + its grant deadline, derives the
@@ -153,16 +188,10 @@ export async function runClosedSweep(
     decidedBy?: string | null;
     now?: () => number;
     sampleSize?: number;
+    pageSize?: number; // scan page size (default PENDING_PAGE); overridable so a test can prove paging
   },
 ): Promise<SweepResult> {
-  const { data, error } = await db
-    .from("review_cards")
-    .select("id, client_id, decision, sme_released_at, card_type, grants(title, submission_deadline)")
-    .eq("decision", "pending")
-    .neq("card_type", "prospect");
-  if (error) throw new Error(error.message);
-
-  const rows = (data ?? []) as unknown as SweepCardRow[];
+  const rows = await fetchPendingCards(db, opts.pageSize ?? PENDING_PAGE);
   const eligible = closedSweepEligible(rows, { includeReleased: opts.includeReleased });
   const released = eligible.filter((c) => c.released).length;
   const byReason = {

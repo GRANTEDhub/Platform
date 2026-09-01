@@ -44,23 +44,35 @@ class Query {
   private op: "select" | "update" | "insert" = "select";
   private patch: Row = {};
   private inserts: Row[] = [];
+  private selectAfterWrite = false;
+  private orderBy: { col: string; asc: boolean } | null = null;
+  private rangeFromTo: { from: number; to: number } | null = null;
   constructor(private store: Store, private table: string) {}
   private get rows(): Row[] {
     return this.store.tables[this.table] ?? (this.store.tables[this.table] = []);
   }
-  select(_cols?: string) { return this; }
+  // `.select()` after an `.update()` is a RETURNING clause — the update resolves to the rows written.
+  select(_cols?: string) { if (this.op === "update") this.selectAfterWrite = true; return this; }
   eq(col: string, val: unknown) { this.filters.push((r) => r[col] === val); return this; }
   neq(col: string, val: unknown) { this.filters.push((r) => r[col] !== val); return this; }
   in(col: string, arr: unknown[]) { this.filters.push((r) => arr.includes(r[col])); return this; }
+  order(col: string, o?: { ascending?: boolean }) { this.orderBy = { col, asc: o?.ascending !== false }; return this; }
+  range(from: number, to: number) { this.rangeFromTo = { from, to }; return this; }
   update(patch: Row) { this.op = "update"; this.patch = patch; return this; }
   insert(rows: Row | Row[]) { this.op = "insert"; this.inserts = Array.isArray(rows) ? rows : [rows]; return this; }
   private exec(): Promise<{ data: unknown; error: { message: string } | null }> {
-    const matched = this.rows.filter((r) => this.filters.every((f) => f(r)));
-    if (this.op === "select") return Promise.resolve({ data: matched.map((r) => ({ ...r })), error: null });
+    let matched = this.rows.filter((r) => this.filters.every((f) => f(r)));
+    if (this.op === "select") {
+      if (this.orderBy) { const { col, asc } = this.orderBy; matched = [...matched].sort((a, b) => (String(a[col]) < String(b[col]) ? -1 : 1) * (asc ? 1 : -1)); }
+      if (this.rangeFromTo) matched = matched.slice(this.rangeFromTo.from, this.rangeFromTo.to + 1);
+      return Promise.resolve({ data: matched.map((r) => ({ ...r })), error: null });
+    }
     if (this.op === "update") {
+      // The update's own WHERE (eq/in filters) decides which rows it touches — a card the guard
+      // (decision='pending') no longer matches is skipped, exactly as PostgREST would.
       this.store.updateCalls.push({ table: this.table, patch: this.patch, count: matched.length });
       for (const r of matched) Object.assign(r, this.patch);
-      return Promise.resolve({ data: null, error: null });
+      return Promise.resolve({ data: this.selectAfterWrite ? matched.map((r) => ({ ...r })) : null, error: null });
     }
     for (const r of this.inserts) this.rows.push({ ...r });
     return Promise.resolve({ data: null, error: null });
@@ -189,6 +201,27 @@ describe("applyClosedSweep — two honest reasons, NO calibration", () => {
     await applyClosedSweep(asDb(s), [{ cardId: "u1", clientId: "c1", released: false, daysAgo: 4, grantTitle: "U" }], { decidedBy: null });
     expect(s.updateCalls).toHaveLength(1);
   });
+
+  it("optimistic-concurrency guard: a card decided between the read and the write is NOT clobbered", async () => {
+    const s = new Store();
+    // The eligibility read saw u1 pending; by write time a client/staffer decided it 'approved'.
+    s.tables.review_cards = [
+      { id: "u1", decision: "approved" },
+      { id: "u2", decision: "pending" },
+    ];
+    const archived = await applyClosedSweep(
+      asDb(s),
+      [
+        { cardId: "u1", clientId: "c1", released: false, daysAgo: 4, grantTitle: "U1" },
+        { cardId: "u2", clientId: "c1", released: false, daysAgo: 4, grantTitle: "U2" },
+      ],
+      { decidedBy: null },
+    );
+    // Only the still-pending u2 is archived; archived counts rows ACTUALLY updated, not ids asked for.
+    expect(archived).toBe(1);
+    expect(s.tables.review_cards.find((r) => r.id === "u1")!.decision).toBe("approved"); // preserved
+    expect(s.tables.review_cards.find((r) => r.id === "u2")!.decision).toBe("passed");
+  });
 });
 
 // ────────────────────────────── runClosedSweep (all-clients driver, fake DB) ──────────────────────────────
@@ -251,6 +284,16 @@ describe("runClosedSweep — dry-run vs apply, cap, split", () => {
     const res = await runClosedSweep(asDb(s), { includeReleased: false, apply: true, decidedBy: null });
     expect(res.archived).toBe(2); // stale + mid only
     expect(s.tables.review_cards.find((r) => r.id === "released")!.decision).toBe("pending");
+  });
+
+  it("pages the pending scan to completeness — a small page size still finds every closed card", async () => {
+    const s = new Store();
+    seed(s); // 5 pending non-prospect rows; 3 are closed
+    // pageSize 2 forces three pages (2 + 2 + 1); a single-page scan would miss the tail.
+    const res = await runClosedSweep(asDb(s), { includeReleased: true, apply: false, pageSize: 2 });
+    expect(res.scanned).toBe(4); // 5 seeded − the prospect row (excluded by the SQL neq)
+    expect(res.eligible).toBe(3);
+    expect(res.byReason).toEqual({ closedBeforeReview: 2, deadlinePassedAfterRelease: 1 });
   });
 });
 
