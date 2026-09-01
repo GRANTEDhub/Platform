@@ -612,8 +612,12 @@ function RationaleCard({
 // Intel paragraph (NO box). It states the verdict the prose above argued for, and ONLY the verdict + the
 // capacity — the reason lives in the prose directly above it, never restated here:
 //   SEND (clean, fit 3)        → "Send — as {capacity}." (client: "Pursue — as {capacity}.")
-//   SEND (conditional, fit 2)  → visibly distinct: the "conditional" qualifier in orange, so a 2 never
-//                                reads like a 3, plus the generic structure the condition takes.
+//   SEND (conditional, fit 2)  → the "conditional" qualifier in orange, so a 2 never reads like a 3 —
+//                                but REASON-AGNOSTIC: a fit-2 can be a partner-structure fit, a
+//                                generic-nexus adjacency demote (unconfirmed program history), or a
+//                                calibration demote, so the line NEVER names the condition (that would
+//                                fabricate a fix — e.g. "get an MOU" — for a card whose real caveat is
+//                                something else). The specific condition is in the prose above.
 //   PASS (fit 1, STAFF-ONLY)   → "Pass." A client never sees it; the reason is the bold blocking sentence.
 // Deterministic + client-safe (see lib/report/recommendation.ts): the verb is already side-chosen, and the
 // only free text is the card's own proposed role — nothing fabricated.
@@ -632,10 +636,7 @@ function RecommendationLine({ rec, spaced }: { rec: Recommendation; spaced: bool
               {" "}
               — conditional
             </strong>
-            {capacity ? <> · as {capacity}</> : null}
-            <span className="text-ink-subtle">
-              , once the right structure is in place (e.g. a co-applicant or an MOU).
-            </span>
+            {capacity ? <> · as {capacity}.</> : <>.</>}
           </>
         ) : (
           <>

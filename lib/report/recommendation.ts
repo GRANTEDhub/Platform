@@ -23,9 +23,12 @@
 //     sent anyway, and the client must never read "Pass". So on the client side a PASS yields NO
 //     recommendation at all (the same null-pattern toReportItem / qaVerdict already use for the two paths).
 //
-// The band mapping (Shannon, 2026-08-31): 1 → PASS, 2 → SEND (conditional — a real structure is
-// required: MOU / co-applicant / cost-share), 3 → SEND (clean). A 2 must read as visibly conditional,
-// distinct from a clean 3 — `conditional` drives that treatment in the component.
+// The band mapping (Shannon, 2026-08-31): 1 → PASS, 2 → SEND (conditional — worth pursuing but it
+// hinges on something the analysis names), 3 → SEND (clean). A 2 must read as visibly conditional,
+// distinct from a clean 3 — `conditional` drives that treatment in the component. The condition is
+// REASON-AGNOSTIC on the line: a fit-2 can be a partner-structure fit, a generic-nexus adjacency
+// demote (unconfirmed program history), or a calibration demote, so the line marks it conditional but
+// NEVER names the fix — the specific condition lives in the prose above it.
 
 export type RecommendationCall = "SEND" | "PASS";
 
@@ -40,8 +43,10 @@ export interface Recommendation {
   // The capacity to pursue in — verbatim from the card's proposed_role (already client-visible as the
   // role pill), so it introduces no new claim. Null when the card carries no proposed role.
   capacity: string | null;
-  // SEND only: true for a fit-2 (viable ONLY via the right structure — a genuine condition), false for a
-  // clean fit-3. Drives the visibly-distinct "conditional" treatment so a 2 never reads like a 3.
+  // SEND only: true for a fit-2 (worth pursuing but conditional on something the analysis names — a
+  // partner structure, unconfirmed history, or a calibration caveat), false for a clean fit-3. Drives
+  // the visibly-distinct "conditional" treatment so a 2 never reads like a 3; the line never names the
+  // condition (that would fabricate a fix), so this flag is reason-agnostic.
   conditional: boolean;
 }
 
@@ -61,7 +66,7 @@ export function buildRecommendation(
     return side === "client" ? null : { call: "PASS", verb: "Pass", capacity, conditional: false };
   }
 
-  // 2 → SEND but conditional on the partnering structure; 3 → clean SEND. Both are client-safe advice.
+  // 2 → SEND but conditional (the analysis names on what); 3 → clean SEND. Both are client-safe advice.
   const verb = side === "client" ? "Pursue" : "Send";
   return { call: "SEND", verb, capacity, conditional: fitScore === 2 };
 }
