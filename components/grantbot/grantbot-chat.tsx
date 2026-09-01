@@ -359,8 +359,18 @@ export function GrantBotChat({
     pasteRef.current = { pasted, pasteLabel };
   }, [pasted, pasteLabel]);
 
+  // Opening a thread (mount, expand, or a switch) must land the reader AT the latest turn with NO
+  // animation -- a smooth scroll from the top on open is the "animate-down" we don't want, and it
+  // fires again every time the corner panel re-opens. So the first paint of a transcript jumps
+  // instantly (behavior "auto"); only once the reader has actually SENT in this on-screen thread do
+  // new turns scroll smoothly to follow the conversation. didUserSend flips true on a send and resets
+  // to false on every thread switch / new conversation (loadThread / newConversation), so a switch
+  // opens instantly too. Keyed on a real send, NOT "have I scrolled once", so an async transcript
+  // (re)load after mount -- the corner's fetch-on-open, or the full page re-fetching its own thread --
+  // still lands instantly instead of animating.
+  const didUserSend = useRef(false);
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    endRef.current?.scrollIntoView({ behavior: didUserSend.current ? "smooth" : "auto", block: "end" });
   }, [messages, sending]);
 
   useEffect(() => {
@@ -434,6 +444,8 @@ export function GrantBotChat({
       // and clear the busy state so the destination thread starts clean.
       attachTokenRef.current += 1;
       setAttaching(false);
+      // A switch/open opens the destination AT its latest turn with no animation (see the scroll effect).
+      didUserSend.current = false;
       setLoading(true);
       setError(null);
       try {
@@ -532,6 +544,9 @@ export function GrantBotChat({
       instructionsVersion: null,
       methodologyVersion: null,
     };
+    // From here on this on-screen thread follows the conversation with a smooth scroll; before the
+    // first send it opened instantly at the bottom (see the scroll effect).
+    didUserSend.current = true;
     setMessages((m) => [...m, mine]);
     setDraft("");
 
@@ -600,6 +615,8 @@ export function GrantBotChat({
     // when the reader starts a new conversation belongs to neither.
     attachTokenRef.current += 1;
     setAttaching(false);
+    // Same as a thread switch: the blank transcript opens instantly, not with a scroll animation.
+    didUserSend.current = false;
     setConvId(null);
     setMessages([]);
     setError(null);
