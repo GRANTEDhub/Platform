@@ -202,6 +202,13 @@ export default async function PortalGrantDetail({
   const displayFit: 1 | 2 | 3 = hardKill?.kind === "ineligible" ? 1 : effFit;
   const verdictLead = verdictEnabled ? buildVerdict(displayFit, hardKill, org.clientName, "client") : null;
 
+  // A hard kill states the whole story in the lead; the fit prose beneath (the QA narrative or the engine's
+  // optimistic lead) would argue the opposite under a no-go, so suppress it when a hard kill fires — the lead
+  // stands alone. Same as the staff page, so both sides read the same. Flag OFF → hardKill null → identical.
+  // (On the client side a no-go lead is null anyway, so this mostly protects a would-be positive paragraph
+  // from rendering with no lead above it once the client sees a closed/ineligible card via never-hide.)
+  const rationaleForRender = hardKill ? { lead: null, blocking: null, mitigation: null, narrative: null } : rationale;
+
   const meta: ReviewMeta[] = [
     { label: "Award range", value: formatAwardRange(g.award_range_min, g.award_range_max) },
     {
@@ -285,7 +292,7 @@ export default async function PortalGrantDetail({
         allowableUses={allowableUsesClientVisible() ? readAllowableUses(g.allowable_uses) : null}
         meta={meta}
         eligibility={eligibility}
-        rationale={rationale}
+        rationale={rationaleForRender}
         factors={factors}
         // Spends a real scorer call — not the client's to spend.
         scoreFactors={null}

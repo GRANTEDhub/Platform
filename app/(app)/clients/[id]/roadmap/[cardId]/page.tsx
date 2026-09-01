@@ -251,6 +251,14 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   const displayFit: 1 | 2 | 3 = hardKill?.kind === "ineligible" ? 1 : effFit;
   const verdictLead = verdictEnabled ? buildVerdict(displayFit, hardKill, client?.name ?? "Client", "staff") : null;
 
+  // A deterministic hard kill states the WHOLE story in the lead (deadline passed / structurally ineligible)
+  // — a fact orthogonal to fit. Any fit prose beneath it (the QA narrative written for the original verdict,
+  // or the engine's optimistic why-this-org lead) would argue the opposite under a "No-go: <disqualifier>"
+  // lead, defeating the pin. So when a hard kill fires, suppress the body prose — the lead + the Send/Pass
+  // line stand alone. (The fit-factor BARS still render: fit is real, the disqualifier is a separate gate.)
+  // Flag OFF → hardKill null → rationaleForRender === rationale, byte-identical.
+  const rationaleForRender = hardKill ? { lead: null, blocking: null, mitigation: null, narrative: null } : rationale;
+
   const meta: ReviewMeta[] = [
     { label: "Award range", value: formatAwardRange(g.award_range_min, g.award_range_max) },
     {
@@ -358,7 +366,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         allowableUses={readAllowableUses(g.allowable_uses)}
         meta={meta}
         eligibility={eligibility}
-        rationale={rationale}
+        rationale={rationaleForRender}
         factors={factors}
         // Only ever rendered in the unscored branch. Offered to every staff reviewer
         // rather than admins only: the reviewer looking at the empty panel is the person

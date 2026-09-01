@@ -480,6 +480,23 @@ describe("apply-the-gate — buildQaPatch + cardCfdaApplyEligible (pure)", () =>
     expect(patch.qa_engine_fit_score).toBeNull();
   });
 
+  it("a HELD demote in the clearing branch carries NO narrative — indistinguishable from a card QA never touched", () => {
+    // The invariant: a refute-unclean (staff-flagged) demote must not surface ANYTHING — not just the score.
+    // Its narrative is the DISQUALIFYING no-go paragraph; carried under the un-demoted engine score + verdict
+    // lead it would contradict them. So a demote that reaches the clearing branch clears its narrative too.
+    const narrative = "This organization cannot apply as a standalone prime; the allocation reality rules it out.";
+    for (const refute of [false, null] as const) {
+      const patch = buildQaPatch(card, demoteReview({ refute_survived: refute, narrative }), "T", null, true);
+      expect(patch.qa_status).toBe("none"); // held, not applied
+      expect(patch.qa_narrative).toBeNull(); // the demote's no-go reasoning is suppressed, not carried
+      expect(patch.qa_engine_fit_score).toBeNull(); // no override to freshness-gate
+    }
+    // Contrast: an AFFIRM/FLAG in the clearing branch DOES carry its (go/marginal) reasoning.
+    const affirmPatch = buildQaPatch(card, demoteReview({ verdict: "flag", qa_fit_score: null, qa_factor_scores: null, narrative }), "T", null, true);
+    expect(affirmPatch.qa_narrative).toBe(narrative);
+    expect(affirmPatch.qa_engine_fit_score).toBe(3);
+  });
+
   it("requireRefuteClean=true: refute_survived NULL demote (refute couldn't complete) → staff-flag, not applied", () => {
     const patch = buildQaPatch(card, demoteReview({ refute_survived: null }), "T", null, true);
     expect(patch.qa_status).toBe("none");
