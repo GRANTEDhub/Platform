@@ -8,6 +8,7 @@ import { collapseDuplicatedBlock, previewHtml } from "@/lib/grants/description";
 import { splitTrailingParenthetical } from "@/lib/report/title";
 import type { FitFactorView, ReviewFactor } from "@/lib/report/fit-factors";
 import type { QaVerdictView } from "@/lib/report/qa-override";
+import type { Recommendation } from "@/lib/report/recommendation";
 import type { EligibilityVerdict } from "@/lib/intellengine/eligibility";
 import { ALLOWABLE_USES_FALLBACK, type AllowableUses } from "@/lib/grants/allowable-uses";
 
@@ -71,6 +72,7 @@ export function GrantReviewConsole({
   factors,
   scoreFactors,
   qaVerdict = null,
+  recommendation = null,
   fitScore,
   verdict,
   consequence,
@@ -133,6 +135,12 @@ export function GrantReviewConsole({
   // The PORTAL passes only `applied` verdicts (sources); the "couldn't verify" states are staff-passed, so
   // a client never sees QA's internal plumbing — the same "pages decide what to pass" pattern as the other slots.
   qaVerdict?: QaVerdictView | null;
+  // The Send/Pass recommendation — the closing CALL of the assessment, rendered as the final line of the
+  // IntellEngine Intel paragraph (NOT a box). DETERMINISTIC data (a projection of the coalesced score +
+  // proposed role), not a control, so it renders on both this staff screen and the portal. A PASS is
+  // staff-only — the PAGE passes null for it on the client side (`buildRecommendation(..., "client")`),
+  // the same "pages decide what to pass" gate as qaVerdict. Null when there is no call to state.
+  recommendation?: Recommendation | null;
   fitScore: 1 | 2 | 3;
   verdict: string;
   consequence: string | null;
@@ -200,6 +208,7 @@ export function GrantReviewConsole({
               scoreFactors={scoreFactors}
               footnote={scoreFootnote}
               qaVerdict={qaVerdict}
+              recommendation={recommendation}
             />
           </div>
 
@@ -485,18 +494,26 @@ function RationaleCard({
   scoreFactors,
   footnote,
   qaVerdict,
+  recommendation,
 }: {
   rationale: { lead: string | null; blocking: string | null; mitigation: string | null; narrative?: string | null };
   factors: FitFactorView;
   scoreFactors: React.ReactNode | null;
   footnote: string;
   qaVerdict: QaVerdictView | null;
+  recommendation: Recommendation | null;
 }) {
   // Step C: an applied-demote card carries a single client-safe narrative paragraph that IS the whole
   // rationale; when present it REPLACES the assembled lead/blocking/mitigation (never stacked). Else the
   // three engine-derived pieces render exactly as before.
   const narrative = rationale.narrative?.trim() || null;
   const hasProse = narrative || rationale.lead || rationale.blocking || rationale.mitigation;
+  // The recommendation closes the paragraph as its final line. It states the CALL only; the specific
+  // reason is the prose directly above it — the bold blocking sentence (which is authoritative for BOTH a
+  // factor-blocked and a calibration-driven pass), or the QA narrative. The line never derives its own
+  // reason, so it can't assert a cap the score doesn't actually rest on. Left column shows whenever there
+  // is prose OR a recommendation to state.
+  const showLeft = hasProse || recommendation;
   return (
     <section className={`flex min-h-0 flex-1 flex-col overflow-hidden ${CARD}`}>
       <div className="flex shrink-0 items-center gap-3 px-5 pb-3 pt-[14px]">
@@ -504,7 +521,7 @@ function RationaleCard({
         <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-brand-navy/[0.06]">
           <Puzzle className="h-4 w-4 text-brand-navy" aria-hidden="true" />
         </span>
-        <h2 className="font-serif text-[17px] font-bold text-brand-navy">Fit factors</h2>
+        <h2 className="font-serif text-[17px] font-bold text-brand-navy">IntellEngine Intel</h2>
         <span className="ml-auto rounded-full bg-brand-navy/[0.06] px-3 py-1 text-[11px] font-semibold text-brand-navy">
           Why this grant fits
         </span>
@@ -520,28 +537,37 @@ function RationaleCard({
           the table — the weak factor's orange bar standing out against the navy strong bars. Do
           not un-bold the sentence. */}
       <div className="flex min-h-0 flex-1 gap-5 overflow-y-auto px-5 pb-2">
-        {hasProse && (
-          <p className="min-w-0 flex-[1.3] text-[13px] leading-[1.65] text-ink-muted [text-wrap:pretty]">
-            {narrative ? (
-              // The QA client-safe narrative IS the rationale on an applied demote — one flowing paragraph,
-              // rendered in place of the three engine pieces. It leads with the score/role shift itself, so
-              // it needs no separate bold blocking sentence.
-              narrative
-            ) : (
-              <>
-                {rationale.lead && <>{rationale.lead} </>}
-                {/* The blocking sentence, in bold, in navy — the engine's own rationale string for
-                    the weakest factor, not a rewrite, so the page cannot assert a cap the score does
-                    not actually rest on. */}
-                {rationale.blocking && (
-                  <strong className="font-semibold text-brand-navy">{rationale.blocking} </strong>
+        {showLeft && (
+          <div className="min-w-0 flex-[1.3]">
+            {hasProse && (
+              <p className="text-[13px] leading-[1.65] text-ink-muted [text-wrap:pretty]">
+                {narrative ? (
+                  // The QA client-safe narrative IS the rationale on an applied demote — one flowing paragraph,
+                  // rendered in place of the three engine pieces. It leads with the score/role shift itself, so
+                  // it needs no separate bold blocking sentence.
+                  narrative
+                ) : (
+                  <>
+                    {rationale.lead && <>{rationale.lead} </>}
+                    {/* The blocking sentence, in bold, in navy — the engine's own rationale string for
+                        the weakest factor, not a rewrite, so the page cannot assert a cap the score does
+                        not actually rest on. */}
+                    {rationale.blocking && (
+                      <strong className="font-semibold text-brand-navy">{rationale.blocking} </strong>
+                    )}
+                    {rationale.mitigation}
+                  </>
                 )}
-                {rationale.mitigation}
-              </>
+              </p>
             )}
-          </p>
+            {/* The closing CALL — the final line of the paragraph, not a box. Deterministic from the
+                coalesced score (see lib/report/recommendation.ts); the prose above is the argument, this
+                is the verdict. A PASS is staff-only and never reaches here on the client side (the page
+                passes null). */}
+            {recommendation && <RecommendationLine rec={recommendation} spaced={!!hasProse} />}
+          </div>
         )}
-        {hasProse && <span aria-hidden="true" className="w-px shrink-0 self-stretch bg-brand-navy/[0.08]" />}
+        {showLeft && <span aria-hidden="true" className="w-px shrink-0 self-stretch bg-brand-navy/[0.08]" />}
 
         {/* The table is WIDER than the rationale — Design's mock puts the factor grid at
             1.65fr against the prose's 1.3fr, so the bars have room to read. */}
@@ -560,7 +586,7 @@ function RationaleCard({
             <>
               {/* Header aligned to the row columns below: name 0.65fr, score 1fr. */}
               <div className="mb-2 flex items-center">
-                <p className={`flex-[0.65] pl-2 ${EYEBROW} tracking-[0.12em]`}>Factor</p>
+                <p className={`flex-[0.65] pl-2 ${EYEBROW} tracking-[0.12em]`}>Fit Factors</p>
                 <p className={`flex-1 ${EYEBROW} tracking-[0.12em]`}>Score</p>
               </div>
               {factors.factors.map((f, i) => (
@@ -579,6 +605,51 @@ function RationaleCard({
           old layout so the redesign does not quietly drop it. */}
       <p className="shrink-0 border-t border-hairline-strong px-5 py-[9px] text-[11px] text-ink-subtle">{footnote}</p>
     </section>
+  );
+}
+
+// The recommendation line — the assessment's closing CALL, styled as the final line of the IntellEngine
+// Intel paragraph (NO box). It states the verdict the prose above argued for, and ONLY the verdict + the
+// capacity — the reason lives in the prose directly above it, never restated here:
+//   SEND (clean, fit 3)        → "Send — as {capacity}." (client: "Pursue — as {capacity}.")
+//   SEND (conditional, fit 2)  → the "conditional" qualifier in orange, so a 2 never reads like a 3 —
+//                                but REASON-AGNOSTIC: a fit-2 can be a partner-structure fit, a
+//                                generic-nexus adjacency demote (unconfirmed program history), or a
+//                                calibration demote, so the line NEVER names the condition (that would
+//                                fabricate a fix — e.g. "get an MOU" — for a card whose real caveat is
+//                                something else). The specific condition is in the prose above.
+//   PASS (fit 1, STAFF-ONLY)   → "Pass." A client never sees it; the reason is the bold blocking sentence.
+// Deterministic + client-safe (see lib/report/recommendation.ts): the verb is already side-chosen, and the
+// only free text is the card's own proposed role — nothing fabricated.
+function RecommendationLine({ rec, spaced }: { rec: Recommendation; spaced: boolean }) {
+  const capacity = rec.capacity?.trim() || null;
+  return (
+    <p className={`text-[13px] leading-[1.6] text-ink-muted [text-wrap:pretty] ${spaced ? "mt-2.5" : ""}`}>
+      <span aria-hidden="true" className="mr-1 font-semibold text-ink-subtle">
+        →
+      </span>
+      {rec.call === "SEND" ? (
+        rec.conditional ? (
+          <>
+            <strong className="font-bold text-brand-navy">{rec.verb}</strong>
+            <strong className="font-bold" style={{ color: BRAND.orangeDeep }}>
+              {" "}
+              — conditional
+            </strong>
+            {capacity ? <> · as {capacity}.</> : <>.</>}
+          </>
+        ) : (
+          <>
+            <strong className="font-bold text-brand-navy">{rec.verb}</strong>
+            {capacity ? <> — as {capacity}.</> : <>.</>}
+          </>
+        )
+      ) : (
+        <strong className="font-bold" style={{ color: BRAND.orangeDeep }}>
+          {rec.verb}.
+        </strong>
+      )}
+    </p>
   );
 }
 

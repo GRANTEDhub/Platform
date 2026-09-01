@@ -18,6 +18,7 @@ import { wasCalibrated } from "@/lib/grants/calibration";
 import { computeEligibility } from "@/lib/intellengine/eligibility";
 import { FIT_BAND, deadlineDaysLeft, isOverdue } from "@/lib/report/shape";
 import { resolveFit } from "@/lib/report/qa-override";
+import { buildRecommendation } from "@/lib/report/recommendation";
 import { MarkRead } from "@/components/report/mark-read";
 import { formatAwardRange, compactCostShare } from "@/lib/grants/format";
 import { isUnconvertedLead } from "@/lib/leads/stage";
@@ -345,6 +346,9 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         // the RAW analyst verdict is no longer shown on the card (the on-demand QA control now lives
         // in the IntellEngine box's re-run — see the `concept` slot below).
         qaVerdict={resolved.qa}
+        // The closing Send/Pass call — deterministic from the coalesced score + proposed role. Staff side,
+        // so a PASS is included; the portal passes "client" and gets SEND-or-null.
+        recommendation={buildRecommendation(effFit, card.proposed_role, "staff")}
         fitScore={effFit}
         verdict={FIT_BAND[effFit].label}
         // What the score MEANS for the next step, derived from the lit factor rather than

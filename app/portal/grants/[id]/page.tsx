@@ -14,6 +14,7 @@ import { wasCalibrated } from "@/lib/grants/calibration";
 import { computeEligibility } from "@/lib/intellengine/eligibility";
 import { FIT_BAND, deadlineDaysLeft, isOverdue } from "@/lib/report/shape";
 import { resolveFit } from "@/lib/report/qa-override";
+import { buildRecommendation } from "@/lib/report/recommendation";
 import { MarkRead } from "@/components/report/mark-read";
 import { formatAwardRange, compactCostShare } from "@/lib/grants/format";
 import { BRAND } from "@/lib/brand";
@@ -276,6 +277,9 @@ export default async function PortalGrantDetail({
         // client — the unverified/failed "couldn't verify" states are internal QA plumbing and stay
         // staff-side (the staff page passes them; here we pass null for them). Null today (no verdict).
         qaVerdict={resolved.qa?.status === "applied" ? resolved.qa : null}
+        // The closing recommendation — CLIENT side, so a SEND reads as "Pursue" (their action word) and a
+        // PASS yields null (a client never sees "Pass", even on a never-hide override that sent a low-fit card).
+        recommendation={buildRecommendation(effFit, card.proposed_role, "client")}
         fitScore={effFit}
         verdict={FIT_BAND[effFit].label}
         consequence={
