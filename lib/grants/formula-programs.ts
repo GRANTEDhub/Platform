@@ -41,7 +41,7 @@ export const FORMULA_PROGRAMS: Record<string, FormulaProgram> = {
   "16.738": {
     label: "Edward Byrne Memorial Justice Assistance Grant (JAG)",
     allocationNote:
-      "Distributed by the JAG allocation formula. The State Administering Agency, and any local jurisdiction that holds its OWN direct allocation on the table, ARE direct applicants; a disparate / 'asterisk' local jurisdiction with no direct allocation cannot prime and must apply jointly, through the county, or via the State Administering Agency.",
+      "Distributed by the JAG allocation formula. The State Administering Agency, and a local jurisdiction that is directly allocated and NOT marked disparate / 'asterisk' (it files on its own), ARE direct applicants; a disparate / 'asterisk' local jurisdiction must apply JOINTLY (through a single fiscal agent, the county, or the State Administering Agency) and cannot prime a standalone application — the asterisk / joint-application requirement is the disqualifier, not whether an allocation amount is shown for it (a disparate unit can still carry its own formula figure).",
   },
   // Crime Victim Assistance (VOCA). Formula grant to STATES; local victim-services organizations are
   // SUBGRANTEES through the state VOCA administering agency, not direct/prime applicants.
