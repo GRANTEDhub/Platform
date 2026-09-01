@@ -166,6 +166,7 @@ export function GrantBotChat({
   onConversationChange,
   onTurnComplete,
   visionEnabled = false,
+  openSignal,
 }: {
   clientId: string;
   clientName: string;
@@ -175,6 +176,12 @@ export function GrantBotChat({
   // Server-read GRANTBOT_VISION_ENABLED, threaded from the page/launcher. OFF (default) hides the
   // image attach/paste affordances entirely and no image is ever sent — the composer is today's.
   visionEnabled?: boolean;
+  // Corner only: a counter the launcher bumps each time the panel OPENS. The corner panel stays
+  // MOUNTED across close/reopen (so a draft survives), which means `messages`/`sending` don't change
+  // on reopen and the scroll effect below can't fire — the panel would stay wherever the reader
+  // scrolled. Bumping this on each open lets the chat snap back to the latest turn. Undefined on the
+  // full page (which remounts on navigation, so its mount scroll already covers it).
+  openSignal?: number;
   // Corner only: open ON a thread (returning from the full page collapses back to the one you
   // were in). Ignored when `initial` is supplied.
   initialConversationId?: string | null;
@@ -481,6 +488,15 @@ export function GrantBotChat({
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: didUserSend.current ? "smooth" : "auto", block: "end" });
   }, [messages, sending]);
+
+  // The corner panel reopened. It stays MOUNTED across close/reopen, so nothing above changes and the
+  // scroll effect can't fire — snap to the latest turn explicitly (instant), the same intent as a
+  // fresh open. Undefined on the full page, so this is inert there. The initial mount value fires once
+  // and is a harmless no-op (the transcript loads async and the effect above scrolls when it lands).
+  useEffect(() => {
+    if (openSignal === undefined) return;
+    endRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+  }, [openSignal]);
 
   useEffect(() => {
     onConversationChange?.(convId);

@@ -72,6 +72,9 @@ export function GrantBotLauncher({
   const [open, setOpen] = useState(startOpen);
   const [shown, setShown] = useState(false);
   const [convId, setConvId] = useState<string | null>(startConversationId);
+  // Bumped on every panel open. The chat stays MOUNTED across close/reopen (so drafts survive), so it
+  // needs this signal to snap back to the latest turn on reopen — see GrantBotChat's openSignal prop.
+  const [openSignal, setOpenSignal] = useState(0);
 
   // Separate from `open` so the panel transitions in rather than appearing: it has to be in the
   // tree at its start position for one frame before the end position can animate.
@@ -99,6 +102,7 @@ export function GrantBotLauncher({
   function openPanel() {
     setEverOpened(true);
     setOpen(true);
+    setOpenSignal((n) => n + 1); // tell the mounted chat to snap to the latest turn on this open
   }
 
   // Expand = the page that already exists, carrying the conversation. Not a second full-screen
@@ -221,6 +225,7 @@ export function GrantBotLauncher({
             initialBlank={startBlank}
             onConversationChange={onConversationChange}
             visionEnabled={visionEnabled}
+            openSignal={openSignal}
           />
         </div>
       )}
