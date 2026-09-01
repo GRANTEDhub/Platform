@@ -216,6 +216,10 @@ export function GrantBotChat({
   // A binary (PDF/.docx) attach round-trips to the server extractor, so the picker is busy while it
   // parses — the attach button shows a spinner and refuses a second pick until it resolves.
   const [attaching, setAttaching] = useState(false);
+  // The image slot is INDEPENDENT of the doc/text slot (they coexist), so it carries its OWN busy flag
+  // and token (below). Sharing them let a valid image paste supersede an in-flight doc extraction —
+  // dropping the document silently — and clear the busy flag while the doc was still parsing.
+  const [imageAttaching, setImageAttaching] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -274,14 +278,15 @@ export function GrantBotChat({
   // Attach ONE image (a screenshot, a snip, a map, a photo) for the vision model to read THIS turn.
   // Unlike a document it is NOT extracted to text and does NOT ride the paste channel — it goes to the
   // turn route as a base64 image block and is never stored. Reads the blob as a data: URL (async, so it
-  // sets `attaching` + uses the isCurrent token guard exactly like the doc/text paths) and keeps the raw
-  // base64 for the wire plus the whole data URL for the thumbnail. 3 MB cap (base64 fits the turn body)
-  // and typed refusal — never a silent bad attach.
+  // sets `imageAttaching` + uses the isCurrent token guard). It uses the IMAGE-SPECIFIC token/flag
+  // (imageTokenRef / imageAttaching), NOT the doc/text ones, so attaching an image never invalidates an
+  // in-flight document extraction (they are independent, coexisting slots). Keeps the raw base64 for the
+  // wire plus the whole data URL for the thumbnail. 3 MB cap (base64 fits the turn body) and typed
+  // refusal — never a silent bad attach.
   const attachImageFile = useCallback((file: File) => {
     setError(null);
-    // Validate BEFORE bumping the token / taking the busy flag: a rejected paste must NOT supersede an
-    // in-flight doc extraction (whose finally would then see a stale token and refuse to clear
-    // `attaching`, soft-locking the composer). An invalid image just errors and leaves any live op alone.
+    // Validate BEFORE bumping the token / taking the busy flag: a rejected paste must not touch the
+    // image slot's state at all. An invalid image just errors and leaves any live op alone.
     if (!isAttachableImage(file.type)) {
       setError("That image type isn't supported — attach a PNG or JPEG, or describe what it shows.");
       return;
@@ -290,15 +295,15 @@ export function GrantBotChat({
       setError("That image is too large to attach (limit 3 MB). Try a smaller crop, or describe what it shows.");
       return;
     }
-    // Now supersede any in-flight op and take the busy flag — the image is going to attach.
-    const token = (attachTokenRef.current += 1);
-    const isCurrent = () => attachTokenRef.current === token;
+    // Supersede any in-flight IMAGE read (not a doc extraction) and take the image busy flag.
+    const token = (imageTokenRef.current += 1);
+    const isCurrent = () => imageTokenRef.current === token;
     const mediaType = file.type as ImageMime;
-    setAttaching(true);
+    setImageAttaching(true);
     const reader = new FileReader();
     reader.onload = () => {
-      if (!isCurrent()) return; // superseded by a newer pick / cancel / thread switch — drop it
-      setAttaching(false);
+      if (!isCurrent()) return; // superseded by a newer image pick / cancel / thread switch — drop it
+      setImageAttaching(false);
       const url = typeof reader.result === "string" ? reader.result : "";
       // "data:image/png;base64,AAAA" → keep the whole URL for the <img> preview, split off the raw
       // base64 (after the comma) for the wire; the server requires base64 with no data: prefix.
@@ -312,7 +317,7 @@ export function GrantBotChat({
     };
     reader.onerror = () => {
       if (!isCurrent()) return;
-      setAttaching(false);
+      setImageAttaching(false);
       setError("Couldn't read that image. Try another, or describe what it shows.");
     };
     reader.readAsDataURL(file);
@@ -425,6 +430,10 @@ export function GrantBotChat({
   // flight) drops its result instead of clobbering the composer or landing the document in the wrong
   // thread. Without it, `attaching` guarding only the current pick is not enough.
   const attachTokenRef = useRef(0);
+  // The image slot's OWN stale-guard token, independent of attachTokenRef — so attaching/pasting an
+  // image never invalidates an in-flight doc/text extraction (and vice versa). Bumped on a new image
+  // pick/paste, on removeImage, and on a thread switch / new conversation.
+  const imageTokenRef = useRef(0);
 
   // The composer's attachment as it is RIGHT NOW, readable from an async handler.
   //
@@ -531,7 +540,9 @@ export function GrantBotChat({
       // A file extracting when the reader switches threads must not land in the new one; supersede it
       // and clear the busy state so the destination thread starts clean.
       attachTokenRef.current += 1;
+      imageTokenRef.current += 1;
       setAttaching(false);
+      setImageAttaching(false);
       setAttachedImage(null); // an image is per-turn; it does not carry across a thread switch
       // A switch/open opens the destination AT its latest turn with no animation (see the scroll effect).
       didUserSend.current = false;
@@ -598,7 +609,7 @@ export function GrantBotChat({
     // No-op while a file is still extracting (matching the Send button + Enter's disabled state): a
     // send here would snapshot the pre-extraction `pasted` and submit the question WITHOUT the
     // document, then the late finalizeAttachment would strand the result on a later turn.
-    if (!text || sending || attaching) return;
+    if (!text || sending || attaching || imageAttaching) return;
     setSending(true);
     setError(null);
     // The transcript this question belongs to. Every UI write below checks it first -- see the
@@ -712,7 +723,9 @@ export function GrantBotChat({
     // Likewise supersede an in-flight extraction and clear the busy state — a document being read
     // when the reader starts a new conversation belongs to neither.
     attachTokenRef.current += 1;
+    imageTokenRef.current += 1;
     setAttaching(false);
+    setImageAttaching(false);
     setAttachedImage(null);
     // Same as a thread switch: the blank transcript opens instantly, not with a scroll animation.
     didUserSend.current = false;
@@ -1050,12 +1063,12 @@ export function GrantBotChat({
     setShowPaste(false);
   };
 
-  // The image thumbnail's × button. Bumps the attach token so a still-in-flight image read cannot
-  // re-attach the picture the reader just removed, and clears the busy flag (same discipline as
-  // removeAttachment).
+  // The image thumbnail's × button. Bumps the IMAGE token so a still-in-flight image read cannot
+  // re-attach the picture the reader just removed, and clears the image busy flag — without touching an
+  // unrelated in-flight doc extraction (its own token/flag are separate).
   const removeImage = () => {
-    attachTokenRef.current += 1;
-    setAttaching(false);
+    imageTokenRef.current += 1;
+    setImageAttaching(false);
     setAttachedImage(null);
   };
 
@@ -1222,15 +1235,16 @@ export function GrantBotChat({
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            disabled={attaching}
-            aria-label={attaching ? "Reading file…" : visionEnabled ? "Attach a file or image" : "Attach a file"}
+            // Busy on EITHER an in-flight doc extraction or an image read — the picker attaches both.
+            disabled={attaching || imageAttaching}
+            aria-label={attaching || imageAttaching ? "Reading file…" : visionEnabled ? "Attach a file or image" : "Attach a file"}
             title={visionEnabled ? "Attach a file or image (or paste an image)" : "Attach a file"}
-            aria-busy={attaching}
+            aria-busy={attaching || imageAttaching}
             className={`inline-flex items-center justify-center rounded-lg border border-edge bg-white text-ink-muted transition-colors hover:text-ink disabled:opacity-60 ${
               isCorner ? "h-7 w-7" : "h-8 w-8"
             }`}
           >
-            {attaching ? (
+            {attaching || imageAttaching ? (
               <Loader2 className={`animate-spin ${isCorner ? "h-3 w-3" : "h-3.5 w-3.5"}`} />
             ) : (
               <Paperclip className={isCorner ? "h-3 w-3" : "h-3.5 w-3.5"} />
@@ -1258,9 +1272,9 @@ export function GrantBotChat({
         <button
           type="button"
           onClick={() => void send()}
-          // Also disabled while a file is extracting — sending then would submit the question without
-          // the document (send() guards this too; the disabled state makes it visible).
-          disabled={sending || attaching || !draft.trim()}
+          // Also disabled while a file is extracting OR an image is still being read — sending then would
+          // submit the question without the attachment (send() guards this too; the disabled state shows it).
+          disabled={sending || attaching || imageAttaching || !draft.trim()}
           // orangeFill, NOT orange: this is white type on a solid orange field, which is
           // 3.04:1 on #E4761F and fails AA -- the exact case lib/brand.ts adds orangeFill
           // for. Both mocks specify #E4761F here; both surfaces depart from it the same way,
