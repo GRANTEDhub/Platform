@@ -7,6 +7,7 @@
     { "path": "/api/cron/intel-drain", "schedule": "2-59/5 * * * *" },
     { "path": "/api/cron/grant-briefs", "schedule": "37 * * * *" },
     { "path": "/api/cron/allowable-uses", "schedule": "52 * * * *" },
+    { "path": "/api/cron/closed-sweep", "schedule": "17 * * * *" },
     { "path": "/api/cron/usaspending-refresh", "schedule": "23 9 1 * *" }
   ]
 }

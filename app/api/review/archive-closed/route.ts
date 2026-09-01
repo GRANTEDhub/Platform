@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { deadlineDaysLeft } from "@/lib/report/shape";
+import { closedSweepEligible, applyClosedSweep, type SweepCardRow } from "@/lib/report/closed-sweep";
 
 // Archive grants whose deadline passed before anyone reviewed them.
 //
@@ -17,11 +17,11 @@ import { deadlineDaysLeft } from "@/lib/report/shape";
 //
 // Reversible. It records decision='passed' with a reason, which is the same terminal state
 // the per-card Reject writes and can be changed later.
+//
+// The eligibility (strict `< 0`, fail-open) and the two-reason write live in the shared
+// lib/report/closed-sweep core, so this manual staff path and the automatic cron sweep
+// share ONE definition of "closed" and ONE write shape — and neither writes match_feedback.
 
-const REASON = "Closed before review";
-// A card the client had already SEEN before the deadline passed. Nobody failed to review
-// it, so the sweep's reason would be a false account of what happened.
-const REASON_RELEASED = "Deadline passed after release";
 const MAX_BATCH = 100;
 
 export async function POST(req: NextRequest) {
@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
   // seen -- mass-archiving what someone is holding is exactly what that guard is for --
   // but a reviewer looking at one closed card, having acknowledged the date, is the case
   // the guard was protecting against. It relaxes ONLY the release check; the deadline is
-  // still re-derived server-side below.
+  // still re-derived server-side below (in closedSweepEligible).
   let body: { card_ids?: unknown; include_released?: unknown };
   try {
     body = await req.json();
@@ -62,62 +62,23 @@ export async function POST(req: NextRequest) {
     .neq("card_type", "prospect");
   if (readErr) return NextResponse.json({ error: readErr.message }, { status: 500 });
 
-  type Row = {
-    id: string;
-    decision: string;
-    sme_released_at: string | null;
-    grants: { submission_deadline: string | null } | { submission_deadline: string | null }[] | null;
-  };
-
   const includeReleased = body.include_released === true;
-
-  const eligible = ((cards ?? []) as Row[]).filter((c) => {
-    const g = Array.isArray(c.grants) ? c.grants[0] : c.grants;
-    const days = deadlineDaysLeft(g?.submission_deadline);
-    // Exactly the page's `closedUnreviewed`: deadline in the past and still undecided. A
-    // closed grant that was already rejected is history, not a miss.
-    //
-    // STILL `< 0`, NOT `<= 0`. A grant due TODAY is not closed -- federal deadlines carry
-    // a cut-off time we do not store, so it is live until the day is gone. The review
-    // screen's overdue WARNING fires a day earlier on purpose, and deliberately does not
-    // offer archiving on that day.
-    if (days === null || days >= 0 || c.decision !== "pending") return false;
-    return includeReleased || c.sme_released_at === null;
-  });
+  // Re-derive which of the handed rows are genuinely closed + still pending (+ unreleased,
+  // unless include_released). Skipped-and-counted rather than rejected when the list moved.
+  const eligible = closedSweepEligible((cards ?? []) as unknown as SweepCardRow[], { includeReleased });
 
   if (eligible.length === 0) {
     return NextResponse.json({ archived: 0, skipped: ids.length });
   }
 
-  // Two writes, because the two groups get DIFFERENT reasons and the reason is the
-  // record of what happened. "Closed before review" on a card the client had already
-  // seen would be a false account: somebody did review it, and released it, and then the
-  // deadline ran out. Grouped rather than per-row so this is still at most two statements
-  // however large the batch.
-  const decidedAt = new Date().toISOString();
-  const groups: { ids: string[]; reason: string }[] = [
-    { ids: eligible.filter((c) => c.sme_released_at === null).map((c) => c.id), reason: REASON },
-    { ids: eligible.filter((c) => c.sme_released_at !== null).map((c) => c.id), reason: REASON_RELEASED },
-  ];
-
-  for (const g of groups) {
-    if (g.ids.length === 0) continue;
-    const { error } = await supabase
-      .from("review_cards")
-      .update({
-        decision: "passed",
-        decision_reason: g.reason,
-        decided_by: user.id,
-        decided_by_actor: "staff",
-        decided_at: decidedAt,
-      })
-      .in("id", g.ids);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  // The staffer who clicked owns the decision. The two reasons ("Closed before review" vs
+  // "Deadline passed after release") are chosen inside the core by the release state, and NO
+  // match_feedback row is written — a missed deadline is capacity, not a scorer error.
+  let archived: number;
+  try {
+    archived = await applyClosedSweep(supabase, eligible, { decidedBy: user.id });
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Archive failed" }, { status: 500 });
   }
-
-  // Deliberately NO match_feedback row. The per-card Reject records one because a human
-  // judged the match wrong, and that is calibration signal. "Nobody got to it in time" is
-  // a fact about our capacity, not about the scorer, and feeding it in as a negative would
-  // teach the engine to stop surfacing grants it was right to surface.
-  return NextResponse.json({ archived: eligible.length, skipped: ids.length - eligible.length });
+  return NextResponse.json({ archived, skipped: ids.length - archived });
 }
