@@ -396,15 +396,22 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         // What the score MEANS for the next step, derived from the lit factor rather than
         // from three canned sentences keyed off the number.
         consequence={
-          // Calibration-driven score: the Fit-factors sentence carries the reason; a factor-based
-          // next-step here would name a second, different cause on the same screen. Defer to it.
-          calibrated
+          // A hard kill's no-go lead makes any FIT-based next-step ("ready to go out" / "pursue once X is
+          // addressed") a contradiction beside it — the same defect the rationale suppression fixes, in the
+          // ScoreCard's separate `consequence` prop. Null it under the SAME guard (`hardKill && verdictLead`,
+          // i.e. where the lead is rendered — staff), so a closed strong-fit card can't say "ready to go out"
+          // under "No-go: deadline passed" (#471 Claude Code Review). The client keeps it (no lead shown).
+          hardKill && verdictLead
             ? null
-            : factors.lead
-              ? `Pursue only once ${factors.lead.label.toLowerCase()} is addressed.`
-              : effFit === 3
-                ? "No blocking factor — this one is ready to go out."
-                : null
+            : // Calibration-driven score: the Fit-factors sentence carries the reason; a factor-based
+              // next-step here would name a second, different cause on the same screen. Defer to it.
+              calibrated
+              ? null
+              : factors.lead
+                ? `Pursue only once ${factors.lead.label.toLowerCase()} is addressed.`
+                : effFit === 3
+                  ? "No blocking factor — this one is ready to go out."
+                  : null
         }
         scoreFootnote={`Machine-scored${
           surfacedAt ? ` ${format(parseISO(surfacedAt), "MMM d")}` : ""

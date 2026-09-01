@@ -314,16 +314,22 @@ export default async function PortalGrantDetail({
         fitScore={displayFit}
         verdict={FIT_BAND[displayFit].label}
         consequence={
-          // When calibration drove the score, the Fit-factors sentence already states that as
-          // the reason; a factor-based next-step here would point at a second, different cause
-          // on the same screen. Defer to the one explanation.
-          calibrated
+          // Same hard-kill guard as the staff page (and as rationaleForRender): null the fit-based
+          // next-step where a no-go lead is rendered. On the client the lead is null (no-go is staff-only),
+          // so this keeps the consequence — it matches the client's displayed score and there is no lead to
+          // contradict.
+          hardKill && verdictLead
             ? null
-            : factors.lead
-              ? `Worth addressing ${factors.lead.label.toLowerCase()} before you commit.`
-              : effFit === 3
-                ? "No blocking factor on this one."
-                : null
+            : // When calibration drove the score, the Fit-factors sentence already states that as
+              // the reason; a factor-based next-step here would point at a second, different cause
+              // on the same screen. Defer to the one explanation.
+              calibrated
+              ? null
+              : factors.lead
+                ? `Worth addressing ${factors.lead.label.toLowerCase()} before you commit.`
+                : effFit === 3
+                  ? "No blocking factor on this one."
+                  : null
         }
         // No "your feedback tunes future scoring" line: that control is staff-only here, so
         // promising it would describe something the client cannot do.
