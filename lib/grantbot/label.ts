@@ -99,6 +99,24 @@ export type ImageMime = (typeof ALLOWED_IMAGE_MIME)[number];
 // Is this a paste/upload the composer should treat as a vision image (vs. route to text/doc extraction)?
 // MIME only — an image on the clipboard has no filename, and a picked file's type is authoritative for
 // png/jpeg. A .jpg with a wrong/blank MIME falls through to the doc/text paths, which refuse it typed.
+// The compact marker appended to a user turn's stored text when an image rode it. TWO jobs, ONE string
+// so the server and client can't drift: (1) a replay note for the model on a LATER turn — an image was
+// here, and is no longer in view; (2) a token the transcript renderer detects and shows as a small
+// "image" CHIP rather than as prose, so it never reads as if we rewrote the staffer's own words. Kept
+// SHORT for both — the long sentence it replaced looked like an edit to the message.
+export const IMAGE_ATTACHED_TAG = "[image attached — not retained]";
+
+// Split the image tag off the END of a user turn's text so the transcript renders the staffer's actual
+// words as prose and the "image attached" fact as a small chip — never as a sentence appended to what
+// they typed. The tag sits on its own trailing "\n\n" segment (send() appends it last). Pure + here in
+// the client-safe module so the renderer and any test share one definition.
+export function splitImageTag(text: string): { body: string; hadImage: boolean } {
+  const suffix = `\n\n${IMAGE_ATTACHED_TAG}`;
+  if (text.endsWith(suffix)) return { body: text.slice(0, -suffix.length), hadImage: true };
+  if (text === IMAGE_ATTACHED_TAG) return { body: "", hadImage: true };
+  return { body: text, hadImage: false };
+}
+
 export function isAttachableImage(mime?: string): mime is ImageMime {
   return typeof mime === "string" && (ALLOWED_IMAGE_MIME as readonly string[]).includes(mime);
 }

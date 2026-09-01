@@ -18,7 +18,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { BRAND } from "@/lib/brand";
-import { stripControlChars, truncateSafely, attachKindFor, isTextAttachable, isAttachableImage, MAX_ATTACH_CHARS, MAX_ATTACH_BYTES, MAX_IMAGE_BYTES, type ImageMime } from "@/lib/grantbot/label";
+import { stripControlChars, truncateSafely, attachKindFor, isTextAttachable, isAttachableImage, splitImageTag, MAX_ATTACH_CHARS, MAX_ATTACH_BYTES, MAX_IMAGE_BYTES, IMAGE_ATTACHED_TAG, type ImageMime } from "@/lib/grantbot/label";
 import { BLANK_CONVERSATION } from "@/lib/grantbot/wire";
 import type { GrantBotMsg, GrantBotThread } from "@/lib/grantbot/wire";
 
@@ -654,6 +654,14 @@ export function GrantBotChat({
     const sentImage = attachedImage;
     const attachmentUntouched = () =>
       pasteRef.current.pasted === sentPasted && pasteRef.current.pasteLabel === sentPasteLabel;
+    // The image is PER TURN: once the request has gone out it must never silently ride the NEXT turn
+    // (the "same image as before" bug — a persisted image re-sent on the follow-up). So it clears on
+    // EVERY resolved path — success, a server error, AND a network/catch (where the server may well have
+    // processed the turn already). Guarded by identity so an image the reader lined up for the next
+    // question mid-turn is never wiped; a genuine retry re-attaches (the image was never retained anyway).
+    const clearSentImage = () => {
+      if (sentImage && imageRef.current === sentImage) setAttachedImage(null);
+    };
     const clearAttachment = () => {
       if (attachmentUntouched()) {
         setPasted("");
@@ -661,10 +669,19 @@ export function GrantBotChat({
         setShowPaste(false);
         setAttachedFile(null);
       }
-      // The image slot clears INDEPENDENTLY of the paste, and only if the composer still holds the
-      // exact image object this turn consumed (identity) — so an image lined up for the next question
-      // during an in-flight turn is never wiped.
-      if (sentImage && imageRef.current === sentImage) setAttachedImage(null);
+      clearSentImage();
+    };
+
+    // A send that did NOT succeed (a server error, or a network/catch) puts the reader's message back
+    // for a clean retry, rather than clearing it. `fetch` rejecting can mean the request never reached
+    // the server (offline / DNS / TLS) — nothing was saved — so a "refresh to check" would just destroy
+    // the only copy of an unsent question (the draft was cleared; the question lives only in the
+    // optimistic bubble). So: roll back the optimistic bubble and restore the draft; the paste and the
+    // image were never cleared on a failure, so they stay attached too. The composer visibly holds the
+    // exact turn again — never a silent re-send, since the reader can see and edit what will go out.
+    const restoreForRetry = () => {
+      setMessages((m) => m.filter((x) => x.id !== mine.id));
+      setDraft(text);
     };
 
     // Optimistic: the question appears immediately, marked pending by the spinner below rather
@@ -673,7 +690,7 @@ export function GrantBotChat({
     const mine: GrantBotMsg = {
       id: `local-${Date.now()}`,
       role: "user",
-      text: `${text}${sentPasted.trim() ? "\n\n[+ pasted content]" : ""}${sentImage ? "\n\n[+ image]" : ""}`,
+      text: `${text}${sentPasted.trim() ? "\n\n[+ pasted content]" : ""}${sentImage ? `\n\n${IMAGE_ATTACHED_TAG}` : ""}`,
       error: null,
       usage: null,
       instructionsVersion: null,
@@ -719,6 +736,19 @@ export function GrantBotChat({
       if (data.conversationId && data.conversationId !== convId) setConvId(data.conversationId);
       if (!res.ok || data.error) {
         setError(data.error ?? `Request failed (${res.status}).`);
+        if (res.ok) {
+          // HTTP 200 WITH an error field: runTurn already RECORDED this turn — it writes the user row
+          // before the model call and an assistant-error row EITHER WAY (turn.ts / the turn route return
+          // 200 + error on a runTurn failure). The optimistic bubble matches that persisted user turn, so
+          // KEEP it; restoring for retry would let a resend append a SECOND user turn and duplicate the
+          // transcript on reopen. Just clear the sent image so a later question doesn't re-send it.
+          clearSentImage();
+        } else {
+          // A real HTTP 4xx/5xx is returned BEFORE runTurn records anything (auth, validation,
+          // conversation lookup/creation) — nothing was saved, so put the message back for a clean retry,
+          // image still attached (the composer shows exactly what will resend).
+          restoreForRetry();
+        }
       } else {
         setMessages((m) => [
           ...m,
@@ -739,7 +769,15 @@ export function GrantBotChat({
       }
       void refreshThreads();
     } catch {
-      if (stillMine()) setError("Could not reach the server.");
+      // `fetch` rejected (or its response wasn't usable). This covers the request never reaching the
+      // server (offline / DNS / TLS) as well as a lost response, and the two are indistinguishable here
+      // — so take the SAFE side: assume it did NOT go through and put the message + image back for a
+      // retry, rather than telling the reader to refresh (which would destroy their only, optimistic
+      // copy of an unsent question). Only if they're still on this thread.
+      if (stillMine()) {
+        setError("Couldn't reach GrantBot — your message wasn't sent. It's back in the box to try again.");
+        restoreForRetry();
+      }
     } finally {
       setSending(false);
     }
@@ -1021,15 +1059,31 @@ export function GrantBotChat({
           The squared corner is RADIUS.sharp, not a fourth radius invented for a tail. */}
       {messages.map((m) =>
         m.role === "user" ? (
-          <div key={m.id} className="flex justify-end">
-            <div
-              className={`whitespace-pre-wrap rounded-2xl rounded-br-sharp bg-brand-navy px-[15px] py-[11px] text-[13.5px] leading-normal text-white ${
-                isCorner ? "max-w-[88%]" : "max-w-[520px]"
-              }`}
-            >
-              {m.text}
-            </div>
-          </div>
+          (() => {
+            // The staffer's words as prose; an attached image shows as a small chip below, not as the
+            // marker sentence inside their message (which read like we'd edited what they typed).
+            const { body, hadImage } = splitImageTag(m.text);
+            return (
+              <div key={m.id} className="flex justify-end">
+                <div
+                  className={`rounded-2xl rounded-br-sharp bg-brand-navy px-[15px] py-[11px] text-[13.5px] leading-normal text-white ${
+                    isCorner ? "max-w-[88%]" : "max-w-[520px]"
+                  }`}
+                >
+                  {body && <span className="whitespace-pre-wrap">{body}</span>}
+                  {hadImage && (
+                    <span
+                      className={`flex w-fit items-center gap-1 rounded-md bg-white/15 px-2 py-0.5 text-[11px] font-medium text-white/85 ${
+                        body ? "mt-2" : ""
+                      }`}
+                    >
+                      <ImageIcon className="h-3 w-3" aria-hidden="true" /> image
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })()
         ) : (
           <div key={m.id} className={`flex gap-2.5 ${isCorner ? "max-w-full" : "max-w-[560px]"}`}>
             <div

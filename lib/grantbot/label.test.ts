@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { stripControlChars, truncateSafely } from "./label";
+import { stripControlChars, truncateSafely, splitImageTag, IMAGE_ATTACHED_TAG } from "./label";
 
 describe("stripControlChars", () => {
   it("collapses line-breaking code points to a space", () => {
@@ -32,5 +32,29 @@ describe("truncateSafely", () => {
     const r = truncateSafely("a😀b", 3); // indices 0,1,2 = "a" + the full emoji
     expect(r.text).toBe("a😀");
     expect(r.text).toBe(r.text.toWellFormed());
+  });
+});
+
+describe("splitImageTag", () => {
+  it("splits a trailing image tag off, returning the body and hadImage", () => {
+    expect(splitImageTag(`Read this png?\n\n${IMAGE_ATTACHED_TAG}`)).toEqual({
+      body: "Read this png?",
+      hadImage: true,
+    });
+  });
+  it("returns an empty body when the message is only the tag", () => {
+    expect(splitImageTag(IMAGE_ATTACHED_TAG)).toEqual({ body: "", hadImage: true });
+  });
+  it("leaves an ordinary message untouched (no false positive)", () => {
+    expect(splitImageTag("What's the deadline?")).toEqual({ body: "What's the deadline?", hadImage: false });
+    // The tag mid-text is NOT a trailing attachment marker — the body is left whole.
+    expect(splitImageTag(`${IMAGE_ATTACHED_TAG} in the middle`)).toEqual({
+      body: `${IMAGE_ATTACHED_TAG} in the middle`,
+      hadImage: false,
+    });
+  });
+  it("keeps a preceding pasted-content marker in the body (only the image tag is a chip)", () => {
+    const r = splitImageTag(`Question\n\n[+ pasted content]\n\n${IMAGE_ATTACHED_TAG}`);
+    expect(r).toEqual({ body: "Question\n\n[+ pasted content]", hadImage: true });
   });
 });

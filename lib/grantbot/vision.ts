@@ -20,7 +20,7 @@
 // image cannot reach a mutation because there is nothing here for it to reach.
 
 import type { PromptBlock } from "@/lib/grantbot/prompt";
-import { MAX_IMAGE_BYTES, ALLOWED_IMAGE_MIME, type ImageMime } from "@/lib/grantbot/label";
+import { MAX_IMAGE_BYTES, ALLOWED_IMAGE_MIME, IMAGE_ATTACHED_TAG, type ImageMime } from "@/lib/grantbot/label";
 
 export function grantbotVisionEnabled(): boolean {
   return process.env.GRANTBOT_VISION_ENABLED === "true";
@@ -71,8 +71,9 @@ export function buildImageUserContent(userText: string, image: TurnImage): unkno
 // Stored on the user message when an image was attached — the bytes are gone, but the transcript and a
 // later turn's replay should know an image WAS part of this turn, so the model doesn't answer a
 // follow-up as if the picture were still in view (and asks the staffer to re-attach if it needs it).
-export const IMAGE_ATTACHED_NOTE =
-  "[An image was attached to this message. It was visible to GrantBot only while answering this turn and is not retained — if a later answer depends on it, ask for it again.]";
+// The SHORT shared tag (label.ts) — a long sentence appended to the staffer's own text read like we
+// rewrote their message; the client renders this token as a small "image" chip, not as prose.
+export const IMAGE_ATTACHED_NOTE = IMAGE_ATTACHED_TAG;
 
 // Appended to the system prompt (cacheable:false, AFTER the cache breakpoint, ONLY when an image rides
 // the turn) so the flag-off / no-image prompt is byte-identical and existing caches are not busted. The
