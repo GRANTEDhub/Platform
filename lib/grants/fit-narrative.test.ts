@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   narrativeGuard,
+  stripSeatCodes,
   structureConfig,
   fitNarrativeEnabled,
   FORBIDDEN_NARRATIVE_MARKERS,
@@ -62,6 +63,65 @@ describe("narrativeGuard", () => {
       "We'd pursue this only through an MOU with Blytheville; the construction and vehicle costs you named " +
       "would need a waiver. On balance this scores as a conditional fit, not a clean one.";
     expect(narrativeGuard(ok)).toBe(ok);
+  });
+
+  it("STRIPS seat codes rather than nulling (never falls back to a coded engine paragraph)", () => {
+    // The observed leak: the model echoes the matcher's seat labels into a client-facing paragraph.
+    const coded =
+      "The college genuinely fills a qualitative research unit (S0_2), CCDF policy expertise (S0_3), and " +
+      "community engagement (S0_6). It cannot prime.";
+    const out = narrativeGuard(coded);
+    expect(out).not.toBeNull();
+    expect(out).not.toMatch(/S\d+_\d+/); // no supporting-seat code survives
+    expect(out).toContain("qualitative research unit"); // the plain-language reasoning is kept
+    expect(out).toContain("It cannot prime.");
+  });
+});
+
+describe("stripSeatCodes", () => {
+  it("removes a bare parenthetical supporting-seat code and its leading space", () => {
+    expect(stripSeatCodes("a qualitative research unit (S0_2), and more")).toBe(
+      "a qualitative research unit, and more",
+    );
+  });
+
+  it("PRESERVES a prime code — it collides with NIH mechanisms / project phases (Codex #480)", () => {
+    // "P<n>" is NOT stripped: (P30)/(P01) are NIH activity codes and (P2) is a project phase, all real
+    // client-facing grant content. Only the unambiguous underscore form is machinery.
+    expect(stripSeatCodes("a P30 center grant (P30) supports cores")).toBe("a P30 center grant (P30) supports cores");
+    expect(stripSeatCodes("the phase-2 trial (P2) is funded")).toBe("the phase-2 trial (P2) is funded");
+    expect(stripSeatCodes("the prime seat (P0) is unfilled")).toBe("the prime seat (P0) is unfilled");
+  });
+
+  it("removes a parenthetical that opens with a code but carries a description", () => {
+    expect(stripSeatCodes("community engagement (S0_6, e.g. town halls) is needed")).toBe(
+      "community engagement is needed",
+    );
+  });
+
+  it("removes a truncation-dangling unclosed parenthetical at the end", () => {
+    // The exact broken output Shannon saw: a generation cut mid-word inside the code parenthetical.
+    expect(stripSeatCodes("stakeholder engagement (S0_6, e.")).toBe("stakeholder engagement");
+  });
+
+  it("removes a bare underscore-form token in prose", () => {
+    expect(stripSeatCodes("the org fills S0_2 and S0_3 here")).toBe("the org fills and here");
+  });
+
+  it("leaves legitimate prose alone (no false positives on bills / phases / clean text)", () => {
+    const clean = "It cannot prime; the path is an MOU with Blytheville.";
+    expect(stripSeatCodes(clean)).toBe(clean);
+    // A bare P/S token in running prose (a bill "S.1234", a phase "P2") is NOT a seat label and is kept.
+    expect(stripSeatCodes("Senate bill S.1234 and phase P2 apply.")).toBe("Senate bill S.1234 and phase P2 apply.");
+    // Under-the-hood: an underscore form only ever comes from the seat menu, so it is safe to strip; a
+    // bare "S3"/"P2" is not, so we require the underscore before stripping unparenthesised.
+    expect(stripSeatCodes("Meets 24 CFR 578 and Section 8 rules.")).toBe("Meets 24 CFR 578 and Section 8 rules.");
+  });
+
+  it("is idempotent", () => {
+    const once = stripSeatCodes("a unit (S0_2), b unit (S0_3), c (S0_6, e.g. x)");
+    expect(stripSeatCodes(once)).toBe(once);
+    expect(once).not.toMatch(/S\d+_\d+/);
   });
 });
 

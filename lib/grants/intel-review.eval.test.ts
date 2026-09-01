@@ -157,6 +157,12 @@ const narrativeClean = (n: string) => FORBIDDEN_NARRATIVE_MARKERS.every((m) => !
 const narrativeVerdictShaped = (n: string) =>
   !/^\s*(no-?go|go for|marginal)\b/i.test(n.trim()) &&
   !/\b[123]\s*\/\s*3\b|\bfit score\b|\bscored (?:a )?[123]\b|\bconditional [123]\b/i.test(n);
+// NO SUPPORTING-SEAT CODES: the matcher's unambiguous "S<n>_<m>" labels must never reach a client
+// paragraph. End-to-end invariant lock — the prompt discourages emitting them AND narrativeGuard strips
+// any that slip — so it fails loudly if BOTH regress. (Only the underscore form is asserted: a prime
+// "P<n>" is NOT stripped because it collides with real identifiers — NIH P30, phase P2 — Codex #480;
+// deterministic behaviour is unit-tested in fit-narrative.test.ts.)
+const narrativeNoSeatCodes = (n: string) => !/\bS\d+_\d+\b/.test(n);
 
 describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
   it(
@@ -238,6 +244,7 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
       // VERDICT-SHAPED: even a demote narrative must not restate the "no-go" call the card states, and must
       // carry no bare numeric fit score — it is the reasoning body, prose only.
       const shaped = demoteRuns.map((r) => !r.narrative || narrativeVerdictShaped(r.narrative));
+      const noCodes = demoteRuns.map((r) => !r.narrative || narrativeNoSeatCodes(r.narrative));
       // LENGTH CAP (visual): the prompt targets ~175 words / ~1,000 chars — a client card, not a memo. The
       // eval bar allows a small overage (≤1,100) since it is a model target, and logs the actual lengths.
       const lengths = demoteRuns.map((r) => r.narrative?.length ?? 0);
@@ -247,6 +254,7 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
       expect.soft(demoteRuns.length === 0 || majority(faithful), "the narrative must preserve the grounded hard fact, not soften it (rule a)").toBe(true);
       expect.soft(clean.every(Boolean), "the narrative must carry NO internal-framing / scoring-machinery language (rule b)").toBe(true);
       expect.soft(shaped.every(Boolean), "the narrative must not restate the no-go call or a numeric fit score (verdict-shaped)").toBe(true);
+      expect.soft(noCodes.every(Boolean), "the narrative must carry NO internal seat/role codes (S0_2, P0) — client machinery leak").toBe(true);
       expect.soft(demoteRuns.length === 0 || majority(withinCap), "the narrative should stay within the ~1,000-char client-card cap in the majority of runs").toBe(true);
     },
     RUNS * 200_000,
@@ -283,6 +291,7 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
         if (r.narrative) {
           expect.soft(narrativeClean(r.narrative), "an affirm narrative must carry NO internal-framing / scoring-machinery language").toBe(true);
           expect.soft(narrativeVerdictShaped(r.narrative), "the narrative must not restate the go/no-go call or a numeric fit score — the card states the call").toBe(true);
+          expect.soft(narrativeNoSeatCodes(r.narrative), "the narrative must carry NO internal seat/role codes (S0_2, P0)").toBe(true);
         }
       }
     },
@@ -556,6 +565,7 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
       for (const r of narrated) {
         expect.soft(narrativeClean(r.narrative!), "the fossil-energy narrative must carry no framing/machinery language").toBe(true);
         expect.soft(narrativeVerdictShaped(r.narrative!), "the fossil-energy narrative must not restate the call or a numeric fit score").toBe(true);
+        expect.soft(narrativeNoSeatCodes(r.narrative!), "the fossil-energy narrative must carry no internal seat/role codes (S0_2, P0)").toBe(true);
       }
       expect.soft(narrated.length === 0 || majority(bothHalves), "the narrative should distinguish entity-eligibility from the research-capacity gap (both halves) in the majority of narrated runs").toBe(true);
     },

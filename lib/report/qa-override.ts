@@ -1,4 +1,5 @@
 import type { FactorScores } from "@/types/database";
+import { stripSeatCodes } from "@/lib/grants/fit-narrative";
 
 // ── The read-layer coalesce for the IntellEngine QA override (migration 0088) ───────────────────────
 //
@@ -82,8 +83,12 @@ export function resolveFit(row: QaOverrideRow): ResolvedFit {
   // score change (qa_fit_score null, status 'none'), and it must still render. So it keys on qa_narrative
   // present + the snapshot fresh, NOT on appliedFresh — a fresh demote, affirm, or flag narrative all show;
   // an absent one, or a stale one (engine re-scored), falls back to the engine paragraph.
+  // Scrub the matcher's internal seat/role codes (S0_2, P0) at the read boundary too — narrativeGuard
+  // strips them at generation, but this also cleans narratives stored before that landed, on every surface.
   const narrative =
-    snapshotFresh && typeof row.qa_narrative === "string" && row.qa_narrative.trim() ? row.qa_narrative : null;
+    snapshotFresh && typeof row.qa_narrative === "string" && row.qa_narrative.trim()
+      ? stripSeatCodes(row.qa_narrative) || null
+      : null;
 
   if (appliedFresh) {
     const sources = (row.qa_sources ?? []).filter((s): s is string => typeof s === "string" && s.length > 0);

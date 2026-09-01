@@ -53,9 +53,10 @@ export const NARRATIVE_TOOL_PROPERTY: JsonSchemaProperty = {
     "bullets, NO numeric score. The card ITSELF states the directional call ('Go for X' / 'Marginal for X' / " +
     "'No-go for X'), so do NOT open with that label or the org name — open with the single most DECISIVE reason. " +
     "If a hard disqualifier drives the call, lead with it (never geography). Distinguish entity-eligibility from " +
-    "competitive fit. For a go or marginal, name the real hurdle honestly. Decisive, not hedged. Written AS " +
-    "advice to the reader; never internal framing (no 'tell the client', 'position as', no engine/QA/score " +
-    "machinery).",
+    "competitive fit. For a go or marginal, name the real hurdle honestly. Decisive, not hedged. Do NOT " +
+    "enumerate every seat/capability — name the one or two that decide it and finish the thought. Never write " +
+    "an internal seat/role code (S0_2, P0). Written AS advice to the reader; never internal framing (no 'tell " +
+    "the client', 'position as', no engine/QA/score machinery).",
 };
 
 // Appended to STRUCTURE_SYSTEM_PROMPT only when the flag is on. This is the spec for the reasoning paragraph.
@@ -65,7 +66,7 @@ VERDICT NARRATIVE (the \`narrative\` field) — write this for EVERY verdict you
 
 WHAT IT IS: the plain-language REASONING body under a one-line directional verdict the card already states for you — "Go for <client>." / "Marginal for <client>." / "No-go for <client>.". You do NOT write that label. You do NOT open with the client's name or a "go/no-go" word. You write the reasoning that JUSTIFIES the call, opening with the reason itself. The number is set elsewhere and is authoritative — never state a numeric score and never argue the call up or down; explain it.
 
-LENGTH: two to five sentences, one paragraph, prose only. No bullet lists, no headings, no dollar tables. A client reads it at a glance. Be economical — name the one or two facts that decide the play and stop.
+LENGTH: two to five sentences, one paragraph, prose only. No bullet lists, no headings, no dollar tables. A client reads it at a glance. Be economical — name the one or two facts that decide the play and stop, and COMPLETE the thought inside that budget. Do NOT enumerate the seats or list every capability the org could fill: naming them all overruns the space (the paragraph gets cut off mid-sentence) and leaks internal structure. Pick the one or two that decide it.
 
 WRITE IT IN THIS SHAPE:
   1. The single most DECISIVE reason FIRST. If a hard disqualifier drives the call — wrong entity type, missing designation, wrong applicant door, deadline passed, too few awards, no genuine match — lead with THAT and you can stop there. Lead with the disqualifier, never with geography.
@@ -74,7 +75,7 @@ WRITE IT IN THIS SHAPE:
 
 TWO HARD RULES:
   (a) FAITHFULNESS OVER POLISH. Never soften or drift from a grounded fact. If <client> CANNOT prime, say it cannot — never "may face challenges", "could be difficult", "may need to consider". Preserve every hard eligibility fact and prohibited-use fact at full strength. Introduce NO new specific claim (no dollar figures, citations, dates, or program details) beyond what the analysis and the grant context give you.
-  (b) DIRECT CLIENT VOICE, NEVER INTERNAL FRAMING. Write it as advice spoken to the reader. Say the thing directly — do NOT say "tell the client", "position this as", "we should frame", "note that they". Do NOT mention the engine, the scorer, the model, the QA pass, a "verdict", an "unverified" state, a "fit score", or any scoring machinery. No meta-commentary about your own analysis.
+  (b) DIRECT CLIENT VOICE, NEVER INTERNAL FRAMING. Write it as advice spoken to the reader. Say the thing directly — do NOT say "tell the client", "position this as", "we should frame", "note that they". Do NOT mention the engine, the scorer, the model, the QA pass, a "verdict", an "unverified" state, a "fit score", or any scoring machinery. No meta-commentary about your own analysis. And NEVER write an internal seat or role code such as "S0_2", "S0_3", or "P0" — those are matcher machinery; name the capability itself in plain words ("a qualitative research unit", not "a qualitative research unit (S0_2)").
 
 Good (no-go): "This is a fossil-energy R&D program that expects a principal investigator and research faculty. NWACC is a two-year teaching college with no research capacity, no federal R&D history, and no energy-research program — entity-eligible as an institution of higher education, but functionally wrong for the work this funds."
 Good (marginal): "Genuinely in the workforce-development lane and no formal match is required, and there are real regional water utilities to partner with. But the strongest fit is a narrower project area than it first appears, and the two real hurdles are a mandatory HAZWOPER training track NWACC does not currently run and locking an employer and school-district partner before the deadline."
@@ -141,8 +142,48 @@ export const FORBIDDEN_NARRATIVE_MARKERS: readonly string[] = [
   "internally,",
 ];
 
-// Returns the trimmed narrative when it is present and clean; null when absent, empty, or it trips the
-// framing scan. Null = "show the engine paragraph" (the fail-safe), never a partial/leaky client string.
+// ── Seat-code scrubber (the client-boundary net) ────────────────────────────────────────────────
+//
+// The matcher labels the seats in a grant's ideal-applicant profile with internal codes — "P0"/"P1"
+// for prime seats, "S0_1"/"S0_2" for the supporting seats beneath them (lib/grants/engine.ts,
+// buildSeatMenu). Those labels ride inside the match's reasoning_context, which the QA pass hands the
+// model, so a model writing the client-facing narrative (or a factor rationale) can echo them verbatim:
+// "a qualitative research unit (S0_2), CCDF policy expertise (S0_3)…". They are pure internal machinery
+// and must never reach a client — they read as leaked code to a staffer too (and the "0" reads as an "O").
+//
+// STRIP, NOT NULL. Dropping the whole narrative on a code (the narrativeGuard framing behaviour) would
+// fall back to the engine paragraph, which is assembled from the SAME matcher rationale where the codes
+// live — trading one coded field for another. So we remove the codes and keep the reasoning. Applied at
+// every client-facing text boundary — the QA narrative (narrativeGuard here + resolveFit as a read net
+// for already-stored narratives) and the factor rationales (viewFitFactors) — so no render path surfaces
+// a code no matter which paragraph shows.
+//
+// SCOPED TO THE SUPPORTING-SEAT FORM ONLY — the unambiguous "S<n>_<m>". That underscore shape is never
+// anything but a seat label, and it is the observed leak (the enumerated supporting seats S0_2, S0_3,
+// S0_6…). A PRIME code "P<n>" is deliberately NOT stripped, parenthesised or bare: it collides with
+// legitimate client-facing grant identifiers — NIH activity codes ("(P30)", "(P01)"; the repo handles the
+// R01/P30 mechanism prefixes, forecast-relevance.ts) and project phases ("(P2)") — so stripping it could
+// silently DELETE real content (Codex #480 P2). The prompt still tells the model to emit no code at all
+// (P0 included); a stray prime code is a generation miss caught by the eval/eyeball, not something this
+// deterministic net can safely remove. A bare "P2"/"S.1234" (a phase, a bill) is likewise left untouched.
+// Idempotent — a no-op on text with no supporting-seat codes.
+export function stripSeatCodes(text: string): string {
+  return text
+    // A parenthetical that OPENS with a supporting-seat code — closed "(S0_2)" / "(S0_6, e.g. town halls)"
+    // or dangling from a truncated generation "(S0_6, e." — remove the whole group and its leading space.
+    .replace(/\s*\(\s*S\d+_\d+\b[^)]*(?:\)|$)/g, "")
+    // A bare supporting-seat token in prose ("…fills S0_2 and…").
+    .replace(/\s*\bS\d+_\d+\b/g, "")
+    // Tidy the seams the removals leave: an emptied "()", a space now before punctuation, doubled spaces.
+    .replace(/\(\s*\)/g, "")
+    .replace(/\s+([,.;:)])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+// Returns the narrative when it is present and clean; null when absent, empty, or it trips the framing
+// scan. Null = "show the engine paragraph" (the fail-safe), never a partial/leaky client string. Seat
+// codes are SCRUBBED (not a null trigger) after the framing scan passes — see stripSeatCodes.
 export function narrativeGuard(raw: string | null | undefined): string | null {
   const text = (raw ?? "").trim();
   if (!text) return null;
@@ -150,5 +191,6 @@ export function narrativeGuard(raw: string | null | undefined): string | null {
   for (const marker of FORBIDDEN_NARRATIVE_MARKERS) {
     if (haystack.includes(marker)) return null;
   }
-  return text;
+  const stripped = stripSeatCodes(text);
+  return stripped || null;
 }

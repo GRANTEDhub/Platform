@@ -87,7 +87,11 @@ export const MIN_REFUTE_BUDGET_MS = 8_000;
 // truncated in the first place. These make a silent no-verdict run rare, not a recurring flake.
 export const STRUCTURE_MAX_ATTEMPTS = 3;
 export const MIN_STRUCTURE_BUDGET_MS = 8_000;
-export const INTEL_STRUCTURE_MAX_TOKENS = 3000;
+// Headroom for the whole phase-2 tool call (summary + six factor rationales + sources + the client
+// narrative). The narrative is a late field, so when the model over-writes — enumerating every seat — it
+// is the narrative that gets guillotined mid-word ("…(S0_6, e."). The prompt now forbids that enumeration;
+// this bump is the belt-and-suspenders so a rich-but-legitimate demote still lands whole.
+export const INTEL_STRUCTURE_MAX_TOKENS = 4000;
 // Cap on the fetched-page text handed to the refute call, so a few large .gov pages can't blow the context.
 export const MAX_REFUTE_CHARS = 40_000;
 
