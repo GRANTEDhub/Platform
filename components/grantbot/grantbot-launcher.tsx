@@ -54,6 +54,7 @@ export function GrantBotLauncher({
   startOpen = false,
   startConversationId = null,
   startBlank = false,
+  visionEnabled = false,
 }: {
   clientId: string;
   clientName: string;
@@ -62,6 +63,9 @@ export function GrantBotLauncher({
   // Collapsed back from a conversation that had been started but never sent: open blank rather
   // than falling through to the most recent thread.
   startBlank?: boolean;
+  // Server-read GRANTBOT_VISION_ENABLED, from the client-record page. Threaded to the corner chat so
+  // the image attach/paste affordances match the full page.
+  visionEnabled?: boolean;
 }) {
   const router = useRouter();
   const [everOpened, setEverOpened] = useState(startOpen);
@@ -220,6 +224,7 @@ export function GrantBotLauncher({
             initialConversationId={startConversationId}
             initialBlank={startBlank}
             onConversationChange={onConversationChange}
+            visionEnabled={visionEnabled}
             openSignal={openSignal}
           />
         </div>

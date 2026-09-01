@@ -75,3 +75,31 @@ export function isTextAttachable(fileName: string, mime?: string): boolean {
   return typeof mime === "string" && mime.startsWith("text/");
 }
 
+// ── PER-TURN IMAGE (vision) bounds, in the same client-safe place so the composer (grantbot-chat.tsx)
+// and the server (vision.ts) enforce the SAME limits and cannot drift. An image is NOT extracted to
+// text; it rides the turn as a base64 image content block the vision model reads directly, per turn,
+// never stored.
+//
+// The cap is deliberately BELOW the file-attach cap (not MAX_ATTACH_BYTES): unlike a document, the image
+// is NOT a multipart file — it rides the JSON turn body as base64, which inflates the raw bytes by ~4/3.
+// Vercel's serverless request-body limit is ~4.5 MB, so a 5 MB image (~6.7 MB base64) would sail past a
+// generous client check, attach, and then be rejected by the platform with an opaque 413 that surfaces
+// as "Could not reach the server". 3 MB raw → ~4 MB base64, which fits under 4.5 MB even alongside the
+// message text and a full pasted section — so the client's own typed "too large" refusal always fires
+// first, and the turn body never 413s.
+export const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
+
+// A WHITELIST of image media types Claude vision accepts that we allow — PNG and JPEG cover every
+// screenshot / snip / phone photo staff attach. Kept narrow on purpose: GIF/WebP are declined with a
+// typed banner rather than sent and rejected by the API (the "never a guess" contract, on the image
+// side). Extension is only a picker hint, so the MIME leads here.
+export const ALLOWED_IMAGE_MIME = ["image/png", "image/jpeg"] as const;
+export type ImageMime = (typeof ALLOWED_IMAGE_MIME)[number];
+
+// Is this a paste/upload the composer should treat as a vision image (vs. route to text/doc extraction)?
+// MIME only — an image on the clipboard has no filename, and a picked file's type is authoritative for
+// png/jpeg. A .jpg with a wrong/blank MIME falls through to the doc/text paths, which refuse it typed.
+export function isAttachableImage(mime?: string): mime is ImageMime {
+  return typeof mime === "string" && (ALLOWED_IMAGE_MIME as readonly string[]).includes(mime);
+}
+

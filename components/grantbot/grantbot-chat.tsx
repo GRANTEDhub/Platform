@@ -6,6 +6,7 @@ import {
   ArrowUp,
   ClipboardPaste,
   FileText,
+  ImageIcon,
   Link2,
   Loader2,
   MessagesSquare,
@@ -17,7 +18,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { BRAND } from "@/lib/brand";
-import { stripControlChars, truncateSafely, attachKindFor, isTextAttachable, MAX_ATTACH_CHARS, MAX_ATTACH_BYTES } from "@/lib/grantbot/label";
+import { stripControlChars, truncateSafely, attachKindFor, isTextAttachable, isAttachableImage, MAX_ATTACH_CHARS, MAX_ATTACH_BYTES, MAX_IMAGE_BYTES, type ImageMime } from "@/lib/grantbot/label";
 import { BLANK_CONVERSATION } from "@/lib/grantbot/wire";
 import type { GrantBotMsg, GrantBotThread } from "@/lib/grantbot/wire";
 
@@ -38,18 +39,37 @@ interface StashedDraft {
   // The file-vs-paste discriminator has to ride the stash too, else a file attachment restores as a
   // manual paste on the other surface and dumps its raw body back into the panel (it's a chip, not text).
   attachedFile: { name: string; type: string } | null;
+  // The vision image rides the stash too, so expanding the corner (which unmounts this component and
+  // remounts the full page) doesn't silently drop an attached screenshot — the same unsent-work the
+  // stash exists to preserve. It carries a few MB of base64, so the write can hit the sessionStorage
+  // quota; stashDraft retries WITHOUT the image on overflow (below) so the cheap fields still survive.
+  attachedImage: { previewUrl: string; data: string; mediaType: ImageMime; name: string } | null;
 }
 
 function stashDraft(clientId: string, d: StashedDraft) {
   if (typeof window === "undefined") return;
-  try {
-    if (!d.draft && !d.pasted && !d.pasteLabel && !d.attachedFile) {
+  if (!d.draft && !d.pasted && !d.pasteLabel && !d.attachedFile && !d.attachedImage) {
+    try {
       window.sessionStorage.removeItem(draftKey(clientId));
-      return;
+    } catch {
+      // Private mode. Nothing to remove is harmless.
     }
+    return;
+  }
+  try {
     window.sessionStorage.setItem(draftKey(clientId), JSON.stringify(d));
   } catch {
-    // Private mode / quota. Losing a draft is the status quo, not a reason to break the panel.
+    // The image (base64, up to ~4 MB) can overflow the ~5 MB per-origin quota. Rather than lose the
+    // WHOLE composer (the cheap, important text draft + pasted email + file chip) to the image, retry
+    // WITHOUT the image so those survive the surface switch — only the image is dropped. A second
+    // failure (private mode, or the text alone over quota) is the pre-existing "draft not stashed".
+    try {
+      if (d.attachedImage) {
+        window.sessionStorage.setItem(draftKey(clientId), JSON.stringify({ ...d, attachedImage: null }));
+      }
+    } catch {
+      // Losing the draft is the status quo, not a reason to break the panel.
+    }
   }
 }
 
@@ -63,6 +83,7 @@ function takeDraft(clientId: string): StashedDraft | null {
     window.sessionStorage.removeItem(draftKey(clientId));
     const parsed = JSON.parse(raw) as Partial<StashedDraft>;
     const af = parsed.attachedFile;
+    const ai = parsed.attachedImage;
     return {
       draft: typeof parsed.draft === "string" ? parsed.draft : "",
       pasted: typeof parsed.pasted === "string" ? parsed.pasted : "",
@@ -70,6 +91,14 @@ function takeDraft(clientId: string): StashedDraft | null {
       attachedFile:
         af && typeof af.name === "string" && typeof af.type === "string"
           ? { name: af.name, type: af.type }
+          : null,
+      attachedImage:
+        ai &&
+        typeof ai.previewUrl === "string" &&
+        typeof ai.data === "string" &&
+        (ai.mediaType === "image/png" || ai.mediaType === "image/jpeg") &&
+        typeof ai.name === "string"
+          ? { previewUrl: ai.previewUrl, data: ai.data, mediaType: ai.mediaType, name: ai.name }
           : null,
     };
   } catch {
@@ -136,6 +165,7 @@ export function GrantBotChat({
   initialBlank = false,
   onConversationChange,
   onTurnComplete,
+  visionEnabled = false,
   openSignal,
 }: {
   clientId: string;
@@ -143,6 +173,9 @@ export function GrantBotChat({
   variant: "corner" | "full";
   initial?: GrantBotInitial;
   promptMeta?: GrantBotPromptMeta;
+  // Server-read GRANTBOT_VISION_ENABLED, threaded from the page/launcher. OFF (default) hides the
+  // image attach/paste affordances entirely and no image is ever sent — the composer is today's.
+  visionEnabled?: boolean;
   // Corner only: a counter the launcher bumps each time the panel OPENS. The corner panel stays
   // MOUNTED across close/reopen (so a draft survives), which means `messages`/`sending` don't change
   // on reopen and the scroll effect below can't fire — the panel would stay wherever the reader
@@ -175,6 +208,12 @@ export function GrantBotChat({
   // chip (filename + type) instead of dumping the raw text into an editable panel, and the discriminator
   // keeps a file and a manual paste from being shown the same way (they share the one `pasted` slot).
   const [attachedFile, setAttachedFile] = useState<{ name: string; type: string } | null>(null);
+  // The one per-turn vision image (v1: exactly one), independent of the text paste/file slot above — a
+  // staffer can attach BOTH a pasted email and a screenshot. `previewUrl` is the data: URL for the
+  // thumbnail; `data` is the raw base64 (prefix stripped) sent to the turn route; the bytes are never
+  // stored server-side. Only rendered/accepted when visionEnabled.
+  const [attachedImage, setAttachedImage] =
+    useState<{ previewUrl: string; data: string; mediaType: ImageMime; name: string } | null>(null);
   const [showThreads, setShowThreads] = useState(false);
   // Inline thread rename. renamingId is the thread whose title is being edited (null = none);
   // renameDraft is the in-progress text. A rename edits only the conversation title (metadata) --
@@ -197,6 +236,10 @@ export function GrantBotChat({
   // A binary (PDF/.docx) attach round-trips to the server extractor, so the picker is busy while it
   // parses — the attach button shows a spinner and refuses a second pick until it resolves.
   const [attaching, setAttaching] = useState(false);
+  // The image slot is INDEPENDENT of the doc/text slot (they coexist), so it carries its OWN busy flag
+  // and token (below). Sharing them let a valid image paste supersede an in-flight doc extraction —
+  // dropping the document silently — and clear the busy flag while the doc was still parsing.
+  const [imageAttaching, setImageAttaching] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -252,6 +295,54 @@ export function GrantBotChat({
     }
   }
 
+  // Attach ONE image (a screenshot, a snip, a map, a photo) for the vision model to read THIS turn.
+  // Unlike a document it is NOT extracted to text and does NOT ride the paste channel — it goes to the
+  // turn route as a base64 image block and is never stored. Reads the blob as a data: URL (async, so it
+  // sets `imageAttaching` + uses the isCurrent token guard). It uses the IMAGE-SPECIFIC token/flag
+  // (imageTokenRef / imageAttaching), NOT the doc/text ones, so attaching an image never invalidates an
+  // in-flight document extraction (they are independent, coexisting slots). Keeps the raw base64 for the
+  // wire plus the whole data URL for the thumbnail. 3 MB cap (base64 fits the turn body) and typed
+  // refusal — never a silent bad attach.
+  const attachImageFile = useCallback((file: File) => {
+    setError(null);
+    // Validate BEFORE bumping the token / taking the busy flag: a rejected paste must not touch the
+    // image slot's state at all. An invalid image just errors and leaves any live op alone.
+    if (!isAttachableImage(file.type)) {
+      setError("That image type isn't supported — attach a PNG or JPEG, or describe what it shows.");
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setError("That image is too large to attach (limit 3 MB). Try a smaller crop, or describe what it shows.");
+      return;
+    }
+    // Supersede any in-flight IMAGE read (not a doc extraction) and take the image busy flag.
+    const token = (imageTokenRef.current += 1);
+    const isCurrent = () => imageTokenRef.current === token;
+    const mediaType = file.type as ImageMime;
+    setImageAttaching(true);
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (!isCurrent()) return; // superseded by a newer image pick / cancel / thread switch — drop it
+      setImageAttaching(false);
+      const url = typeof reader.result === "string" ? reader.result : "";
+      // "data:image/png;base64,AAAA" → keep the whole URL for the <img> preview, split off the raw
+      // base64 (after the comma) for the wire; the server requires base64 with no data: prefix.
+      const comma = url.indexOf(",");
+      const data = comma >= 0 ? url.slice(comma + 1) : "";
+      if (!data) {
+        setError("Couldn't read that image. Try another, or describe what it shows.");
+        return;
+      }
+      setAttachedImage({ previewUrl: url, data, mediaType, name: file.name || "pasted image" });
+    };
+    reader.onerror = () => {
+      if (!isCurrent()) return;
+      setImageAttaching(false);
+      setError("Couldn't read that image. Try another, or describe what it shows.");
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
   // "Attach a file" quick action: turn a file into text and drop it into the SAME paste-attachment
   // channel the paste panel uses -- the server frames it as untrusted pasted content (framePastedContent),
   // so this adds no new trust surface. TEXT files (email threads, notes, a NOFO saved to .txt) are read
@@ -263,6 +354,12 @@ export function GrantBotChat({
       const file = e.target.files?.[0];
       e.target.value = ""; // allow re-picking the same file
       if (!file) return;
+      // An image goes to the vision path (base64 to the model), NOT text extraction. Gated on the flag
+      // so with vision off a picked image falls through and is refused typed like any other binary.
+      if (visionEnabled && isAttachableImage(file.type)) {
+        attachImageFile(file);
+        return;
+      }
       setError(null); // a new pick clears any prior "too large" / "couldn't read" banner
       // A fresh pick supersedes any extraction still in flight (its late result will be dropped by the
       // token check below), so the last file the reader chose is the one that attaches.
@@ -332,7 +429,7 @@ export function GrantBotChat({
       };
       reader.readAsText(file);
     },
-    [finalizeAttachment],
+    [finalizeAttachment, visionEnabled, attachImageFile],
   );
 
   // WHICH TRANSCRIPT IS ON SCREEN, as a number that changes whenever it is replaced.
@@ -353,6 +450,10 @@ export function GrantBotChat({
   // flight) drops its result instead of clobbering the composer or landing the document in the wrong
   // thread. Without it, `attaching` guarding only the current pick is not enough.
   const attachTokenRef = useRef(0);
+  // The image slot's OWN stale-guard token, independent of attachTokenRef — so attaching/pasting an
+  // image never invalidates an in-flight doc/text extraction (and vice versa). Bumped on a new image
+  // pick/paste, on removeImage, and on a thread switch / new conversation.
+  const imageTokenRef = useRef(0);
 
   // The composer's attachment as it is RIGHT NOW, readable from an async handler.
   //
@@ -365,6 +466,14 @@ export function GrantBotChat({
   useEffect(() => {
     pasteRef.current = { pasted, pasteLabel };
   }, [pasted, pasteLabel]);
+
+  // Same shape as pasteRef, for the image slot: a send captures the image object it consumed, and the
+  // response handler clears it only if the composer still holds THAT object (identity) — so preparing
+  // the next question's image during an in-flight turn is never wiped.
+  const imageRef = useRef<typeof attachedImage>(null);
+  useEffect(() => {
+    imageRef.current = attachedImage;
+  }, [attachedImage]);
 
   // Opening a thread (mount, expand, or a switch) must land the reader AT the latest turn with NO
   // animation -- a smooth scroll from the top on open is the "animate-down" we don't want, and it
@@ -421,6 +530,7 @@ export function GrantBotChat({
     setPasted(stashed.pasted);
     setPasteLabel(stashed.pasteLabel);
     setAttachedFile(stashed.attachedFile);
+    setAttachedImage(stashed.attachedImage);
     // A file restores as its chip (attachedFile); only a MANUAL paste reopens the editable panel.
     if (!stashed.attachedFile && (stashed.pasted || stashed.pasteLabel)) setShowPaste(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -429,8 +539,8 @@ export function GrantBotChat({
   // Mirror the composer into sessionStorage so a route change cannot swallow it. Cheap enough
   // to do on every keystroke, and it self-clears when the fields go empty.
   useEffect(() => {
-    stashDraft(clientId, { draft, pasted, pasteLabel, attachedFile });
-  }, [clientId, draft, pasted, pasteLabel, attachedFile]);
+    stashDraft(clientId, { draft, pasted, pasteLabel, attachedFile, attachedImage });
+  }, [clientId, draft, pasted, pasteLabel, attachedFile, attachedImage]);
 
   // ONE fetch of the context route, both callers. They differ only in what they do with the
   // result, so the query-param spelling and the error shape live here rather than in two
@@ -459,7 +569,10 @@ export function GrantBotChat({
       // A file extracting when the reader switches threads must not land in the new one; supersede it
       // and clear the busy state so the destination thread starts clean.
       attachTokenRef.current += 1;
+      imageTokenRef.current += 1;
       setAttaching(false);
+      setImageAttaching(false);
+      setAttachedImage(null); // an image is per-turn; it does not carry across a thread switch
       // A switch/open opens the destination AT its latest turn with no animation (see the scroll effect).
       didUserSend.current = false;
       setLoading(true);
@@ -525,7 +638,7 @@ export function GrantBotChat({
     // No-op while a file is still extracting (matching the Send button + Enter's disabled state): a
     // send here would snapshot the pre-extraction `pasted` and submit the question WITHOUT the
     // document, then the late finalizeAttachment would strand the result on a later turn.
-    if (!text || sending || attaching) return;
+    if (!text || sending || attaching || imageAttaching) return;
     setSending(true);
     setError(null);
     // The transcript this question belongs to. Every UI write below checks it first -- see the
@@ -538,14 +651,20 @@ export function GrantBotChat({
     // the fields would delete something that was never sent.
     const sentPasted = pasted;
     const sentPasteLabel = pasteLabel;
+    const sentImage = attachedImage;
     const attachmentUntouched = () =>
       pasteRef.current.pasted === sentPasted && pasteRef.current.pasteLabel === sentPasteLabel;
     const clearAttachment = () => {
-      if (!attachmentUntouched()) return;
-      setPasted("");
-      setPasteLabel("");
-      setShowPaste(false);
-      setAttachedFile(null);
+      if (attachmentUntouched()) {
+        setPasted("");
+        setPasteLabel("");
+        setShowPaste(false);
+        setAttachedFile(null);
+      }
+      // The image slot clears INDEPENDENTLY of the paste, and only if the composer still holds the
+      // exact image object this turn consumed (identity) — so an image lined up for the next question
+      // during an in-flight turn is never wiped.
+      if (sentImage && imageRef.current === sentImage) setAttachedImage(null);
     };
 
     // Optimistic: the question appears immediately, marked pending by the spinner below rather
@@ -554,7 +673,7 @@ export function GrantBotChat({
     const mine: GrantBotMsg = {
       id: `local-${Date.now()}`,
       role: "user",
-      text: pasted.trim() ? `${text}\n\n[+ pasted content]` : text,
+      text: `${text}${sentPasted.trim() ? "\n\n[+ pasted content]" : ""}${sentImage ? "\n\n[+ image]" : ""}`,
       error: null,
       usage: null,
       instructionsVersion: null,
@@ -575,6 +694,9 @@ export function GrantBotChat({
           conversationId: convId,
           message: text,
           pasted: pasted.trim() ? { body: pasted, describedAs: pasteLabel || undefined } : null,
+          // One per-turn image (raw base64 + media type). Undefined when none; the server also drops it
+          // unless GRANTBOT_VISION_ENABLED is on, and never stores the bytes.
+          image: sentImage ? { data: sentImage.data, mediaType: sentImage.mediaType } : undefined,
         }),
       });
       const data = await res.json();
@@ -630,7 +752,10 @@ export function GrantBotChat({
     // Likewise supersede an in-flight extraction and clear the busy state — a document being read
     // when the reader starts a new conversation belongs to neither.
     attachTokenRef.current += 1;
+    imageTokenRef.current += 1;
     setAttaching(false);
+    setImageAttaching(false);
+    setAttachedImage(null);
     // Same as a thread switch: the blank transcript opens instantly, not with a scroll animation.
     didUserSend.current = false;
     setConvId(null);
@@ -967,6 +1092,15 @@ export function GrantBotChat({
     setShowPaste(false);
   };
 
+  // The image thumbnail's × button. Bumps the IMAGE token so a still-in-flight image read cannot
+  // re-attach the picture the reader just removed, and clears the image busy flag — without touching an
+  // unrelated in-flight doc extraction (its own token/flag are separate).
+  const removeImage = () => {
+    imageTokenRef.current += 1;
+    setImageAttaching(false);
+    setAttachedImage(null);
+  };
+
   const errorBanner = error && (
     <div className="flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-[13px] text-amber-900 ring-1 ring-amber-200">
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
@@ -1023,11 +1157,39 @@ export function GrantBotChat({
     </div>
   );
 
-  // The chip and the manual panel are mutually exclusive; render whichever is active in the same slot
-  // both surfaces already reserve for the paste panel.
+  // The attached vision image shows as a small thumbnail chip (preview + name + remove). It is its own
+  // slot, independent of the paste/file chip above — a staffer can send a screenshot alongside a pasted
+  // email. The preview is a plain <img> on the local data: URL; nothing is uploaded until Send.
+  const imageChip = attachedImage && (
+    <div className="flex items-center gap-2.5 rounded-xl border border-edge bg-white px-3 py-2 shadow-card">
+      {/* eslint-disable-next-line @next/next/no-img-element -- a local data: URL preview, not a remote/optimizable asset */}
+      <img
+        src={attachedImage.previewUrl}
+        alt=""
+        className="h-9 w-9 shrink-0 rounded-md object-cover ring-1 ring-edge"
+      />
+      <ImageIcon className="h-4 w-4 shrink-0 text-ink-subtle" aria-hidden="true" />
+      <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-ink">{attachedImage.name}</span>
+      <span className="shrink-0 rounded bg-surface-sunken px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-subtle">
+        {attachedImage.mediaType === "image/png" ? "PNG" : "JPG"}
+      </span>
+      <button
+        type="button"
+        onClick={removeImage}
+        aria-label="Remove image"
+        className="shrink-0 rounded p-0.5 text-ink-subtle transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+
+  // The file chip and the manual panel are mutually exclusive (they share the paste slot); the image
+  // chip is a separate slot rendered alongside. Both surfaces already reserve this area under the transcript.
   const attachmentArea = (
     <>
       {attachmentChip}
+      {imageChip}
       {manualPastePanel}
     </>
   );
@@ -1048,6 +1210,25 @@ export function GrantBotChat({
       <textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
+        onPaste={(e) => {
+          // THE HEADLINE: snip → Ctrl/Cmd-V straight into the composer. Intercept ONLY an image on the
+          // clipboard (attach it for vision); anything else (text) pastes normally. Gated on the flag so
+          // with vision off Ctrl-V is exactly today's plain text paste.
+          if (!visionEnabled) return;
+          const items = e.clipboardData?.items;
+          if (!items) return;
+          for (let i = 0; i < items.length; i++) {
+            const it = items[i];
+            if (it.kind === "file" && isAttachableImage(it.type)) {
+              const file = it.getAsFile();
+              if (file) {
+                e.preventDefault(); // don't also drop the binary as garbage text
+                attachImageFile(file);
+              }
+              return;
+            }
+          }
+        }}
         onKeyDown={(e) => {
           // Enter sends; Shift+Enter inserts a newline (standard chat composer). Cmd/Ctrl+Enter
           // still sends too, so the old shortcut keeps working. TWO IME guards, not one: while an
@@ -1083,14 +1264,16 @@ export function GrantBotChat({
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            disabled={attaching}
-            aria-label={attaching ? "Reading file…" : "Attach a file"}
-            aria-busy={attaching}
+            // Busy on EITHER an in-flight doc extraction or an image read — the picker attaches both.
+            disabled={attaching || imageAttaching}
+            aria-label={attaching || imageAttaching ? "Reading file…" : visionEnabled ? "Attach a file or image" : "Attach a file"}
+            title={visionEnabled ? "Attach a file or image (or paste an image)" : "Attach a file"}
+            aria-busy={attaching || imageAttaching}
             className={`inline-flex items-center justify-center rounded-lg border border-edge bg-white text-ink-muted transition-colors hover:text-ink disabled:opacity-60 ${
               isCorner ? "h-7 w-7" : "h-8 w-8"
             }`}
           >
-            {attaching ? (
+            {attaching || imageAttaching ? (
               <Loader2 className={`animate-spin ${isCorner ? "h-3 w-3" : "h-3.5 w-3.5"}`} />
             ) : (
               <Paperclip className={isCorner ? "h-3 w-3" : "h-3.5 w-3.5"} />
@@ -1118,9 +1301,9 @@ export function GrantBotChat({
         <button
           type="button"
           onClick={() => void send()}
-          // Also disabled while a file is extracting — sending then would submit the question without
-          // the document (send() guards this too; the disabled state makes it visible).
-          disabled={sending || attaching || !draft.trim()}
+          // Also disabled while a file is extracting OR an image is still being read — sending then would
+          // submit the question without the attachment (send() guards this too; the disabled state shows it).
+          disabled={sending || attaching || imageAttaching || !draft.trim()}
           // orangeFill, NOT orange: this is white type on a solid orange field, which is
           // 3.04:1 on #E4761F and fails AA -- the exact case lib/brand.ts adds orangeFill
           // for. Both mocks specify #E4761F here; both surfaces depart from it the same way,
@@ -1135,12 +1318,14 @@ export function GrantBotChat({
       </div>
       {/* Hidden picker driven by the composer's attach button — present in BOTH surfaces (#4),
           unlike the page-only starter it replaces. Text files read client-side; PDF / .docx are
-          extracted server-side (/api/grantbot/extract). Images (PNG/JPG) are the next follow-on
-          (issue #465) — they need the vision path, not text extraction. */}
+          extracted server-side (/api/grantbot/extract). When vision is on, PNG/JPG are also accepted
+          and go to the vision path (base64 to the model), never text extraction. */}
       <input
         ref={fileInputRef}
         type="file"
-        accept=".pdf,.docx,.txt,.md,.eml,.csv,.json,.html,.htm,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/*"
+        accept={`.pdf,.docx,.txt,.md,.eml,.csv,.json,.html,.htm,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/*${
+          visionEnabled ? ",.png,.jpg,.jpeg,image/png,image/jpeg" : ""
+        }`}
         onChange={handleFileUpload}
         className="hidden"
       />

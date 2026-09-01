@@ -10,6 +10,7 @@ import { listConversations, loadMessages } from "@/lib/grantbot/store";
 import { GrantBotWorkspace } from "@/components/grantbot/grantbot-workspace";
 import { GrantBotCollapse } from "@/components/grantbot/grantbot-collapse";
 import { grantbotArtifactsEnabled } from "@/lib/grantbot/artifacts";
+import { grantbotVisionEnabled } from "@/lib/grantbot/vision";
 import { BLANK_CONVERSATION, toGrantBotMsg, toGrantBotThread } from "@/lib/grantbot/wire";
 
 export const dynamic = "force-dynamic";
@@ -182,6 +183,7 @@ export default async function GrantBotPage({
             byte-identical to the pre-1a page. */}
         <GrantBotWorkspace
           artifactsEnabled={grantbotArtifactsEnabled()}
+          visionEnabled={grantbotVisionEnabled()}
           clientId={params.id}
           clientName={gathered.clientName}
           variant="full"

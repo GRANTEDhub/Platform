@@ -47,6 +47,13 @@ import {
   READ_CONVERSATION_TOOL_NAME,
   type CrossThreadAuditRecord,
 } from "@/lib/grantbot/cross-thread";
+import {
+  grantbotVisionEnabled,
+  buildImageUserContent,
+  IMAGE_INSTRUCTION_BLOCK,
+  IMAGE_ATTACHED_NOTE,
+  type TurnImage,
+} from "@/lib/grantbot/vision";
 
 // One conversational turn: assemble, call, store. The orchestrator between the pure renderer and
 // the store, and the only place that knows anything about the model.
@@ -93,6 +100,10 @@ export interface RunTurnInput {
   message: string;
   // Optional paste, framed as untrusted evidence rather than concatenated into the question.
   pasted?: { body: string; describedAs?: string } | null;
+  // Optional single image the vision model reads THIS turn (a screenshot, a map). Ignored unless
+  // GRANTBOT_VISION_ENABLED is on; never stored. Validated (type + size) by the route before it gets
+  // here. See lib/grantbot/vision.ts.
+  image?: TurnImage | null;
   actorEmail: string;
   actorRole: string;
   // ── THE SEAM FOR A FUTURE SKILL LIBRARY ──
@@ -138,11 +149,20 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
     ? `${text}\n\n${framePastedContent(input.pasted.body, new Date().toISOString(), input.pasted.describedAs)}`
     : text;
 
+  // Vision is flag-gated: OFF drops any image so this turn is byte-identical to the pre-vision turn
+  // (no framing block, string user content, unchanged stored row). The route already validated the
+  // image's type + size; this is the master gate + kill-switch.
+  const image = grantbotVisionEnabled() ? input.image ?? null : null;
+
   const history = await loadMessages(input.db, input.conversationId);
   const { messages, dropped } = budgetHistory(history, userText);
 
   const seq = await nextSeq(input.db, input.conversationId);
-  await appendUser(input.db, { conversationId: input.conversationId, seq, text: userText });
+  // The bytes are NEVER stored; when an image rode this turn, a short note is appended to the stored
+  // text so the transcript and a later turn's replay know an image existed (and is gone). userText
+  // itself — what the model reads alongside the image below — is unchanged.
+  const storedUserText = image ? `${userText}\n\n${IMAGE_ATTACHED_NOTE}` : userText;
+  await appendUser(input.db, { conversationId: input.conversationId, seq, text: storedUserText });
 
   // The fetch instruction is appended AFTER the cache breakpoint (cacheable: false) and ONLY when
   // enabled, so it never enters the shared cached prefix -- the flag-off prompt is unchanged and
@@ -161,6 +181,9 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
     ...(webFetchEnabled ? [FETCH_INSTRUCTION_BLOCK] : []),
     ...(artifactsEnabled ? [ARTIFACT_INSTRUCTION_BLOCK] : []),
     ...(crossThreadEnabled ? [CROSS_THREAD_INSTRUCTION_BLOCK] : []),
+    // Only when an image actually rides this turn (cacheable:false, after the breakpoint) — so a
+    // no-image turn's prompt is byte-identical and existing caches are not busted.
+    ...(image ? [IMAGE_INSTRUCTION_BLOCK] : []),
   ];
 
   const system = assembleSystem(prompt, effectiveTurnBlocks);
@@ -174,6 +197,16 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
         ...messages,
       ]
     : messages;
+
+  // When an image rides this turn, swap the CURRENT user turn's string content for image+text content
+  // blocks so the vision model sees the picture. budgetHistory always appends the current turn LAST, so
+  // it is baseMessages' final element (the dropped-notice, when present, is prepended). No-image turns
+  // leave baseMessages untouched -> byte-identical string content, exactly the pre-vision request.
+  const modelMessages = image
+    ? baseMessages.map((m, i) =>
+        i === baseMessages.length - 1 ? { role: "user" as const, content: buildImageUserContent(userText, image) } : m,
+      )
+    : baseMessages;
 
   let answer = "";
   let usage: TurnUsage | null = null;
@@ -270,7 +303,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
     };
 
     const loop = await runToolLoop({
-      messages: baseMessages,
+      messages: modelMessages,
       toolsEnabled,
       callModel,
       dispatch,
