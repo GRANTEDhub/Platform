@@ -894,8 +894,15 @@ export function readAllowableUses(value: unknown): AllowableUses | null {
 // restriction_class so a single mistag can't leak one through. Staff/console are unaffected -- they
 // read the full stored list. Kept deliberately narrow (the recurring federal-rider terms), matched
 // against BOTH the plain line and its quote.
+//
+// STEMS, and NO trailing `\b` (the #483 fix): a trailing word boundary after a stem never fires on the
+// real inflected forms -- `ideolog\b` can't match "ideology" (the `g` is followed by a letter, so no
+// boundary exists), and likewise "abortions" / "gender identities" / "conversion therapies". Matching a
+// stem with no trailing boundary catches every inflection, and over-matching only ever HIDES more from
+// the client, which is the safe direction for this net. The leading `\b` still anchors each term to a
+// word start.
 const STATUTORY_CLIENT_HIDE =
-  /\b(abortion|gender\s+ideolog|sexual\s+orientation|gender\s+identity|conversion\s+therapy|transgender)\b/i;
+  /\b(abortion|gender\s+ideolog|sexual\s+orientation|gender\s+identit|conversion\s+therap|transgender)/i;
 
 // Client visibility, RESOLVED. What the portal's grant detail passes to the shared review console for
 // a CLIENT: the parsed uses-of-funds list, FILTERED to what is client-appropriate, or null to omit the

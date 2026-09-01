@@ -178,6 +178,28 @@ describe("clientAllowableUses (client-surface filter)", () => {
     expect(out?.items.map((i) => i.line)).toEqual(["General standard"]);
   });
 
+  it("backstop catches INFLECTED statutory wording tagged budget (the #483 regex fix)", () => {
+    process.env[FLAG] = "true";
+    // Each quote is a not-allowed item MIS-tagged "budget"; the backstop must still hide it. These
+    // inflected forms are exactly what a trailing \b after the stem failed to match ("ideology" after
+    // "ideolog", plus the plurals) — the bug this test locks closed.
+    for (const quote of [
+      "may not promote gender ideology",
+      "no funds for abortions",
+      "activities targeting gender identities are unallowable",
+      "conversion therapies are not permitted",
+    ]) {
+      const out = clientAllowableUses({
+        reason: null,
+        items: [
+          { line: "General standard", quote: "costs must be reasonable", kind: "allowed" },
+          { line: "Restricted", quote, kind: "not_allowed", restriction_class: "budget" },
+        ],
+      });
+      expect(out?.items.map((i) => i.line), quote).toEqual(["General standard"]);
+    }
+  });
+
   it("returns null when everything filters out (only statutory not-allowed items)", () => {
     process.env[FLAG] = "true";
     const out = clientAllowableUses({
