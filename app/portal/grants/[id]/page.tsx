@@ -202,6 +202,15 @@ export default async function PortalGrantDetail({
   const displayFit: 1 | 2 | 3 = hardKill?.kind === "ineligible" ? 1 : effFit;
   const verdictLead = verdictEnabled ? buildVerdict(displayFit, hardKill, org.clientName, "client") : null;
 
+  // Suppress the fit prose ONLY when a no-go LEAD is actually rendered (`hardKill && verdictLead`) — the same
+  // expression as the staff page. On the CLIENT a no-go lead is null (`buildVerdict(…, "client")` returns null
+  // for a hard kill), so `verdictLead` is null here and the rationale is KEPT: there is no lead for the prose
+  // to contradict, and blanking it would only strip the client's why-this-grant explanation (Codex #471). The
+  // closed/ineligible facts already surface in the deadline tile / eligibility callout. Flag OFF → hardKill
+  // null → rationaleForRender === rationale, byte-identical.
+  const rationaleForRender =
+    hardKill && verdictLead ? { lead: null, blocking: null, mitigation: null, narrative: null } : rationale;
+
   const meta: ReviewMeta[] = [
     { label: "Award range", value: formatAwardRange(g.award_range_min, g.award_range_max) },
     {
@@ -285,7 +294,7 @@ export default async function PortalGrantDetail({
         allowableUses={allowableUsesClientVisible() ? readAllowableUses(g.allowable_uses) : null}
         meta={meta}
         eligibility={eligibility}
-        rationale={rationale}
+        rationale={rationaleForRender}
         factors={factors}
         // Spends a real scorer call — not the client's to spend.
         scoreFactors={null}
@@ -305,16 +314,22 @@ export default async function PortalGrantDetail({
         fitScore={displayFit}
         verdict={FIT_BAND[displayFit].label}
         consequence={
-          // When calibration drove the score, the Fit-factors sentence already states that as
-          // the reason; a factor-based next-step here would point at a second, different cause
-          // on the same screen. Defer to the one explanation.
-          calibrated
+          // Same hard-kill guard as the staff page (and as rationaleForRender): null the fit-based
+          // next-step where a no-go lead is rendered. On the client the lead is null (no-go is staff-only),
+          // so this keeps the consequence — it matches the client's displayed score and there is no lead to
+          // contradict.
+          hardKill && verdictLead
             ? null
-            : factors.lead
-              ? `Worth addressing ${factors.lead.label.toLowerCase()} before you commit.`
-              : effFit === 3
-                ? "No blocking factor on this one."
-                : null
+            : // When calibration drove the score, the Fit-factors sentence already states that as
+              // the reason; a factor-based next-step here would point at a second, different cause
+              // on the same screen. Defer to the one explanation.
+              calibrated
+              ? null
+              : factors.lead
+                ? `Worth addressing ${factors.lead.label.toLowerCase()} before you commit.`
+                : effFit === 3
+                  ? "No blocking factor on this one."
+                  : null
         }
         // No "your feedback tunes future scoring" line: that control is staff-only here, so
         // promising it would describe something the client cannot do.

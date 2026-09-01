@@ -251,6 +251,18 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   const displayFit: 1 | 2 | 3 = hardKill?.kind === "ineligible" ? 1 : effFit;
   const verdictLead = verdictEnabled ? buildVerdict(displayFit, hardKill, client?.name ?? "Client", "staff") : null;
 
+  // A deterministic hard kill states the WHOLE story in the lead (deadline passed / structurally ineligible)
+  // — a fact orthogonal to fit. Any fit prose beneath it (the QA narrative written for the original verdict,
+  // or the engine's optimistic why-this-org lead) would argue the opposite under a "No-go: <disqualifier>"
+  // lead, defeating the pin. So suppress the body prose ONLY when a no-go LEAD is actually rendered — i.e.
+  // `hardKill && verdictLead`. Staff shows the lead → blank the contradicting prose. The CLIENT hides a no-go
+  // lead (`buildVerdict(…, "client")` → null), so there is nothing to contradict there — blanking would only
+  // strip the why-this-grant explanation (Codex #471), and the closed/ineligible facts already show in the
+  // deadline tile / eligibility callout. So the client keeps its rationale. Flag OFF → hardKill null →
+  // rationaleForRender === rationale, byte-identical.
+  const rationaleForRender =
+    hardKill && verdictLead ? { lead: null, blocking: null, mitigation: null, narrative: null } : rationale;
+
   const meta: ReviewMeta[] = [
     { label: "Award range", value: formatAwardRange(g.award_range_min, g.award_range_max) },
     {
@@ -358,7 +370,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         allowableUses={readAllowableUses(g.allowable_uses)}
         meta={meta}
         eligibility={eligibility}
-        rationale={rationale}
+        rationale={rationaleForRender}
         factors={factors}
         // Only ever rendered in the unscored branch. Offered to every staff reviewer
         // rather than admins only: the reviewer looking at the empty panel is the person
@@ -384,15 +396,22 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         // What the score MEANS for the next step, derived from the lit factor rather than
         // from three canned sentences keyed off the number.
         consequence={
-          // Calibration-driven score: the Fit-factors sentence carries the reason; a factor-based
-          // next-step here would name a second, different cause on the same screen. Defer to it.
-          calibrated
+          // A hard kill's no-go lead makes any FIT-based next-step ("ready to go out" / "pursue once X is
+          // addressed") a contradiction beside it — the same defect the rationale suppression fixes, in the
+          // ScoreCard's separate `consequence` prop. Null it under the SAME guard (`hardKill && verdictLead`,
+          // i.e. where the lead is rendered — staff), so a closed strong-fit card can't say "ready to go out"
+          // under "No-go: deadline passed" (#471 Claude Code Review). The client keeps it (no lead shown).
+          hardKill && verdictLead
             ? null
-            : factors.lead
-              ? `Pursue only once ${factors.lead.label.toLowerCase()} is addressed.`
-              : effFit === 3
-                ? "No blocking factor — this one is ready to go out."
-                : null
+            : // Calibration-driven score: the Fit-factors sentence carries the reason; a factor-based
+              // next-step here would name a second, different cause on the same screen. Defer to it.
+              calibrated
+              ? null
+              : factors.lead
+                ? `Pursue only once ${factors.lead.label.toLowerCase()} is addressed.`
+                : effFit === 3
+                  ? "No blocking factor — this one is ready to go out."
+                  : null
         }
         scoreFootnote={`Machine-scored${
           surfacedAt ? ` ${format(parseISO(surfacedAt), "MMM d")}` : ""

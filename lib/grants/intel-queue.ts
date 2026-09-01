@@ -170,19 +170,22 @@ export function buildQaPatch(
   // engine score, independent of the freshness snapshot below. So a demote → affirm re-run correctly drops
   // the demoted number even though we now keep a snapshot.
   //
-  // BUT the verdict NARRATIVE (the go/no-go reasoning body) rides EVERY resolved verdict now, not just a
-  // demote — an affirm/flag carries its own grounded reasoning. So the clearing patch KEEPS `qa_narrative`
-  // (verbatim from finalizeIntel — null for unverified or a guarded-away leak) and, when there IS a narrative
-  // to honor, sets the freshness snapshot so the read layer displays it while fresh and drops it on an engine
-  // re-score (same staleness rule as a score override). No narrative → snapshot stays null (nothing to gate).
-  // The score still coalesces to the engine number regardless; only the reasoning paragraph is carried.
+  // The verdict NARRATIVE (the go/no-go reasoning body) rides an affirm/flag's OWN grounded reasoning here —
+  // BUT NEVER a DEMOTE's. A demote that reaches this clearing branch is one that did NOT apply: under
+  // broad-apply a refute-UNCLEAN demote is held for staff (score untouched), and CLAUDE.md's invariant is
+  // that such a card stays INDISTINGUISHABLE from one QA never touched. Carrying the demote's disqualifying
+  // "no-go" paragraph here would render it under the ORIGINAL, un-demoted engine score + verdict lead — the
+  // exact contradiction that invariant forbids. So a demote clears its narrative too (null); only a
+  // non-demote (affirm/flag) carries its reasoning, with the freshness snapshot to gate it (dropped on an
+  // engine re-score). The score coalesces to the engine number regardless; only a non-demote's prose rides.
+  const carryNarrative = review.verdict !== "demote" ? review.narrative : null;
   return {
     qa_fit_score: null,
     qa_factor_scores: null,
     qa_sources: null,
-    qa_narrative: review.narrative,
+    qa_narrative: carryNarrative,
     qa_status: review.verdict === "unverified" ? "unverified" : "none",
-    qa_engine_fit_score: review.narrative ? card.fit_score : null,
+    qa_engine_fit_score: carryNarrative ? card.fit_score : null,
     qa_applied_at: nowIso,
     qa_reviewed_by: reviewedBy,
   };
