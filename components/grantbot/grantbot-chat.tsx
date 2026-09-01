@@ -736,9 +736,19 @@ export function GrantBotChat({
       if (data.conversationId && data.conversationId !== convId) setConvId(data.conversationId);
       if (!res.ok || data.error) {
         setError(data.error ?? `Request failed (${res.status}).`);
-        // The turn did not produce an answer — put the message back so it can be retried or edited,
-        // image still attached (the composer shows exactly what will resend, never a silent one).
-        restoreForRetry();
+        if (res.ok) {
+          // HTTP 200 WITH an error field: runTurn already RECORDED this turn — it writes the user row
+          // before the model call and an assistant-error row EITHER WAY (turn.ts / the turn route return
+          // 200 + error on a runTurn failure). The optimistic bubble matches that persisted user turn, so
+          // KEEP it; restoring for retry would let a resend append a SECOND user turn and duplicate the
+          // transcript on reopen. Just clear the sent image so a later question doesn't re-send it.
+          clearSentImage();
+        } else {
+          // A real HTTP 4xx/5xx is returned BEFORE runTurn records anything (auth, validation,
+          // conversation lookup/creation) — nothing was saved, so put the message back for a clean retry,
+          // image still attached (the composer shows exactly what will resend).
+          restoreForRetry();
+        }
       } else {
         setMessages((m) => [
           ...m,
