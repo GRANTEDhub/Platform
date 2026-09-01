@@ -27,6 +27,21 @@ describe("resolveFit — QA override coalesce + staleness", () => {
     expect(r.narrative).toBeNull();
   });
 
+  it("scrubs the matcher's seat codes from a stored narrative at the read boundary", () => {
+    // A narrative stored before narrativeGuard scrubbed codes must still display clean on every surface.
+    const r = resolveFit(
+      row({
+        fit_score: 2,
+        qa_status: "none",
+        qa_fit_score: null,
+        qa_engine_fit_score: 2,
+        qa_narrative: "It fills a research unit (S0_2) and community engagement (S0_6), but cannot prime.",
+      }),
+    );
+    expect(r.narrative).toBe("It fills a research unit and community engagement, but cannot prime.");
+    expect(r.narrative).not.toMatch(/S\d+_\d+/);
+  });
+
   it("applied + fresh (snapshot === fit_score) → QA score/factors/sources/narrative shown, badge applied", () => {
     const r = resolveFit(
       row({

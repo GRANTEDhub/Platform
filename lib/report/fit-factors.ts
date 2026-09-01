@@ -1,5 +1,6 @@
 import type { FactorRating, FactorScores } from "@/types/database";
 import { FIT_BAND } from "@/lib/report/shape";
+import { stripSeatCodes } from "@/lib/grants/fit-narrative";
 
 // The six fit factors as the grant-review screen reads them.
 //
@@ -74,7 +75,10 @@ export function viewFitFactors(scores: FactorScores | null): FitFactorView {
       rating,
       filled: seg?.filled ?? 0,
       word: seg?.word ?? "Not assessed",
-      rationale: scores?.[key]?.rationale?.trim() || null,
+      // Scrub the matcher's internal seat/role codes (S0_2, P0) the model sometimes leaves in a factor
+      // rationale — this string feeds both the engine paragraph's blocking sentence (blockingReason) and
+      // the client-visible factor-table hover, so it must be client-clean at the read boundary.
+      rationale: stripSeatCodes(scores?.[key]?.rationale?.trim() || "") || null,
       lead: false,
     };
   });

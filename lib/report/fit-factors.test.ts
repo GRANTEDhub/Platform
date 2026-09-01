@@ -47,4 +47,16 @@ describe("blockingReason", () => {
   it("is null on an all-strong card with no calibration (no reason to invent)", () => {
     expect(blockingReason(viewFitFactors(scores()), 3, { calibrated: false })).toBeNull();
   });
+
+  it("scrubs the matcher's seat codes from a factor rationale (blocking sentence + table hover)", () => {
+    // The rationale feeds both blockingReason and the client-visible factor-table hover, so a leaked
+    // "S0_2" must be gone at the viewFitFactors read boundary.
+    const view = viewFitFactors(
+      scores({ seat_role: { rating: "weak", rationale: "fills a support role (S0_2) but cannot prime" } }),
+    );
+    expect(view.factors.find((f) => f.key === "seat_role")?.rationale).toBe("fills a support role but cannot prime");
+    const s = blockingReason(view, 2, { calibrated: false });
+    expect(s).not.toMatch(/S\d+_\d+/);
+    expect(s).toContain("fills a support role but cannot prime");
+  });
 });
