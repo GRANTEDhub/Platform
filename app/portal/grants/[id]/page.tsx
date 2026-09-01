@@ -202,12 +202,14 @@ export default async function PortalGrantDetail({
   const displayFit: 1 | 2 | 3 = hardKill?.kind === "ineligible" ? 1 : effFit;
   const verdictLead = verdictEnabled ? buildVerdict(displayFit, hardKill, org.clientName, "client") : null;
 
-  // A hard kill states the whole story in the lead; the fit prose beneath (the QA narrative or the engine's
-  // optimistic lead) would argue the opposite under a no-go, so suppress it when a hard kill fires — the lead
-  // stands alone. Same as the staff page, so both sides read the same. Flag OFF → hardKill null → identical.
-  // (On the client side a no-go lead is null anyway, so this mostly protects a would-be positive paragraph
-  // from rendering with no lead above it once the client sees a closed/ineligible card via never-hide.)
-  const rationaleForRender = hardKill ? { lead: null, blocking: null, mitigation: null, narrative: null } : rationale;
+  // Suppress the fit prose ONLY when a no-go LEAD is actually rendered (`hardKill && verdictLead`) — the same
+  // expression as the staff page. On the CLIENT a no-go lead is null (`buildVerdict(…, "client")` returns null
+  // for a hard kill), so `verdictLead` is null here and the rationale is KEPT: there is no lead for the prose
+  // to contradict, and blanking it would only strip the client's why-this-grant explanation (Codex #471). The
+  // closed/ineligible facts already surface in the deadline tile / eligibility callout. Flag OFF → hardKill
+  // null → rationaleForRender === rationale, byte-identical.
+  const rationaleForRender =
+    hardKill && verdictLead ? { lead: null, blocking: null, mitigation: null, narrative: null } : rationale;
 
   const meta: ReviewMeta[] = [
     { label: "Award range", value: formatAwardRange(g.award_range_min, g.award_range_max) },
