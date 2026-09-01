@@ -672,6 +672,18 @@ export function GrantBotChat({
       clearSentImage();
     };
 
+    // A send that did NOT succeed (a server error, or a network/catch) puts the reader's message back
+    // for a clean retry, rather than clearing it. `fetch` rejecting can mean the request never reached
+    // the server (offline / DNS / TLS) — nothing was saved — so a "refresh to check" would just destroy
+    // the only copy of an unsent question (the draft was cleared; the question lives only in the
+    // optimistic bubble). So: roll back the optimistic bubble and restore the draft; the paste and the
+    // image were never cleared on a failure, so they stay attached too. The composer visibly holds the
+    // exact turn again — never a silent re-send, since the reader can see and edit what will go out.
+    const restoreForRetry = () => {
+      setMessages((m) => m.filter((x) => x.id !== mine.id));
+      setDraft(text);
+    };
+
     // Optimistic: the question appears immediately, marked pending by the spinner below rather
     // than by a fake assistant bubble. A placeholder answer that later turns into an error reads
     // as though GrantBot said something and then took it back.
@@ -724,9 +736,9 @@ export function GrantBotChat({
       if (data.conversationId && data.conversationId !== convId) setConvId(data.conversationId);
       if (!res.ok || data.error) {
         setError(data.error ?? `Request failed (${res.status}).`);
-        // The turn (and its image) went to the server; clear the image so a retry doesn't silently
-        // re-send it. A failed turn is still recorded server-side, so re-sending would double it.
-        clearSentImage();
+        // The turn did not produce an answer — put the message back so it can be retried or edited,
+        // image still attached (the composer shows exactly what will resend, never a silent one).
+        restoreForRetry();
       } else {
         setMessages((m) => [
           ...m,
@@ -747,15 +759,15 @@ export function GrantBotChat({
       }
       void refreshThreads();
     } catch {
-      // The request went out but its RESPONSE didn't come back cleanly (a dropped connection, or a slow
-      // vision turn the gateway timed out) — yet the server may well have finished and SAVED the answer.
-      // Say so honestly (refreshing surfaces a saved reply) rather than implying nothing happened, and
-      // clear the image so it doesn't ride the next turn. Only if the reader is still on this thread.
+      // `fetch` rejected (or its response wasn't usable). This covers the request never reaching the
+      // server (offline / DNS / TLS) as well as a lost response, and the two are indistinguishable here
+      // — so take the SAFE side: assume it did NOT go through and put the message + image back for a
+      // retry, rather than telling the reader to refresh (which would destroy their only, optimistic
+      // copy of an unsent question). Only if they're still on this thread.
       if (stillMine()) {
-        setError("GrantBot didn't send its reply back in time. It may still have gone through — refresh the page to check before resending.");
-        clearSentImage();
+        setError("Couldn't reach GrantBot — your message wasn't sent. It's back in the box to try again.");
+        restoreForRetry();
       }
-      void refreshThreads();
     } finally {
       setSending(false);
     }
