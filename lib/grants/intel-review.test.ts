@@ -279,6 +279,9 @@ describe("intelContext", () => {
     expect(ctx).toMatch(/FORMULA \/ ALLOCATION PROGRAM — CFDA 16\.738/);
     expect(ctx).toMatch(/ENTITY-TYPE eligibility is NOT application eligibility/);
     expect(ctx).toMatch(/SEARCH for it/);
+    // The note is two-directional (case-2 fix): it names the designated recipient as the PRIME to affirm,
+    // not only the sub to demote.
+    expect(ctx).toMatch(/PRIME to AFFIRM/);
   });
 
   it("discovery ON but a NON-formula CFDA → no formula note (tag is conservative)", () => {
