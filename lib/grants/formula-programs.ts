@@ -31,60 +31,64 @@ export interface FormulaProgram {
 // Known federal FORMULA / BLOCK / ALLOCATION programs. Each is distributed by statutory formula (to
 // states / units of local government / by an allocation table), so a sub-recipient is not a prime
 // applicant even when the entity-type list reads as if it were. High-confidence entries only.
+// Each note names BOTH sides of the formula structure — the DESIGNATED recipient that IS the direct/prime
+// applicant (to AFFIRM) and the sub-participant that is not (to demote). The QA pass was over-demoting the
+// designated recipient (e.g. a State Administering Agency) because the notes named only who was a sub;
+// stating who the prime is gives the reviewer the affirmative anchor (case-2 over-demote fix).
 export const FORMULA_PROGRAMS: Record<string, FormulaProgram> = {
   // Edward Byrne Memorial Justice Assistance Grant (JAG) — Local. Local allocation table marks
   // disparate / asterisk jurisdictions that must apply jointly / through the county / via the state.
   "16.738": {
     label: "Edward Byrne Memorial Justice Assistance Grant (JAG)",
     allocationNote:
-      "Distributed by the JAG allocation formula; disparate / 'asterisk' local jurisdictions on the allocation table cannot prime a direct application and must apply jointly, through the county, or via the State Administering Agency.",
+      "Distributed by the JAG allocation formula. The State Administering Agency, and a local jurisdiction that is directly allocated and NOT marked disparate / 'asterisk' (it files on its own), ARE direct applicants; a disparate / 'asterisk' local jurisdiction must apply JOINTLY (through a single fiscal agent, the county, or the State Administering Agency) and cannot prime a standalone application — the asterisk / joint-application requirement is the disqualifier, not whether an allocation amount is shown for it (a disparate unit can still carry its own formula figure).",
   },
   // Crime Victim Assistance (VOCA). Formula grant to STATES; local victim-services organizations are
   // SUBGRANTEES through the state VOCA administering agency, not direct/prime applicants.
   "16.575": {
     label: "Crime Victim Assistance (VOCA Victim Assistance Formula)",
     allocationNote:
-      "A formula grant to the states; local and nonprofit victim-services providers participate as SUBGRANTEES through the state VOCA administering agency, not as direct federal applicants.",
+      "A formula grant to the states: the Governor-designated state VOCA administering agency IS the direct applicant; local and nonprofit victim-services providers participate as SUBGRANTEES through that agency, not as direct federal applicants.",
   },
   // STOP Violence Against Women Formula Grants. Formula to states; local governments and nonprofits
   // are subgrantees through the state STOP administering agency.
   "16.588": {
     label: "Violence Against Women Formula Grants (STOP)",
     allocationNote:
-      "A formula grant to the states; local governments and nonprofits participate as subgrantees through the state STOP administering agency, not as direct applicants.",
+      "A formula grant to the states: the state STOP administering agency IS the direct applicant; local governments and nonprofits participate as subgrantees through that agency, not as direct applicants.",
   },
   // Community Development Block Grant — Entitlement communities. Formula/allocation to entitlement
   // jurisdictions; a non-entitlement locality participates through the state CDBG program.
   "14.218": {
     label: "Community Development Block Grant (CDBG) — Entitlement",
     allocationNote:
-      "A formula/allocation program; entitlement jurisdictions receive a direct allocation, while non-entitlement localities participate through the state CDBG program, not as direct HUD applicants.",
+      "A formula/allocation program: an entitlement jurisdiction receives its OWN direct allocation and applies directly to HUD; a non-entitlement locality participates through the state CDBG program, not as a direct HUD applicant.",
   },
   // Community Development Block Grant — State's program (small cities). Formula to states, which then
   // subaward to non-entitlement local governments.
   "14.228": {
     label: "Community Development Block Grant (CDBG) — State's Program",
     allocationNote:
-      "A formula grant to the states; non-entitlement local governments receive funds as subrecipients of the state, not as direct HUD applicants.",
+      "A formula grant to the states: the state IS the direct HUD applicant; non-entitlement local governments receive funds as subrecipients of the state, not as direct HUD applicants.",
   },
   // Federal Transit Formula Grants (§5307 and related). Apportioned by formula to designated
   // recipients / urbanized areas; other operators participate as subrecipients of that recipient.
   "20.507": {
     label: "Federal Transit Formula Grants",
     allocationNote:
-      "Apportioned by formula to the designated recipient for each urbanized area; other transit operators participate as subrecipients of that designated recipient, not as direct FTA applicants.",
+      "Apportioned by formula to the DESIGNATED RECIPIENT for each urbanized area, which IS the direct applicant; other transit operators participate as subrecipients of that designated recipient, not as direct FTA applicants.",
   },
   // Title I Grants to Local Educational Agencies. Formula through the State Educational Agency to LEAs.
   "84.010": {
     label: "Title I Grants to Local Educational Agencies",
     allocationNote:
-      "A formula program flowing through the State Educational Agency to LEAs by formula; it is not a competitive direct application.",
+      "A formula program: the State Educational Agency is the direct recipient and sub-allocates to LEAs by formula; it is not a competitive direct application.",
   },
   // Special Education — IDEA Part B Grants to States. Formula through the state to LEAs.
   "84.027": {
     label: "Special Education — Grants to States (IDEA Part B)",
     allocationNote:
-      "A formula grant to the states, sub-allocated to LEAs by formula; not a competitive direct application.",
+      "A formula grant to the states: the State Educational Agency is the direct recipient, sub-allocated to LEAs by formula; not a competitive direct application.",
   },
 };
 
