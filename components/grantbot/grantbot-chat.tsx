@@ -228,6 +228,8 @@ export function GrantBotChat({
         return "That PDF has no selectable text — it looks scanned. Paste the text in, or attach a text export.";
       case "docx_no_text":
         return "That Word document had no readable text. Paste the text in instead.";
+      case "docx_too_large":
+        return "That Word file expands too large to read safely — paste the text in instead.";
       case "pdf_parse_failed":
         return "Couldn't read that PDF (it may be corrupt or password-protected). Paste the text in instead.";
       case "docx_parse_failed":
@@ -308,8 +310,10 @@ export function GrantBotChat({
         const { text: sliced, truncated } = truncateSafely(text, MAX_ATTACH_CHARS);
         finalizeAttachment(sliced, truncated, file.name, file.type);
       };
-      reader.onerror = () =>
+      reader.onerror = () => {
+        if (!isCurrent()) return; // a superseded read's error must not overwrite the current context
         setError("Couldn't read that file. Try a PDF, Word .docx, or a text file — or paste the text in instead.");
+      };
       reader.readAsText(file);
     },
     [finalizeAttachment],
@@ -910,8 +914,11 @@ export function GrantBotChat({
   // manual paste while a file chip is up (the two share the one `pasted` slot).
   const removeAttachment = () => {
     // Supersede any in-flight extraction so a late result cannot re-attach a document the reader just
-    // cleared.
+    // cleared — AND clear the busy flag, like loadThread/newConversation. Without the reset, clearing
+    // the chip while a *second* pick is extracting would strand `attaching` true (its request's
+    // isCurrent() finally now fails), soft-locking the composer.
     attachTokenRef.current += 1;
+    setAttaching(false);
     setPasted("");
     setPasteLabel("");
     setAttachedFile(null);

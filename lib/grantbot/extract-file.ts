@@ -25,7 +25,49 @@ export type ExtractReason =
   | "pdf_parse_failed" // pdf-parse could not read the bytes (corrupt / encrypted / not really a PDF)
   | "pdf_no_text" // the PDF parsed but has no text layer (a scanned image) — refuse to guess its content
   | "docx_parse_failed" // mammoth could not read the bytes (corrupt / not a real .docx / legacy .doc)
-  | "docx_no_text"; // the .docx parsed but yielded no text
+  | "docx_no_text" // the .docx parsed but yielded no text
+  | "docx_too_large"; // the .docx's DECOMPRESSED content exceeds the safe cap (zip-bomb guard)
+
+// A .docx is a ZIP. The 5MB input cap bounds the COMPRESSED bytes; it does NOT bound what they inflate
+// to, and mammoth (via JSZip) decompresses the whole archive into memory before the char cap ever
+// runs — so a crafted <5MB zip-bomb could expand to gigabytes and OOM/hang the route. Cap the summed
+// DECLARED uncompressed size of the archive's entries (read from the ZIP central directory, no
+// decompression) before handing bytes to mammoth. Generous for a real text document; a text .docx is
+// nowhere near this even with embedded media (which extractRawText ignores anyway).
+export const MAX_DOCX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024;
+
+// Sum the declared uncompressed sizes across a ZIP's central-directory entries, WITHOUT decompressing.
+// Returns null if the bytes are not a parseable ZIP (→ not a valid .docx). A ZIP64 size marker
+// (0xFFFFFFFF) yields Infinity — treated as over any sane cap, since a real .docx entry is never ≥4GB.
+export function sumZipUncompressedSize(bytes: Uint8Array): number | null {
+  if (bytes.byteLength < 22) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const EOCD_SIG = 0x06054b50;
+  const CDH_SIG = 0x02014b50;
+  // The End Of Central Directory record sits near the end but can carry a trailing comment, so scan
+  // back for its signature (bounded to the max comment length + the 22-byte record).
+  const minStart = Math.max(0, bytes.byteLength - (0xffff + 22));
+  let eocd = -1;
+  for (let i = bytes.byteLength - 22; i >= minStart; i--) {
+    if (view.getUint32(i, true) === EOCD_SIG) { eocd = i; break; }
+  }
+  if (eocd < 0) return null;
+  const count = view.getUint16(eocd + 10, true);
+  let off = view.getUint32(eocd + 16, true); // offset of the central directory
+  if (off === 0xffffffff) return Number.POSITIVE_INFINITY; // ZIP64
+  let total = 0;
+  for (let n = 0; n < count; n++) {
+    if (off + 46 > bytes.byteLength || view.getUint32(off, true) !== CDH_SIG) return null;
+    const uncompressed = view.getUint32(off + 24, true);
+    if (uncompressed === 0xffffffff) return Number.POSITIVE_INFINITY; // ZIP64 entry
+    total += uncompressed;
+    const nameLen = view.getUint16(off + 28, true);
+    const extraLen = view.getUint16(off + 30, true);
+    const commentLen = view.getUint16(off + 32, true);
+    off += 46 + nameLen + extraLen + commentLen;
+  }
+  return total;
+}
 
 export type ExtractResult =
   | { ok: true; text: string; truncated: boolean; kind: "pdf" | "docx" }
@@ -61,8 +103,12 @@ export interface ExtractOptions {
   mime?: string;
   pdfExtract?: PdfExtract;
   docxExtract?: DocxExtract;
+  // Seam for the zip-bomb pre-check (default sumZipUncompressedSize) — injectable so the guard's
+  // branch logic is tested without crafting a real bomb.
+  docxSize?: (bytes: Uint8Array) => number | null;
   maxBytes?: number;
   maxChars?: number;
+  maxDocxUncompressed?: number;
 }
 
 export async function extractFileText(
@@ -92,6 +138,21 @@ export async function extractFileText(
       return { ok: false, reason: "pdf_no_text", detail: "no extractable text layer (likely a scanned PDF)" };
     }
   } else {
+    // Zip-bomb guard: bound the DECLARED uncompressed size before mammoth decompresses the archive
+    // into memory (the 5MB input cap only bounds the compressed bytes). Not a parseable zip → it is
+    // not a real .docx.
+    const uncompressed = (opts.docxSize ?? sumZipUncompressedSize)(bytes);
+    if (uncompressed === null) {
+      return { ok: false, reason: "docx_parse_failed", detail: "not a valid .docx (zip) file" };
+    }
+    const docxCap = opts.maxDocxUncompressed ?? MAX_DOCX_UNCOMPRESSED_BYTES;
+    if (uncompressed > docxCap) {
+      return {
+        ok: false,
+        reason: "docx_too_large",
+        detail: `decompressed content exceeds the safe limit (${Math.round(docxCap / (1024 * 1024))}MB)`,
+      };
+    }
     try {
       raw = await (opts.docxExtract ?? defaultDocxExtract)(bytes);
     } catch (err) {

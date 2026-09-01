@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractFileText, type PdfExtract, type DocxExtract } from "./extract-file";
+import { extractFileText, sumZipUncompressedSize, type PdfExtract, type DocxExtract } from "./extract-file";
 import { attachKindFor, isTextAttachable } from "./label";
 
 // Deterministic — the real pdf-parse / mammoth are injected as seams, so the branch, typed-reason,
@@ -65,21 +65,81 @@ describe("extractFileText — PDF", () => {
 });
 
 describe("extractFileText — DOCX", () => {
+  // These test the extraction/no-text logic, so they inject a passing size check (the real zip guard
+  // is exercised by the zip-bomb describe block); `bytes()` here is not a real zip.
+  const okSize = { docxSize: () => 1000 };
+
   it("returns the extracted text (kind docx)", async () => {
-    const r = await extractFileText(bytes(), "letter.docx", { docxExtract: docx("Dear reviewer,") });
+    const r = await extractFileText(bytes(), "letter.docx", { ...okSize, docxExtract: docx("Dear reviewer,") });
     expect(r).toEqual({ ok: true, text: "Dear reviewer,", truncated: false, kind: "docx" });
   });
 
   it("an empty .docx is a typed docx_no_text", async () => {
-    const r = await extractFileText(bytes(), "blank.docx", { docxExtract: docx("") });
+    const r = await extractFileText(bytes(), "blank.docx", { ...okSize, docxExtract: docx("") });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe("docx_no_text");
   });
 
   it("a .docx the parser can't read (or a renamed legacy .doc) is a typed docx_parse_failed", async () => {
-    const r = await extractFileText(bytes(), "legacy.docx", { docxExtract: boom() });
+    const r = await extractFileText(bytes(), "legacy.docx", { ...okSize, docxExtract: boom() });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe("docx_parse_failed");
+  });
+});
+
+describe("extractFileText — DOCX zip-bomb guard (bound decompressed size before parsing)", () => {
+  const bomb = () => 200 * 1024 * 1024; // declares 200MB uncompressed
+
+  it("refuses a .docx whose declared uncompressed size exceeds the cap → docx_too_large, parser never called", async () => {
+    const r = await extractFileText(bytes(), "bomb.docx", { docxSize: bomb, docxExtract: boom() });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("docx_too_large");
+  });
+
+  it("bytes that are not a parseable zip → docx_parse_failed (not a real .docx)", async () => {
+    const r = await extractFileText(bytes(), "fake.docx", { docxSize: () => null, docxExtract: boom() });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("docx_parse_failed");
+  });
+
+  it("under the cap → proceeds to the parser", async () => {
+    const r = await extractFileText(bytes(), "ok.docx", { docxSize: () => 1000, docxExtract: docx("Body text.") });
+    expect(r).toEqual({ ok: true, text: "Body text.", truncated: false, kind: "docx" });
+  });
+});
+
+describe("sumZipUncompressedSize — read the ZIP central directory without decompressing", () => {
+  // A minimal valid ZIP: one central-directory header declaring `uncompressed`, then the EOCD.
+  function miniZip(uncompressed: number): Uint8Array {
+    const name = "a";
+    const cdh = new Uint8Array(46 + name.length);
+    const cv = new DataView(cdh.buffer);
+    cv.setUint32(0, 0x02014b50, true); // central dir header sig
+    cv.setUint32(24, uncompressed >>> 0, true); // uncompressed size
+    cv.setUint16(28, name.length, true); // file name length
+    cdh.set([...Buffer.from(name)], 46);
+    const eocd = new Uint8Array(22);
+    const ev = new DataView(eocd.buffer);
+    ev.setUint32(0, 0x06054b50, true); // EOCD sig
+    ev.setUint16(10, 1, true); // total entries
+    ev.setUint32(16, 0, true); // central dir starts at offset 0
+    const out = new Uint8Array(cdh.length + eocd.length);
+    out.set(cdh, 0);
+    out.set(eocd, cdh.length);
+    return out;
+  }
+
+  it("sums the declared uncompressed sizes", () => {
+    expect(sumZipUncompressedSize(miniZip(500))).toBe(500);
+  });
+
+  it("returns null for bytes that are not a zip", () => {
+    expect(sumZipUncompressedSize(new Uint8Array([1, 2, 3]))).toBeNull();
+    expect(sumZipUncompressedSize(new Uint8Array(40))).toBeNull(); // no EOCD signature anywhere
+  });
+
+  it("treats a ZIP64 size marker as over any cap", () => {
+    expect(sumZipUncompressedSize(miniZip(0xffffffff))).toBe(Number.POSITIVE_INFINITY);
   });
 });
 
