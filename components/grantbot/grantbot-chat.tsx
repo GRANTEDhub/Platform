@@ -18,7 +18,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { BRAND } from "@/lib/brand";
-import { stripControlChars, truncateSafely, attachKindFor, isTextAttachable, isAttachableImage, MAX_ATTACH_CHARS, MAX_ATTACH_BYTES, MAX_IMAGE_BYTES, type ImageMime } from "@/lib/grantbot/label";
+import { stripControlChars, truncateSafely, attachKindFor, isTextAttachable, isAttachableImage, splitImageTag, MAX_ATTACH_CHARS, MAX_ATTACH_BYTES, MAX_IMAGE_BYTES, IMAGE_ATTACHED_TAG, type ImageMime } from "@/lib/grantbot/label";
 import { BLANK_CONVERSATION } from "@/lib/grantbot/wire";
 import type { GrantBotMsg, GrantBotThread } from "@/lib/grantbot/wire";
 
@@ -654,6 +654,14 @@ export function GrantBotChat({
     const sentImage = attachedImage;
     const attachmentUntouched = () =>
       pasteRef.current.pasted === sentPasted && pasteRef.current.pasteLabel === sentPasteLabel;
+    // The image is PER TURN: once the request has gone out it must never silently ride the NEXT turn
+    // (the "same image as before" bug — a persisted image re-sent on the follow-up). So it clears on
+    // EVERY resolved path — success, a server error, AND a network/catch (where the server may well have
+    // processed the turn already). Guarded by identity so an image the reader lined up for the next
+    // question mid-turn is never wiped; a genuine retry re-attaches (the image was never retained anyway).
+    const clearSentImage = () => {
+      if (sentImage && imageRef.current === sentImage) setAttachedImage(null);
+    };
     const clearAttachment = () => {
       if (attachmentUntouched()) {
         setPasted("");
@@ -661,10 +669,7 @@ export function GrantBotChat({
         setShowPaste(false);
         setAttachedFile(null);
       }
-      // The image slot clears INDEPENDENTLY of the paste, and only if the composer still holds the
-      // exact image object this turn consumed (identity) — so an image lined up for the next question
-      // during an in-flight turn is never wiped.
-      if (sentImage && imageRef.current === sentImage) setAttachedImage(null);
+      clearSentImage();
     };
 
     // Optimistic: the question appears immediately, marked pending by the spinner below rather
@@ -673,7 +678,7 @@ export function GrantBotChat({
     const mine: GrantBotMsg = {
       id: `local-${Date.now()}`,
       role: "user",
-      text: `${text}${sentPasted.trim() ? "\n\n[+ pasted content]" : ""}${sentImage ? "\n\n[+ image]" : ""}`,
+      text: `${text}${sentPasted.trim() ? "\n\n[+ pasted content]" : ""}${sentImage ? `\n\n${IMAGE_ATTACHED_TAG}` : ""}`,
       error: null,
       usage: null,
       instructionsVersion: null,
@@ -719,6 +724,9 @@ export function GrantBotChat({
       if (data.conversationId && data.conversationId !== convId) setConvId(data.conversationId);
       if (!res.ok || data.error) {
         setError(data.error ?? `Request failed (${res.status}).`);
+        // The turn (and its image) went to the server; clear the image so a retry doesn't silently
+        // re-send it. A failed turn is still recorded server-side, so re-sending would double it.
+        clearSentImage();
       } else {
         setMessages((m) => [
           ...m,
@@ -739,7 +747,15 @@ export function GrantBotChat({
       }
       void refreshThreads();
     } catch {
-      if (stillMine()) setError("Could not reach the server.");
+      // The request went out but its RESPONSE didn't come back cleanly (a dropped connection, or a slow
+      // vision turn the gateway timed out) — yet the server may well have finished and SAVED the answer.
+      // Say so honestly (refreshing surfaces a saved reply) rather than implying nothing happened, and
+      // clear the image so it doesn't ride the next turn. Only if the reader is still on this thread.
+      if (stillMine()) {
+        setError("GrantBot didn't send its reply back in time. It may still have gone through — refresh the page to check before resending.");
+        clearSentImage();
+      }
+      void refreshThreads();
     } finally {
       setSending(false);
     }
@@ -1021,15 +1037,31 @@ export function GrantBotChat({
           The squared corner is RADIUS.sharp, not a fourth radius invented for a tail. */}
       {messages.map((m) =>
         m.role === "user" ? (
-          <div key={m.id} className="flex justify-end">
-            <div
-              className={`whitespace-pre-wrap rounded-2xl rounded-br-sharp bg-brand-navy px-[15px] py-[11px] text-[13.5px] leading-normal text-white ${
-                isCorner ? "max-w-[88%]" : "max-w-[520px]"
-              }`}
-            >
-              {m.text}
-            </div>
-          </div>
+          (() => {
+            // The staffer's words as prose; an attached image shows as a small chip below, not as the
+            // marker sentence inside their message (which read like we'd edited what they typed).
+            const { body, hadImage } = splitImageTag(m.text);
+            return (
+              <div key={m.id} className="flex justify-end">
+                <div
+                  className={`rounded-2xl rounded-br-sharp bg-brand-navy px-[15px] py-[11px] text-[13.5px] leading-normal text-white ${
+                    isCorner ? "max-w-[88%]" : "max-w-[520px]"
+                  }`}
+                >
+                  {body && <span className="whitespace-pre-wrap">{body}</span>}
+                  {hadImage && (
+                    <span
+                      className={`flex w-fit items-center gap-1 rounded-md bg-white/15 px-2 py-0.5 text-[11px] font-medium text-white/85 ${
+                        body ? "mt-2" : ""
+                      }`}
+                    >
+                      <ImageIcon className="h-3 w-3" aria-hidden="true" /> image
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })()
         ) : (
           <div key={m.id} className={`flex gap-2.5 ${isCorner ? "max-w-full" : "max-w-[560px]"}`}>
             <div
