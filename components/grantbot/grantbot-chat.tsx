@@ -304,16 +304,23 @@ export function GrantBotChat({
         return;
       }
 
-      // Text-based file: read it in the browser, no round-trip.
+      // Text-based file: read it in the browser, no round-trip. readAsText is async, so this path
+      // ALSO sets `attaching` (like the binary branch) — otherwise Send/Enter/Paste, gated on
+      // `attaching`, would stay live during the read and a quick send would go out before onload,
+      // stranding the file's text on a later turn. Only the current read clears the flag (isCurrent);
+      // a superseded read leaves it to whoever superseded it (a new pick, removeAttachment, a switch).
+      setAttaching(true);
       const reader = new FileReader();
       reader.onload = () => {
         if (!isCurrent()) return; // a thread switch / newer pick during the read supersedes this one
+        setAttaching(false);
         const text = typeof reader.result === "string" ? reader.result : "";
         const { text: sliced, truncated } = truncateSafely(text, MAX_ATTACH_CHARS);
         finalizeAttachment(sliced, truncated, file.name, file.type);
       };
       reader.onerror = () => {
         if (!isCurrent()) return; // a superseded read's error must not overwrite the current context
+        setAttaching(false);
         setError("Couldn't read that file. Try a PDF, Word .docx, or a text file — or paste the text in instead.");
       };
       reader.readAsText(file);

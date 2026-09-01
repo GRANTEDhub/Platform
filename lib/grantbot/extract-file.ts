@@ -82,15 +82,23 @@ export type DocxExtract = (bytes: Uint8Array) => Promise<string>;
 // usable XFA datasets. Never throws to the caller (a pdf-lib error is caught → null).
 export type XfaExtract = (bytes: Uint8Array) => Promise<string | null>;
 
+// Page cap for pdf-parse. A "PDF bomb" (many pages, or streams that inflate hugely) can stay under the
+// 5MB COMPRESSED input cap yet blow memory during parse. pdfjs honors `max` (it stops after N pages),
+// which bounds the common page-explosion shape; a real NOFO/application form is a handful of pages, so
+// 50 is generous. (A single-page stream-inflation bomb is not page-bounded and pdfjs cannot be aborted
+// mid-parse — the fetch.ts limitation — so that residual is bounded only by the route's 60s maxDuration
+// and Vercel's PER-INVOCATION memory isolation: a bomb kills one function instance, not the platform.)
+const MAX_PDF_PAGES = 50;
+
 const defaultPdfExtract: PdfExtract = async (bytes) => {
   // Import the LIB entry, not the package index: pdf-parse's index.js runs a debug-mode fixture read
   // when `module.parent` is falsy (as in a bundled serverless build), which throws ENOENT. The lib
   // entry is the bare async function with no such side effect — the same import fetch.ts uses.
   // @ts-expect-error -- pdf-parse ships no declaration for its /lib subpath entry
   const mod = (await import("pdf-parse/lib/pdf-parse.js")) as {
-    default: (data: Buffer, options?: unknown) => Promise<{ text: string }>;
+    default: (data: Buffer, options?: { max?: number }) => Promise<{ text: string }>;
   };
-  const parsed = await mod.default(Buffer.from(bytes));
+  const parsed = await mod.default(Buffer.from(bytes), { max: MAX_PDF_PAGES });
   return parsed.text ?? "";
 };
 
