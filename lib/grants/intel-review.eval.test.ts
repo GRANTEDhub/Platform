@@ -346,7 +346,10 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
       const demoted = results.map((r) => r.verdict === "demote" || r.verdict === "flag");
       const grounded = results.map((r) => r.fetched.some((f) => f.ok));
       const reasoned = results.map((r) =>
-        /subgrant|sub-?recipient|through the state|state administering|administering agency|not.*(a )?direct|cannot (prime|apply)/i.test(r.summary),
+        // The subgrantee reality has several correct phrasings the model uses interchangeably: a "subgrant"
+        // / "subaward" through the state, the "Governor-designated state agency" that alone may apply, or
+        // "not a direct" recipient. Accept all of them — the demote is what matters, not one exact word.
+        /subgrant|subaward|sub-?recipient|through the state|state administering|administering agency|governor-designated|not.*(a )?direct|cannot (prime|apply)/i.test(r.summary),
       );
       console.log("[intel-eval] VOCA searches:", results.map((r) => r.searched.length).join(", "));
       console.log("[intel-eval] VOCA verdicts:", results.map((r) => `${r.verdict}${r.qa_fit_score != null ? `→${r.qa_fit_score}` : ""}`).join(", "));
@@ -363,7 +366,7 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
       for (const r of results) {
         if (r.verdict === "demote" || r.verdict === "flag") {
           expect.soft(
-            /subgrant|sub-?recipient|through the state|state administering|administering agency|not.*(a )?direct/i.test(r.summary),
+            /subgrant|subaward|sub-?recipient|through the state|state administering|administering agency|governor-designated|not.*(a )?direct/i.test(r.summary),
             "an adverse VOCA verdict must name the state-administering-agency / subgrantee reality it grounded on",
           ).toBe(true);
         }
@@ -404,7 +407,18 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
             eligible_entity_types: ["state administering agencies"],
             source_url: "https://ovc.ojp.gov/funding",
           }),
-          client({ name: "Arkansas Division of Victim Services (State Administering Agency)", org_type: "state_government", location_state: "AR" }),
+          // The client must be the REAL Arkansas VOCA Victim-Assistance administering agency — the OVC
+          // Arkansas page names it the Department of Finance and Administration, Office of Intergovernmental
+          // Services (DFA-OIG). The prior fixture "Arkansas Division of Victim Services" is NOT the
+          // designated agency, so a well-grounded pass correctly demoted it to subgrantee ("not the client
+          // as named"), which is right behavior on a mismatched name, not the over-demote this guard tests.
+          // Naming the genuine designated agency is what actually exercises "the true administering agency
+          // affirms" (eval run #12).
+          client({
+            name: "Arkansas Department of Finance and Administration, Office of Intergovernmental Services (VOCA State Administering Agency)",
+            org_type: "state_government",
+            location_state: "AR",
+          }),
           { discovery: true },
         ),
       );
