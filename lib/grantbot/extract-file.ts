@@ -96,10 +96,17 @@ const defaultPdfExtract: PdfExtract = async (bytes) => {
   // entry is the bare async function with no such side effect — the same import fetch.ts uses.
   // @ts-expect-error -- pdf-parse ships no declaration for its /lib subpath entry
   const mod = (await import("pdf-parse/lib/pdf-parse.js")) as {
-    default: (data: Buffer, options?: { max?: number }) => Promise<{ text: string }>;
+    default: (data: Buffer, options?: { max?: number }) => Promise<{ text: string; numpages?: number }>;
   };
   const parsed = await mod.default(Buffer.from(bytes), { max: MAX_PDF_PAGES });
-  return parsed.text ?? "";
+  const text = parsed.text ?? "";
+  // If the page cap actually DROPPED pages, say so IN THE BODY — otherwise GrantBot would answer on the
+  // first 50 pages believing it had the whole document (the same "never a partial doc silently" discipline
+  // as the char-cap note). Baked into the text, not a separate flag, so it survives into the paste frame.
+  if (typeof parsed.numpages === "number" && parsed.numpages > MAX_PDF_PAGES) {
+    return `${text}\n\n[This PDF has ${parsed.numpages} pages; only the first ${MAX_PDF_PAGES} were read — treat it as partial, and say so if the answer might depend on later pages.]`;
+  }
+  return text;
 };
 
 const defaultDocxExtract: DocxExtract = async (bytes) => {
