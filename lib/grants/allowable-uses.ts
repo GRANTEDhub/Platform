@@ -85,6 +85,25 @@ export const SECTION_PATTERNS = [
   /necessary,?\s+reasonable,?\s+allocable/gi,
   /object\s+class\s+categories/gi,
   /line-item\s+budget/gi,
+  // NSF-family cost phrasing (verified against the IUSE / Two-Year College STEM solicitation, and
+  // core for community-college clients -- NSF IUSE / ATE / S-STEM). NSF states its cost rules as
+  // ALLOWABLE FRAMING ("funds may be used for ...", "X is an allowable charge", "faculty release
+  // time", "participant support") under a "Budgetary Information" section, NOT the ACF "we do not
+  // allow the following" list -- the real IUSE allowable detail (faculty release time, admin salaries
+  // as direct, PD conference travel/lodging/stipends) lives under Budgetary Information, with a single
+  // unallowable (equipment installation). So the finder anchors on the framing phrases AND the NSF
+  // headings, so the density winner is the budget section, not an isolated F&A line.
+  /budgetary\s+information/gi,
+  /budget\s+justification/gi,
+  /other\s+budgetary\s+limitations/gi,
+  /cost\s+shar/gi, // "cost sharing" / "cost share"
+  /program\s+income/gi,
+  /facilities\s+and\s+administrative/gi,
+  /participant\s+support/gi,
+  /faculty\s+release\s+time/gi,
+  /funds?\s+may\s+be\s+used\s+for/gi,
+  /may\s+be\s+(?:charged|requested|budgeted|included)\b/gi,
+  /is\s+an?\s+allowable\s+(?:charge|cost|expense)/gi,
 ];
 
 // THE SENTINEL, and it is deliberately not an empty render. A blank section reads as "we
@@ -515,18 +534,106 @@ const RECUT_SCAN_BATCH = 100;
 // URL, so this bounds the request line rather than anything about the work itself.
 const RETIRE_CHUNK = 50;
 
-// The generation of this file's finder + extraction, STORED on each row as `recut`. Bumped to 2 when
-// SECTION_PATTERNS were widened to the ACF-style headings ("we do not allow", "funding policies and
-// limitations", "indirect costs", "necessary, reasonable, allocable") and extraction began returning
-// not-allowed items -- so every no_section row a v1 build wrote (recut null or 1) is re-run once under
-// v2 and re-stamped. Bump again for any future finder/prompt change that should re-touch the
-// already-processed no_section corpus. Kept single-digit: the recut scan compares `recut` as TEXT
-// (PostgREST `.lt`), and "1" < "2" holds lexically only while the numbers are single digits.
-const ALLOWABLE_USES_GENERATION = 2;
+// The generation of this file's finder + extraction, STORED on each row as `recut`. The recut re-runs
+// any no_section row BELOW the current generation, so a finder/prompt change re-touches the whole
+// no_section corpus simply by bumping this. History: gen 2 widened SECTION_PATTERNS to the ACF-style
+// headings and added not-allowed extraction; gen 3 added the NSF-family patterns (Budgetary
+// Information / cost sharing / participant support / "funds may be used for" ...). Gen 3 must re-run
+// the rows gen 2's recut already stamped -- an NSF grant the ACF-only finder missed would otherwise
+// stay no_section -- which "re-run any row below the current generation" already does. Kept
+// single-digit: the recut scan compares `recut` as TEXT (PostgREST `.lt`), and "1"<"2"<"3" holds
+// lexically only while the numbers are single digits.
+const ALLOWABLE_USES_GENERATION = 3;
 
 // The recut scan predicate: a no_section row whose generation is BELOW the current one -- absent
 // (never recut) OR an older generation number. Shared by the probe and the scan so they can't drift.
 const RECUT_STALE_OR = `allowable_uses->>recut.is.null,allowable_uses->>recut.lt.${ALLOWABLE_USES_GENERATION}`;
+
+// A re-extraction REGRESSION: the prior stored list had items and the fresh run produced FEWER.
+// Extraction is a model call and mildly nondeterministic, so re-running an already-populated grant can
+// come back thinner than the good list already on the row. This is the guard against silently
+// overwriting a better result with a worse one -- and, worse, stamping the worse one at the current
+// generation (`recut: ALLOWABLE_USES_GENERATION`), which lifts it out of the recut's `recut < GENERATION`
+// reach so it never self-heals. A shrink is HELD (not saved) unless the caller forces it. NOT a
+// regression: a prior empty row (nothing to lose), an equal count, or a growth. Pure -- unit-tested
+// without a DB. (Only the on-demand path can hit this: the sweep writes NULL rows and the recut writes
+// no_section rows, both 0-item, so neither can regress a populated list.)
+export function isAllowableUsesRegression(prev: AllowableUses | null, next: AllowableUses): boolean {
+  const prevCount = prev?.items.length ?? 0;
+  return prevCount > 0 && next.items.length < prevCount;
+}
+
+// On-demand single-grant re-extract of allowable / not-allowed uses. Runs the SAME generate + save
+// path the sweep uses (no second extraction path), stamps the current generation, and returns the
+// stored outcome so an admin trigger can report what happened. The throttled recut reaches every
+// no_section grant eventually; this is the "populate THIS grant now, I'm about to forward it" bypass.
+// Any grant id is accepted (an admin re-extracting a specific grant); generateAllowableUses already
+// handles a missing raw_text (-> no_raw_text) and a transient model failure (-> null, writes nothing).
+//
+// REGRESSION GUARD. Unlike the sweep (writes only NULL rows) and the recut (writes only 0-item
+// no_section rows), this route can be pointed at an already-POPULATED grant, and re-extraction is a
+// nondeterministic model call. So it reads the list currently on the row first and, if the fresh run
+// came back with FEWER items (isAllowableUsesRegression), HOLDS the write -- reporting saved:false so
+// the admin decides -- rather than clobbering a good list with a worse one and stamping it out of recut
+// reach. `opts.force` overwrites deliberately (the admin has looked at both lists and wants the new one).
+export async function reextractAllowableUses(
+  db: SupabaseClient,
+  grant: AllowableUsesGrant,
+  opts: { force?: boolean } = {},
+): Promise<{
+  ok: boolean;
+  saved: boolean;
+  value: AllowableUses | null;
+  previous: AllowableUses | null;
+  held?: "regression";
+}> {
+  // The list currently on the row, so a worse re-run can't silently clobber a good one. A read-only
+  // select of just the jsonb column (never raw_text). A lookup fault is non-fatal and fails OPEN: treat
+  // it as "no prior value" so a transient read error can never BLOCK a legitimate populate -- the guard
+  // only ever holds on a real, read-confirmed shrink.
+  let previous: AllowableUses | null = null;
+  const { data: existing, error: readErr } = await db
+    .from("grants")
+    .select("allowable_uses")
+    .eq("id", grant.id)
+    .maybeSingle<{ allowable_uses: unknown }>();
+  if (readErr) {
+    console.error(`[allowable-uses] on-demand re-extract prior-read failed grant=${grant.id}: ${readErr.message}`);
+  } else {
+    previous = readAllowableUses(existing?.allowable_uses);
+  }
+
+  let result: Awaited<ReturnType<typeof generateAllowableUses>> = null;
+  try {
+    result = await generateAllowableUses(grant);
+  } catch (e) {
+    console.error(
+      `[allowable-uses] on-demand re-extract threw grant=${grant.id}:`,
+      e instanceof Error ? e.message : e,
+    );
+  }
+  // null = a transient model failure: leave the column alone (writes nothing) and let the caller retry.
+  if (!result) return { ok: false, saved: false, value: null, previous };
+  const value: AllowableUses = { ...result.value, recut: ALLOWABLE_USES_GENERATION };
+
+  // HOLD a shrink unless forced. The extraction itself succeeded (ok:true), but saved:false + held tells
+  // the caller "I would have replaced N items with fewer -- re-run with force to overwrite", never a
+  // silent clobber.
+  if (!opts.force && isAllowableUsesRegression(previous, value)) {
+    return { ok: true, saved: false, value, previous, held: "regression" };
+  }
+
+  try {
+    await saveAllowableUses(db, grant.id, value);
+  } catch (e) {
+    // Match the sweep/recut convention: a write error is a real fault -- LOG it and report a clean
+    // failure so the caller/route returns its structured {ok:false} instead of an opaque 500, and
+    // the row is discoverable in the logs. Never throw into the caller.
+    console.error(`[allowable-uses] save failed grant=${grant.id}:`, e instanceof Error ? e.message : e);
+    return { ok: false, saved: false, value: null, previous };
+  }
+  return { ok: true, saved: true, value, previous };
+}
 
 // Cheap head-only probe. No rows, and critically no raw_text -- the largest column on the
 // table. Runs before the main claim because the answer changes its size.

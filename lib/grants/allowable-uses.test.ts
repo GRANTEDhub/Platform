@@ -4,8 +4,10 @@ import {
   readAllowableUses,
   verifyAllowableUses,
   allowableSource,
+  isAllowableUsesRegression,
   SECTION_PATTERNS,
   type AllowableUseItem,
+  type AllowableUses,
 } from "./allowable-uses";
 import { sectionHits } from "./nofo-text";
 
@@ -65,6 +67,65 @@ describe("section finder", () => {
   it("a document with no cost language at all is not anchored (falls back to the head)", () => {
     const { anchored } = allowableSource("Program goals and background. ".repeat(50));
     expect(anchored).toBe(false);
+  });
+});
+
+// ── 1b. NSF-family finder (real IUSE / Two-Year College STEM fixture) ────────────────────────
+//
+// Verbatim excerpts from the NSF 23-584 IUSE: Innovation in Two-Year College STEM Education (ITYC)
+// solicitation — the grant that proved the ACF-tuned finder misses NSF (stored no_section on 85.7k of
+// real NOFO text). NSF states cost rules as allowable FRAMING under a "B. Budgetary Information"
+// section, and a SEPARATE summary block earlier in the doc carries the "Indirect Cost (F&A)
+// Limitations" line — the F&A decoy the finder must NOT anchor on instead of the real section.
+const IUSE_BUDGET_SECTION = `B. Budgetary Information
+Cost Sharing:
+Voluntary committed cost sharing is prohibited.
+Other Budgetary Limitations:
+Budgets and budget justifications submitted to this solicitation must reflect an appropriate distribution of funds based on the proposed scope of the project.
+Faculty Release Time/Extra Compensation Above Base Salary: Faculty release time and/or faculty stipends to carry out project work that goes beyond the normal faculty duties is allowed. Salary compensation above 2 months salary must be disclosed and justified in the Budget Justification.
+Administrative Support: The salaries of administrative and clerical staff should normally be considered part of indirect costs. However, these may be applied as direct costs if the conditions of 2 CFR 200.413 are met.
+Professional Development Conferences/Meetings: In proposals that involve professional development activities, reasonable travel costs and costs for subsistence (lodging and meals) during the meeting may be included in project budgets. In addition, funds may be requested for a reasonable stipend per meeting day for participants.
+Equipment: Requested equipment must be essential components of proposed deliverables. Equipment costs must not exceed 30% of the total NSF budget requested.
+NSF project funds may not be used for: Student scholarships; replacement equipment or instrumentation; teaching aids; the modification, construction, or furnishing of laboratories or other buildings; the installation of equipment or instrumentation (as distinct from the on-site assembly of multi-component instruments--which is an allowable charge).`;
+
+const IUSE_SUMMARY_DECOY = `B. Budgetary Information
+Cost Sharing Requirements:
+Voluntary committed cost sharing is prohibited.
+Indirect Cost (F&A) Limitations:
+Not Applicable
+Other Budgetary Limitations:
+Other budgetary limitations apply. Please see the full text of this solicitation for further information.`;
+
+describe("NSF-family section finder (real IUSE fixture)", () => {
+  it("the widened patterns anchor densely on the real IUSE Budgetary Information section", () => {
+    expect(sectionHits(IUSE_BUDGET_SECTION, SECTION_PATTERNS).length).toBeGreaterThan(5);
+  });
+
+  it("the ACF 'we do not allow the following' list patterns don't fire on NSF allowable framing", () => {
+    const ACF_LIST = [
+      /we\s+do\s+not\s+allow/gi,
+      /do\s+not\s+allow\s+the\s+following/gi,
+      /funding\s+policies\s+and\s+limitations/gi,
+      /program-specific\s+limitations/gi,
+    ];
+    expect(sectionHits(IUSE_BUDGET_SECTION, ACF_LIST)).toHaveLength(0);
+  });
+
+  it("anchors on the real Budgetary Information section, not the earlier '(F&A)' summary decoy", () => {
+    // The real doc shape: a summary block carrying the "Indirect Cost (F&A) Limitations" line up front,
+    // the real Budgetary Information section ~45k chars later. The denser real section must win — the
+    // "land there, not on the F&A line" requirement.
+    const head1 = "The ITYC program invests in two-year colleges to advance STEM education. ".repeat(60); // ~4.3k
+    const gap = "Proposals must describe evidence-based instructional practice and project evaluation. ".repeat(240); // ~20k
+    const { excerpt, anchored } = allowableSource(head1 + IUSE_SUMMARY_DECOY + gap + IUSE_BUDGET_SECTION);
+    expect(anchored).toBe(true);
+    // Markers unique to the REAL section (absent from the F&A summary decoy):
+    expect(excerpt).toContain("Faculty Release Time");
+    expect(excerpt).toContain("is an allowable charge");
+    // ...and in the PRIMARY window (before any second-window join), i.e. the finder anchored ON the
+    // real section, not merely reached it via the second-window hedge off the decoy.
+    const join = excerpt.indexOf("\n\n[...]\n\n");
+    if (join >= 0) expect(excerpt.indexOf("Faculty Release Time")).toBeLessThan(join);
   });
 });
 
@@ -214,5 +275,40 @@ describe("clientAllowableUses (client-surface filter)", () => {
     expect(clientAllowableUses({ items: [], reason: "no_section" })).toBeNull();
     expect(clientAllowableUses(null)).toBeNull();
     expect(clientAllowableUses("nonsense")).toBeNull();
+  });
+});
+
+// ── 4. The on-demand re-extract regression guard ──────────────────────────────────────────────
+// isAllowableUsesRegression is the guard that stops a nondeterministic re-run from silently clobbering
+// an already-populated list with a thinner one (and stamping it out of recut reach). Pure — no DB.
+
+describe("isAllowableUsesRegression", () => {
+  const uses = (n: number): AllowableUses => ({
+    items: Array.from({ length: n }, (_, i) => ({ line: `item ${i}`, quote: `q${i}`, kind: "allowed" as const })),
+    reason: n === 0 ? "no_section" : null,
+  });
+
+  it("flags a shrink on a populated list", () => {
+    // 5 good items already stored, the fresh run came back with 2 — the exact clobber this guards.
+    expect(isAllowableUsesRegression(uses(5), uses(2))).toBe(true);
+  });
+
+  it("flags a shrink all the way to empty", () => {
+    // A verified-empty re-run must NOT be allowed to wipe a real populated list.
+    expect(isAllowableUsesRegression(uses(3), uses(0))).toBe(true);
+  });
+
+  it("does not flag an equal count or a growth", () => {
+    expect(isAllowableUsesRegression(uses(3), uses(3))).toBe(false);
+    expect(isAllowableUsesRegression(uses(2), uses(4))).toBe(false);
+  });
+
+  it("does not flag when there was nothing to lose (prior empty or absent)", () => {
+    // A prior empty row (the sweep/recut's 0-item state) or no prior value at all can't regress —
+    // this is the fail-open path when the prior-read finds nothing.
+    expect(isAllowableUsesRegression(uses(0), uses(2))).toBe(false);
+    expect(isAllowableUsesRegression(uses(0), uses(0))).toBe(false);
+    expect(isAllowableUsesRegression(null, uses(0))).toBe(false);
+    expect(isAllowableUsesRegression(null, uses(3))).toBe(false);
   });
 });
