@@ -411,7 +411,11 @@ function EligibilityCallout({ eligibility }: { eligibility: EligibilityVerdict }
         )}
       </div>
       {hasLimits && (
-        <p className="mt-2 line-clamp-2 text-[12px] leading-[1.5] text-ink-muted">
+        // NOT clamped (Shannon, 2026-09-02): this is a verbatim NOFO limit — often the disqualifier — and a
+        // `line-clamp-2` cut it off mid-sentence with no hover to recover the rest. Hiding a disqualifier is
+        // worse than the overflow, so it wraps fully. The height is safe: OverviewCard is shrink-0 and the
+        // RationaleCard below is the flex-1 min-h-0 overflow-y-auto valve, so the page still never scrolls.
+        <p className="mt-2 text-[12px] leading-[1.5] text-ink-muted [text-wrap:pretty]">
           <strong className="font-semibold" style={{ color: BRAND.orangeDeep }}>
             Limits to check:{" "}
           </strong>
