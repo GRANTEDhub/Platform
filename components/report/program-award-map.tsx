@@ -101,6 +101,22 @@ export function ProgramAwardMap({
   const [hover, setHover] = useState<{ code: string; left: number; top: number } | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
+  // Reset all view state when the grant changes (React's "adjust state on a prop change" pattern). On
+  // client-side nav between grants — the portal header search /portal/grants/A → /B — this component is
+  // reconciled BY POSITION, not remounted, so `useState(initialSummary)` would keep grant A's award data
+  // on grant B's page (Codex #488 P1). Resetting here fixes it for every call site (keying the parent would
+  // also work, but a future caller could forget the key). The lazy-fetch effect below then re-fetches B if
+  // B has no cached summary.
+  const [prevGrantId, setPrevGrantId] = useState(grantId);
+  if (grantId !== prevGrantId) {
+    setPrevGrantId(grantId);
+    setSummary(initialSummary);
+    setSelected(null);
+    setHover(null);
+    setFailed(false);
+    setLoading(false);
+  }
+
   // Lazy fetch-on-view: a grant with a CFDA but no cached summary (not yet swept)
   // fetches once on mount; a populated grant server-renders with no fetch.
   useEffect(() => {
