@@ -49,6 +49,70 @@ export function formatAwardRange(min: string | null | undefined, max: string | n
   return (lo || hi)!;
 }
 
+// The expected-number-of-awards text as a positive integer, or null. num_awards is FREE TEXT, so a naive
+// "first integer" is unsafe: "FY 2026: 20 awards" would divide by 2026 and "2 rounds of 10 awards" by 2,
+// each a materially wrong per-award figure (Codex #486). So only two UNAMBIGUOUS shapes are accepted, and
+// anything else falls through to null → the estimate is simply not shown (never a wrong number):
+//   1. a number tied directly to the award/grant count word ("… 20 awards", "10 grants") — robust to a
+//      leading year or round count;
+//   2. a bare simple count/range ("20", "Approximately 20", "20–25" → the lower 20), with NOTHING else in
+//      the string (a stray year / "FY" / "round" makes it ambiguous → reject).
+export function parseAwardCount(raw: string | null | undefined): number | null {
+  if (!raw) return null;
+  const s = raw.replace(/,/g, "").trim();
+  if (!s) return null;
+  const pos = (n: number) => (Number.isFinite(n) && n > 0 ? n : null);
+  // (1) A count word anchors the number even amid other numbers.
+  const tied = s.match(/(\d{1,6})\s*(?:total\s+)?(?:awards?|grants?|recipients?|projects?)\b/i);
+  if (tied) return pos(parseInt(tied[1], 10));
+  // (2) Otherwise the WHOLE string must be a simple count / range, or it is too ambiguous to divide by.
+  const simple = s.match(/^(?:up\s+to\s+|approximately\s+|about\s+|~\s*)?(\d{1,6})(?:\s*[–-]\s*\d{1,6})?$/i);
+  if (simple) return pos(parseInt(simple[1], 10));
+  return null;
+}
+
+// Award range that NEVER renders a bare blank when the size is knowable (the allowable-uses never-blank
+// principle, on a money field). The real stated range wins; when it is genuinely empty, DEDUCE a
+// per-award figure from the pool ÷ the award count (total_funding ÷ num_awards) and label it "est." so it
+// can never be read as a stated number (the org rule: label estimates). Only fires when BOTH the pool and
+// a real count are present — a missing input falls through to "—", never a guess. The real per-award
+// CEILING stated only in the NOFO text (unstructured) is a separate extraction pass; this is the cheap,
+// structured-field tier.
+export function awardRangeOrEstimate(
+  min: string | null | undefined,
+  max: string | null | undefined,
+  totalFunding: string | null | undefined,
+  numAwards: string | null | undefined,
+): string {
+  const real = formatAwardRange(min, max);
+  if (real !== "—") return real;
+  const pool = parseAmount(totalFunding);
+  const count = parseAwardCount(numAwards);
+  if (pool !== null && pool > 0 && count) return `~${abbrevDollars(pool / count)} est.`;
+  return "—";
+}
+
+// Compact the period-of-performance for the narrow facts tile: abbreviate the units + common filler and
+// soft-truncate at a WORD boundary, so it reads in ~2 lines with the FULL text still on hover (the tile
+// passes the original as its `title`). Unlike the eligibility limits — never truncated, since a dropped
+// disqualifier is worse than overflow — a term is a duration, not a rule, so shortening it is safe.
+export function compactTerm(raw: string | null | undefined): string {
+  const s = (raw ?? "").trim();
+  if (!s) return "Not stated";
+  const out = s
+    .replace(/\byears?\b/gi, "yrs")
+    .replace(/\bmonths?\b/gi, "mos")
+    .replace(/\bapproximately\b/gi, "~")
+    .replace(/\bwith\b/gi, "w/")
+    .replace(/\s+/g, " ")
+    .trim();
+  const CAP = 42;
+  if (out.length <= CAP) return out;
+  const cut = out.slice(0, CAP);
+  const sp = cut.lastIndexOf(" ");
+  return (sp > 24 ? cut.slice(0, sp) : cut).replace(/[\s,;:.–-]+$/, "") + "…";
+}
+
 export function compactCostShare(raw: string | null | undefined): string {
   const s = (raw ?? "").trim();
   if (!s) return "—";
