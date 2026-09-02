@@ -86,12 +86,13 @@ describe("stripSeatCodes", () => {
     );
   });
 
-  it("PRESERVES a prime code — it collides with NIH mechanisms / project phases (Codex #480)", () => {
-    // "P<n>" is NOT stripped: (P30)/(P01) are NIH activity codes and (P2) is a project phase, all real
-    // client-facing grant content. Only the unambiguous underscore form is machinery.
-    expect(stripSeatCodes("a P30 center grant (P30) supports cores")).toBe("a P30 center grant (P30) supports cores");
-    expect(stripSeatCodes("the phase-2 trial (P2) is funded")).toBe("the phase-2 trial (P2) is funded");
-    expect(stripSeatCodes("the prime seat (P0) is unfilled")).toBe("the prime seat (P0) is unfilled");
+  it("STRIPS prime codes too — the whole [SP] family, unconditionally (Shannon, 2026-09-02)", () => {
+    // Reverses the earlier P-preservation (Codex #480): a prime "P<n>" is machinery and must never render,
+    // so it is stripped in every shape — bare and parenthetical — accepting the collision with a legit
+    // "P30"/"P2" as the cost of "no code of any form, ever".
+    expect(stripSeatCodes("the prime seat (P0) is unfilled")).toBe("the prime seat is unfilled");
+    expect(stripSeatCodes("the org takes P0 as prime")).toBe("the org takes as prime");
+    expect(stripSeatCodes("fills P1 and S0_2 here")).toBe("fills and here");
   });
 
   it("removes a parenthetical that opens with a code but carries a description", () => {
@@ -109,14 +110,17 @@ describe("stripSeatCodes", () => {
     expect(stripSeatCodes("the org fills S0_2 and S0_3 here")).toBe("the org fills and here");
   });
 
-  it("leaves legitimate prose alone (no false positives on bills / phases / clean text)", () => {
+  it("leaves genuinely-safe prose alone (requires a DIGIT right after S/P; case-sensitive)", () => {
     const clean = "It cannot prime; the path is an MOU with Blytheville.";
     expect(stripSeatCodes(clean)).toBe(clean);
-    // A bare P/S token in running prose (a bill "S.1234", a phase "P2") is NOT a seat label and is kept.
-    expect(stripSeatCodes("Senate bill S.1234 and phase P2 apply.")).toBe("Senate bill S.1234 and phase P2 apply.");
-    // Under-the-hood: an underscore form only ever comes from the seat menu, so it is safe to strip; a
-    // bare "S3"/"P2" is not, so we require the underscore before stripping unparenthesised.
-    expect(stripSeatCodes("Meets 24 CFR 578 and Section 8 rules.")).toBe("Meets 24 CFR 578 and Section 8 rules.");
+    // A DIGIT must immediately follow an UPPERCASE S/P for a match, so a bill "S.1234" (S then "."), a
+    // heading "Section 8" (S then "e"), a regulation "24 CFR 578", and any lowercase word are all safe.
+    expect(stripSeatCodes("Senate bill S.1234 and Section 8 of 24 CFR 578 apply.")).toBe(
+      "Senate bill S.1234 and Section 8 of 24 CFR 578 apply.",
+    );
+    // The accepted collision (documented): an UPPERCASE "P<digit>" in real prose IS now stripped — the cost
+    // of catching every prime code. Lowercase "phase-2" is untouched (case-sensitive [SP]).
+    expect(stripSeatCodes("the phase-2 trial and P2 milestone")).toBe("the phase-2 trial and milestone");
   });
 
   it("is idempotent", () => {
@@ -142,10 +146,10 @@ describe("stripSeatCodes", () => {
     expect(stripSeatCodes("engagement (S0_1_2) here")).toBe("engagement here");
   });
 
-  it("leaves NO S<digit>_ token of any shape in the output", () => {
-    const coded = "fills S0_1, S1_2, S0_, S1_, and S0_1_2 (S0_6, e.g. x) plus a dangling (S0_6, e.";
+  it("leaves NO seat/prime code of any shape in the output", () => {
+    const coded = "P0 fills S0_1, S1_2, S0_, S1_, and S0_1_2 (S0_6, e.g. x) with P1 plus a dangling (S0_6, e.";
     const out = stripSeatCodes(coded);
-    expect(out).not.toMatch(/S\d+_/); // the whole family, including the trailing-underscore form
+    expect(out).not.toMatch(/[SP]\d+(?:_\d*)*/); // the whole [SP] family, every shape
   });
 });
 
@@ -192,6 +196,38 @@ describe("scrubCardSeatCodes", () => {
     // A card whose scrubbable fields are all null/absent is returned intact — nothing to scrub, no throw.
     const bare = { id: "c3", why_this_org: null, concept_synopsis: null, before_you_approve: null, reasoning_context: null };
     expect(scrubCardSeatCodes(bare)).toEqual(bare);
+  });
+
+  it("scrubs the per-factor rationales in factor_scores AND qa_factor_scores (Codex #485)", () => {
+    // The raw FactorBreakdown on /review/[id] renders factor rationales straight into a title + hover, so
+    // the card-load scrub must reach both factor collections, not just the prose fields.
+    const factor = (rationale: string) => ({ rating: "weak" as const, rationale });
+    const card = {
+      id: "c4",
+      factor_scores: {
+        seat_role: factor("Fills the supporting seat S0_2 but not the prime P0."),
+        eligibility: factor("Entity-eligible."),
+        geographic: factor("In-region."),
+        program_history: factor("Some history."),
+        cost_share: factor("No match required."),
+        mission: factor("Aligned."),
+      },
+      qa_factor_scores: {
+        seat_role: factor("QA: still only S0_2, cannot prime P0."),
+        eligibility: factor("QA confirms eligibility."),
+        geographic: factor("QA in-region."),
+        program_history: factor("QA history."),
+        cost_share: factor("QA cost-share."),
+        mission: factor("QA mission."),
+      },
+    };
+    const out = scrubCardSeatCodes(card);
+    expect(JSON.stringify(out)).not.toMatch(/[SP]\d+(?:_\d*)*/); // no code in either factor collection
+    expect(out.factor_scores?.seat_role.rationale).toBe("Fills the supporting seat but not the prime.");
+    expect(out.qa_factor_scores?.seat_role.rationale).toBe("QA: still only, cannot prime.");
+    // Ratings and other factors are untouched.
+    expect(out.factor_scores?.seat_role.rating).toBe("weak");
+    expect(out.factor_scores?.eligibility.rationale).toBe("Entity-eligible.");
   });
 });
 
