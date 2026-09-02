@@ -1,12 +1,15 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { format, parseISO } from "date-fns";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { GrantStatusBadge } from "@/components/grants/badges";
-import { GrantOverview, GrantKeyFacts } from "@/components/grants/grant-facts";
+import { GrantIdealProfile, GrantDeeperFacts } from "@/components/grants/grant-facts";
+import { WhatItFunds, WhoCanApply } from "@/components/grants/grant-detail";
+import { OverviewCard } from "@/components/report/grant-review-console";
+import { buildGrantSummary } from "@/lib/report/grant-summary";
 import { MatchOutcomes, type OutcomeCard } from "@/components/grants/match-outcomes";
 import { ConsortiumPairings } from "@/components/grants/consortium-pairings";
 import { computeConsortiumPairings, type SeatedClient } from "@/lib/grants/consortium";
@@ -176,28 +179,31 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
   return (
     <div>
       <AutoRefresh enabled={processing} />
-      <PageHeader
-        backHref="/grants"
-        backLabel="Ledger"
-        title={grant.title || "Processing opportunity…"}
-        description={[grant.funder, grant.fon].filter(Boolean).join(" · ") || undefined}
-        action={
-          <div className="flex items-center gap-2">
-            {grant.activated_from_forecast_at && (
-              <Badge variant="secondary">
-                Was forecasted, now active · {format(parseISO(grant.activated_from_forecast_at), "MMM d, yyyy")}
-              </Badge>
-            )}
-            {!grant.is_domestic && <Badge variant="warning">International — excluded</Badge>}
-            {!processing && !forecasted && (
-              <Badge variant={grant.shred_depth === "full" ? "success" : "warning"}>
-                {grant.shred_depth === "full" ? "Full shred" : "Summary shred"}
-              </Badge>
-            )}
-            <GrantStatusBadge status={grant.status} grantStatus={grant.grant_status} />
-          </div>
-        }
-      />
+      {/* Slim header — OverviewCard below owns the grant title + funder line (matching the grant
+          report, which has no separate title header). Back-nav and the status / shred / international
+          badges stay, each with its own text label so meaning never rides on colour alone. */}
+      <div className="border-b bg-card px-8 py-6">
+        <Link
+          href="/grants"
+          className="mb-2 inline-flex items-center gap-1 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <span aria-hidden="true">←</span> Ledger
+        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          {grant.activated_from_forecast_at && (
+            <Badge variant="secondary">
+              Was forecasted, now active · {format(parseISO(grant.activated_from_forecast_at), "MMM d, yyyy")}
+            </Badge>
+          )}
+          {!grant.is_domestic && <Badge variant="warning">International — excluded</Badge>}
+          {!processing && !forecasted && (
+            <Badge variant={grant.shred_depth === "full" ? "success" : "warning"}>
+              {grant.shred_depth === "full" ? "Full shred" : "Summary shred"}
+            </Badge>
+          )}
+          <GrantStatusBadge status={grant.status} grantStatus={grant.grant_status} />
+        </div>
+      </div>
 
       <div className="grid gap-6 p-8 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
@@ -298,7 +304,22 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
             </div>
           )}
 
-          <GrantOverview grant={grant} />
+          {/* WHY this grant is a summary shred — the reason behind the header's "Summary shred" badge.
+              The retired GrantOverview carried this unconditionally; the header badge alone shows the state
+              but not the reason, and getGrantDisposition only surfaces shred_reason on the profile_gap tier
+              (skipped once a card is decided). Rendered here, independent of disposition, matching the
+              sibling /intel/[id] page so a decided summary-shred grant still shows its reason. */}
+          {!processing && !forecasted && grant.shred_depth === "summary" && grant.shred_reason && (
+            <p className="text-xs text-muted-foreground">Summary shred only — {grant.shred_reason}</p>
+          )}
+
+          {/* Grant SUMMARY via the shared OverviewCard (grant-level: no client, no role pill). The FULL,
+              expandable description follows in "What it funds" (OverviewCard's summary is null — its
+              programme blurb truncates with no expander, which would hide detail staff need), then the
+              deeper ideal-applicant-profile analysis. */}
+          <OverviewCard {...buildGrantSummary(grant)} />
+          <WhatItFunds grant={grant} />
+          <GrantIdealProfile grant={grant} />
 
           {erroredClientCount > 0 && !processing && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
@@ -388,7 +409,12 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
             </Card>
           )}
 
-          <GrantKeyFacts grant={grant} />
+          {/* Who can apply — the full eligibility facts (eligible entity types incl. a sole type,
+              geography, ineligible entities, subaward-prohibited). OverviewCard's eligibility callout is a
+              client-oriented VERDICT that under-shows these for a client-less grant view, so the facts stay
+              here. */}
+          <WhoCanApply grant={grant} dense />
+          <GrantDeeperFacts grant={grant} />
         </div>
       </div>
     </div>

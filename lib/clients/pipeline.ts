@@ -63,9 +63,8 @@ export interface PipelineStage {
 }
 
 // NO per-stage links yet. The design has each column click through to a pre-filtered
-// list and there is nowhere for it to go: /matches takes no searchParams (it is a
-// cross-client review worklist, not a filterable per-client list) and the roadmap list
-// has no stage filter either. A link carrying ?stage= would be silently ignored and
+// list and there is nowhere for it to go: the per-client roadmap list has no stage
+// filter. A link carrying ?stage= would be silently ignored and
 // land you on an unfiltered page that looks like the answer — worse than a column that
 // plainly isn't clickable. The columns therefore also drop the hover/cursor affordance,
 // so they do not advertise themselves as links. Tracked as a follow-up.

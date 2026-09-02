@@ -40,9 +40,10 @@ export const DEADLINE_DAYS = threshold("PORTFOLIO_DEADLINE_DAYS", 30);
 export type ActionReason = "question" | "deadline" | "alerts";
 
 export interface PortfolioRollup {
-  // Cards awaiting review. SAME predicate as /matches and the command band's badge
-  // (non-prospect, non-passed, not yet released) so the three surfaces cannot disagree
-  // about how much is waiting on a client.
+  // Cards awaiting review. SAME predicate the per-client roadmap review uses
+  // (non-prospect, non-passed, not yet released) so the surfaces cannot disagree about
+  // how much is waiting on a client. (The cross-client /matches queue and its nav badge
+  // that once shared this predicate were retired — #489.)
   alerts: number;
   // Whole days to the client's nearest grant deadline; null when they have none.
   // Negative means overdue, which still counts as inside the window.

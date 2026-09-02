@@ -275,7 +275,12 @@ function Decor({ ghost }: { ghost: number }) {
 const CARD = "rounded-sharp border border-edge bg-white";
 const EYEBROW = "text-[10px] font-bold uppercase tracking-[0.11em] text-ink-muted";
 
-function OverviewCard({
+// EXPORTED so the Ledger detail (/grants/[id]) and the prospect detail (/intel/[id]) can render the
+// SAME grant-SUMMARY card as the report — one shared treatment, never a fork. Those pages feed it
+// grant-level props (buildGrantSummary): grant-level eligibility (computeEligibility with a null
+// client), focus-area tags only (no role pill, no client context). GrantReviewConsole still calls it
+// exactly as before, so the report is byte-identical.
+export function OverviewCard({
   tags,
   agencyLine,
   title,

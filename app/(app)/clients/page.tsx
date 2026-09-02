@@ -130,9 +130,9 @@ export default async function ClientsPage() {
     const pipeline = derivePipeline(own);
     pipelines.push(pipeline);
 
-    // "Alerts" = awaiting review. Identical predicate to /matches and the command
-    // band's badge (non-passed, not yet released to the client), so a client's number
-    // is the same wherever it is shown.
+    // "Alerts" = awaiting review. Identical predicate the per-client roadmap review uses
+    // (non-passed, not yet released to the client), so a client's number is the same
+    // wherever it is shown. (The /matches queue and nav badge that once shared it are gone — #489.)
     const waiting = own.filter((x) => x.decision !== "passed" && x.sme_released_at === null);
     const alerts = waiting.length;
 
