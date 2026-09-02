@@ -30,6 +30,7 @@ export function ConceptCard({
   overdue,
   showConcept,
   rerun = null,
+  reextract = null,
 }: {
   cardId: string;
   status: ConceptProposalStatus | null;
@@ -47,6 +48,10 @@ export function ConceptCard({
   // The IntellEngine grant-match re-run control (staff, showIntel), rendered below Generate.
   // Null when QA isn't available for this card.
   rerun?: React.ReactNode | null;
+  // The allowable-uses re-extract control (staff, showIntel + a grant to re-extract), rendered
+  // below the re-run. Null when it doesn't apply. Staff-only by mount point like `rerun` — the
+  // portal builds its own concept slot and never passes it.
+  reextract?: React.ReactNode | null;
 }) {
   const router = useRouter();
   // IN-FLIGHT POST ONLY. This used to be left true forever on purpose, on the theory
@@ -151,6 +156,12 @@ export function ConceptCard({
           hairline when it sits below the concept action; on its own (a self-serve card with no
           concept half) it just gets a small gap under the title. */}
       {rerun && <div className={showConcept ? "mt-3 border-t border-edge pt-3" : "mt-[11px]"}>{rerun}</div>}
+
+      {/* Action 3 — the allowable-uses re-extract (secondary, bordered). Under a hairline whenever
+          anything sits above it (concept content or the re-run); on its own it gets a small gap. */}
+      {reextract && (
+        <div className={showConcept || rerun ? "mt-3 border-t border-edge pt-3" : "mt-[11px]"}>{reextract}</div>
+      )}
       {gate}
     </section>
   );
