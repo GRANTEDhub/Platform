@@ -32,6 +32,8 @@
 // schema and whether the addendum is appended, so off → the phase-2 request/system are exactly today's and
 // no narrative is generated, stored, or displayed.
 
+import type { FactorScores } from "@/types/database";
+
 // The tool-schema property shape (a plain JSON-schema object). Anthropic tool input_schema `properties`.
 export interface JsonSchemaProperty {
   type: string;
@@ -158,27 +160,95 @@ export const FORBIDDEN_NARRATIVE_MARKERS: readonly string[] = [
 // for already-stored narratives) and the factor rationales (viewFitFactors) — so no render path surfaces
 // a code no matter which paragraph shows.
 //
-// SCOPED TO THE SUPPORTING-SEAT FORM ONLY — the unambiguous "S<n>_<m>". That underscore shape is never
-// anything but a seat label, and it is the observed leak (the enumerated supporting seats S0_2, S0_3,
-// S0_6…). A PRIME code "P<n>" is deliberately NOT stripped, parenthesised or bare: it collides with
-// legitimate client-facing grant identifiers — NIH activity codes ("(P30)", "(P01)"; the repo handles the
-// R01/P30 mechanism prefixes, forecast-relevance.ts) and project phases ("(P2)") — so stripping it could
-// silently DELETE real content (Codex #480 P2). The prompt still tells the model to emit no code at all
-// (P0 included); a stray prime code is a generation miss caught by the eval/eyeball, not something this
-// deterministic net can safely remove. A bare "P2"/"S.1234" (a phase, a bill) is likewise left untouched.
-// Idempotent — a no-op on text with no supporting-seat codes.
+// THE WHOLE SEAT/PRIME-CODE FAMILY, UNCONDITIONALLY (Shannon, 2026-09-02). The matcher labels a grant's
+// ideal-profile seats with a SUPPORTING code "S<n>_<m>" and a PRIME code "P<n>" (buildSeatMenu, engine.ts).
+// BOTH are pure internal machinery and neither may ever reach rendered text — so this strips the whole
+// `[SP]\d+(?:_\d*)*` family in every shape it can take: a prime "P0"/"P1", a full supporting "S0_1"/"S1_2",
+// a trailing-underscore truncation from a generation cut mid-token "S0_"/"S1_", and a nested "S0_1_2",
+// bare or parenthesised, glued to following text or not. This DELIBERATELY REVERSES the earlier
+// P-preservation (Codex #480): the previous scope caught the underscore form but missed prime codes, so a
+// "P0"/"P2" leaked. The known cost of stripping the whole P family is a COLLISION with legitimate
+// client-facing identifiers that share the shape — an NIH activity code ("P30"/"P01") or a project phase
+// ("P2") in real prose is removed too. Shannon accepted that trade for "no code of any form, ever": the
+// codes are cosmetic-but-wrong, the collision is rare on GRANTED's roster, and the SOURCE-side scrub
+// (scrubCardSeatCodes fed to the model prompt in intelContext) means the client narrative rarely contains a
+// legitimate P-code to lose in the first place — this output strip is the backstop. "S.1234" (a bill) and
+// "Section 8" are still safe: the strip requires a DIGIT immediately after S/P, which "S." and "Se" lack.
+// Idempotent — a no-op on text with no codes.
+//
+// `[SP]\d+(?:_\d*)*` is the whole family in one sub-pattern: an S or P, one-or-more digits, then ZERO or
+// more groups of (underscore + zero-or-more digits) — matching a bare "P0"/"S3", "S0_1", "S1_2", the
+// trailing "S0_", and the nested "S0_1_2" alike.
 export function stripSeatCodes(text: string): string {
   return text
-    // A parenthetical that OPENS with a supporting-seat code — closed "(S0_2)" / "(S0_6, e.g. town halls)"
-    // or dangling from a truncated generation "(S0_6, e." — remove the whole group and its leading space.
-    .replace(/\s*\(\s*S\d+_\d+\b[^)]*(?:\)|$)/g, "")
-    // A bare supporting-seat token in prose ("…fills S0_2 and…").
-    .replace(/\s*\bS\d+_\d+\b/g, "")
+    // A parenthetical that OPENS with a code — "(P0)", "(S0_2)", "(S0_6, e.g. town halls)", a truncated
+    // "(S0_6, e." / "(S0_", or a nested "(S0_1_2)" — remove the whole group and its leading space.
+    .replace(/\s*\(\s*[SP]\d+(?:_\d*)*[^)]*(?:\)|$)/g, "")
+    // A bare code in prose ("…fills S0_2 and…", "P30", a dangling "S0_", a nested "S0_1_2").
+    .replace(/\s*\b[SP]\d+(?:_\d*)*/g, "")
     // Tidy the seams the removals leave: an emptied "()", a space now before punctuation, doubled spaces.
     .replace(/\(\s*\)/g, "")
     .replace(/\s+([,.;:)])/g, "$1")
     .replace(/[ \t]{2,}/g, " ")
     .trim();
+}
+
+// Scrub the matcher's internal seat/role codes from EVERY free-text card field a detail page renders, in one
+// pass at card-load. The codes live in the engine's prose — why_this_org, concept_synopsis,
+// before_you_approve, the reasoning_context strings (which feed the IntellEngine Intel paragraph's
+// lead/mitigation, the why-this-org bullets, the concept box and the score-derivation show-more) AND the
+// per-factor rationales in factor_scores / qa_factor_scores (which a raw FactorBreakdown renders straight
+// into a title + hover popover, bypassing viewFitFactors' own strip — Codex #485). Scrubbing the card once,
+// at load, means NO downstream render can surface a code regardless of which field carried it. Returns a
+// shallow clone (never mutates the input); idempotent; a field with no code comes back unchanged.
+// reasoning_context is a flat string map, so a top-level value scrub covers it; it is typed `unknown` in
+// the constraint (not Record<string, unknown>) so a page's concrete interface-typed reasoning_context still
+// satisfies `T extends` — a declared interface is not assignable to an index-signature type ("missing index
+// signature"), which would otherwise reject the call. It is narrowed to an object inside before scrubbing.
+type SeatCodeCardText = {
+  why_this_org?: string[] | null;
+  concept_synopsis?: string | null;
+  before_you_approve?: string[] | null;
+  reasoning_context?: unknown;
+  factor_scores?: FactorScores | null;
+  qa_factor_scores?: FactorScores | null;
+};
+export function scrubCardSeatCodes<T extends SeatCodeCardText>(card: T): T {
+  const arr = (a: string[] | null | undefined) =>
+    Array.isArray(a) ? a.map((s) => (typeof s === "string" ? stripSeatCodes(s) : s)) : a;
+  const str = (s: string | null | undefined) => (typeof s === "string" ? stripSeatCodes(s) : s);
+  const rc = card.reasoning_context;
+  const scrubbedRc =
+    rc && typeof rc === "object" && !Array.isArray(rc)
+      ? Object.fromEntries(
+          Object.entries(rc as Record<string, unknown>).map(([k, v]) => [
+            k,
+            typeof v === "string" ? stripSeatCodes(v) : v,
+          ]),
+        )
+      : rc;
+  // Each of the 6 factors is { rating, rationale }; scrub the rationale string, keep everything else. Entry
+  // iteration tolerates a partial / unexpected shape (a missing factor, a non-object value) without throwing.
+  const factors = (f: FactorScores | null | undefined): FactorScores | null | undefined => {
+    if (!f || typeof f !== "object") return f;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(f)) {
+      out[k] =
+        v && typeof v === "object" && typeof (v as { rationale?: unknown }).rationale === "string"
+          ? { ...(v as Record<string, unknown>), rationale: stripSeatCodes((v as { rationale: string }).rationale) }
+          : v;
+    }
+    return out as unknown as FactorScores;
+  };
+  return {
+    ...card,
+    why_this_org: arr(card.why_this_org),
+    concept_synopsis: str(card.concept_synopsis),
+    before_you_approve: arr(card.before_you_approve),
+    reasoning_context: scrubbedRc,
+    factor_scores: factors(card.factor_scores),
+    qa_factor_scores: factors(card.qa_factor_scores),
+  } as T;
 }
 
 // Returns the narrative when it is present and clean; null when absent, empty, or it trips the framing

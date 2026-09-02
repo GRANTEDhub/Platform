@@ -54,7 +54,7 @@ import { clientContextForJudge } from "@/lib/grants/subseat-routing";
 import { allocationSourcesFor } from "@/lib/grants/allocation-sources";
 import { formulaProgramTag } from "@/lib/grants/formula-programs";
 import { intelWebSearchEnabled, intelPhase1Config, serverSearchQueries } from "@/lib/grants/intel-web-search";
-import { fitNarrativeEnabled, structureConfig, narrativeGuard } from "@/lib/grants/fit-narrative";
+import { fitNarrativeEnabled, structureConfig, narrativeGuard, scrubCardSeatCodes } from "@/lib/grants/fit-narrative";
 import { deadlineDaysLeft } from "@/lib/report/shape";
 import type { Grant, Client, FactorScores } from "@/types/database";
 
@@ -303,7 +303,14 @@ const REFUTE_TOOL = {
 // program — telling the pass that entity-type eligibility is not application eligibility here and to
 // search for the allocation table if it is not seeded. Default false keeps the context byte-identical to
 // today's fetch-only pass, so flag-off QA is unchanged.
-export function intelContext(card: IntelCard, grant: Grant, client: Client, discovery = false): string {
+export function intelContext(cardRaw: IntelCard, grant: Grant, client: Client, discovery = false): string {
+  // SOURCE-SIDE scrub (Shannon, 2026-09-02): strip the matcher's internal seat/prime codes from the card's
+  // prose BEFORE it is serialized into the QA/narrative model prompt, so the model never sees a code to echo
+  // back into the client-facing narrative in the first place. This is the "fix the source" half; the
+  // read-boundary strip (RationaleCard / resolveFit / this page's card-load scrub) stays the defensive
+  // backup for the matcher-authored fields the matcher writes in the protected engine (which this can't
+  // reach at their own source).
+  const card = scrubCardSeatCodes(cardRaw);
   const rc = card.reasoning_context ?? null;
   const cfdas = (grant.assistance_listings ?? []).map((a) => a?.number).filter(Boolean).join(", ") || "(none)";
   const sources = allocationSourcesFor(grant.assistance_listings ?? null);
