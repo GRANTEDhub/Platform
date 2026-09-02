@@ -549,16 +549,60 @@ const ALLOWABLE_USES_GENERATION = 3;
 // (never recut) OR an older generation number. Shared by the probe and the scan so they can't drift.
 const RECUT_STALE_OR = `allowable_uses->>recut.is.null,allowable_uses->>recut.lt.${ALLOWABLE_USES_GENERATION}`;
 
+// A re-extraction REGRESSION: the prior stored list had items and the fresh run produced FEWER.
+// Extraction is a model call and mildly nondeterministic, so re-running an already-populated grant can
+// come back thinner than the good list already on the row. This is the guard against silently
+// overwriting a better result with a worse one -- and, worse, stamping the worse one at the current
+// generation (`recut: ALLOWABLE_USES_GENERATION`), which lifts it out of the recut's `recut < GENERATION`
+// reach so it never self-heals. A shrink is HELD (not saved) unless the caller forces it. NOT a
+// regression: a prior empty row (nothing to lose), an equal count, or a growth. Pure -- unit-tested
+// without a DB. (Only the on-demand path can hit this: the sweep writes NULL rows and the recut writes
+// no_section rows, both 0-item, so neither can regress a populated list.)
+export function isAllowableUsesRegression(prev: AllowableUses | null, next: AllowableUses): boolean {
+  const prevCount = prev?.items.length ?? 0;
+  return prevCount > 0 && next.items.length < prevCount;
+}
+
 // On-demand single-grant re-extract of allowable / not-allowed uses. Runs the SAME generate + save
 // path the sweep uses (no second extraction path), stamps the current generation, and returns the
 // stored outcome so an admin trigger can report what happened. The throttled recut reaches every
 // no_section grant eventually; this is the "populate THIS grant now, I'm about to forward it" bypass.
 // Any grant id is accepted (an admin re-extracting a specific grant); generateAllowableUses already
 // handles a missing raw_text (-> no_raw_text) and a transient model failure (-> null, writes nothing).
+//
+// REGRESSION GUARD. Unlike the sweep (writes only NULL rows) and the recut (writes only 0-item
+// no_section rows), this route can be pointed at an already-POPULATED grant, and re-extraction is a
+// nondeterministic model call. So it reads the list currently on the row first and, if the fresh run
+// came back with FEWER items (isAllowableUsesRegression), HOLDS the write -- reporting saved:false so
+// the admin decides -- rather than clobbering a good list with a worse one and stamping it out of recut
+// reach. `opts.force` overwrites deliberately (the admin has looked at both lists and wants the new one).
 export async function reextractAllowableUses(
   db: SupabaseClient,
   grant: AllowableUsesGrant,
-): Promise<{ ok: boolean; value: AllowableUses | null }> {
+  opts: { force?: boolean } = {},
+): Promise<{
+  ok: boolean;
+  saved: boolean;
+  value: AllowableUses | null;
+  previous: AllowableUses | null;
+  held?: "regression";
+}> {
+  // The list currently on the row, so a worse re-run can't silently clobber a good one. A read-only
+  // select of just the jsonb column (never raw_text). A lookup fault is non-fatal and fails OPEN: treat
+  // it as "no prior value" so a transient read error can never BLOCK a legitimate populate -- the guard
+  // only ever holds on a real, read-confirmed shrink.
+  let previous: AllowableUses | null = null;
+  const { data: existing, error: readErr } = await db
+    .from("grants")
+    .select("allowable_uses")
+    .eq("id", grant.id)
+    .maybeSingle<{ allowable_uses: unknown }>();
+  if (readErr) {
+    console.error(`[allowable-uses] on-demand re-extract prior-read failed grant=${grant.id}: ${readErr.message}`);
+  } else {
+    previous = readAllowableUses(existing?.allowable_uses);
+  }
+
   let result: Awaited<ReturnType<typeof generateAllowableUses>> = null;
   try {
     result = await generateAllowableUses(grant);
@@ -569,8 +613,16 @@ export async function reextractAllowableUses(
     );
   }
   // null = a transient model failure: leave the column alone (writes nothing) and let the caller retry.
-  if (!result) return { ok: false, value: null };
+  if (!result) return { ok: false, saved: false, value: null, previous };
   const value: AllowableUses = { ...result.value, recut: ALLOWABLE_USES_GENERATION };
+
+  // HOLD a shrink unless forced. The extraction itself succeeded (ok:true), but saved:false + held tells
+  // the caller "I would have replaced N items with fewer -- re-run with force to overwrite", never a
+  // silent clobber.
+  if (!opts.force && isAllowableUsesRegression(previous, value)) {
+    return { ok: true, saved: false, value, previous, held: "regression" };
+  }
+
   try {
     await saveAllowableUses(db, grant.id, value);
   } catch (e) {
@@ -578,9 +630,9 @@ export async function reextractAllowableUses(
     // failure so the caller/route returns its structured {ok:false} instead of an opaque 500, and
     // the row is discoverable in the logs. Never throw into the caller.
     console.error(`[allowable-uses] save failed grant=${grant.id}:`, e instanceof Error ? e.message : e);
-    return { ok: false, value: null };
+    return { ok: false, saved: false, value: null, previous };
   }
-  return { ok: true, value };
+  return { ok: true, saved: true, value, previous };
 }
 
 // Cheap head-only probe. No rows, and critically no raw_text -- the largest column on the

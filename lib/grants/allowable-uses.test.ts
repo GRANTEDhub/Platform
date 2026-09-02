@@ -4,8 +4,10 @@ import {
   readAllowableUses,
   verifyAllowableUses,
   allowableSource,
+  isAllowableUsesRegression,
   SECTION_PATTERNS,
   type AllowableUseItem,
+  type AllowableUses,
 } from "./allowable-uses";
 import { sectionHits } from "./nofo-text";
 
@@ -273,5 +275,40 @@ describe("clientAllowableUses (client-surface filter)", () => {
     expect(clientAllowableUses({ items: [], reason: "no_section" })).toBeNull();
     expect(clientAllowableUses(null)).toBeNull();
     expect(clientAllowableUses("nonsense")).toBeNull();
+  });
+});
+
+// ── 4. The on-demand re-extract regression guard ──────────────────────────────────────────────
+// isAllowableUsesRegression is the guard that stops a nondeterministic re-run from silently clobbering
+// an already-populated list with a thinner one (and stamping it out of recut reach). Pure — no DB.
+
+describe("isAllowableUsesRegression", () => {
+  const uses = (n: number): AllowableUses => ({
+    items: Array.from({ length: n }, (_, i) => ({ line: `item ${i}`, quote: `q${i}`, kind: "allowed" as const })),
+    reason: n === 0 ? "no_section" : null,
+  });
+
+  it("flags a shrink on a populated list", () => {
+    // 5 good items already stored, the fresh run came back with 2 — the exact clobber this guards.
+    expect(isAllowableUsesRegression(uses(5), uses(2))).toBe(true);
+  });
+
+  it("flags a shrink all the way to empty", () => {
+    // A verified-empty re-run must NOT be allowed to wipe a real populated list.
+    expect(isAllowableUsesRegression(uses(3), uses(0))).toBe(true);
+  });
+
+  it("does not flag an equal count or a growth", () => {
+    expect(isAllowableUsesRegression(uses(3), uses(3))).toBe(false);
+    expect(isAllowableUsesRegression(uses(2), uses(4))).toBe(false);
+  });
+
+  it("does not flag when there was nothing to lose (prior empty or absent)", () => {
+    // A prior empty row (the sweep/recut's 0-item state) or no prior value at all can't regress —
+    // this is the fail-open path when the prior-read finds nothing.
+    expect(isAllowableUsesRegression(uses(0), uses(2))).toBe(false);
+    expect(isAllowableUsesRegression(uses(0), uses(0))).toBe(false);
+    expect(isAllowableUsesRegression(null, uses(0))).toBe(false);
+    expect(isAllowableUsesRegression(null, uses(3))).toBe(false);
   });
 });
