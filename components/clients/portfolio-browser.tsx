@@ -54,6 +54,10 @@ export type PortfolioRow = {
   // 100% for a draft that had merely been clicked through.
   draftPct: number | null;
   reason: ActionReason | null;
+  // Paused for matching (match_active=false). Held out of the two headline action signals
+  // ("Open alerts" total + "Requires action" grid) and shown in the "All" index with a "Paused"
+  // chip and its real, greyed count. Set on the server; a paused row always has reason === null.
+  paused: boolean;
   counts: Record<PipelineStageKey, number>;
   totalGrants: number;
   inPursuit: number;
@@ -110,7 +114,10 @@ export function PortfolioBrowser({
 
   const clientCount = rows.filter((r) => !r.isProspect).length;
   const prospectCount = rows.filter((r) => r.isProspect).length;
-  const openAlerts = rows.reduce((n, r) => n + r.alerts, 0);
+  // Paused clients (match_active=false) are excluded from the headline total and the giant
+  // background figure — their alerts still show on their own "All" index row, just not counted
+  // as live work. A paused row always has reason===null, so it's already out of the action grid.
+  const openAlerts = rows.reduce((n, r) => n + (r.paused ? 0 : r.alerts), 0);
   const questionsWaiting = rows.reduce((n, r) => n + r.questions, 0);
   const emptyCount = quiet.filter((r) => r.emptyPipeline).length;
 
@@ -565,6 +572,20 @@ function ProspectChip() {
   );
 }
 
+// A real client held out of matching (match_active=false). Neutral navy tint + ink-muted — NOT a
+// STAGE colour (those mean pipeline stages; borrowing one here would break the funnel legend). Text
+// label, so it reads without relying on colour.
+function PausedChip() {
+  return (
+    <span
+      className="shrink-0 rounded-full bg-brand-navy/[0.06] px-1.5 text-[9.5px] font-semibold text-ink-muted"
+      title="Paused — not matched against new grants; flip match_active back on to resume"
+    >
+      Paused
+    </span>
+  );
+}
+
 // One line of the index. Name, dot leader, alerts, next deadline — the whole quiet tier
 // is this row twenty times, which is the point: a client with nothing to do earns a line,
 // not a card.
@@ -578,6 +599,7 @@ function IndexRow({ row }: { row: PortfolioRow }) {
         {row.name}
       </span>
       {row.isProspect && <ProspectChip />}
+      {row.paused && <PausedChip />}
       <span
         aria-hidden="true"
         className="h-px min-w-[12px] flex-1 -translate-y-[3px]"
@@ -585,7 +607,12 @@ function IndexRow({ row }: { row: PortfolioRow }) {
           background: "repeating-linear-gradient(to right,rgba(11,30,58,.28) 0 1.5px,transparent 1.5px 5px)",
         }}
       />
-      <span className="w-4 shrink-0 text-right text-[12.5px] font-semibold tabular-nums text-ink-muted">
+      {/* A paused client keeps its REAL waiting-card count, greyed a step further (INK.faint):
+          visible so the backlog is known for when they onboard, but reading as set-aside. */}
+      <span
+        className="w-4 shrink-0 text-right text-[12.5px] font-semibold tabular-nums text-ink-muted"
+        style={row.paused ? { color: INK.faint } : undefined}
+      >
         {row.alerts > 0 ? row.alerts : "–"}
       </span>
       <span

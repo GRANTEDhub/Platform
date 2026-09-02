@@ -51,6 +51,12 @@ export default async function ClientsPage() {
 
   let cards: CardRow[] = [];
   const locById = new Map<string, string>();
+  // Clients paused for matching (match_active=false, migration 0091). A paused client is
+  // held out of the two headline action signals — it never enters "Requires action" and its
+  // alerts don't feed the "Open alerts" total or "To next deadline" — but it still appears in
+  // the "All" index (marked "Paused") with its real count. Fail-open: only an explicit false
+  // pauses (the column is NOT NULL DEFAULT true in prod), so a missing flag never hides a client.
+  const pausedIds = new Set<string>();
   // (client_id | grant_id) -> ms of the first time the engine carded that pair.
   const firstCarded = new Map<string, number>();
   // client_id -> percent complete of that client's furthest-along IntellEngine draft.
@@ -66,7 +72,7 @@ export default async function ClientsPage() {
         .select("client_id, grant_id, decision, interested_at, sme_released_at, sent_at, pursuit_path")
         .in("client_id", ids)
         .neq("card_type", "prospect"),
-      supabase.from("clients").select("id, location_city, location_state").in("id", ids),
+      supabase.from("clients").select("id, location_city, location_state, match_active").in("id", ids),
       // WHERE THE ALERT AGE COMES FROM. review_cards has no created_at, so the age of a
       // waiting alert is not recoverable from the card itself — that is why the previous
       // build dropped the design's "oldest sat 41 days" outright. match_attempts does
@@ -89,10 +95,11 @@ export default async function ClientsPage() {
 
     cards = (cardData ?? []) as CardRow[];
 
-    for (const l of (locData ?? []) as { id: string; location_city: string | null; location_state: string | null }[]) {
+    for (const l of (locData ?? []) as { id: string; location_city: string | null; location_state: string | null; match_active: boolean | null }[]) {
       // City only, per the design's "Nonprofit · Springdale" subtitle. The state is
       // redundant on a roster that is almost entirely one state, and the card is narrow.
       if (l.location_city) locById.set(l.id, l.location_city);
+      if (l.match_active === false) pausedIds.add(l.id);
     }
 
     // Ascending order means the FIRST row seen for a pair is its earliest attempt, so
@@ -129,6 +136,12 @@ export default async function ClientsPage() {
     const own = byClient.get(c.id) ?? [];
     const pipeline = derivePipeline(own);
     pipelines.push(pipeline);
+
+    // A paused client (match_active=false) is set aside: never in "Requires action", not in the
+    // headline counts. It keeps its real alert count on its "All" index row (greyed, "Paused"),
+    // and its pipeline still rolls into the book bar (the grants are real; they're just not being
+    // worked). Un-pause and it rejoins the action view automatically.
+    const paused = pausedIds.has(c.id);
 
     // "Alerts" = awaiting review. Identical predicate the per-client roadmap review uses
     // (non-passed, not yet released to the client), so a client's number is the same
@@ -172,7 +185,10 @@ export default async function ClientsPage() {
       // the rung on the scope -> compliance -> build ladder, the same figure the client
       // dashboard shows, and the card says "of the flow" so it cannot be misread.
       draftPct: draftPctById.get(c.id) ?? null,
-      reason: actionReason({ alerts, deadlineDays, questions }),
+      // A paused client is forced to no-action so it lands in the "All" index, never the
+      // action grid — regardless of a near deadline or waiting alerts.
+      reason: paused ? null : actionReason({ alerts, deadlineDays, questions }),
+      paused,
       counts,
       totalGrants: pipeline.total,
       inPursuit: counts.pursuit ?? 0,
@@ -186,6 +202,9 @@ export default async function ClientsPage() {
   // thing is due", and an overdue grant is a different statement that the client's own
   // card already makes.
   const nextDeadlineDays = rows
+    // Paused clients don't drive the headline "to next deadline" — a set-aside client's clock
+    // shouldn't read as work due (it mirrors their exclusion from "Open alerts" / "Require action").
+    .filter((r) => !r.paused)
     .map((r) => r.deadlineDays)
     .filter((d): d is number => d !== null && d >= 0)
     .reduce<number | null>((min, d) => (min === null || d < min ? d : min), null);
