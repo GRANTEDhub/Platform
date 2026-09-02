@@ -413,9 +413,17 @@ function EligibilityCallout({ eligibility }: { eligibility: EligibilityVerdict }
       {hasLimits && (
         // NOT clamped (Shannon, 2026-09-02): this is a verbatim NOFO limit — often the disqualifier — and a
         // `line-clamp-2` cut it off mid-sentence with no hover to recover the rest. Hiding a disqualifier is
-        // worse than the overflow, so it wraps fully. The height is safe: OverviewCard is shrink-0 and the
-        // RationaleCard below is the flex-1 min-h-0 overflow-y-auto valve, so the page still never scrolls.
-        <p className="mt-2 text-[12px] leading-[1.5] text-ink-muted [text-wrap:pretty]">
+        // worse than the overflow. But an UNBOUNDED expand is not safe either: OverviewCard is `shrink-0`
+        // inside the `overflow-hidden` console body, so a limit long enough to push the card past the frame
+        // has its tail CLIPPED by that ancestor — the rationale's own overflow-y-auto cannot recover another
+        // card's overflow (Codex #487 P1), and `ineligible_entities` is unbounded `text`. So the full text
+        // lives in a BOUNDED, SCROLLABLE region: a typical limit shows in full; a pathologically long one
+        // scrolls WITHIN the callout — every character reachable, nothing clipped, and the card can't balloon
+        // past the frame and shove the rationale off-screen. `title` gives the full text on pointer hover too.
+        <p
+          className="mt-2 max-h-28 overflow-y-auto text-[12px] leading-[1.5] text-ink-muted [text-wrap:pretty]"
+          title={eligibility.excluded ?? eligibility.reasons[0]}
+        >
           <strong className="font-semibold" style={{ color: BRAND.orangeDeep }}>
             Limits to check:{" "}
           </strong>
