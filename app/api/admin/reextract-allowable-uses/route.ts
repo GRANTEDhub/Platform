@@ -28,11 +28,17 @@ export async function POST(req: NextRequest) {
   if (!grantId) return NextResponse.json({ error: "grantId is required" }, { status: 400 });
 
   const db = createServiceClient();
-  const { data: grant } = await db
+  const { data: grant, error: lookupError } = await db
     .from("grants")
     .select("id, title, funder, raw_text")
     .eq("id", grantId)
     .maybeSingle<AllowableUsesGrant>();
+  if (lookupError) {
+    // A transient DB / network fault is NOT a missing row -- surface it as retryable rather than
+    // masking a recoverable infra fault as a permanent 404 that tells the admin the id is wrong.
+    console.error(`[allowable-uses] reextract grant lookup failed grant=${grantId}: ${lookupError.message}`);
+    return NextResponse.json({ ok: false, error: "Grant lookup failed, retry" }, { status: 502 });
+  }
   if (!grant) return NextResponse.json({ error: "Grant not found" }, { status: 404 });
 
   const { ok, value } = await reextractAllowableUses(db, grant);
