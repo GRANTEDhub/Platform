@@ -8,6 +8,7 @@ import { ConceptCard } from "@/components/report/concept-card";
 import { MarkUnreadButton } from "@/components/report/mark-unread-button";
 import { ScoreFactorsBackfill } from "@/components/report/score-factors-backfill";
 import { IntelRerunButton } from "@/components/report/intel-rerun-button";
+import { AllowableRefreshButton } from "@/components/report/allowable-refresh-button";
 import type { IntelReview } from "@/lib/grants/intel-review";
 import { GrantReviewConsole, type ReviewKeyDetail, type ReviewMeta } from "@/components/report/grant-review-console";
 import { AlertSend } from "@/app/(app)/review/[id]/alert-send";
@@ -487,6 +488,9 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
               overdue={overdueConfig}
               showConcept={showConcept}
               rerun={showIntel ? <IntelRerunButton cardId={params.cardId} hasVerdict={intelReview !== null} /> : null}
+              // Same staff gate as the re-run (admin + pending + not released) plus a grant to
+              // re-extract. Admin-only again at the route; the portal never passes this slot.
+              reextract={showIntel && card.grant_id ? <AllowableRefreshButton grantId={card.grant_id} /> : null}
             />
           ) : null
         }
