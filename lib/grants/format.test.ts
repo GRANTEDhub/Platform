@@ -6,18 +6,28 @@ import { awardRangeOrEstimate, compactTerm, parseAwardCount } from "./format";
 //   ② Term is compacted to fit the facts tile (units abbreviated, soft word-boundary truncation).
 
 describe("parseAwardCount", () => {
-  it("pulls a positive integer from free text", () => {
+  it("accepts a bare simple count / range", () => {
     expect(parseAwardCount("20")).toBe(20);
     expect(parseAwardCount("Approximately 20")).toBe(20);
+    expect(parseAwardCount("up to 20")).toBe(20);
     expect(parseAwardCount("1,200")).toBe(1200);
-    // A range yields its LOWER count (first integer) → the larger, never-understated per-award figure.
+    // A range yields its LOWER count → the larger, never-understated per-award figure.
     expect(parseAwardCount("20–25")).toBe(20);
   });
-  it("returns null when there is no usable count", () => {
+  it("anchors on the count word when other numbers precede it (Codex #486)", () => {
+    // The naive first-integer parser divided by 2026 / 2 here — materially wrong.
+    expect(parseAwardCount("FY 2026: 20 awards")).toBe(20);
+    expect(parseAwardCount("2 rounds of 10 awards")).toBe(10);
+    expect(parseAwardCount("Approximately 15 grants")).toBe(15);
+  });
+  it("rejects ambiguous / non-count text (falls through → no estimate, never a wrong divisor)", () => {
     expect(parseAwardCount(null)).toBeNull();
     expect(parseAwardCount("")).toBeNull();
     expect(parseAwardCount("several")).toBeNull();
     expect(parseAwardCount("0")).toBeNull(); // zero is not a divisor
+    // Multiple numbers with no count word to anchor on → too ambiguous to divide by.
+    expect(parseAwardCount("2 rounds in 2026")).toBeNull();
+    expect(parseAwardCount("20 (estimated), see NOFO")).toBeNull();
   });
 });
 

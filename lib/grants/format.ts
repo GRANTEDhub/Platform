@@ -49,15 +49,26 @@ export function formatAwardRange(min: string | null | undefined, max: string | n
   return (lo || hi)!;
 }
 
-// The expected-number-of-awards text as a positive integer, or null. num_awards is free text
-// ("20", "Approximately 20", "20–25"); take the first integer. A range yields its LOWER count, which
-// makes the per-award deduction the LARGER (more conservative-toward-visible, never understated) figure.
+// The expected-number-of-awards text as a positive integer, or null. num_awards is FREE TEXT, so a naive
+// "first integer" is unsafe: "FY 2026: 20 awards" would divide by 2026 and "2 rounds of 10 awards" by 2,
+// each a materially wrong per-award figure (Codex #486). So only two UNAMBIGUOUS shapes are accepted, and
+// anything else falls through to null → the estimate is simply not shown (never a wrong number):
+//   1. a number tied directly to the award/grant count word ("… 20 awards", "10 grants") — robust to a
+//      leading year or round count;
+//   2. a bare simple count/range ("20", "Approximately 20", "20–25" → the lower 20), with NOTHING else in
+//      the string (a stray year / "FY" / "round" makes it ambiguous → reject).
 export function parseAwardCount(raw: string | null | undefined): number | null {
   if (!raw) return null;
-  const m = raw.replace(/,/g, "").match(/\b(\d{1,7})\b/);
-  if (!m) return null;
-  const n = parseInt(m[1], 10);
-  return Number.isFinite(n) && n > 0 ? n : null;
+  const s = raw.replace(/,/g, "").trim();
+  if (!s) return null;
+  const pos = (n: number) => (Number.isFinite(n) && n > 0 ? n : null);
+  // (1) A count word anchors the number even amid other numbers.
+  const tied = s.match(/(\d{1,6})\s*(?:total\s+)?(?:awards?|grants?|recipients?|projects?)\b/i);
+  if (tied) return pos(parseInt(tied[1], 10));
+  // (2) Otherwise the WHOLE string must be a simple count / range, or it is too ambiguous to divide by.
+  const simple = s.match(/^(?:up\s+to\s+|approximately\s+|about\s+|~\s*)?(\d{1,6})(?:\s*[–-]\s*\d{1,6})?$/i);
+  if (simple) return pos(parseInt(simple[1], 10));
+  return null;
 }
 
 // Award range that NEVER renders a bare blank when the size is knowable (the allowable-uses never-blank

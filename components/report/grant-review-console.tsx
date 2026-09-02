@@ -365,7 +365,18 @@ function MetaTiles({ meta }: { meta: ReviewMeta[] }) {
               style={accent ? { color: BRAND.orange } : undefined}
               title={m.full ?? m.value}
             >
-              {m.value}
+              {/* When the visible value is a compacted/truncated form (Term), the full text must reach
+                  assistive tech too — a `title` is pointer-hover only (Codex #486). So hide the truncated
+                  visible text from AT and expose the full string via an sr-only span; a screen reader reads
+                  the complete term, sighted users see the compact one, pointer users still get the title. */}
+              {m.full && m.full !== m.value ? (
+                <>
+                  <span aria-hidden="true">{m.value}</span>
+                  <span className="sr-only">{m.full}</span>
+                </>
+              ) : (
+                m.value
+              )}
             </p>
           </div>
         );
