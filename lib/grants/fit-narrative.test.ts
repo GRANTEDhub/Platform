@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   narrativeGuard,
   stripSeatCodes,
+  scrubCardSeatCodes,
   structureConfig,
   fitNarrativeEnabled,
   FORBIDDEN_NARRATIVE_MARKERS,
@@ -122,6 +123,75 @@ describe("stripSeatCodes", () => {
     const once = stripSeatCodes("a unit (S0_2), b unit (S0_3), c (S0_6, e.g. x)");
     expect(stripSeatCodes(once)).toBe(once);
     expect(once).not.toMatch(/S\d+_\d+/);
+  });
+
+  // The widened family (Shannon, 2026-09-02): the strip must catch EVERY S<digit>_ variant unconditionally,
+  // not only the S<digit>_<digit> form the first version required — a trailing-underscore truncation "S0_" /
+  // "S1_" and a nested "S0_1_2" slipped through and reached the IntellEngine Intel paragraph.
+  it("removes the full underscore forms Shannon saw live (S0_1, S1_2)", () => {
+    expect(stripSeatCodes("the org fills S0_1 and S1_2 today")).toBe("the org fills and today");
+  });
+
+  it("removes a trailing-underscore truncation with NO digit after it (S0_, S1_), bare and parenthetical", () => {
+    expect(stripSeatCodes("the org fills S0_ and S1_ here")).toBe("the org fills and here");
+    expect(stripSeatCodes("community engagement (S0_) matters")).toBe("community engagement matters");
+  });
+
+  it("removes a nested underscore form (S0_1_2)", () => {
+    expect(stripSeatCodes("the org fills S0_1_2 today")).toBe("the org fills today");
+    expect(stripSeatCodes("engagement (S0_1_2) here")).toBe("engagement here");
+  });
+
+  it("leaves NO S<digit>_ token of any shape in the output", () => {
+    const coded = "fills S0_1, S1_2, S0_, S1_, and S0_1_2 (S0_6, e.g. x) plus a dangling (S0_6, e.";
+    const out = stripSeatCodes(coded);
+    expect(out).not.toMatch(/S\d+_/); // the whole family, including the trailing-underscore form
+  });
+});
+
+// The card-load scrub — the single choke point that cleans EVERY free-text field a detail page renders
+// (why_this_org bullets, concept_synopsis, before_you_approve, and the reasoning_context prose that feeds
+// the rationale lead/mitigation), so no surface can leak a seat code regardless of which field carried it.
+describe("scrubCardSeatCodes", () => {
+  it("scrubs codes from every free-text field and leaves the rest untouched", () => {
+    const card = {
+      id: "c1",
+      fit_score: 2,
+      why_this_org: ["fills S0_1 the research seat", "no code here"],
+      concept_synopsis: "The college fills S0_2 and S1_ under a partner.",
+      before_you_approve: ["STOP: confirm S0_3 capacity"],
+      reasoning_context: {
+        consortium_rationale: "Needs a prime; the org fills S0_6 (S0_6, e.g. town halls).",
+        fit_score_derivation: "Capped at conditional on seat_role.",
+        role_assignment_logic: null,
+      },
+    };
+    const out = scrubCardSeatCodes(card);
+    // No S<digit>_ token survives anywhere it renders.
+    expect(JSON.stringify(out)).not.toMatch(/S\d+_/);
+    // The reasoning is kept, just de-coded.
+    expect(out.why_this_org?.[0]).toBe("fills the research seat");
+    expect(out.why_this_org?.[1]).toBe("no code here");
+    expect(out.concept_synopsis).toBe("The college fills and under a partner.");
+    expect(out.before_you_approve?.[0]).toBe("STOP: confirm capacity");
+    expect((out.reasoning_context as { consortium_rationale: string }).consortium_rationale).toBe(
+      "Needs a prime; the org fills.",
+    );
+    // Untouched fields pass through, and a null sub-field stays null.
+    expect(out.id).toBe("c1");
+    expect(out.fit_score).toBe(2);
+    expect((out.reasoning_context as { role_assignment_logic: null }).role_assignment_logic).toBeNull();
+  });
+
+  it("does not mutate the input and tolerates absent/null fields", () => {
+    const card = { id: "c2", why_this_org: ["fills S0_1 here"], reasoning_context: null };
+    const out = scrubCardSeatCodes(card);
+    expect(card.why_this_org[0]).toBe("fills S0_1 here"); // input untouched
+    expect(out.why_this_org?.[0]).toBe("fills here");
+    expect(out.reasoning_context).toBeNull();
+    // A card whose scrubbable fields are all null/absent is returned intact — nothing to scrub, no throw.
+    const bare = { id: "c3", why_this_org: null, concept_synopsis: null, before_you_approve: null, reasoning_context: null };
+    expect(scrubCardSeatCodes(bare)).toEqual(bare);
   });
 });
 

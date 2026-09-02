@@ -158,27 +158,77 @@ export const FORBIDDEN_NARRATIVE_MARKERS: readonly string[] = [
 // for already-stored narratives) and the factor rationales (viewFitFactors) — so no render path surfaces
 // a code no matter which paragraph shows.
 //
-// SCOPED TO THE SUPPORTING-SEAT FORM ONLY — the unambiguous "S<n>_<m>". That underscore shape is never
-// anything but a seat label, and it is the observed leak (the enumerated supporting seats S0_2, S0_3,
-// S0_6…). A PRIME code "P<n>" is deliberately NOT stripped, parenthesised or bare: it collides with
-// legitimate client-facing grant identifiers — NIH activity codes ("(P30)", "(P01)"; the repo handles the
-// R01/P30 mechanism prefixes, forecast-relevance.ts) and project phases ("(P2)") — so stripping it could
-// silently DELETE real content (Codex #480 P2). The prompt still tells the model to emit no code at all
-// (P0 included); a stray prime code is a generation miss caught by the eval/eyeball, not something this
-// deterministic net can safely remove. A bare "P2"/"S.1234" (a phase, a bill) is likewise left untouched.
-// Idempotent — a no-op on text with no supporting-seat codes.
+// SCOPED TO THE SUPPORTING-SEAT FAMILY — the unambiguous underscore form "S<n>_…", in EVERY variant it can
+// appear in: full ("S0_1", "S1_2"), truncated to a trailing underscore from a generation cut mid-token
+// ("S0_", "S1_"), and nested ("S0_1_2"). The moment an "S<digit>" is followed by an underscore it is a seat
+// label and nothing else, so the strip fires UNCONDITIONALLY on that shape — it does not require a digit
+// after the underscore (that was the gap: "S0_"/"S1_" slipped through) and it does not require a trailing
+// word boundary (so a code glued to following text is still removed). A PRIME code "P<n>" is deliberately
+// NOT stripped, parenthesised or bare: it collides with legitimate client-facing grant identifiers — NIH
+// activity codes ("(P30)", "(P01)"; the repo handles the R01/P30 mechanism prefixes, forecast-relevance.ts)
+// and project phases ("(P2)") — so stripping it could silently DELETE real content (Codex #480 P2). The
+// prompt still tells the model to emit no code at all (P0 included); a stray prime code is a generation
+// miss caught by the eval/eyeball, not something this deterministic net can safely remove. A bare "P2" /
+// "S.1234" (a phase, a bill) is likewise left untouched — only the "S<digit>_" underscore shape is a seat
+// code. Idempotent — a no-op on text with no supporting-seat codes.
+//
+// `S\d+(?:_\d*)+` is the whole family in one sub-pattern: an S, one-or-more digits, then one-or-more groups
+// of (underscore + zero-or-more digits) — which matches "S0_1", "S1_2", "S0_" (empty last group), "S1_",
+// and "S0_1_2" alike.
 export function stripSeatCodes(text: string): string {
   return text
-    // A parenthetical that OPENS with a supporting-seat code — closed "(S0_2)" / "(S0_6, e.g. town halls)"
-    // or dangling from a truncated generation "(S0_6, e." — remove the whole group and its leading space.
-    .replace(/\s*\(\s*S\d+_\d+\b[^)]*(?:\)|$)/g, "")
-    // A bare supporting-seat token in prose ("…fills S0_2 and…").
-    .replace(/\s*\bS\d+_\d+\b/g, "")
+    // A parenthetical that OPENS with a supporting-seat code — closed "(S0_2)" / "(S0_6, e.g. town halls)",
+    // dangling from a truncated generation "(S0_6, e." / "(S0_", or nested "(S0_1_2)" — remove the whole
+    // group and its leading space.
+    .replace(/\s*\(\s*S\d+(?:_\d*)+[^)]*(?:\)|$)/g, "")
+    // A bare supporting-seat token in prose ("…fills S0_2 and…", a dangling "S0_", a nested "S0_1_2").
+    .replace(/\s*\bS\d+(?:_\d*)+/g, "")
     // Tidy the seams the removals leave: an emptied "()", a space now before punctuation, doubled spaces.
     .replace(/\(\s*\)/g, "")
     .replace(/\s+([,.;:)])/g, "$1")
     .replace(/[ \t]{2,}/g, " ")
     .trim();
+}
+
+// Scrub the matcher's internal seat/role codes from EVERY free-text card field a detail page renders, in one
+// pass at card-load. The codes live not only in the factor rationales (stripped in viewFitFactors) and the
+// QA narrative (stripped in narrativeGuard/resolveFit) but in the engine's OTHER prose — why_this_org, the
+// concept_synopsis, before_you_approve, and the reasoning_context strings — which feed the IntellEngine
+// Intel paragraph's lead/mitigation, the why-this-org bullets, the concept box and the score-derivation
+// show-more. Scrubbing the card once, at load, means NO downstream render can surface a code regardless of
+// which field carried it. Returns a shallow clone (never mutates the input); idempotent; a field with no
+// code comes back unchanged. reasoning_context is a flat string map, so a top-level value scrub covers it.
+// reasoning_context is typed `unknown` in the constraint (not Record<string, unknown>) so a page's concrete
+// interface-typed reasoning_context still satisfies `T extends` — a declared interface is not assignable to
+// an index-signature type ("missing index signature"), which would otherwise reject the call. It is
+// narrowed to an object inside before its string values are scrubbed.
+type SeatCodeCardText = {
+  why_this_org?: string[] | null;
+  concept_synopsis?: string | null;
+  before_you_approve?: string[] | null;
+  reasoning_context?: unknown;
+};
+export function scrubCardSeatCodes<T extends SeatCodeCardText>(card: T): T {
+  const arr = (a: string[] | null | undefined) =>
+    Array.isArray(a) ? a.map((s) => (typeof s === "string" ? stripSeatCodes(s) : s)) : a;
+  const str = (s: string | null | undefined) => (typeof s === "string" ? stripSeatCodes(s) : s);
+  const rc = card.reasoning_context;
+  const scrubbedRc =
+    rc && typeof rc === "object" && !Array.isArray(rc)
+      ? Object.fromEntries(
+          Object.entries(rc as Record<string, unknown>).map(([k, v]) => [
+            k,
+            typeof v === "string" ? stripSeatCodes(v) : v,
+          ]),
+        )
+      : rc;
+  return {
+    ...card,
+    why_this_org: arr(card.why_this_org),
+    concept_synopsis: str(card.concept_synopsis),
+    before_you_approve: arr(card.before_you_approve),
+    reasoning_context: scrubbedRc,
+  } as T;
 }
 
 // Returns the narrative when it is present and clean; null when absent, empty, or it trips the framing

@@ -18,6 +18,7 @@ import { formatDeadlineShort } from "@/lib/grants/format";
 import { getSentAlertForCard } from "@/lib/alerts/sent-status";
 import { FactorBreakdown, ScoreArcRing } from "@/components/report/match-score";
 import { resolveFit } from "@/lib/report/qa-override";
+import { scrubCardSeatCodes } from "@/lib/grants/fit-narrative";
 import { prospectCredibility } from "@/lib/prospects/credibility";
 import type { ProgramAwardSummary } from "@/lib/grants/program-awards";
 import type { ReviewCard, Client, Grant, Prospect } from "@/types/database";
@@ -60,8 +61,13 @@ export default async function CardDetailPage({
     .eq("id", params.id)
     .single();
 
-  const card = data as FullCard | null;
-  if (!card) notFound();
+  const cardRaw = data as FullCard | null;
+  if (!cardRaw) notFound();
+  // Scrub the matcher's internal seat codes ("S0_1", "S1_2", "S0_") from every free-text field this page
+  // renders — the why-this-org bullets, the concept box, the score-derivation show-more, the prime overlay —
+  // in one pass at load, so none of those surfaces can leak a code (the RationaleCard on the console/portal
+  // is scrubbed at its own render boundary; this is the equivalent guarantee for this bespoke layout).
+  const card = scrubCardSeatCodes(cardRaw);
 
   const g = card.grants;
   const isProspect = card.card_type === "prospect";

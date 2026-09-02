@@ -11,6 +11,7 @@ import type { QaVerdictView } from "@/lib/report/qa-override";
 import type { Recommendation, VerdictLead } from "@/lib/report/recommendation";
 import type { EligibilityVerdict } from "@/lib/intellengine/eligibility";
 import { ALLOWABLE_USES_FALLBACK, type AllowableUses } from "@/lib/grants/allowable-uses";
+import { stripSeatCodes } from "@/lib/grants/fit-narrative";
 
 // The grant review screen — one matched grant, one client, one decision.
 //
@@ -543,16 +544,28 @@ function RationaleCard({
   recommendation: Recommendation | null;
   verdictLead: VerdictLead | null;
 }) {
+  // Last-line seat-code scrub. The matcher's internal codes ("S0_1", "S1_2", the truncated "S0_") live in
+  // the engine's why-this-org / consortium prose, which feed rationale.lead + rationale.mitigation here.
+  // Scrub EVERY field this paragraph renders (idempotent — blocking / narrative are already scrubbed at
+  // their data boundary) so a code can never reach the client no matter which upstream field carried it.
+  // This shared component is the IntellEngine Intel paragraph on BOTH the staff console and the client
+  // portal, so scrubbing here guarantees the one surface Shannon named, independent of the page assembly.
+  const r = {
+    lead: rationale.lead ? stripSeatCodes(rationale.lead) : null,
+    blocking: rationale.blocking ? stripSeatCodes(rationale.blocking) : null,
+    mitigation: rationale.mitigation ? stripSeatCodes(rationale.mitigation) : null,
+    narrative: rationale.narrative ? stripSeatCodes(rationale.narrative) : null,
+  };
   // Step C: an applied-demote card carries a single client-safe narrative paragraph that IS the whole
   // rationale; when present it REPLACES the assembled lead/blocking/mitigation (never stacked). Else the
   // three engine-derived pieces render exactly as before.
-  const narrative = rationale.narrative?.trim() || null;
-  const hasProse = narrative || rationale.lead || rationale.blocking || rationale.mitigation;
+  const narrative = r.narrative?.trim() || null;
+  const hasProse = narrative || r.lead || r.blocking || r.mitigation;
   // The VERDICT LEAD opens the paragraph — the go/no-go call, ahead of the reasoning. Deterministic, pinned
   // to the displayed score (the model never authors it), so prose and score can't disagree. It leads the
   // same <p> as the reasoning; the reasoning body (the QA narrative, written NOT to restate the call) flows
   // straight on from it, matching the target voice "No-go for NWACC. This is a fossil-energy R&D grant…".
-  const lead = verdictLead?.text?.trim() || null;
+  const lead = verdictLead?.text ? stripSeatCodes(verdictLead.text).trim() || null : null;
   // The recommendation closes the paragraph as its final line. It states the CALL only; the specific
   // reason is the prose directly above it — the bold blocking sentence (which is authoritative for BOTH a
   // factor-blocked and a calibration-driven pass), or the QA narrative. The line never derives its own
@@ -604,14 +617,14 @@ function RationaleCard({
                   narrative
                 ) : hasProse ? (
                   <>
-                    {rationale.lead && <>{rationale.lead} </>}
+                    {r.lead && <>{r.lead} </>}
                     {/* The blocking sentence, in bold, in navy — the engine's own rationale string for
                         the weakest factor, not a rewrite, so the page cannot assert a cap the score does
                         not actually rest on. */}
-                    {rationale.blocking && (
-                      <strong className="font-semibold text-brand-navy">{rationale.blocking} </strong>
+                    {r.blocking && (
+                      <strong className="font-semibold text-brand-navy">{r.blocking} </strong>
                     )}
-                    {rationale.mitigation}
+                    {r.mitigation}
                   </>
                 ) : null}
               </p>
