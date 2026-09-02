@@ -13,7 +13,7 @@ import { AlertSend } from "./alert-send";
 import { ProspectContact } from "./prospect-contact";
 import { RecommendedPrime } from "./recommended-prime";
 import { ExpandableText } from "./expandable-text";
-import { ProgramAwardMap } from "./program-award-map";
+import { ProgramAwardMap } from "@/components/report/program-award-map";
 import { formatDeadlineShort } from "@/lib/grants/format";
 import { getSentAlertForCard } from "@/lib/alerts/sent-status";
 import { FactorBreakdown, ScoreArcRing } from "@/components/report/match-score";

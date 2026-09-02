@@ -18,6 +18,7 @@ import { buildRecommendation, buildVerdict, type HardKill } from "@/lib/report/r
 import { fitNarrativeEnabled } from "@/lib/grants/fit-narrative";
 import { MarkRead } from "@/components/report/mark-read";
 import { awardRangeOrEstimate, compactCostShare, compactTerm } from "@/lib/grants/format";
+import type { ProgramAwardSummary } from "@/lib/grants/program-awards";
 import { BRAND } from "@/lib/brand";
 import { clientAllowableUses } from "@/lib/grants/allowable-uses";
 import type { Client, FactorScores, Grant, CardDecision, PursuitPath } from "@/types/database";
@@ -48,7 +49,7 @@ export const dynamic = "force-dynamic";
 
 type GrantEmbed = Pick<
   Grant,
-  | "id" | "source_url" | "title" | "funder" | "fon" | "assistance_listings" | "focus_areas"
+  | "id" | "source_url" | "title" | "funder" | "fon" | "assistance_listings" | "program_award_summary" | "focus_areas"
   | "submission_deadline" | "period_of_performance" | "cost_share" | "num_awards" | "total_funding" | "description" | "description_brief"
   | "allowable_uses"
   | "award_range_min" | "award_range_max" | "award_range_is_estimate"
@@ -122,7 +123,7 @@ export default async function PortalGrantDetail({
   let query: any = supabase
     .from("review_cards")
     .select(
-      "fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, qa_fit_score, qa_factor_scores, qa_sources, qa_narrative, qa_status, qa_engine_fit_score, reasoning_context, decision, pursuit_path, card_type, grants(id, source_url, title, funder, fon, assistance_listings, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, total_funding, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status)",
+      "fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, qa_fit_score, qa_factor_scores, qa_sources, qa_narrative, qa_status, qa_engine_fit_score, reasoning_context, decision, pursuit_path, card_type, grants(id, source_url, title, funder, fon, assistance_listings, program_award_summary, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, total_funding, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status)",
     )
     .eq("id", params.id)
     .eq("client_id", org.clientId)
@@ -398,6 +399,17 @@ export default async function PortalGrantDetail({
         }
         keyDetails={keyDetails}
         sourceUrl={g.source_url}
+        programAward={
+          // Only show the map when there is a CFDA to profile; a no-CFDA grant keeps the old Key Details
+          // fill. Client-safe: the map is program-wide public USASpending data, not this client's.
+          g.id && Array.isArray(g.assistance_listings) && g.assistance_listings.length > 0
+            ? {
+                grantId: g.id,
+                summary: (g.program_award_summary as unknown as ProgramAwardSummary | null) ?? null,
+                hasCfda: true,
+              }
+            : null
+        }
       />
 
       {/* Below the frame, exactly as on the staff screen: the review screen is zero-scroll,

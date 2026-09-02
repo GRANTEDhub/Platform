@@ -61,7 +61,18 @@ function binOf(amount: number, thresholds: number[]): number {
   return b;
 }
 
-function SectionShell({ children }: { children: React.ReactNode }) {
+function SectionShell({ children, compact }: { children: React.ReactNode; compact?: boolean }) {
+  // COMPACT = the grant-report console's right column (386px). It is the flex-1 element that ABSORBS the
+  // whitespace the Key Details box used to balloon into, with its own internal scroll; tighter chrome
+  // matches the console's other cards. FULL = the standalone /review/[id] section (padded ui Card).
+  if (compact) {
+    return (
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-sharp border border-edge bg-white px-[17px] py-3.5">
+        <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-muted">Program award history</p>
+        <div className="mt-1.5 min-h-0 flex-1 overflow-y-auto">{children}</div>
+      </section>
+    );
+  }
   return (
     <Card className="p-6 sm:p-7">
       <SectionLabel>Program award history</SectionLabel>
@@ -74,10 +85,14 @@ export function ProgramAwardMap({
   grantId,
   initialSummary,
   hasCfda,
+  compact = false,
 }: {
   grantId: string;
   initialSummary: ProgramAwardSummary | null;
   hasCfda: boolean;
+  // Compact: render for the report console's narrow right column — tighter shell, no award table /
+  // selection chip (the map + hover + legend are the interactive value there), map still fully interactive.
+  compact?: boolean;
 }) {
   const [summary, setSummary] = useState<ProgramAwardSummary | null>(initialSummary);
   const [loading, setLoading] = useState(false);
@@ -127,7 +142,7 @@ export function ProgramAwardMap({
   // Loading / null / failure states (each still inside the section shell).
   if (loading) {
     return (
-      <SectionShell>
+      <SectionShell compact={compact}>
         <div className="mt-2.5 flex items-center gap-2.5 text-sm text-muted-foreground">
           <span className="h-4 w-4 animate-spin rounded-full border-2 border-brand-navy/20 border-t-brand-orange" />
           Loading program award history…
@@ -137,7 +152,7 @@ export function ProgramAwardMap({
   }
   if (!summary || summary.byState.length === 0) {
     return (
-      <SectionShell>
+      <SectionShell compact={compact}>
         <p className="mt-2 text-sm text-muted-foreground">
           {failed ? "Couldn’t load program award history." : "No program award history available."}
         </p>
@@ -164,7 +179,7 @@ export function ProgramAwardMap({
   const startYear = (summary.timePeriod?.start ?? "").slice(0, 4);
 
   return (
-    <SectionShell>
+    <SectionShell compact={compact}>
       {/* Honest, program-wide label -- never "this grant's awards". */}
       <p className="mt-2 text-sm leading-relaxed text-foreground">
         <span className="font-semibold text-brand-navy">{label}</span> · program-wide, all competitions
@@ -197,10 +212,22 @@ export function ProgramAwardMap({
                   setHover({ code, left: e.clientX - box.left, top: e.clientY - box.top });
                 }}
                 onMouseLeave={() => setHover((h) => (h?.code === code ? null : h))}
-                onClick={() => {
-                  if (!rec) return;
-                  setSelected((s) => (s === code ? null : code));
+                // Touch: tap a state to show its tooltip on phones/tablets, where mouse hover never fires.
+                // No preventDefault, so vertical page scroll over the map is unaffected.
+                onTouchStart={(e) => {
+                  const t = e.touches[0];
+                  const box = wrapRef.current?.getBoundingClientRect();
+                  if (!t || !box) return;
+                  setHover({ code, left: t.clientX - box.left, top: t.clientY - box.top });
                 }}
+                onClick={
+                  compact
+                    ? undefined
+                    : () => {
+                        if (!rec) return;
+                        setSelected((s) => (s === code ? null : code));
+                      }
+                }
               />
             );
           })}
@@ -243,6 +270,10 @@ export function ProgramAwardMap({
         </span>
       </div>
 
+      {/* The selection chip + click-through award table are the FULL variant only — the compact console
+          box keeps the map + hover + legend (the interactive value in a 386px column) and drops the table. */}
+      {!compact && (
+        <>
       {/* Selection chip + truncation note */}
       <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1.5">
         {selName && (
@@ -294,6 +325,8 @@ export function ProgramAwardMap({
           </tbody>
         </table>
       </div>
+        </>
+      )}
     </SectionShell>
   );
 }
