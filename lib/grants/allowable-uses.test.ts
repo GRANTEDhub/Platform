@@ -68,41 +68,62 @@ describe("section finder", () => {
   });
 });
 
-// ── 1b. NSF-family finder ───────────────────────────────────────────────────────────────────
+// ── 1b. NSF-family finder (real IUSE / Two-Year College STEM fixture) ────────────────────────
 //
-// NSF states cost rules as ALLOWABLE FRAMING under a "Budgetary Information" section, not the ACF
-// "we do not allow the following" list — so the ACF-only patterns anchor on an isolated indirect/F&A
-// line and miss the real section. NOTE: this is a synthetic fixture modeled on the IUSE / Two-Year
-// College STEM solicitation; swap in the real NOFO text as the fixture when available.
-const NSF_BUDGET_SECTION = `Budgetary Information
-Cost Sharing: Cost sharing is not required for this program.
-Funds may be used for faculty release time to support curriculum development.
-Administrative salaries may be charged as direct costs consistent with 2 CFR 200.413.
-Reasonable travel costs and lodging for project personnel to attend the annual PI conference may be included.
-Participant support costs, including stipends for participants, are an allowable charge.
-Indirect costs (Facilities and Administrative, F&A) are recovered at the awardee's federally negotiated rate.
-Other Budgetary Limitations: Costs for the installation of equipment are not allowable under this program.`;
+// Verbatim excerpts from the NSF 23-584 IUSE: Innovation in Two-Year College STEM Education (ITYC)
+// solicitation — the grant that proved the ACF-tuned finder misses NSF (stored no_section on 85.7k of
+// real NOFO text). NSF states cost rules as allowable FRAMING under a "B. Budgetary Information"
+// section, and a SEPARATE summary block earlier in the doc carries the "Indirect Cost (F&A)
+// Limitations" line — the F&A decoy the finder must NOT anchor on instead of the real section.
+const IUSE_BUDGET_SECTION = `B. Budgetary Information
+Cost Sharing:
+Voluntary committed cost sharing is prohibited.
+Other Budgetary Limitations:
+Budgets and budget justifications submitted to this solicitation must reflect an appropriate distribution of funds based on the proposed scope of the project.
+Faculty Release Time/Extra Compensation Above Base Salary: Faculty release time and/or faculty stipends to carry out project work that goes beyond the normal faculty duties is allowed. Salary compensation above 2 months salary must be disclosed and justified in the Budget Justification.
+Administrative Support: The salaries of administrative and clerical staff should normally be considered part of indirect costs. However, these may be applied as direct costs if the conditions of 2 CFR 200.413 are met.
+Professional Development Conferences/Meetings: In proposals that involve professional development activities, reasonable travel costs and costs for subsistence (lodging and meals) during the meeting may be included in project budgets. In addition, funds may be requested for a reasonable stipend per meeting day for participants.
+Equipment: Requested equipment must be essential components of proposed deliverables. Equipment costs must not exceed 30% of the total NSF budget requested.
+NSF project funds may not be used for: Student scholarships; replacement equipment or instrumentation; teaching aids; the modification, construction, or furnishing of laboratories or other buildings; the installation of equipment or instrumentation (as distinct from the on-site assembly of multi-component instruments--which is an allowable charge).`;
 
-describe("NSF-family section finder", () => {
-  it("the ACF-worded 'we do not allow' patterns don't fire on NSF allowable-framing text", () => {
-    const ACF_LIST_PATTERNS = [/we\s+do\s+not\s+allow/gi, /do\s+not\s+allow\s+the\s+following/gi, /funding\s+policies\s+and\s+limitations/gi];
-    expect(sectionHits(NSF_BUDGET_SECTION, ACF_LIST_PATTERNS)).toHaveLength(0);
+const IUSE_SUMMARY_DECOY = `B. Budgetary Information
+Cost Sharing Requirements:
+Voluntary committed cost sharing is prohibited.
+Indirect Cost (F&A) Limitations:
+Not Applicable
+Other Budgetary Limitations:
+Other budgetary limitations apply. Please see the full text of this solicitation for further information.`;
+
+describe("NSF-family section finder (real IUSE fixture)", () => {
+  it("the widened patterns anchor densely on the real IUSE Budgetary Information section", () => {
+    expect(sectionHits(IUSE_BUDGET_SECTION, SECTION_PATTERNS).length).toBeGreaterThan(5);
   });
 
-  it("the widened patterns anchor densely on the NSF budget section", () => {
-    expect(sectionHits(NSF_BUDGET_SECTION, SECTION_PATTERNS).length).toBeGreaterThan(4);
+  it("the ACF 'we do not allow the following' list patterns don't fire on NSF allowable framing", () => {
+    const ACF_LIST = [
+      /we\s+do\s+not\s+allow/gi,
+      /do\s+not\s+allow\s+the\s+following/gi,
+      /funding\s+policies\s+and\s+limitations/gi,
+      /program-specific\s+limitations/gi,
+    ];
+    expect(sectionHits(IUSE_BUDGET_SECTION, ACF_LIST)).toHaveLength(0);
   });
 
-  it("lands the window on Budgetary Information, not an isolated F&A line earlier in the doc", () => {
-    // A lone F&A mention up front (the trap Shannon flagged), then real NSF program prose, then the
-    // dense Budgetary Information cluster — the window must anchor on the cluster, not the lone line.
-    const head1 = "The IUSE program supports institutional efforts to improve STEM education. ".repeat(90); // ~6.7k
-    const loneFA = "\nThe awardee's Facilities and Administrative rate applies to this award.\n";
-    const head2 = "Proposals must describe evidence-based instructional practices and evaluation. ".repeat(90); // ~7k
-    const { excerpt, anchored } = allowableSource(head1 + loneFA + head2 + NSF_BUDGET_SECTION);
+  it("anchors on the real Budgetary Information section, not the earlier '(F&A)' summary decoy", () => {
+    // The real doc shape: a summary block carrying the "Indirect Cost (F&A) Limitations" line up front,
+    // the real Budgetary Information section ~45k chars later. The denser real section must win — the
+    // "land there, not on the F&A line" requirement.
+    const head1 = "The ITYC program invests in two-year colleges to advance STEM education. ".repeat(60); // ~4.3k
+    const gap = "Proposals must describe evidence-based instructional practice and project evaluation. ".repeat(240); // ~20k
+    const { excerpt, anchored } = allowableSource(head1 + IUSE_SUMMARY_DECOY + gap + IUSE_BUDGET_SECTION);
     expect(anchored).toBe(true);
-    expect(excerpt).toContain("Funds may be used for faculty release time");
-    expect(excerpt).toContain("Participant support costs");
+    // Markers unique to the REAL section (absent from the F&A summary decoy):
+    expect(excerpt).toContain("Faculty Release Time");
+    expect(excerpt).toContain("is an allowable charge");
+    // ...and in the PRIMARY window (before any second-window join), i.e. the finder anchored ON the
+    // real section, not merely reached it via the second-window hedge off the decoy.
+    const join = excerpt.indexOf("\n\n[...]\n\n");
+    if (join >= 0) expect(excerpt.indexOf("Faculty Release Time")).toBeLessThan(join);
   });
 });
 
