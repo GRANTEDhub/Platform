@@ -46,7 +46,12 @@ export function AllowableRefreshButton({ grantId }: { grantId: string }) {
         held?: string;
         itemCount?: number;
       };
-      if (!res.ok || data.ok === false) throw new Error(data.error || "Re-extract couldn't run");
+      // Require POSITIVE confirmation the route succeeded (`data.ok === true`) before trusting the
+      // shape. An unparseable / truncated 200 — a proxy interstitial, or a stream cut by the route's
+      // 60s budget — decodes to `{}` through the catch; treating that as success would falsely report
+      // "Refreshed" on a grant whose list never changed. So anything short of ok:true is an error,
+      // mirroring the sibling IntelRerunButton's positive `!data.intel` check.
+      if (!res.ok || data.ok !== true) throw new Error(data.error || "Re-extract couldn't run");
       if (data.saved === false && data.held === "regression") {
         // Held, not saved — the fresh run was thinner than the good stored list. Nothing changed, so
         // no refresh; report it honestly rather than offering a re-roll that could clobber the list.
@@ -54,10 +59,15 @@ export function AllowableRefreshButton({ grantId }: { grantId: string }) {
         setPhase("idle");
         return;
       }
-      // Saved — the grant's use-of-funds column changed; refresh so the OverviewCard re-renders it.
-      setMessage(typeof data.itemCount === "number" ? `Refreshed — ${data.itemCount} item(s).` : "Refreshed.");
-      setPhase("idle");
-      router.refresh();
+      if (data.saved === true) {
+        // Saved — the grant's use-of-funds column changed; refresh so the OverviewCard re-renders it.
+        setMessage(typeof data.itemCount === "number" ? `Refreshed — ${data.itemCount} item(s).` : "Refreshed.");
+        setPhase("idle");
+        router.refresh();
+        return;
+      }
+      // ok:true but neither a clean save nor a recognized hold — an unexpected shape; don't claim success.
+      throw new Error("Re-extract returned an unexpected response");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Re-extract couldn't run");
       setPhase("error");
