@@ -575,6 +575,7 @@ function prospectAsClient(c: Candidate): Client {
     client_profile_generated_at: null, // synthetic shape; nothing was ever distilled
     initial_match_status: null,
     match_locked_at: null,
+    match_active: true, // synthetic prospect-scoring shape; the pause gate is irrelevant here
     needs_review: false,
     research_opt_in: false,
     account_managed: false, // not a real client; the SME gate is irrelevant to scoring

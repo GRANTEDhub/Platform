@@ -118,6 +118,28 @@ describe("pollAndEnqueue — eligibility", () => {
     expect(s.tables.intel_review_queue[0]).toMatchObject({ grant_id: "g1", client_id: "c1", status: "queued" });
   });
 
+  it("skips a card whose client is PAUSED (match_active=false) — Lever A, migration 0091", async () => {
+    const s = db();
+    s.tables.review_cards = [pendingCard()];
+    s.tables.clients = [{ id: "c1", match_active: false }];
+    expect(await pollAndEnqueue(asDb(s), { now })).toBe(0);
+    expect(s.tables.intel_review_queue ?? []).toHaveLength(0);
+  });
+
+  it("still enqueues an ACTIVE client's card (match_active=true), and fails OPEN when the flag is absent", async () => {
+    // Explicit active → enqueued.
+    const active = db();
+    active.tables.review_cards = [pendingCard()];
+    active.tables.clients = [{ id: "c1", match_active: true }];
+    expect(await pollAndEnqueue(asDb(active), { now })).toBe(1);
+    // No match_active on the row (legacy read) → NOT paused → still enqueued (the default test above
+    // seeds no clients row at all and also enqueues). Only an explicit false pauses.
+    const legacy = db();
+    legacy.tables.review_cards = [pendingCard()];
+    legacy.tables.clients = [{ id: "c1", name: "x" }];
+    expect(await pollAndEnqueue(asDb(legacy), { now })).toBe(1);
+  });
+
   it("skips a card that already has a QA verdict", async () => {
     const s = db(); s.tables.review_cards = [pendingCard()]; s.tables.card_intel_reviews = [{ review_card_id: "card-1" }];
     expect(await pollAndEnqueue(asDb(s), { now })).toBe(0);

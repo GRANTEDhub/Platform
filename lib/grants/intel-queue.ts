@@ -289,6 +289,17 @@ export async function pollAndEnqueue(db: DB, opts: { now?: () => number; limit?:
     .returns<{ grant_id: string; client_id: string }[]>();
   const blocked = new Set((blocking ?? []).map((q) => pairKey(q.grant_id, q.client_id)));
 
+  // Paused clients (match_active=false, migration 0091 — Lever A) drop out of auto-QA the same
+  // way the forward matcher skips them, so a not-yet-onboarded client's card backlog never spends
+  // QA budget. Fetched once (the set is tiny); flag-independent — this bites whenever the poller
+  // runs, regardless of the APPLY flags. Reversible: un-pausing lets the client's cards flow again.
+  const { data: pausedRows } = await db
+    .from("clients")
+    .select("id")
+    .eq("match_active", false)
+    .returns<{ id: string }[]>();
+  const pausedClients = new Set((pausedRows ?? []).map((r) => r.id));
+
   const eligible: { id: string; grant_id: string; client_id: string }[] = [];
   for (let page = 0; page < INTEL_POLL_MAX_PAGES && eligible.length < limit; page++) {
     const { data: cards } = await db
@@ -313,7 +324,11 @@ export async function pollAndEnqueue(db: DB, opts: { now?: () => number; limit?:
     const qad = new Set((verdicts ?? []).map((v) => v.review_card_id));
 
     for (const c of cards) {
-      if (!qad.has(c.id) && !blocked.has(pairKey(c.grant_id, c.client_id))) {
+      if (
+        !qad.has(c.id) &&
+        !blocked.has(pairKey(c.grant_id, c.client_id)) &&
+        !pausedClients.has(c.client_id)
+      ) {
         eligible.push({ id: c.id, grant_id: c.grant_id, client_id: c.client_id });
         if (eligible.length >= limit) break;
       }
