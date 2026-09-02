@@ -15,7 +15,6 @@ import {
   Radar,
   Receipt,
   Settings,
-  Target,
   TrendingUp,
   UserPlus,
   type LucideIcon,
@@ -61,7 +60,6 @@ export interface NavItem {
 
 const ICONS: Record<string, LucideIcon> = {
   portfolio: LayoutGrid,
-  matching: Target,
   intel: Radar,
   grants: FileSearch,
   leads: UserPlus,
@@ -366,7 +364,7 @@ function StaffBell() {
         >
           <p className="text-[13px] font-semibold text-brand-navy">No staff notifications yet</p>
           <p className="mt-1 text-[11.5px] leading-[1.5] text-ink-subtle">
-            Grants awaiting your review show up under Matches.
+            Grants awaiting your review show up under Portfolio, on each client&apos;s roadmap.
           </p>
         </div>
       )}

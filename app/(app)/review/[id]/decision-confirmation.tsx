@@ -71,8 +71,9 @@ function ConfirmationShell({ children }: { children: React.ReactNode }) {
 // emailed or moved you off the card you had just finished. Same destination as State A --
 // the release IS the end of the work on this card, so it ends the way an approve does.
 // doneHref/doneLabel (#8): the console (ReleaseToClientBar) passes the client's Grant Report
-// or dashboard so a managed release returns there, not to the cross-client Matches queue.
-// Absent on the /review worklist path, where /matches is the correct home.
+// or dashboard so a managed release returns there. Absent on the /review worklist path, where
+// Portfolio is the home (the cross-client Matches queue was retired — per-client review lives
+// under Portfolio -> a client's roadmap).
 export function ReleaseConfirmation({
   sent,
   to,
@@ -85,8 +86,8 @@ export function ReleaseConfirmation({
   doneLabel?: string;
 }) {
   const router = useRouter();
-  const dest = doneHref ?? "/matches";
-  const destLabel = doneLabel ?? "Matches";
+  const dest = doneHref ?? "/clients";
+  const destLabel = doneLabel ?? "Portfolio";
 
   useEffect(() => {
     const t = setTimeout(() => router.push(dest), REDIRECT_MS);
@@ -116,7 +117,7 @@ export function DecisionConfirmation({ summary }: { summary: GrantSummary }) {
   // State A auto-dismisses; State B waits for the user's click.
   useEffect(() => {
     if (!summary.completed) return;
-    const t = setTimeout(() => router.push("/matches"), REDIRECT_MS);
+    const t = setTimeout(() => router.push("/clients"), REDIRECT_MS);
     return () => clearTimeout(t);
   }, [summary.completed, router]);
 
@@ -141,7 +142,7 @@ export function DecisionConfirmation({ summary }: { summary: GrantSummary }) {
           {summary.prospect_eligible && (
             <p className="text-sm text-neutral-600">Now available for prospecting.</p>
           )}
-          <p className="pt-2 text-xs text-neutral-400">Redirecting to Matches…</p>
+          <p className="pt-2 text-xs text-neutral-400">Redirecting to Portfolio…</p>
         </div>
       ) : (
         <div className="mt-8 max-w-md space-y-4">
@@ -153,8 +154,8 @@ export function DecisionConfirmation({ summary }: { summary: GrantSummary }) {
             <Button onClick={() => router.push(`/grants/${summary.grant_id}`)}>
               Finish this grant
             </Button>
-            <Button variant="outline" onClick={() => router.push("/matches")}>
-              Back to Matches
+            <Button variant="outline" onClick={() => router.push("/clients")}>
+              Back to Portfolio
             </Button>
           </div>
         </div>

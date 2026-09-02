@@ -1,6 +1,5 @@
 import { requireUser } from "@/lib/auth";
 import { TopNav, type NavItem } from "@/components/layout/top-nav";
-import { pendingReviewCount } from "@/lib/matches/pending-count";
 
 // The nav is the console's frame. It holds the modules the firm runs on, but it is
 // now split by HOW OFTEN a destination is used rather than listing all eleven at
@@ -8,7 +7,8 @@ import { pendingReviewCount } from "@/lib/matches/pending-count";
 //
 //   BAND — the daily path, in the order the approved design draws it (see
 //          design/dashboard/). Portfolio (clients) -> Ledger (opportunities) ->
-//          Matches (the two match tracks) -> Prospecting -> Pipeline -> Sales.
+//          Prospecting -> Pipeline -> Sales. (The cross-client Matches tab was
+//          retired; per-client review lives under Portfolio -> a client's roadmap.)
 //   MORE — live but occasional (Feedback, Invoices, Contracts, Settings), then
 //          genuinely unshipped (Time) below a divider, as a disabled row.
 //
@@ -26,7 +26,6 @@ import { pendingReviewCount } from "@/lib/matches/pending-count";
 const ADMIN_BAND: NavItem[] = [
   { href: "/clients", label: "Portfolio", icon: "portfolio" },
   { href: "/grants", label: "Ledger", icon: "grants" },
-  { href: "/matches", label: "Matches", icon: "matching" },
   { href: "/intel", label: "Prospecting", icon: "intel" },
   { href: "/leads", label: "Pipeline", icon: "leads" },
   { href: "/sales", label: "Sales", icon: "sales" },
@@ -58,7 +57,6 @@ const ADMIN_MORE: NavItem[] = [
 const CONTRACTOR_BAND: NavItem[] = [
   { href: "/clients", label: "Portfolio", icon: "portfolio" },
   { href: "/grants", label: "Ledger", icon: "grants" },
-  { href: "/matches", label: "Matches", icon: "matching" },
 ];
 
 export default async function AppLayout({
@@ -69,14 +67,7 @@ export default async function AppLayout({
   const profile = await requireUser();
   const isAdmin = profile.role === "admin";
 
-  // The Matches badge. Resolved here rather than inside TopNav because the band is a
-  // client component and this count is a server read. It is the SAME predicate /matches
-  // uses for its own worklist, so the badge and that page can never disagree — the
-  // handoff calls that out explicitly. Null (query failed) renders no pill.
-  const pending = await pendingReviewCount();
-  const band = (isAdmin ? ADMIN_BAND : CONTRACTOR_BAND).map((item) =>
-    item.href === "/matches" ? { ...item, badge: pending } : item,
-  );
+  const band = isAdmin ? ADMIN_BAND : CONTRACTOR_BAND;
 
   return (
     // COLUMN, not row: the band spans the full width edge-to-edge, so the shell's old

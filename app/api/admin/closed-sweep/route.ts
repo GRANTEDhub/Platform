@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { runClosedSweep, type EligibleCard } from "@/lib/report/closed-sweep";
-import { appBaseUrl } from "@/lib/site-url";
+import { appBaseUrl, reviewConsoleLink } from "@/lib/site-url";
 
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
@@ -34,9 +34,10 @@ async function requireAdmin() {
 }
 
 // A staff console link per sampled card so the dry-run list is spot-checkable in one click.
+// Points at the redesigned review page; falls back to /review/<cardId> when clientId is null.
 function withLinks(rows: EligibleCard[]) {
   const base = appBaseUrl();
-  return rows.map((r) => ({ ...r, console: `${base}/review/${r.cardId}` }));
+  return rows.map((r) => ({ ...r, console: reviewConsoleLink(base, r.cardId, r.clientId) }));
 }
 
 export async function GET() {
