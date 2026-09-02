@@ -12,6 +12,8 @@ import type { Recommendation, VerdictLead } from "@/lib/report/recommendation";
 import type { EligibilityVerdict } from "@/lib/intellengine/eligibility";
 import { ALLOWABLE_USES_FALLBACK, type AllowableUses } from "@/lib/grants/allowable-uses";
 import { stripSeatCodes } from "@/lib/grants/fit-narrative";
+import { ProgramAwardMap } from "@/components/report/program-award-map";
+import type { ProgramAwardSummary } from "@/lib/grants/program-awards";
 
 // The grant review screen — one matched grant, one client, one decision.
 //
@@ -87,6 +89,7 @@ export function GrantReviewConsole({
   concept,
   keyDetails,
   sourceUrl,
+  programAward = null,
 }: {
   backHref: string;
   // The portal reaches this screen from Grant Alerts as well as from the Report, so a
@@ -170,6 +173,10 @@ export function GrantReviewConsole({
   concept: React.ReactNode | null;
   keyDetails: ReviewKeyDetail[];
   sourceUrl: string | null;
+  // The program-award map for the right column (#107 resurfaced). Present only when the grant has a CFDA
+  // to profile; when present it becomes the flex-1 element that fills the column, so Key Details sizes to
+  // content instead of ballooning under the tall IntellEngine box. Null → today's layout, no map.
+  programAward?: { grantId: string; summary: ProgramAwardSummary | null; hasCfda: boolean } | null;
 }) {
   return (
     <div className="flex min-h-full flex-col bg-ground">
@@ -228,7 +235,18 @@ export function GrantReviewConsole({
           <div className="flex min-h-0 flex-col gap-3.5">
             <ScoreCard score={fitScore} verdict={verdict} consequence={consequence} feedback={feedback} decision={decision} />
             {concept}
-            <KeyDetailsCard details={keyDetails} sourceUrl={sourceUrl} />
+            {/* When the program-award map is present it is the flex-1 element that fills the column, so
+                Key Details sizes to its content (grow={false}); the map absorbs the height the Key Details
+                box used to balloon into. No map → Key Details keeps flex-1 as before. */}
+            <KeyDetailsCard details={keyDetails} sourceUrl={sourceUrl} grow={!programAward} />
+            {programAward && (
+              <ProgramAwardMap
+                compact
+                grantId={programAward.grantId}
+                initialSummary={programAward.summary}
+                hasCfda={programAward.hasCfda}
+              />
+            )}
           </div>
         </div>
       </div>
@@ -919,11 +937,21 @@ function ScoreCard({
   );
 }
 
-function KeyDetailsCard({ details, sourceUrl }: { details: ReviewKeyDetail[]; sourceUrl: string | null }) {
+function KeyDetailsCard({
+  details,
+  sourceUrl,
+  grow = true,
+}: {
+  details: ReviewKeyDetail[];
+  sourceUrl: string | null;
+  // grow=true (no map): flex-1 + justify-around fills the column, as before. grow=false (map present):
+  // size to content so the map below is the element that absorbs the column's spare height.
+  grow?: boolean;
+}) {
   return (
-    <section className={`flex min-h-0 flex-1 flex-col ${CARD} px-[17px] py-3.5`}>
+    <section className={`flex min-h-0 ${grow ? "flex-1" : "shrink-0"} flex-col ${CARD} px-[17px] py-3.5`}>
       <p className={`${EYEBROW} tracking-[0.13em]`}>Key details</p>
-      <div className="flex flex-1 flex-col justify-around py-1">
+      <div className={`flex flex-col py-1 ${grow ? "flex-1 justify-around" : "gap-2.5"}`}>
         {details.map((d) => (
           <div key={d.label} className="flex items-center justify-between gap-2.5">
             <span className="shrink-0 text-[12px] text-ink-muted">{d.label}</span>

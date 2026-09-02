@@ -22,6 +22,7 @@ import { buildRecommendation, buildVerdict, type HardKill } from "@/lib/report/r
 import { fitNarrativeEnabled } from "@/lib/grants/fit-narrative";
 import { MarkRead } from "@/components/report/mark-read";
 import { awardRangeOrEstimate, compactCostShare, compactTerm } from "@/lib/grants/format";
+import type { ProgramAwardSummary } from "@/lib/grants/program-awards";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import { readAllowableUses } from "@/lib/grants/allowable-uses";
 import type { Client, FactorScores, Grant } from "@/types/database";
@@ -42,7 +43,7 @@ export const dynamic = "force-dynamic";
 
 type GrantEmbed = Pick<
   Grant,
-  | "id" | "source_url" | "title" | "funder" | "fon" | "assistance_listings" | "focus_areas"
+  | "id" | "source_url" | "title" | "funder" | "fon" | "assistance_listings" | "program_award_summary" | "focus_areas"
   | "submission_deadline" | "period_of_performance" | "cost_share" | "num_awards" | "total_funding" | "description" | "description_brief"
   | "allowable_uses"
   | "award_range_min" | "award_range_max" | "award_range_is_estimate"
@@ -109,7 +110,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   const { data } = await supabase
     .from("review_cards")
     .select(
-      "id, fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, qa_fit_score, qa_factor_scores, qa_sources, qa_narrative, qa_status, qa_engine_fit_score, reasoning_context, decision, sme_released_at, sent_at, sent_to, grant_id, grants(id, source_url, title, funder, fon, assistance_listings, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, total_funding, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status, status)",
+      "id, fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, qa_fit_score, qa_factor_scores, qa_sources, qa_narrative, qa_status, qa_engine_fit_score, reasoning_context, decision, sme_released_at, sent_at, sent_to, grant_id, grants(id, source_url, title, funder, fon, assistance_listings, program_award_summary, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, total_funding, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status, status)",
     )
     .eq("id", params.cardId)
     .eq("client_id", params.id)
@@ -491,6 +492,17 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         }
         keyDetails={keyDetails}
         sourceUrl={g.source_url}
+        programAward={
+          // Only show the map when there is a CFDA to profile; a no-CFDA grant keeps the old Key Details
+          // fill (no empty "no history" box). The summary is cast from the jsonb column; null lazy-fetches.
+          card.grant_id && Array.isArray(g.assistance_listings) && g.assistance_listings.length > 0
+            ? {
+                grantId: card.grant_id,
+                summary: (g.program_award_summary as unknown as ProgramAwardSummary | null) ?? null,
+                hasCfda: true,
+              }
+            : null
+        }
       />
 
       {/* The generated concept expands BELOW the frame. The review screen is zero-scroll;
