@@ -47,7 +47,15 @@ export function buildGrantSummary(grant: Grant): GrantSummaryProps {
   // via the same format helpers, so the tiles read identically across the report and these pages.
   const meta: ReviewMeta[] = [
     {
-      label: "Award range",
+      // An inferred/estimated stored range must not read as a NOFO-stated figure (org rule: label award
+      // amounts as estimates). `awardRangeOrEstimate` marks a POOL÷awards derivation ("est.") but returns a
+      // populated stored min/max unchanged, so when that stored range is flagged an estimate we mark it on
+      // the label (mirroring the retired GrantStatTiles "Award range · est."). Guarded on a real range so a
+      // computed "~X est." value is never double-labelled.
+      label:
+        grant.award_range_is_estimate && (grant.award_range_min || grant.award_range_max)
+          ? "Award range · est."
+          : "Award range",
       value: awardRangeOrEstimate(grant.award_range_min, grant.award_range_max, grant.total_funding, grant.num_awards),
     },
     {
@@ -76,7 +84,11 @@ export function buildGrantSummary(grant: Grant): GrantSummaryProps {
     tags: (grant.focus_areas ?? []).filter((f) => f && f.trim()).map((label) => ({ label, role: false })),
     agencyLine: [grant.funder, grant.fon].filter(Boolean).join(" · ") || null,
     title: grant.title || "Untitled opportunity",
-    summary: grant.description,
+    // NULL, not grant.description: OverviewCard's ProgrammeSummary truncates at ~58 words with no expander
+    // (fine for the client report, but it would hide material funding detail on a staff working page). Both
+    // staff pages render the FULL, expandable description in a separate "What it funds" card below the
+    // OverviewCard instead, so nothing is dropped and the opening lines are not shown twice.
+    summary: null,
     meta,
     eligibility,
     allowableUses: readAllowableUses(grant.allowable_uses),

@@ -1,5 +1,4 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import type { Grant } from "@/types/database";
 
 // Read-only factual rendering of a shredded grant for the Ledger detail (/grants/[id]).
@@ -69,15 +68,11 @@ export function GrantDeeperFacts({ grant }: { grant: Grant }) {
       <Card>
         <CardHeader><CardTitle>Key facts</CardTitle></CardHeader>
         <CardContent className="space-y-3 text-sm">
+          {/* Deadline / award range / expected awards / cost share are in OverviewCard's facts strip;
+              eligible entity types / geography / ineligible / subawards are in the Who-can-apply block on
+              the page. Only the facts NEITHER carries stay here. */}
           <Fact label="Total funding" value={grant.total_funding} />
           <Fact label="Program type" value={grant.program_type} />
-          {/* Geography is the one eligibility fact OverviewCard's callout does not carry, so it stays
-              here rather than being dropped. Eligible entity types + ineligible-entity limits live in
-              the callout; a null geography renders "—". */}
-          <Fact label="Geography" value={grant.geographic_eligibility} />
-          {grant.subaward_prohibited && (
-            <Badge variant="warning">Subawards prohibited — single applicant</Badge>
-          )}
         </CardContent>
       </Card>
 

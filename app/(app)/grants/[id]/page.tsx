@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { GrantStatusBadge } from "@/components/grants/badges";
 import { GrantIdealProfile, GrantDeeperFacts } from "@/components/grants/grant-facts";
+import { WhatItFunds, WhoCanApply } from "@/components/grants/grant-detail";
 import { OverviewCard } from "@/components/report/grant-review-console";
 import { buildGrantSummary } from "@/lib/report/grant-summary";
 import { MatchOutcomes, type OutcomeCard } from "@/components/grants/match-outcomes";
@@ -303,9 +304,12 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
             </div>
           )}
 
-          {/* Grant SUMMARY via the shared OverviewCard (grant-level: no client, no role pill),
-              then the deeper ideal-applicant-profile analysis kept intact below it. */}
+          {/* Grant SUMMARY via the shared OverviewCard (grant-level: no client, no role pill). The FULL,
+              expandable description follows in "What it funds" (OverviewCard's summary is null — its
+              programme blurb truncates with no expander, which would hide detail staff need), then the
+              deeper ideal-applicant-profile analysis. */}
           <OverviewCard {...buildGrantSummary(grant)} />
+          <WhatItFunds grant={grant} />
           <GrantIdealProfile grant={grant} />
 
           {erroredClientCount > 0 && !processing && (
@@ -396,6 +400,11 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
             </Card>
           )}
 
+          {/* Who can apply — the full eligibility facts (eligible entity types incl. a sole type,
+              geography, ineligible entities, subaward-prohibited). OverviewCard's eligibility callout is a
+              client-oriented VERDICT that under-shows these for a client-less grant view, so the facts stay
+              here. */}
+          <WhoCanApply grant={grant} dense />
           <GrantDeeperFacts grant={grant} />
         </div>
       </div>

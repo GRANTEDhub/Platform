@@ -7,6 +7,8 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScoreBadge, DecisionBadge, GrantStatusBadge } from "@/components/grants/badges";
 import {
+  WhatItFunds,
+  WhoCanApply,
   MakeOrBreak,
   IdealApplicantProfile,
   AdditionalInformation,
@@ -139,9 +141,11 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
             <p className="text-xs text-muted-foreground">Summary shred only — {grant.shred_reason}</p>
           ) : null}
 
-          {/* Grant SUMMARY via the shared OverviewCard (grant-level: no client, no role pill), then
-              the deeper staff-analysis blocks kept intact below it. */}
+          {/* Grant SUMMARY via the shared OverviewCard (grant-level: no client, no role pill). The FULL,
+              expandable description follows in "What it funds" (OverviewCard's summary is null — its blurb
+              truncates with no expander), then the deeper staff-analysis blocks. */}
           <OverviewCard {...buildGrantSummary(grant)} />
+          <WhatItFunds grant={grant} />
           <MakeOrBreak grant={grant} />
           <IdealApplicantProfile grant={grant} />
           <AdditionalInformation grant={grant} />
@@ -222,23 +226,11 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
 
         {/* RAIL: Who-can-apply (as on The Grant tab) + the prospecting gate + carry-over. */}
         <aside className="space-y-4">
-          {/* Geography + subawards are the two eligibility facts OverviewCard's callout does not
-              carry (eligible entity types + ineligible-entity limits are in the callout), so they
-              stay here rather than being dropped. Omitted entirely when the grant states neither. */}
-          {(grant.geographic_eligibility || grant.subaward_prohibited) && (
-            <Card className="p-5">
-              <SectionLabel>Eligibility details</SectionLabel>
-              {grant.geographic_eligibility && (
-                <p className="mt-3 text-sm text-foreground">
-                  <span className="text-muted-foreground">Geography: </span>
-                  {grant.geographic_eligibility}
-                </p>
-              )}
-              {grant.subaward_prohibited && (
-                <p className="mt-2 text-sm font-medium text-brand-orange">Subawards prohibited — single applicant</p>
-              )}
-            </Card>
-          )}
+          {/* Who can apply — the full eligibility facts (eligible entity types incl. a sole type,
+              geography, ineligible entities, subaward-prohibited). OverviewCard's eligibility callout is a
+              client-oriented VERDICT that under-shows these for a client-less grant view, so the facts stay
+              here. */}
+          <WhoCanApply grant={grant} dense />
 
           <Card className="p-5">
             <SectionLabel>Client-match status</SectionLabel>
