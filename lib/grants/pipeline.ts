@@ -470,7 +470,7 @@ export async function runMatching(
   // would score grants against un-converted lead rows and mint cards for them.
   // Mirrors isUnconvertedLead(): keep only rows never in the pipeline (null) or
   // graduated ('converted', now real active clients).
-  const { data: clients } = await db.from("clients").select("*").or(NON_LEAD_OR_FILTER);
+  const { data: clients } = await db.from("clients").select("*").or(NON_LEAD_OR_FILTER).eq("match_active", true);
   if (!clients || clients.length === 0) {
     await db.from("grants").update({ status: "complete" }).eq("id", grantId);
     return;
