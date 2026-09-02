@@ -17,7 +17,7 @@ import { resolveFit } from "@/lib/report/qa-override";
 import { buildRecommendation, buildVerdict, type HardKill } from "@/lib/report/recommendation";
 import { fitNarrativeEnabled } from "@/lib/grants/fit-narrative";
 import { MarkRead } from "@/components/report/mark-read";
-import { formatAwardRange, compactCostShare } from "@/lib/grants/format";
+import { awardRangeOrEstimate, compactCostShare, compactTerm } from "@/lib/grants/format";
 import { BRAND } from "@/lib/brand";
 import { clientAllowableUses } from "@/lib/grants/allowable-uses";
 import type { Client, FactorScores, Grant, CardDecision, PursuitPath } from "@/types/database";
@@ -49,7 +49,7 @@ export const dynamic = "force-dynamic";
 type GrantEmbed = Pick<
   Grant,
   | "id" | "source_url" | "title" | "funder" | "fon" | "assistance_listings" | "focus_areas"
-  | "submission_deadline" | "period_of_performance" | "cost_share" | "num_awards" | "description" | "description_brief"
+  | "submission_deadline" | "period_of_performance" | "cost_share" | "num_awards" | "total_funding" | "description" | "description_brief"
   | "allowable_uses"
   | "award_range_min" | "award_range_max" | "award_range_is_estimate"
   | "eligible_entity_types" | "geographic_eligibility" | "ineligible_entities" | "hard_disqualifiers"
@@ -122,7 +122,7 @@ export default async function PortalGrantDetail({
   let query: any = supabase
     .from("review_cards")
     .select(
-      "fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, qa_fit_score, qa_factor_scores, qa_sources, qa_narrative, qa_status, qa_engine_fit_score, reasoning_context, decision, pursuit_path, card_type, grants(id, source_url, title, funder, fon, assistance_listings, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status)",
+      "fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, qa_fit_score, qa_factor_scores, qa_sources, qa_narrative, qa_status, qa_engine_fit_score, reasoning_context, decision, pursuit_path, card_type, grants(id, source_url, title, funder, fon, assistance_listings, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, total_funding, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status)",
     )
     .eq("id", params.id)
     .eq("client_id", org.clientId)
@@ -212,14 +212,16 @@ export default async function PortalGrantDetail({
     hardKill && verdictLead ? { lead: null, blocking: null, mitigation: null, narrative: null } : rationale;
 
   const meta: ReviewMeta[] = [
-    { label: "Award range", value: formatAwardRange(g.award_range_min, g.award_range_max) },
+    // Never a bare blank when the size is knowable: real range → pool÷awards estimate → "—".
+    { label: "Award range", value: awardRangeOrEstimate(g.award_range_min, g.award_range_max, g.total_funding, g.num_awards) },
     {
       label: "Deadline",
       value: deadlineLabel ?? "Not stated",
       ...(isOverdue(days) ? { tone: "danger" as const } : {}),
     },
     { label: "Match required", value: compactCostShare(g.cost_share) },
-    { label: "Term", value: g.period_of_performance?.trim() || "Not stated" },
+    // Compacted to fit the tile; the full period-of-performance stays on hover via `full`.
+    { label: "Term", value: compactTerm(g.period_of_performance), full: g.period_of_performance?.trim() || undefined },
     { label: "Awards expected", value: g.num_awards?.trim() || "Not stated" },
   ];
 

@@ -49,6 +49,59 @@ export function formatAwardRange(min: string | null | undefined, max: string | n
   return (lo || hi)!;
 }
 
+// The expected-number-of-awards text as a positive integer, or null. num_awards is free text
+// ("20", "Approximately 20", "20–25"); take the first integer. A range yields its LOWER count, which
+// makes the per-award deduction the LARGER (more conservative-toward-visible, never understated) figure.
+export function parseAwardCount(raw: string | null | undefined): number | null {
+  if (!raw) return null;
+  const m = raw.replace(/,/g, "").match(/\b(\d{1,7})\b/);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// Award range that NEVER renders a bare blank when the size is knowable (the allowable-uses never-blank
+// principle, on a money field). The real stated range wins; when it is genuinely empty, DEDUCE a
+// per-award figure from the pool ÷ the award count (total_funding ÷ num_awards) and label it "est." so it
+// can never be read as a stated number (the org rule: label estimates). Only fires when BOTH the pool and
+// a real count are present — a missing input falls through to "—", never a guess. The real per-award
+// CEILING stated only in the NOFO text (unstructured) is a separate extraction pass; this is the cheap,
+// structured-field tier.
+export function awardRangeOrEstimate(
+  min: string | null | undefined,
+  max: string | null | undefined,
+  totalFunding: string | null | undefined,
+  numAwards: string | null | undefined,
+): string {
+  const real = formatAwardRange(min, max);
+  if (real !== "—") return real;
+  const pool = parseAmount(totalFunding);
+  const count = parseAwardCount(numAwards);
+  if (pool !== null && pool > 0 && count) return `~${abbrevDollars(pool / count)} est.`;
+  return "—";
+}
+
+// Compact the period-of-performance for the narrow facts tile: abbreviate the units + common filler and
+// soft-truncate at a WORD boundary, so it reads in ~2 lines with the FULL text still on hover (the tile
+// passes the original as its `title`). Unlike the eligibility limits — never truncated, since a dropped
+// disqualifier is worse than overflow — a term is a duration, not a rule, so shortening it is safe.
+export function compactTerm(raw: string | null | undefined): string {
+  const s = (raw ?? "").trim();
+  if (!s) return "Not stated";
+  const out = s
+    .replace(/\byears?\b/gi, "yrs")
+    .replace(/\bmonths?\b/gi, "mos")
+    .replace(/\bapproximately\b/gi, "~")
+    .replace(/\bwith\b/gi, "w/")
+    .replace(/\s+/g, " ")
+    .trim();
+  const CAP = 42;
+  if (out.length <= CAP) return out;
+  const cut = out.slice(0, CAP);
+  const sp = cut.lastIndexOf(" ");
+  return (sp > 24 ? cut.slice(0, sp) : cut).replace(/[\s,;:.–-]+$/, "") + "…";
+}
+
 export function compactCostShare(raw: string | null | undefined): string {
   const s = (raw ?? "").trim();
   if (!s) return "—";
