@@ -172,11 +172,13 @@ export interface Client {
   // on a clean stop / terminal state. Other drains skip a record whose lease is
   // still fresh; an expired/null lease is claimable. See lib/clients/match-queue.ts.
   match_locked_at: string | null;
-  // Reversible matching pause (migration 0091, Lever A). Default TRUE. When false, the
-  // forward matcher (runMatching's roster load) and the intel QA poller skip this client,
-  // and the staff Review Queue hides their matches by default — a pause for a real-but-not-
-  // yet-onboarded client. Forward-only: flipping back to true resumes matching on NEW grants
-  // and never re-scores the existing corpus, and pausing never mutates or deletes a card.
+  // Reversible matching pause (migration 0091, Lever A). Default TRUE. When false, the intel QA
+  // poller/drain skip this client and the staff Review Queue hides their matches by default; the
+  // forward matcher (runMatching's roster load) also skips it via a maintainer-applied
+  // `.eq("match_active", true)` one-liner on the PROTECTED pipeline.ts — applied by hand, not part
+  // of the feature PR. A pause for a real-but-not-yet-onboarded client. Forward-only: flipping back
+  // to true resumes matching on NEW grants and never re-scores the existing corpus, and pausing
+  // never mutates or deletes a card.
   match_active: boolean;
   needs_review: boolean;
   // Research-grants opt-in (migration 0051). Default false. When true, the forecasted
