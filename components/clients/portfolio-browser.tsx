@@ -607,12 +607,11 @@ function IndexRow({ row }: { row: PortfolioRow }) {
           background: "repeating-linear-gradient(to right,rgba(11,30,58,.28) 0 1.5px,transparent 1.5px 5px)",
         }}
       />
-      {/* A paused client keeps its REAL waiting-card count, greyed a step further (INK.faint):
-          visible so the backlog is known for when they onboard, but reading as set-aside. */}
-      <span
-        className="w-4 shrink-0 text-right text-[12.5px] font-semibold tabular-nums text-ink-muted"
-        style={row.paused ? { color: INK.faint } : undefined}
-      >
+      {/* A paused client keeps its REAL waiting-card count in the normal muted grey — the "Paused"
+          chip above is what marks it set-aside, so the number stays legible. (INK.faint here fell to
+          ~1.65:1 on SURFACE.ground, below AA and below the file's own ground floor, defeating the
+          "backlog stays visible" intent — Claude Code Review #494.) */}
+      <span className="w-4 shrink-0 text-right text-[12.5px] font-semibold tabular-nums text-ink-muted">
         {row.alerts > 0 ? row.alerts : "–"}
       </span>
       <span
