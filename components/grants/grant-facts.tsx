@@ -1,50 +1,23 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { sanitizeRichText } from "@/lib/sanitize/html";
-import { previewHtml, collapseDuplicatedBlock } from "@/lib/grants/description";
-import { ExpandableDescription } from "@/components/grants/expandable-description";
 import type { Grant } from "@/types/database";
 
-// Read-only factual rendering of a shredded grant, shared by the Ledger detail
-// (/grants/[id]) and the Prospects detail (/intel/[id]). Facts only -- no actions
-// live here, so neither surface teleports into the other's action page.
+// Read-only factual rendering of a shredded grant for the Ledger detail (/grants/[id]).
+// Facts only -- no actions live here, so the surface never teleports into an action page.
+//
+// The grant SUMMARY (title, focus tags, description, the facts strip, grant-level eligibility,
+// allowable uses) is rendered by the shared OverviewCard on the page now (PR-C), so the two
+// exports below carry only the DEEPER staff analysis OverviewCard does not: the ideal-applicant
+// profile, and the deeper key facts (total funding, program type, subawards, scoring rubric,
+// high-value criteria, technical burden, incumbent risk, verification, source). The description /
+// eligibility / focus-area duplicates OverviewCard now owns were removed here so nothing shows twice.
 
-// The wide "what it funds + ideal applicant" block.
-export function GrantOverview({ grant }: { grant: Grant }) {
-  // Sanitized description; long ones truncate (sentence-clean) behind Show more.
-  const descClean = grant.description ? sanitizeRichText(collapseDuplicatedBlock(grant.description)) : "";
-  const descPreview = previewHtml(descClean);
-  const descClass = "[&_li]:ml-4 [&_li]:list-disc [&_ol]:mt-2 [&_ol]:list-decimal [&_p]:mt-2 [&_ul]:mt-2";
+// The ideal-applicant profile card (the "what a winning applicant looks like" analysis). Kept
+// intact from the old GrantOverview; the description + forecasted notice it used to carry moved
+// to OverviewCard / the page's own banners.
+export function GrantIdealProfile({ grant }: { grant: Grant }) {
   return (
     <>
-      {grant.grant_status === "Forecasted" ? (
-        <Card>
-          <CardContent className="p-4 text-xs text-muted-foreground">
-            Forecasted — no NOFO published yet.
-          </CardContent>
-        </Card>
-      ) : grant.shred_depth === "summary" && grant.shred_reason ? (
-        <Card>
-          <CardContent className="p-4 text-xs text-muted-foreground">
-            Summary shred only — {grant.shred_reason}
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {grant.description && (
-        <Card>
-          <CardHeader><CardTitle>What it funds</CardTitle></CardHeader>
-          <CardContent className="text-sm leading-relaxed">
-            {/* Long descriptions truncate (sentence-clean) behind Show more. */}
-            {descPreview.truncated ? (
-              <ExpandableDescription preview={descPreview.html} full={descClean} className={descClass} />
-            ) : (
-              <div className={descClass} dangerouslySetInnerHTML={{ __html: descClean }} />
-            )}
-          </CardContent>
-        </Card>
-      )}
-
       {grant.ideal_applicant_profile && (
         <Card>
           <CardHeader><CardTitle>Ideal applicant profile</CardTitle></CardHeader>
@@ -85,53 +58,28 @@ export function GrantOverview({ grant }: { grant: Grant }) {
   );
 }
 
-// The narrow key-facts / eligibility / rubric sidebar stack.
-export function GrantKeyFacts({ grant }: { grant: Grant }) {
+// The narrow DEEPER-facts / rubric sidebar stack. The summary facts (deadline, award range,
+// expected awards, cost share), the eligibility split, and the focus-area chips moved to
+// OverviewCard on the page; only what OverviewCard does NOT carry stays here — total funding,
+// program type, subawards, scoring rubric, high-value criteria, technical burden, incumbent risk,
+// verification, source — so nothing is dropped and nothing is shown twice.
+export function GrantDeeperFacts({ grant }: { grant: Grant }) {
   return (
     <>
       <Card>
         <CardHeader><CardTitle>Key facts</CardTitle></CardHeader>
         <CardContent className="space-y-3 text-sm">
-          <Fact label="Deadline" value={grant.submission_deadline} />
-          <Fact
-            label="Award range"
-            value={
-              grant.award_range_min || grant.award_range_max
-                ? `${grant.award_range_min || "?"} – ${grant.award_range_max || "?"}${grant.award_range_is_estimate ? " (estimate)" : ""}`
-                : null
-            }
-          />
           <Fact label="Total funding" value={grant.total_funding} />
-          <Fact label="Expected awards" value={grant.num_awards} />
-          <Fact label="Cost share / match" value={grant.cost_share} />
           <Fact label="Program type" value={grant.program_type} />
+          {/* Geography is the one eligibility fact OverviewCard's callout does not carry, so it stays
+              here rather than being dropped. Eligible entity types + ineligible-entity limits live in
+              the callout; a null geography renders "—". */}
+          <Fact label="Geography" value={grant.geographic_eligibility} />
           {grant.subaward_prohibited && (
             <Badge variant="warning">Subawards prohibited — single applicant</Badge>
           )}
         </CardContent>
       </Card>
-
-      <Card>
-        <CardHeader><CardTitle>Eligibility</CardTitle></CardHeader>
-        <CardContent className="space-y-3 text-sm">
-          <Fact label="Eligible entities" value={(grant.eligible_entity_types || []).join(", ") || null} />
-          <Fact label="Geography" value={grant.geographic_eligibility} />
-          <Fact label="Ineligible" value={grant.ineligible_entities} />
-        </CardContent>
-      </Card>
-
-      {(grant.focus_areas?.length || 0) > 0 && (
-        <Card>
-          <CardHeader><CardTitle>Focus areas</CardTitle></CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap gap-1.5">
-              {grant.focus_areas!.map((f, i) => (
-                <Badge key={i} variant="secondary">{f}</Badge>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {grant.scoring_rubric && Object.keys(grant.scoring_rubric).length > 0 && (
         <Card>

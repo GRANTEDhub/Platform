@@ -3,17 +3,18 @@ import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { NavyHero } from "@/components/ui/navy-hero";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ScoreBadge, DecisionBadge } from "@/components/grants/badges";
+import { ScoreBadge, DecisionBadge, GrantStatusBadge } from "@/components/grants/badges";
 import {
-  GrantBody,
-  GrantStatTiles,
-  GrantStatusPill,
-  WhoCanApply,
+  MakeOrBreak,
+  IdealApplicantProfile,
+  AdditionalInformation,
+  RiskFactors,
   SectionLabel,
 } from "@/components/grants/grant-detail";
+import { OverviewCard } from "@/components/report/grant-review-console";
+import { buildGrantSummary } from "@/lib/report/grant-summary";
 import { MatchOutcomes, type OutcomeCard } from "@/components/grants/match-outcomes";
 import { getGrantGateStatus, undecidedClientCount } from "@/lib/grants/gate";
 import { RematchButton } from "@/app/(app)/grants/[id]/rematch-button";
@@ -117,22 +118,17 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
         <ArrowLeft className="h-4 w-4" />
         Grant prospecting
       </Link>
-      <NavyHero
-        eyebrow="Prospecting"
-        eyebrowRight={<GrantStatusPill status={grant.grant_status} />}
-        title={grant.title || "Untitled opportunity"}
-        subtitle={[grant.funder, grant.fon].filter(Boolean).join(" · ") || "—"}
-        actions={
-          <div className="flex flex-col items-end gap-2">
-            {!grant.is_domestic && <Badge variant="warning">International — excluded</Badge>}
-            <Badge variant={grant.shred_depth === "full" ? "success" : "warning"}>
-              {grant.shred_depth === "full" ? "Full shred" : "Summary shred"}
-            </Badge>
-          </div>
-        }
-      >
-        <GrantStatTiles grant={grant} tone="onHero" />
-      </NavyHero>
+      {/* Slim header — OverviewCard below owns the grant title + funder line + the facts strip
+          (matching the grant report, which has no separate title hero). Back-nav (above) and the
+          status / shred / international badges stay, each with a text label so meaning never rides
+          on colour alone. */}
+      <div className="flex flex-wrap items-center gap-2">
+        {!grant.is_domestic && <Badge variant="warning">International — excluded</Badge>}
+        <Badge variant={grant.shred_depth === "full" ? "success" : "warning"}>
+          {grant.shred_depth === "full" ? "Full shred" : "Summary shred"}
+        </Badge>
+        <GrantStatusBadge status={grant.status} grantStatus={grant.grant_status} />
+      </div>
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_330px] lg:items-start">
         {/* MAIN: grant facts (identical to The Grant tab), then the prospecting section. */}
@@ -143,7 +139,13 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
             <p className="text-xs text-muted-foreground">Summary shred only — {grant.shred_reason}</p>
           ) : null}
 
-          <GrantBody grant={grant} showStats={false} showWhoCanApply={false} />
+          {/* Grant SUMMARY via the shared OverviewCard (grant-level: no client, no role pill), then
+              the deeper staff-analysis blocks kept intact below it. */}
+          <OverviewCard {...buildGrantSummary(grant)} />
+          <MakeOrBreak grant={grant} />
+          <IdealApplicantProfile grant={grant} />
+          <AdditionalInformation grant={grant} />
+          <RiskFactors grant={grant} />
 
           {/* Prospects — the discovered non-client orgs + the Prospect action. The one
               piece "The Grant" page doesn't have; it sits at the bottom of the facts. */}
@@ -220,7 +222,23 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
 
         {/* RAIL: Who-can-apply (as on The Grant tab) + the prospecting gate + carry-over. */}
         <aside className="space-y-4">
-          <WhoCanApply grant={grant} dense />
+          {/* Geography + subawards are the two eligibility facts OverviewCard's callout does not
+              carry (eligible entity types + ineligible-entity limits are in the callout), so they
+              stay here rather than being dropped. Omitted entirely when the grant states neither. */}
+          {(grant.geographic_eligibility || grant.subaward_prohibited) && (
+            <Card className="p-5">
+              <SectionLabel>Eligibility details</SectionLabel>
+              {grant.geographic_eligibility && (
+                <p className="mt-3 text-sm text-foreground">
+                  <span className="text-muted-foreground">Geography: </span>
+                  {grant.geographic_eligibility}
+                </p>
+              )}
+              {grant.subaward_prohibited && (
+                <p className="mt-2 text-sm font-medium text-brand-orange">Subawards prohibited — single applicant</p>
+              )}
+            </Card>
+          )}
 
           <Card className="p-5">
             <SectionLabel>Client-match status</SectionLabel>

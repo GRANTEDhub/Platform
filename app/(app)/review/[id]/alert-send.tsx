@@ -47,9 +47,9 @@ export function AlertSend({
   // the click — passing it there would prompt twice inside one workflow.
   overdue?: OverdueGateConfig;
   // #8: where the RELEASE confirmation lands. Passed from the console (ReleaseToClientBar)
-  // so a managed release returns to the client's Grant Report or dashboard instead of the
-  // cross-client Matches queue. Absent on the /review worklist and prospect paths, where
-  // ReleaseConfirmation keeps its /matches default.
+  // so a managed release returns to the client's Grant Report or dashboard. Absent on the
+  // /review worklist and prospect paths, where ReleaseConfirmation keeps its Portfolio
+  // default (the cross-client Matches queue was retired — #489).
   doneHref?: string;
   doneLabel?: string;
   // The INLINE trigger's surface. "dark" renders it on the fit-score box (bg-brand-chrome) —

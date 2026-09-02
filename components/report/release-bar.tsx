@@ -59,7 +59,8 @@ export function ReleaseToClientBar({
   backHref: string;
   // #8: where a send/pass DECISION lands. The Grant Report while this client still has grants
   // pending review, else the client's dashboard. Computed on the page from the remaining count,
-  // and threaded into AlertSend's release confirmation so a send lands there too (not /matches).
+  // and threaded into AlertSend's release confirmation so a send lands there too (the client's
+  // own surface, never a cross-client queue).
   doneHref: string;
   // Human label for the redirect line on the release confirmation ("Redirecting to <x>…").
   doneLabel: string;
@@ -340,7 +341,7 @@ export function ReleaseToClientBar({
 
       {/* AlertSend gets NO `overdue` here on purpose — setMode is already gated above. It DOES
           get doneHref/doneLabel so its release confirmation lands where a decision should
-          (Grant Report or dashboard), not on /matches. */}
+          (Grant Report or dashboard), never a cross-client queue. */}
       {mode === "alert" && (
         <AlertSend cardId={cardId} autoOpen onClose={() => setMode(null)} doneHref={doneHref} doneLabel={doneLabel} />
       )}
