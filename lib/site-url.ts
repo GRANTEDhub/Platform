@@ -18,3 +18,15 @@ export function appBaseUrl(req?: Request): string {
   }
   return "";
 }
+
+// The staff console link for a single review card. Points at the redesigned grant
+// review page (/clients/<clientId>/roadmap/<cardId>) — the same OverviewCard /
+// RationaleCard surface the report uses — NOT the old /review/<id> worklist detail,
+// which lacks the redesigned fit-factors section. That page hard-filters on BOTH ids
+// (.eq id, .eq client_id), so the client id is required; when it is unknown (should
+// not happen for client-card sweeps, but the field is nullable) we fall back to the
+// single-id /review/<cardId> route so an admin spot-check link never 404s. The one
+// definition both admin sweep/backfill emitters share, so their links can't drift.
+export function reviewConsoleLink(base: string, cardId: string, clientId: string | null): string {
+  return clientId ? `${base}/clients/${clientId}/roadmap/${cardId}` : `${base}/review/${cardId}`;
+}

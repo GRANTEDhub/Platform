@@ -639,6 +639,7 @@ export async function applyQaPatch(db: DB, cardId: string, patch: QaPatch): Prom
 // NOT read AUTO_INTEL_APPLY_BROAD — the broad rule is baked in here as requireRefuteClean=true.
 export interface BackfillCardInfo {
   cardId: string;
+  clientId: string | null; // for the staff console link (/clients/<clientId>/roadmap/<cardId>)
   grantTitle: string | null;
   clientName: string | null;
   engineFit: number | null;
@@ -717,6 +718,7 @@ export async function backfillBroadApply(
     if (!card) continue;
     const info: BackfillCardInfo = {
       cardId: d.review_card_id,
+      clientId: card.client_id ?? null,
       grantTitle: card.grant_id ? grantTitle.get(card.grant_id) ?? null : null,
       clientName: card.client_id ? clientName.get(card.client_id) ?? null : null,
       engineFit: card.fit_score,
