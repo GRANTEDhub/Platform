@@ -269,6 +269,19 @@ describe("drainIntelQueue — proposal-only + transitions", () => {
     expect(s.tables.card_intel_reviews ?? []).toHaveLength(0);
   });
 
+  it("skips (no model call, no cost) a queued job whose client was PAUSED after enqueue — Codex #493 P2", async () => {
+    // The poller stops NEW enqueues for paused clients, but this job was queued BEFORE the pause. The
+    // drain must recheck and skip it so an already-queued job never spends the model on a paused client.
+    s.tables.clients = [{ id: "c1", match_active: false }];
+    let called = false;
+    const r = await drainIntelQueue(asDb(s), { now, runReview: async () => { called = true; return okReview("demote"); } });
+    expect(called).toBe(false); // recheck short-circuits before the model call
+    expect(r.skipped).toBe(1);
+    expect(s.tables.intel_review_queue[0].status).toBe("done");
+    expect(s.tables.card_intel_reviews ?? []).toHaveLength(0); // no verdict written
+    expect(s.tables.intel_auto_run_log ?? []).toHaveLength(0); // no cost logged
+  });
+
   it("skips (no model call) when a verdict already exists — never clobbers a staff on-demand verdict", async () => {
     // A staffer ran the on-demand Intel pass (created_by = their id) while this auto job waited.
     s.tables.card_intel_reviews = [{ review_card_id: "card-1", created_by: "user-x", intel_review: { verdict: "affirm" } }];

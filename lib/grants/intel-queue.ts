@@ -525,6 +525,17 @@ async function processOne(
     return "skipped";
   }
 
+  // The client was PAUSED (match_active=false, migration 0091) AFTER this job was enqueued. The poller
+  // stops NEW enqueues for paused clients, but a job already queued must not still spend the model —
+  // recheck at claim time and skip it (no cost), the same as a card that's since been decided. Reversible:
+  // un-pausing re-enqueues the pair via the poller. (Codex #493 P2.) Explicit-false only, matching the
+  // poller / view-filter fail-open convention: a missing/null flag never pauses (the column is NOT NULL
+  // DEFAULT true in prod, so === false is exactly "deliberately paused").
+  if (client.match_active === false) {
+    await finish({ status: "done", finished_at: new Date(now()).toISOString(), error_detail: "client paused (match_active=false)" });
+    return "skipped";
+  }
+
   const intelCard: IntelCard = {
     fit_score: card.fit_score,
     proposed_role: card.proposed_role,
