@@ -571,7 +571,15 @@ export async function reextractAllowableUses(
   // null = a transient model failure: leave the column alone (writes nothing) and let the caller retry.
   if (!result) return { ok: false, value: null };
   const value: AllowableUses = { ...result.value, recut: ALLOWABLE_USES_GENERATION };
-  await saveAllowableUses(db, grant.id, value);
+  try {
+    await saveAllowableUses(db, grant.id, value);
+  } catch (e) {
+    // Match the sweep/recut convention: a write error is a real fault -- LOG it and report a clean
+    // failure so the caller/route returns its structured {ok:false} instead of an opaque 500, and
+    // the row is discoverable in the logs. Never throw into the caller.
+    console.error(`[allowable-uses] save failed grant=${grant.id}:`, e instanceof Error ? e.message : e);
+    return { ok: false, value: null };
+  }
   return { ok: true, value };
 }
 
