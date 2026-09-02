@@ -68,6 +68,44 @@ describe("section finder", () => {
   });
 });
 
+// ── 1b. NSF-family finder ───────────────────────────────────────────────────────────────────
+//
+// NSF states cost rules as ALLOWABLE FRAMING under a "Budgetary Information" section, not the ACF
+// "we do not allow the following" list — so the ACF-only patterns anchor on an isolated indirect/F&A
+// line and miss the real section. NOTE: this is a synthetic fixture modeled on the IUSE / Two-Year
+// College STEM solicitation; swap in the real NOFO text as the fixture when available.
+const NSF_BUDGET_SECTION = `Budgetary Information
+Cost Sharing: Cost sharing is not required for this program.
+Funds may be used for faculty release time to support curriculum development.
+Administrative salaries may be charged as direct costs consistent with 2 CFR 200.413.
+Reasonable travel costs and lodging for project personnel to attend the annual PI conference may be included.
+Participant support costs, including stipends for participants, are an allowable charge.
+Indirect costs (Facilities and Administrative, F&A) are recovered at the awardee's federally negotiated rate.
+Other Budgetary Limitations: Costs for the installation of equipment are not allowable under this program.`;
+
+describe("NSF-family section finder", () => {
+  it("the ACF-worded 'we do not allow' patterns don't fire on NSF allowable-framing text", () => {
+    const ACF_LIST_PATTERNS = [/we\s+do\s+not\s+allow/gi, /do\s+not\s+allow\s+the\s+following/gi, /funding\s+policies\s+and\s+limitations/gi];
+    expect(sectionHits(NSF_BUDGET_SECTION, ACF_LIST_PATTERNS)).toHaveLength(0);
+  });
+
+  it("the widened patterns anchor densely on the NSF budget section", () => {
+    expect(sectionHits(NSF_BUDGET_SECTION, SECTION_PATTERNS).length).toBeGreaterThan(4);
+  });
+
+  it("lands the window on Budgetary Information, not an isolated F&A line earlier in the doc", () => {
+    // A lone F&A mention up front (the trap Shannon flagged), then real NSF program prose, then the
+    // dense Budgetary Information cluster — the window must anchor on the cluster, not the lone line.
+    const head1 = "The IUSE program supports institutional efforts to improve STEM education. ".repeat(90); // ~6.7k
+    const loneFA = "\nThe awardee's Facilities and Administrative rate applies to this award.\n";
+    const head2 = "Proposals must describe evidence-based instructional practices and evaluation. ".repeat(90); // ~7k
+    const { excerpt, anchored } = allowableSource(head1 + loneFA + head2 + NSF_BUDGET_SECTION);
+    expect(anchored).toBe(true);
+    expect(excerpt).toContain("Funds may be used for faculty release time");
+    expect(excerpt).toContain("Participant support costs");
+  });
+});
+
 // ── 2. Two-list parse + quote gate ──────────────────────────────────────────────────────────
 
 describe("readAllowableUses / verifyAllowableUses", () => {

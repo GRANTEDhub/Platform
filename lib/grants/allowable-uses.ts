@@ -85,6 +85,25 @@ export const SECTION_PATTERNS = [
   /necessary,?\s+reasonable,?\s+allocable/gi,
   /object\s+class\s+categories/gi,
   /line-item\s+budget/gi,
+  // NSF-family cost phrasing (verified against the IUSE / Two-Year College STEM solicitation, and
+  // core for community-college clients -- NSF IUSE / ATE / S-STEM). NSF states its cost rules as
+  // ALLOWABLE FRAMING ("funds may be used for ...", "X is an allowable charge", "faculty release
+  // time", "participant support") under a "Budgetary Information" section, NOT the ACF "we do not
+  // allow the following" list -- the real IUSE allowable detail (faculty release time, admin salaries
+  // as direct, PD conference travel/lodging/stipends) lives under Budgetary Information, with a single
+  // unallowable (equipment installation). So the finder anchors on the framing phrases AND the NSF
+  // headings, so the density winner is the budget section, not an isolated F&A line.
+  /budgetary\s+information/gi,
+  /budget\s+justification/gi,
+  /other\s+budgetary\s+limitations/gi,
+  /cost\s+shar/gi, // "cost sharing" / "cost share"
+  /program\s+income/gi,
+  /facilities\s+and\s+administrative/gi,
+  /participant\s+support/gi,
+  /faculty\s+release\s+time/gi,
+  /funds?\s+may\s+be\s+used\s+for/gi,
+  /may\s+be\s+(?:charged|requested|budgeted|included)\b/gi,
+  /is\s+an?\s+allowable\s+(?:charge|cost|expense)/gi,
 ];
 
 // THE SENTINEL, and it is deliberately not an empty render. A blank section reads as "we
@@ -515,18 +534,46 @@ const RECUT_SCAN_BATCH = 100;
 // URL, so this bounds the request line rather than anything about the work itself.
 const RETIRE_CHUNK = 50;
 
-// The generation of this file's finder + extraction, STORED on each row as `recut`. Bumped to 2 when
-// SECTION_PATTERNS were widened to the ACF-style headings ("we do not allow", "funding policies and
-// limitations", "indirect costs", "necessary, reasonable, allocable") and extraction began returning
-// not-allowed items -- so every no_section row a v1 build wrote (recut null or 1) is re-run once under
-// v2 and re-stamped. Bump again for any future finder/prompt change that should re-touch the
-// already-processed no_section corpus. Kept single-digit: the recut scan compares `recut` as TEXT
-// (PostgREST `.lt`), and "1" < "2" holds lexically only while the numbers are single digits.
-const ALLOWABLE_USES_GENERATION = 2;
+// The generation of this file's finder + extraction, STORED on each row as `recut`. The recut re-runs
+// any no_section row BELOW the current generation, so a finder/prompt change re-touches the whole
+// no_section corpus simply by bumping this. History: gen 2 widened SECTION_PATTERNS to the ACF-style
+// headings and added not-allowed extraction; gen 3 added the NSF-family patterns (Budgetary
+// Information / cost sharing / participant support / "funds may be used for" ...). Gen 3 must re-run
+// the rows gen 2's recut already stamped -- an NSF grant the ACF-only finder missed would otherwise
+// stay no_section -- which "re-run any row below the current generation" already does. Kept
+// single-digit: the recut scan compares `recut` as TEXT (PostgREST `.lt`), and "1"<"2"<"3" holds
+// lexically only while the numbers are single digits.
+const ALLOWABLE_USES_GENERATION = 3;
 
 // The recut scan predicate: a no_section row whose generation is BELOW the current one -- absent
 // (never recut) OR an older generation number. Shared by the probe and the scan so they can't drift.
 const RECUT_STALE_OR = `allowable_uses->>recut.is.null,allowable_uses->>recut.lt.${ALLOWABLE_USES_GENERATION}`;
+
+// On-demand single-grant re-extract of allowable / not-allowed uses. Runs the SAME generate + save
+// path the sweep uses (no second extraction path), stamps the current generation, and returns the
+// stored outcome so an admin trigger can report what happened. The throttled recut reaches every
+// no_section grant eventually; this is the "populate THIS grant now, I'm about to forward it" bypass.
+// Any grant id is accepted (an admin re-extracting a specific grant); generateAllowableUses already
+// handles a missing raw_text (-> no_raw_text) and a transient model failure (-> null, writes nothing).
+export async function reextractAllowableUses(
+  db: SupabaseClient,
+  grant: AllowableUsesGrant,
+): Promise<{ ok: boolean; value: AllowableUses | null }> {
+  let result: Awaited<ReturnType<typeof generateAllowableUses>> = null;
+  try {
+    result = await generateAllowableUses(grant);
+  } catch (e) {
+    console.error(
+      `[allowable-uses] on-demand re-extract threw grant=${grant.id}:`,
+      e instanceof Error ? e.message : e,
+    );
+  }
+  // null = a transient model failure: leave the column alone (writes nothing) and let the caller retry.
+  if (!result) return { ok: false, value: null };
+  const value: AllowableUses = { ...result.value, recut: ALLOWABLE_USES_GENERATION };
+  await saveAllowableUses(db, grant.id, value);
+  return { ok: true, value };
+}
 
 // Cheap head-only probe. No rows, and critically no raw_text -- the largest column on the
 // table. Runs before the main claim because the answer changes its size.
