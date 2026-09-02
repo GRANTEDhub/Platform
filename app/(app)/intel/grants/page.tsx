@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { ListGroup, ListGroupHeader, ListGroupRow } from "@/components/ui/list-group";
 import { Badge } from "@/components/ui/badge";
 import { getProspectFeed } from "@/lib/grants/gate";
+import { IngestForm } from "@/app/(app)/grants/ingest-form";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,22 @@ export default async function GrantProspectingPage() {
           <span>grant{feed.length === 1 ? "" : "s"} in prospecting</span>
         </div>
       </NavyHero>
+
+      {/* Analyze on demand — the Ledger's ingest affordance, surfaced here so a prospector
+          can score a grant that isn't in the feed yet without bouncing to the Ledger. The
+          SAME zero-prop <IngestForm /> the Ledger renders (reused, not forked); it lands on
+          the new grant's Ledger record via the existing path. */}
+      <Card className="p-6">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          Analyze on demand
+        </h2>
+        <p className="mt-1.5 text-sm text-muted-foreground">
+          Paste a grant link or NOFO to score a new opportunity against the roster. It opens in the Ledger once analyzed.
+        </p>
+        <div className="mt-4">
+          <IngestForm />
+        </div>
+      </Card>
 
       {feed.length === 0 ? (
         <Card className="py-16 text-center text-sm text-muted-foreground">
