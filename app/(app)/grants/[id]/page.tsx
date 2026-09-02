@@ -304,6 +304,15 @@ export default async function LedgerDetailPage({ params }: { params: { id: strin
             </div>
           )}
 
+          {/* WHY this grant is a summary shred — the reason behind the header's "Summary shred" badge.
+              The retired GrantOverview carried this unconditionally; the header badge alone shows the state
+              but not the reason, and getGrantDisposition only surfaces shred_reason on the profile_gap tier
+              (skipped once a card is decided). Rendered here, independent of disposition, matching the
+              sibling /intel/[id] page so a decided summary-shred grant still shows its reason. */}
+          {!processing && !forecasted && grant.shred_depth === "summary" && grant.shred_reason && (
+            <p className="text-xs text-muted-foreground">Summary shred only — {grant.shred_reason}</p>
+          )}
+
           {/* Grant SUMMARY via the shared OverviewCard (grant-level: no client, no role pill). The FULL,
               expandable description follows in "What it funds" (OverviewCard's summary is null — its
               programme blurb truncates with no expander, which would hide detail staff need), then the
