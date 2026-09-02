@@ -16,38 +16,42 @@ import { BRAND } from "@/lib/brand";
 // staff roadmap passes; the client portal builds its OWN read-only concept slot and never renders
 // this. (2) By GATE — the roadmap passes it only under `showIntel` (admin + pending + not released).
 // (3) By ROUTE — /api/admin/reextract-allowable-uses is admin-gated (403 for non-admins), so even a
-// forged POST from a client session can't run it. Nothing in the shared frame forks on actor.
+// forced POST from a client session can't run it. Nothing in the shared frame forks on actor.
 //
-// A bare re-extract HOLDS a regression (the fresh run came back thinner than the stored list) rather
-// than clobbering a good list; this surfaces the hold and offers a deliberate "Overwrite anyway"
-// (force) re-send, exactly as the route intends — never a silent no-op on a hold.
+// SINGLE-SHOT, NEVER force. Re-extraction is a nondeterministic model call, so the route HOLDS a
+// regression (the fresh run came back thinner than the stored list) rather than clobbering a good
+// list. We deliberately do NOT expose the route's `force` overwrite here: a force re-POST would run
+// the model AGAIN and save whatever THAT run produced — not the candidate the hold reported — so it
+// could clobber the good list with a different, possibly-thinner result (Codex #492 P2). A safe
+// overwrite needs the endpoint to persist the exact seen candidate, which is out of this PR's scope;
+// until then a held regression just reports "kept the existing list" and makes no change.
 export function AllowableRefreshButton({ grantId }: { grantId: string }) {
   const router = useRouter();
-  const [phase, setPhase] = useState<"idle" | "running" | "held" | "error">("idle");
+  const [phase, setPhase] = useState<"idle" | "running" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
 
-  async function run(force: boolean) {
+  async function run() {
     setPhase("running");
     setMessage(null);
     try {
       const res = await fetch("/api/admin/reextract-allowable-uses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(force ? { grantId, force: true } : { grantId }),
+        body: JSON.stringify({ grantId }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         error?: string;
         ok?: boolean;
         saved?: boolean;
         held?: string;
-        message?: string;
         itemCount?: number;
       };
       if (!res.ok || data.ok === false) throw new Error(data.error || "Re-extract couldn't run");
       if (data.saved === false && data.held === "regression") {
-        // Thinner result held back — do NOT refresh (nothing changed); offer a deliberate overwrite.
-        setMessage(data.message || "Held: the fresh run was thinner than the stored list.");
-        setPhase("held");
+        // Held, not saved — the fresh run was thinner than the good stored list. Nothing changed, so
+        // no refresh; report it honestly rather than offering a re-roll that could clobber the list.
+        setMessage("Kept the existing list — the fresh run came back thinner, so nothing changed.");
+        setPhase("idle");
         return;
       }
       // Saved — the grant's use-of-funds column changed; refresh so the OverviewCard re-renders it.
@@ -70,7 +74,7 @@ export function AllowableRefreshButton({ grantId }: { grantId: string }) {
       <button
         type="button"
         disabled={running}
-        onClick={() => void run(false)}
+        onClick={() => void run()}
         className="inline-flex h-[34px] w-full items-center justify-center gap-[7px] rounded-sharp border border-edge text-[12.5px] font-semibold text-brand-navy transition-colors hover:border-brand-navy/25 disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
       >
         {running ? (
@@ -83,25 +87,13 @@ export function AllowableRefreshButton({ grantId }: { grantId: string }) {
       <p className="mt-2 text-[12px] leading-[1.5] text-ink-muted">
         Re-pull the allowable and not-allowed uses from the notice.
       </p>
-      {phase === "held" && (
-        <div className="mt-1.5">
-          <p className="text-[11px] leading-[1.5] text-ink-muted">{message}</p>
-          <button
-            type="button"
-            onClick={() => void run(true)}
-            className="mt-1 text-[11px] font-semibold underline hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60 focus-visible:ring-offset-2"
-            style={{ color: BRAND.orangeDeep }}
-          >
-            Overwrite anyway
-          </button>
-        </div>
-      )}
-      {phase === "error" && (
+      {phase === "error" ? (
         <p className="mt-1 text-[11px]" style={{ color: BRAND.reject }}>
           {message}
         </p>
+      ) : (
+        message && <p className="mt-1 text-[11px] text-ink-muted">{message}</p>
       )}
-      {phase === "idle" && message && <p className="mt-1 text-[11px] text-ink-muted">{message}</p>}
     </div>
   );
 }
