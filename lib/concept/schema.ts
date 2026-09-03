@@ -7,8 +7,9 @@
 import type { Client, Grant, Prospect } from "@/types/database";
 import { renderClientProfileBlock } from "@/lib/clients/profile";
 
-// The card's already-computed match signals -- fed as a STARTING hint (the match
-// engine already reasoned about role/why/concept), not a constraint to re-derive.
+// The card's already-computed match signals. proposed_role is the triage's FIXED role
+// determination -- consumed exactly, never re-derived or inverted (the prime/sub guardrail);
+// fit_score / why_this_org / concept_synopsis are STARTING hints the generator may refine.
 export interface ConceptCardSignals {
   fit_score: number | null;
   proposed_role: string | null;
@@ -44,12 +45,34 @@ CORE DISCIPLINE:
 3. Snapshot, not a full proposal. Concise beats exhaustive. The scope is a "picture the
    project" narrative, not an eligibility restatement or boilerplate.
 4. Estimates are estimates. Any dollar figure is an ESTIMATE; never present it as exact.
+5. No unverified external facts. Do NOT state as established fact that any specific external
+   organization, program, institution, accreditation, or statistic EXISTS or holds a given
+   attribute unless it is present in the inputs you were given (the NOFO text, the client
+   profile, or the candidate partner list). If you reference an external org, program, or
+   institution that is not in those inputs, frame it as a to-verify placeholder ("a partner
+   such as [X], if one exists"; "a regional MLIS program, if available") -- never a flat
+   factual claim. Never invent a specific named program, institution, accreditation, or an
+   enrollment / demographic / dollar statistic and present it as fact; an unsourced number is
+   an estimate or is left out, never stated as established fact.
 
-ROLE (two options only):
-- role is "prime" or "partner": the client's suggested lead posture on THIS grant, grounded
-  in the NOFO's eligible entity types and the client's prime capacity. If the client would
-  more naturally support than lead, choose "partner" and make the leading organization clear
-  in the partners list.
+ROLE (FIXED from triage -- consume it, do not re-derive):
+- GRANTED's upstream triage has ALREADY determined the client's applicant role and eligibility
+  path. It is handed to you as a FIXED input (the "APPLICANT ROLE (FIXED ...)" line in the
+  input). Consume that determination exactly. Do NOT re-derive, second-guess, or contradict it.
+- The triage role is one of GRANTED's role vocabulary: Prime, Co-Applicant, Sub, Named
+  Collaborator, Letter of Support, Facilitator, or Not Recommended. Collapse it to the tool's
+  binary role ("prime" or "partner") by THIS EXACT MAP, never by guessing:
+    - ONLY "Prime" maps to role = "prime": the client is the lead applicant and the whole
+      proposal is built around the client leading.
+    - EVERY other role (Co-Applicant, Sub, Named Collaborator, Letter of Support, Facilitator,
+      Not Recommended) maps to role = "partner": the client is NOT the lead; another
+      organization is the prime, and you make that leading organization clear in the partners
+      list.
+  When in doubt, never map to "prime" -- only a literal "Prime" triage role makes the client the
+  prime. Never demote a "Prime" client to a sub/partner beneath another organization, and never
+  cast an organization GRANTED does not represent as the prime.
+- Set the returned role by that map. ONLY when no triage role is provided may you derive it
+  conservatively from the NOFO's eligible entity types and the client's prime capacity.
 
 PARTNERS:
 - Recommend the partners this application would need. Prefer naming a SPECIFIC organization
@@ -230,16 +253,25 @@ function renderCandidates(prospects: Prospect[]): string {
 
 function renderSignals(card: ConceptCardSignals): string {
   const why = (card.why_this_org ?? []).filter(Boolean);
+  // The applicant role is the ONE signal that is NOT a refinable hint: it is GRANTED's upstream
+  // triage determination, rendered as its own FIXED section so the generator consumes it exactly
+  // and never re-derives or inverts it (the prime/sub guardrail). fit_score / concept_synopsis /
+  // why_this_org stay in the "hints to refine" block below.
+  const role = val(card.proposed_role);
+  const roleBlock = role
+    ? `=== APPLICANT ROLE (FIXED -- from GRANTED triage; use EXACTLY, do NOT re-derive, override, or invert) ===\nThe client's role on this grant is: ${role}`
+    : "";
   const lines = [
     ["Match fit score (1-3)", card.fit_score != null ? String(card.fit_score) : null],
-    ["Engine-proposed role", val(card.proposed_role)],
     ["Concept synopsis (starting hint)", val(card.concept_synopsis)],
   ]
     .filter(([, v]) => v)
     .map(([k, v]) => `${k}: ${v}`);
   if (why.length) lines.push(`Why this org (starting hints):\n${why.map((w) => `  - ${w}`).join("\n")}`);
-  if (!lines.length) return "";
-  return `=== STARTING SIGNALS FROM THE MATCH (hints to refine, not constraints) ===\n${lines.join("\n")}`;
+  const hintsBlock = lines.length
+    ? `=== STARTING SIGNALS FROM THE MATCH (hints to refine, not constraints) ===\n${lines.join("\n")}`
+    : "";
+  return [roleBlock, hintsBlock].filter(Boolean).join("\n\n");
 }
 
 export function renderConceptInput(input: ConceptGenerationInput): string {
