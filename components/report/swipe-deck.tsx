@@ -432,6 +432,9 @@ function CardFace({
         <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 rounded-2xl bg-brand-cream/70 p-4">
           <StatCell label="Total available" value={item.totalAvailable || "—"} />
           <StatCell label={`Award range${item.awardIsEstimate ? " · est." : ""}`} value={item.awardRange} />
+          {/* Expected number of awards, rendered verbatim with a non-numeric fallback ("—"), never a
+              computed "N awards" phrase — so an empty field never reads "0 awards". */}
+          <StatCell label="Est. awards" value={item.numAwards || "—"} />
           <StatCell label="Match required" value={item.matchRequired} />
           <StatCell label="Your role" value={item.role || "—"} />
         </div>

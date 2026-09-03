@@ -68,6 +68,13 @@ export interface VerdictLead {
 // no-go (staff-only, like a PASS) and picks the phrasing (a client reads their own card, so a go is advice
 // — "Worth pursuing" — not "Go for {them}"). Returns null when there is nothing to state (no score, or a
 // no-go on the client side).
+//
+// A GO / MARGINAL has NO STAFF LEAD (Shannon, 2026-09-03). The flat "Go for {name}." / "Marginal for
+// {name}." opener duplicated the score bars and the closing Send/Pass line and read robotic AHEAD of the
+// reasoning, so on the staff side a go/marginal returns null and the (gate-first) reasoning body leads the
+// paragraph instead. Only the NO-GO keeps its staff lead — a no-go must announce itself up front, and under
+// a hard kill its reasoning body is suppressed, so the lead is the whole story there. The client keeps its
+// own short advice phrasings ("Worth pursuing." / "Marginal — worth a look.").
 export function buildVerdict(
   fitScore: 1 | 2 | 3 | null,
   hardKill: HardKill | null,
@@ -89,16 +96,17 @@ export function buildVerdict(
   if (fitScore == null) return null;
 
   if (fitScore === 1) {
-    // No-go — staff-only (a "not a fit" verdict is never client advice; the client sees no lead).
+    // No-go — staff-only (a "not a fit" verdict is never client advice; the client sees no lead). The lead
+    // STAYS: a no-go announces itself up front, and its reasoning body is suppressed under a hard kill.
     return side === "client" ? null : { call: "no-go", text: `No-go for ${name}.` };
   }
   if (fitScore === 2) {
-    return side === "client"
-      ? { call: "marginal", text: "Marginal — worth a look." }
-      : { call: "marginal", text: `Marginal for ${name}.` };
+    // Marginal. No STAFF lead — the reasoning body leads instead (the flat "Marginal for {name}." opener is
+    // dropped). The client keeps its own short advice phrasing.
+    return side === "client" ? { call: "marginal", text: "Marginal — worth a look." } : null;
   }
-  // fitScore === 3 → go.
-  return side === "client" ? { call: "go", text: "Worth pursuing." } : { call: "go", text: `Go for ${name}.` };
+  // fitScore === 3 → go. No STAFF lead (same as marginal); the client keeps its advice phrasing.
+  return side === "client" ? { call: "go", text: "Worth pursuing." } : null;
 }
 
 export type RecommendationCall = "SEND" | "PASS";

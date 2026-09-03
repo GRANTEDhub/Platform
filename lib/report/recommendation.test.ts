@@ -66,17 +66,19 @@ describe("buildRecommendation", () => {
 });
 
 describe("buildVerdict", () => {
-  it("3 → go; staff names the client, client reads their own advice", () => {
-    expect(buildVerdict(3, null, "NWACC", "staff")).toEqual({ call: "go", text: "Go for NWACC." });
+  it("3 → go; NO staff lead (reasoning leads), client reads its own advice", () => {
+    // The flat "Go for NWACC." staff opener is dropped — the reasoning body leads the paragraph instead.
+    expect(buildVerdict(3, null, "NWACC", "staff")).toBeNull();
     expect(buildVerdict(3, null, "NWACC", "client")).toEqual({ call: "go", text: "Worth pursuing." });
   });
 
-  it("2 → marginal on both sides (client-safe advice)", () => {
-    expect(buildVerdict(2, null, "NWACC", "staff")).toEqual({ call: "marginal", text: "Marginal for NWACC." });
+  it("2 → marginal; NO staff lead (reasoning leads), client keeps its short advice", () => {
+    // The flat "Marginal for NWACC." staff opener is dropped; the client phrasing is unchanged.
+    expect(buildVerdict(2, null, "NWACC", "staff")).toBeNull();
     expect(buildVerdict(2, null, "NWACC", "client")).toEqual({ call: "marginal", text: "Marginal — worth a look." });
   });
 
-  it("1 → no-go, STAFF-ONLY (client sees no lead — a 'not a fit' verdict is never client advice)", () => {
+  it("1 → no-go, STAFF-ONLY lead that STAYS (a no-go must announce itself; client sees no lead)", () => {
     expect(buildVerdict(1, null, "NWACC", "staff")).toEqual({ call: "no-go", text: "No-go for NWACC." });
     expect(buildVerdict(1, null, "NWACC", "client")).toBeNull();
   });
@@ -110,7 +112,8 @@ describe("buildVerdict", () => {
   });
 
   it("blank client name falls back to 'this client' (never an empty name)", () => {
-    expect(buildVerdict(3, null, "   ", "staff")).toEqual({ call: "go", text: "Go for this client." });
+    // Tested on a no-go, the one score-based verdict that still carries a staff lead naming the client.
+    expect(buildVerdict(1, null, "   ", "staff")).toEqual({ call: "no-go", text: "No-go for this client." });
   });
 
   it("no score and no hard kill → no lead", () => {
