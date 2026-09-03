@@ -658,6 +658,11 @@ function RationaleCard({
   // reason, so it can't assert a cap the score doesn't actually rest on. Left column shows whenever there
   // is a lead, prose, OR a recommendation to state.
   const showLeft = lead || hasProse || recommendation;
+  // The left column ALSO renders when a program-award band is present — the map lives here (Move #2), so
+  // a card with no prose (a fit-1 client-portal card: client-null verdict lead + client-null PASS
+  // recommendation → showLeft false, or a legacy unscored card) must still show it. The map used to render
+  // independently in the right rail; gating the whole column on showLeft alone dropped it on those cards.
+  const showLeftColumn = showLeft || !!programAward;
   return (
     <section className={`flex min-h-0 flex-1 flex-col overflow-hidden ${CARD}`}>
       <div className="flex shrink-0 items-center gap-3 px-5 pb-3 pt-[14px]">
@@ -681,7 +686,7 @@ function RationaleCard({
           the table — the weak factor's orange bar standing out against the navy strong bars. Do
           not un-bold the sentence. */}
       <div className="flex min-h-0 flex-1 gap-5 overflow-y-auto px-5 pb-2">
-        {showLeft && (
+        {showLeftColumn && (
           <div className="min-w-0 flex-[1.3]">
             {(lead || hasProse) && (
               <p className="text-[13px] leading-[1.65] text-ink-muted [text-wrap:pretty]">
@@ -726,7 +731,10 @@ function RationaleCard({
                 rides the middle's overflow-y-auto valve, so it cannot break the zero-scroll frame. Null →
                 nothing renders and the box is exactly today's. */}
             {programAward && (
-              <div className="mt-4 border-t border-hairline-strong pt-3">
+              // The top border + margin separate the band from the prose ABOVE it. When there is no prose
+              // (showLeft false — the map is the column's only content), drop them so no stray hairline
+              // floats at the top of an otherwise-empty column.
+              <div className={showLeft ? "mt-4 border-t border-hairline-strong pt-3" : ""}>
                 <p className={`mb-2 ${EYEBROW} tracking-[0.12em]`}>Program award history</p>
                 <ProgramAwardMap
                   compact
@@ -738,7 +746,7 @@ function RationaleCard({
             )}
           </div>
         )}
-        {showLeft && <span aria-hidden="true" className="w-px shrink-0 self-stretch bg-brand-navy/[0.08]" />}
+        {showLeftColumn && <span aria-hidden="true" className="w-px shrink-0 self-stretch bg-brand-navy/[0.08]" />}
 
         {/* The table is WIDER than the rationale — Design's mock puts the factor grid at
             1.65fr against the prose's 1.3fr, so the bars have room to read. */}
