@@ -641,6 +641,15 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
       expect.soft(majority(demoted), "the museum-workforce purpose mismatch (no museum) must be SCORED (demote), not just narrated, in the majority of runs").toBe(true);
       expect.soft(scoreDropped.every(Boolean), "a 21MP demote must actually lower the score below the engine's 2").toBe(true);
       expect.soft(majority(reasoned), "the 21MP demote summary should name the museum purpose it grounded on").toBe(true);
+      // REFUTE-CLEAN (Codex #496 P1): under AUTO_INTEL_APPLY_BROAD (ON) buildQaPatch auto-applies a demote
+      // ONLY when refute_survived===true; a refute-unclean demote is staff-held and NEVER lowers the live
+      // score. A purpose-fit demote's client-side fact ("no museum") is not on the .gov page, so without the
+      // client context now passed to the refute this would fail — catching the false-green where the proposal
+      // demotes but every broad-apply projection is rejected.
+      const demotedRuns9 = results.filter((r) => r.verdict === "demote");
+      const refuteClean9 = demotedRuns9.map((r) => r.refute_survived === true);
+      console.log("[intel-eval] 21MP refute_survived:", results.map((r) => String(r.refute_survived)).join(", "));
+      expect.soft(demotedRuns9.length === 0 || majority(refuteClean9), "a 21MP demote must be REFUTE-CLEAN (refute_survived===true) in the majority of demote runs — else broad apply staff-holds it and the live score never drops").toBe(true);
     },
     RUNS * 240_000,
   );
@@ -688,6 +697,12 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
       expect.soft(majority(demoted), "the 'has a library != does the funded national research' mismatch must be SCORED (demote) in the majority of runs").toBe(true);
       expect.soft(scoreDropped.every(Boolean), "an NLG-L demote must actually lower the score below the engine's 2").toBe(true);
       expect.soft(majority(reasoned), "the NLG-L demote summary should name the national-impact / research purpose it grounded on").toBe(true);
+      // REFUTE-CLEAN (Codex #496 P1) — same gate as case 9: under broad apply only a refute-clean demote
+      // auto-applies, so a demote here must survive the (now client-context-aware) refute to lower the score.
+      const demotedRuns10 = results.filter((r) => r.verdict === "demote");
+      const refuteClean10 = demotedRuns10.map((r) => r.refute_survived === true);
+      console.log("[intel-eval] NLG-L refute_survived:", results.map((r) => String(r.refute_survived)).join(", "));
+      expect.soft(demotedRuns10.length === 0 || majority(refuteClean10), "an NLG-L demote must be REFUTE-CLEAN (refute_survived===true) in the majority of demote runs — else broad apply staff-holds it and the live score never drops").toBe(true);
     },
     RUNS * 240_000,
   );

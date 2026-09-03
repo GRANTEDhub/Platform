@@ -287,9 +287,13 @@ const SUBMIT_TOOL = {
 // evidence actually support lowering the score? It is deliberately biased toward NOT supporting, so a
 // confident misread of a page (the failure the quote-guard was a proxy for) is caught. supported=true only
 // when the fetched pages clearly back the concern.
-const REFUTE_SYSTEM_PROMPT = `You are a skeptical reviewer checking an IntellEngine QA verdict before it changes a client's score. The QA pass proposed lowering (DEMOTE) or flagging this match. Your job is to try to REFUTE that concern using ONLY the fetched page text provided — do not use outside knowledge or memory.
+const REFUTE_SYSTEM_PROMPT = `You are a skeptical reviewer checking an IntellEngine QA verdict before it changes a client's score. The QA pass proposed lowering (DEMOTE) or flagging this match. Your job is to try to REFUTE that concern using ONLY (a) the fetched .gov page text provided and (b) the client's CONFIRMED identity provided below — do NOT use any outside knowledge or memory of the program or the organization. Both are ground truth: the fetched page is the authoritative program source; the client's confirmed identity is the client record (entity type, service area, known constraints), not a guess.
 
-Return supported=true ONLY if the fetched pages CLEARLY establish the concern (e.g. the allocation table really does list this jurisdiction as an asterisk/disparate unit that cannot prime). Return supported=false if the fetched pages do NOT establish it — including when the basis for the concern is not actually present in the fetched text, when the pages are ambiguous, or when they contradict the concern. When in doubt, supported=false: a score change must rest on what the sources actually show. Give a one-sentence reason.`;
+The two concern types rest on different evidence — check the RIGHT source for each:
+- ALLOCATION / eligibility (a disparate / "asterisk" jurisdiction or a subgrantee that cannot prime): the FETCHED PAGES must establish the client is on the sub / ineligible side of the allocation source.
+- PURPOSE-FIT (the client is entity-eligible but does not perform the funded ACTIVITY / serve the funded POPULATION): this rests on TWO facts and BOTH must hold — the FUNDED PURPOSE must be established by the fetched page (this program funds museum-workforce / national library research / etc.), AND the client's LACK of that activity or population must be established by the client's CONFIRMED identity (the record shows no museum / no research capacity / does not serve this population). One without the other does NOT support the concern.
+
+Return supported=true ONLY if the provided evidence CLEARLY establishes the concern. Return supported=false if it does not — including when the fetched pages do not establish the funded purpose, when the client's confirmed identity does not establish the missing activity/population, when the evidence is ambiguous, or when it contradicts the concern. When in doubt, supported=false: a score change must rest on what the sources and the confirmed record actually show. Give a one-sentence reason.`;
 
 const REFUTE_TOOL = {
   name: "submit_refute_check",
@@ -718,6 +722,12 @@ async function realRefute(
   fetchedBodies: string[],
   engineFitScore: number | null,
   timeoutMs: number,
+  // The client's CONFIRMED identity (clientContextForJudge). A PURPOSE-FIT demote rests on TWO facts — the
+  // funded purpose (on the fetched page) AND the client's lack of that activity (in the client record, NOT
+  // on a .gov program page) — so without this the refute cannot establish the client-side half and correctly
+  // returns supported=false, which under broad apply (requireRefuteClean) would leave every purpose-fit
+  // demote staff-held and never lower the score (Codex #496 P1). It is ground truth, not memory.
+  clientContext: string,
 ): Promise<RefuteResult> {
   const anthropic = getAnthropicClient();
   // Give EACH fetched page an equal share of the refute budget rather than slicing the fetch-order
@@ -747,7 +757,10 @@ async function realRefute(
       messages: [
         {
           role: "user",
-          content: `THE QA CONCERN TO CHECK:\n${claim}\n\nFETCHED PAGE TEXT (the only evidence you may use):\n${pages}`,
+          content:
+            `THE QA CONCERN TO CHECK:\n${claim}\n\n` +
+            `CLIENT (confirmed identity — ground truth for the client-side half of a purpose-fit concern):\n${clientContext}\n\n` +
+            `FETCHED PAGE TEXT (the authoritative program source; the ONLY web evidence you may use):\n${pages}`,
         },
       ],
     },
@@ -767,8 +780,9 @@ export interface RunIntelOptions {
   // Injected seams for deterministic tests (no live model / network).
   callModel?: CallModel;
   structure?: (analysisText: string, audit: FetchAuditRecord[], timeoutMs: number) => Promise<RawVerdict | null>;
-  // The phase-3 adversarial refute (correctness half of the grounding guard). Injected in tests.
-  refute?: (parsed: RawVerdict, fetchedBodies: string[], engineFitScore: number | null, timeoutMs: number) => Promise<RefuteResult>;
+  // The phase-3 adversarial refute (correctness half of the grounding guard). Injected in tests. Takes the
+  // client's confirmed identity so a purpose-fit demote's client-side fact (e.g. "no museum") is verifiable.
+  refute?: (parsed: RawVerdict, fetchedBodies: string[], engineFitScore: number | null, timeoutMs: number, clientContext: string) => Promise<RefuteResult>;
   fetcher?: (url: string) => Promise<FetchResult>;
   deadlineMs?: number;
   // Web-search discovery (INTEL_WEB_SEARCH_ENABLED). Defaults to the flag; overridable in tests so the
@@ -868,7 +882,9 @@ export async function runIntelReview(
       const remaining = INTEL_TOTAL_BUDGET_MS - (clock() - startMs);
       if (remaining >= MIN_REFUTE_BUDGET_MS) {
         try {
-          const r = await refute(parsed, fetchedBodies, card.fit_score, remaining);
+          // Pass the client's CONFIRMED identity so the refute can verify a purpose-fit demote's client-side
+          // fact (e.g. "no museum") — it is not on any .gov program page (Codex #496 P1).
+          const r = await refute(parsed, fetchedBodies, card.fit_score, remaining, clientContextForJudge(client));
           refuteSurvived = r.supported; // true = survived, false = genuinely refuted by the second read
         } catch {
           refuteSurvived = null; // COULD NOT COMPLETE the check (threw) — distinct from a genuine refutation;
