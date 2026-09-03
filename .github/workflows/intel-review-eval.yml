@@ -79,4 +79,4 @@ jobs:
         # The per-fixture verdicts/summaries the eval console.logs (and the soft-assertion messages) are
         # captured in this step's log, so the JAG / state / VOCA-discovery reads are readable in the
         # browser with pass/fail.
-        run: npx vitest run lib/grants/intel-review.eval.test.ts
+        run: npx vitest run lib/grants/intel-review.eval.test.ts -t "State of Arkansas"

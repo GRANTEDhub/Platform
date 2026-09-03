@@ -289,6 +289,9 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
       );
       console.log("[intel-eval] JAG-state verdicts:", results.map((r) => r.verdict).join(", "));
       console.log("[intel-eval] JAG-state narratives:", results.map((r) => r.narrative));
+      // PROBE (throwaway, 2026-09-03): surface refute_survived per run so we can see whether a wrong
+      // state demote auto-applies (refute_survived===true) or is staff-held (false/null) under broad apply.
+      console.log("[intel-eval] JAG-state refute_survived:", results.map((r) => `${r.verdict}=${String(r.refute_survived)}`).join(", "));
       const notDemoted = results.map((r) => r.verdict !== "demote");
       expect.soft(majority(notDemoted), "a state IS a direct JAG recipient — QA must not demote it").toBe(true);
       // VERDICT NARRATIVE WIDENING: the reasoning body now rides EVERY resolved verdict, so a genuine AFFIRM
