@@ -53,7 +53,13 @@ import type { Grant, Client } from "@/types/database";
 //
 //   2. [A] JAG-state-AFFIRM    — the State of Arkansas (state_government, the State Administering Agency)
 //      on the SAME program IS a direct JAG recipient. QA must NOT over-demote a genuine direct
-//      recipient. This is the carve-out that proves the pass discriminates rather than blanket-demotes.
+//      recipient. This is the carve-out that proves the pass discriminates rather than blanket-demotes,
+//      and it is the one UNSAFE-direction case (auto-LOWERING a correct match). The over-demote here was a
+//      WRONG-EVIDENCE seed: 16.738 covers State AND Local under one CFDA, and the seed handed a state
+//      client the LOCAL disparate-jurisdiction table (which never lists the state), so the reviewer
+//      mis-inferred "absent → subrecipient" ~1/3–2/3 of runs. FIX (2026-09-03): the org_type-aware seed
+//      hands a state client the STATE allocations / SAA pages instead. The guard is now ZERO-TOLERANCE
+//      (`.every`, mirroring case 7): no demote AND no flag in ANY run — the seed fix must make it AFFIRM.
 //
 //   3. [F] no-source-UNVERIFIED — a card whose only "source" is unreachable (non-.gov, unseeded CFDA). An
 //      adverse verdict is STRUCTURALLY impossible without a successful fetch (finalizeIntel's grounding
@@ -289,8 +295,19 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
       );
       console.log("[intel-eval] JAG-state verdicts:", results.map((r) => r.verdict).join(", "));
       console.log("[intel-eval] JAG-state narratives:", results.map((r) => r.narrative));
-      const notDemoted = results.map((r) => r.verdict !== "demote");
-      expect.soft(majority(notDemoted), "a state IS a direct JAG recipient — QA must not demote it").toBe(true);
+      // refute_survived is logged (not gated): a demote/flag would fire the adversarial refute, an
+      // affirm/unverified leaves it null. Kept as a visible probe of the UNSAFE-direction case.
+      console.log("[intel-eval] JAG-state refute_survived:", results.map((r) => `${r.verdict}=${String(r.refute_survived)}`).join(", "));
+      // ZERO-TOLERANCE (2026-09-03), mirroring VOCA case 7. 16.738 is on APPLY_ELIGIBLE_CFDAS, so a single
+      // false demote of a genuine direct STATE recipient can reach a live score — and this is the one
+      // UNSAFE-direction case in the cohort (auto-LOWERING a correct match). The org_type-aware seed now
+      // hands a state client the STATE allocations / SAA pages instead of the local disparate-jurisdiction
+      // table, so the reviewer reads evidence that NAMES the state as the direct recipient. The bar is
+      // therefore no demote AND no flag in ANY run (an `unverified` fetch-miss is fine — it changes no
+      // score). This is a deliberate TIGHTENING of the prior majority() guard: the seed fix must make the
+      // state AFFIRM every run. A demote here is a FINDING, never a reason to relax the bar back to majority.
+      const notDemoted = results.map((r) => r.verdict !== "demote" && r.verdict !== "flag");
+      expect.soft(notDemoted.every(Boolean), "a state IS the direct JAG recipient — QA must NOT demote or flag it in ANY run (16.738 is apply-eligible, so one false demote lowers a real recipient's live score; zero-tolerance)").toBe(true);
       // VERDICT NARRATIVE WIDENING: the reasoning body now rides EVERY resolved verdict, so a genuine AFFIRM
       // carries its OWN go-reasoning paragraph (not just a demote). The bar:
       //   - a non-unverified verdict CARRIES a narrative in the majority of runs (the widening works);

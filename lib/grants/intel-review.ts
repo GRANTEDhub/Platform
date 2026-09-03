@@ -327,7 +327,11 @@ export function intelContext(cardRaw: IntelCard, grant: Grant, client: Client, d
   const card = scrubCardSeatCodes(cardRaw);
   const rc = card.reasoning_context ?? null;
   const cfdas = (grant.assistance_listings ?? []).map((a) => a?.number).filter(Boolean).join(", ") || "(none)";
-  const sources = allocationSourcesFor(grant.assistance_listings ?? null);
+  // Pass the client's org_type so a state (SAA) client on a state-vs-local formula program (Byrne-JAG
+  // 16.738) gets the STATE allocations / SAA pages instead of the local disparate-jurisdiction table — the
+  // wrong-evidence seed that made QA over-demote a genuine direct state recipient (2026-09-03). Every other
+  // org_type / program is unchanged.
+  const sources = allocationSourcesFor(grant.assistance_listings ?? null, client.org_type);
 
   const authoritative =
     sources.length > 0

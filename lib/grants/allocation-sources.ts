@@ -20,8 +20,17 @@ export interface AllocationSource {
   label: string;
   // Authoritative .gov page(s) for this program's allocation / applicant-eligibility reality.
   // Prefer a stable program/allocations landing page; the reviewer can follow a link from it to
-  // the current-year table. Order = suggested fetch order.
+  // the current-year table. Order = suggested fetch order. This is the DEFAULT / local-side variant.
   urls: string[];
+  // OPTIONAL STATE-side variant, for a formula program (Byrne-JAG 16.738) whose applicant reality is
+  // OPPOSITE by entity type: the LOCAL solicitation's disparate/'asterisk' table (in `urls`) is the wrong
+  // evidence for a STATE (State Administering Agency) client — the state never appears on a local table, so
+  // handing it that page makes the reviewer mis-infer "absent → subrecipient" and over-demote a genuine
+  // direct recipient (the 2026-09-03 unsafe-direction finding). When the client is `state_government`,
+  // `allocationSourcesFor` returns `stateUrls`/`stateLabel` instead — pages that NAME the state as the
+  // direct recipient. Absent → the client gets `urls` (byte-identical to before).
+  stateUrls?: string[];
+  stateLabel?: string;
 }
 
 // JAG allocations URL — VERIFIED live (2026-08-27): the FY26 Arkansas Local JAG allocations PDF
@@ -40,6 +49,19 @@ export const ALLOCATION_SOURCES: Record<string, AllocationSource> = {
     urls: [
       "https://bja.ojp.gov/funding/fy26-jag-local-allocations-ar.pdf",
       "https://bja.ojp.gov/program/jag/overview",
+    ],
+    // STATE side. Byrne-JAG covers BOTH the State and Local solicitations under ONE CFDA (16.738), but the
+    // applicant reality is opposite: a state_government client is the Governor-designated State Administering
+    // Agency — the DIRECT recipient of the State allocation — not a subgrantee. It must read the STATE
+    // allocations page + the SAA directory, NOT the local disparate-jurisdiction table above. Both VERIFIED
+    // LIVE 2026-09-03: the JAG allocations page shows "FY 2026 JAG State Allocations" (a stable program
+    // landing page that links the current-year state table, so it does not FY-rot like the local PDF), and
+    // the OJP SAA overview states OJP formula grants "are awarded directly to state governments." Both .gov.
+    stateLabel:
+      "Edward Byrne Memorial Justice Assistance Grant (JAG) — State allocations; the Governor-designated State Administering Agency is the DIRECT recipient (not a subgrantee)",
+    stateUrls: [
+      "https://bja.ojp.gov/program/jag/allocations",
+      "https://www.ojp.gov/funding/state-administering-agencies/overview",
     ],
   },
   // Crime Victim Assistance (VOCA — Victim Assistance Formula). A formula grant to the STATES; the
@@ -72,17 +94,30 @@ function normalizeCfda(raw: string): string {
 // The authoritative sources for a grant, de-duplicated across its assistance listings. Empty when
 // none of the grant's CFDA numbers are seeded — which is the common case, and fine: the reviewer
 // then verifies against the NOFO's own source_url and any .gov links it carries.
+//
+// `orgType` (the client's org_type) selects the state-vs-local variant ONLY for a program that has one
+// (Byrne-JAG 16.738): a `state_government` client is the direct State Administering Agency and gets the
+// STATE pages; every other org_type — and a caller that omits orgType entirely — gets the default `urls`,
+// so all existing callers are byte-identical. Each returned entry is normalized to `{label, urls}` (the
+// variant already resolved), which is all the QA context reads.
 export function allocationSourcesFor(
   assistanceListings: { number?: string | null }[] | null | undefined,
+  orgType?: string | null,
 ): AllocationSource[] {
   const out: AllocationSource[] = [];
   const seen = new Set<string>();
+  const wantsState = orgType === "state_government";
   for (const a of assistanceListings ?? []) {
     const num = a?.number ? normalizeCfda(a.number) : "";
     if (!num || seen.has(num)) continue;
     seen.add(num);
     const src = ALLOCATION_SOURCES[num];
-    if (src) out.push(src);
+    if (!src) continue;
+    if (wantsState && src.stateUrls && src.stateUrls.length > 0) {
+      out.push({ label: src.stateLabel ?? src.label, urls: src.stateUrls });
+    } else {
+      out.push({ label: src.label, urls: src.urls });
+    }
   }
   return out;
 }

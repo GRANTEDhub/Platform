@@ -32,12 +32,46 @@ describe("allocationSourcesFor", () => {
     expect(allocationSourcesFor([{ number: "16.738" }, { number: "16.738A" }])).toHaveLength(1);
   });
 
-  it("every seeded entry is well-formed (.gov urls, non-empty label)", () => {
+  // STATE-vs-LOCAL split (Byrne-JAG 16.738): a state_government (SAA) client is the DIRECT recipient and
+  // must read the STATE allocations / SAA pages, not the local disparate-jurisdiction table (the wrong
+  // evidence that made QA over-demote a genuine direct state recipient, 2026-09-03).
+  it("16.738: a state_government client gets the STATE pages, not the local table", () => {
+    const local = allocationSourcesFor([{ number: "16.738" }], "local_government");
+    const state = allocationSourcesFor([{ number: "16.738" }], "state_government");
+    // The state variant is a DIFFERENT URL set — and specifically NOT the local disparate-jurisdiction PDF.
+    expect(state[0].urls).not.toEqual(local[0].urls);
+    expect(state[0].urls.some((u) => /local-allocations/i.test(u))).toBe(false);
+    expect(state[0].urls.some((u) => /jag\/allocations|state-administering-agencies/i.test(u))).toBe(true);
+    expect(state[0].label).toMatch(/state administering agency|direct recipient/i);
+  });
+
+  it("16.738: local / nonprofit / higher_ed / omitted org_type all get the default local table", () => {
+    const expected = allocationSourcesFor([{ number: "16.738" }]); // omitted → default
+    for (const org of ["local_government", "nonprofit", "higher_education", "small_business", null, undefined]) {
+      expect(allocationSourcesFor([{ number: "16.738" }], org as string | null)).toEqual(expected);
+    }
+    // The default is the LOCAL disparate-jurisdiction table (unchanged — case 1 JAG-county still grounds).
+    expect(expected[0].urls.some((u) => /local-allocations/i.test(u))).toBe(true);
+  });
+
+  it("a non-state-split program (16.575) ignores org_type — same sources for state and local", () => {
+    const state = allocationSourcesFor([{ number: "16.575" }], "state_government");
+    const local = allocationSourcesFor([{ number: "16.575" }], "local_government");
+    expect(state).toEqual(local);
+  });
+
+  it("every seeded entry is well-formed (.gov urls, non-empty label) — including any stateUrls", () => {
     for (const [cfda, src] of Object.entries(ALLOCATION_SOURCES)) {
       expect(cfda, "CFDA key shape").toMatch(/^\d{2}\.\d{3}$/);
       expect(src.label.trim().length, cfda).toBeGreaterThan(0);
       expect(src.urls.length, cfda).toBeGreaterThan(0);
       for (const u of src.urls) expect(u, cfda).toMatch(/^https:\/\/[^/]+\.gov(\/|$)/);
+      // A stateUrls variant, when present, is held to the same .gov + non-empty-label bar.
+      if (src.stateUrls) {
+        expect(src.stateUrls.length, `${cfda} stateUrls`).toBeGreaterThan(0);
+        expect((src.stateLabel ?? src.label).trim().length, `${cfda} stateLabel`).toBeGreaterThan(0);
+        for (const u of src.stateUrls) expect(u, `${cfda} stateUrls`).toMatch(/^https:\/\/[^/]+\.gov(\/|$)/);
+      }
     }
   });
 });
