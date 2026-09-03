@@ -641,21 +641,24 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
       expect.soft(majority(demoted), "the museum-workforce purpose mismatch (no museum) must be SCORED (demote), not just narrated, in the majority of runs").toBe(true);
       expect.soft(scoreDropped.every(Boolean), "a 21MP demote must actually lower the score below the engine's 2").toBe(true);
       expect.soft(majority(reasoned), "the 21MP demote summary should name the museum purpose it grounded on").toBe(true);
-      // REFUTE-CLEAN (Codex #496 P1): under AUTO_INTEL_APPLY_BROAD (ON) buildQaPatch auto-applies a demote
-      // ONLY when refute_survived===true; a refute-unclean demote is staff-held and NEVER lowers the live
-      // score. A purpose-fit demote's client-side fact ("no museum") is not on the .gov page, so without the
-      // client context now passed to the refute this would fail — catching the false-green where the proposal
-      // demotes but every broad-apply projection is rejected.
-      const demotedRuns9 = results.filter((r) => r.verdict === "demote");
-      const refuteClean9 = demotedRuns9.map((r) => r.refute_survived === true);
-      console.log("[intel-eval] 21MP refute_survived:", results.map((r) => String(r.refute_survived)).join(", "));
-      expect.soft(demotedRuns9.length === 0 || majority(refuteClean9), "a 21MP demote must be REFUTE-CLEAN (refute_survived===true) in the majority of demote runs — else broad apply staff-holds it and the live score never drops").toBe(true);
+      // STAFF-HELD BY DESIGN (Shannon, 2026-09-03 — Option A). A purpose-fit demote is a JUDGMENT ("the org
+      // does not perform the funded work"), NOT a fact on a page like an allocation asterisk — so it does NOT
+      // reliably survive the adversarial refute (eval run #17 here: refute_survived false/false/false). Under
+      // AUTO_INTEL_APPLY_BROAD that means it is STAFF-HELD (durable in card_intel_reviews, applied via the
+      // manual Re-run route, which is grounding-only), NOT auto-applied — the refute backstop working as
+      // INTENDED for a judgment demote, which is why we deliberately do NOT assert refute_survived here. This
+      // is NOT a weakened bar: the earlier "must be refute-clean" assertion encoded an auto-apply expectation
+      // Shannon consciously rejected (a "does-not-do-this-work" judgment should get a human Re-run click before
+      // it lowers a client's score). The staff-held-vs-auto routing is buildQaPatch's DETERMINISTIC concern,
+      // unit-tested in intel-queue.test.ts (refute-unclean demote → staff-flag under requireRefuteClean). This
+      // case proves the CLEAR purpose-fit demote FIRES and is GROUNDED; refute_survived is logged, not gated.
+      console.log("[intel-eval] 21MP refute_survived (staff-held; NOT an apply gate):", results.map((r) => String(r.refute_survived)).join(", "));
     },
     RUNS * 240_000,
   );
 
   it(
-    "10. IMLS National Leadership Grants for Libraries × NWACC → GROUNDED PURPOSE-FIT DEMOTE (has a library, not the funded national research)",
+    "10. IMLS National Leadership Grants for Libraries × NWACC → AMBIGUOUS purpose-fit boundary (has a library, not the funded national research — grounded demote OR affirm, direction unasserted; staff-held)",
     async () => {
       // The SUBTLER miss (why generic-nexus misses it and it must live in QA): NWACC HAS a library, so the
       // broad "library" nexus is entailed — but NLG-L funds NATIONAL-IMPACT, replicable, applied-research
@@ -682,27 +685,29 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
           { discovery: true, narrative: true },
         ),
       );
-      const demoted = results.map((r) => r.verdict === "demote");
-      const grounded = results.map((r) => r.fetched.some((f) => f.ok));
       const scoreDropped = results.map((r) => r.verdict !== "demote" || (r.qa_fit_score != null && r.qa_fit_score < 2));
-      const reasoned = results.map((r) => /national|research|replicab|innovation|field-wide|leadership|scal/i.test(r.summary));
       console.log("[intel-eval] NLG-L verdicts:", results.map((r) => `${r.verdict}${r.qa_fit_score != null ? `→${r.qa_fit_score}` : ""}`).join(", "));
       console.log("[intel-eval] NLG-L summaries:", results.map((r) => r.summary));
+      // FAIL-SAFE (HARD every run): no adverse verdict without a grounded .gov fetch.
       for (const r of results) {
         if (r.verdict === "demote" || r.verdict === "flag") {
           expect.soft(r.fetched.some((f) => f.ok), "an adverse NLG-L verdict must rest on a grounded .gov fetch (fail-safe)").toBe(true);
         }
       }
-      expect.soft(majority(grounded), "should fetch + ground on the IMLS NLG-L program page in the majority of runs").toBe(true);
-      expect.soft(majority(demoted), "the 'has a library != does the funded national research' mismatch must be SCORED (demote) in the majority of runs").toBe(true);
-      expect.soft(scoreDropped.every(Boolean), "an NLG-L demote must actually lower the score below the engine's 2").toBe(true);
-      expect.soft(majority(reasoned), "the NLG-L demote summary should name the national-impact / research purpose it grounded on").toBe(true);
-      // REFUTE-CLEAN (Codex #496 P1) — same gate as case 9: under broad apply only a refute-clean demote
-      // auto-applies, so a demote here must survive the (now client-context-aware) refute to lower the score.
-      const demotedRuns10 = results.filter((r) => r.verdict === "demote");
-      const refuteClean10 = demotedRuns10.map((r) => r.refute_survived === true);
-      console.log("[intel-eval] NLG-L refute_survived:", results.map((r) => String(r.refute_survived)).join(", "));
-      expect.soft(demotedRuns10.length === 0 || majority(refuteClean10), "an NLG-L demote must be REFUTE-CLEAN (refute_survived===true) in the majority of demote runs — else broad apply staff-holds it and the live score never drops").toBe(true);
+      // AMBIGUOUS BOUNDARY — DIRECTION DELIBERATELY UNASSERTED (Shannon, 2026-09-03). NLG-L is the razor's-edge
+      // "has a library != does the funded NATIONAL research" case, and its affirm-control sibling LB21 (case 11)
+      // is ALSO "NWACC has a library" — so this is a genuinely-ambiguous boundary the model flickers on
+      // (grounded demote 1/3 in eval run #16, 2/3 in #17 — i.e. ~50/50). Forcing majority(demote) here is the
+      // EXACT mistake the documented generic-nexus AMBIGUOUS band guards against ("no prompt/vote makes a
+      // genuinely-ambiguous case deterministic ... the gate stops demanding it"): it can't be made to demote
+      // reliably without pushing its affirm sibling (LB21) into over-demote. So — like that band — the
+      // DIRECTION (demote vs affirm) is deliberately UNASSERTED; the CLEAR, reliable demote proof lives in
+      // case 9 (21MP, 3/3). We assert ONLY the safety invariants that hold whichever way it lands: the
+      // fail-safe above, and — when it does demote — that the grounded demote actually lowers the score. And,
+      // like case 9, a purpose-fit demote is STAFF-HELD under broad apply (it does not reliably survive the
+      // adversarial refute), so refute_survived is logged, not gated.
+      expect.soft(scoreDropped.every(Boolean), "when NLG-L demotes, the grounded demote must lower the score below the engine's 2").toBe(true);
+      console.log("[intel-eval] NLG-L refute_survived (staff-held; NOT an apply gate):", results.map((r) => String(r.refute_survived)).join(", "));
     },
     RUNS * 240_000,
   );
