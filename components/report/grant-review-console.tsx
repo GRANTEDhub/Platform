@@ -207,20 +207,37 @@ export function GrantReviewConsole({
       <div className="relative flex-1 overflow-hidden px-[30px] pb-5 pt-[18px]">
         <Decor ghost={fitScore} />
 
-        {/* grid-template-rows: minmax(0,1fr) is REQUIRED, not tidiness. Without it the
-            implicit row sizes to max-content, both columns grow past the frame, and the
-            page scrolls — which is the one thing this screen may not do. */}
-        <div className="relative z-[1] grid h-full grid-rows-[minmax(0,1fr)] gap-[18px] xl:grid-cols-[1fr_386px]">
-          <div className="flex min-h-0 min-w-0 flex-col gap-3.5">
-            <OverviewCard
-              tags={tags}
-              agencyLine={agencyLine}
-              title={title}
-              summary={summary}
-              meta={meta}
-              eligibility={eligibility}
-              allowableUses={allowableUses}
-            />
+        {/* Layout: a TOP ROW (overview tile | the pinned Fit-Score/decision rail) over a FULL-WIDTH
+            IntellEngine Intel row. grid-template-rows [auto minmax(0,1fr)] — row 1 sizes to the taller of
+            the two top cells; row 2 fills the remainder, and the Intel box's own overflow-y-auto valve
+            keeps the PAGE from scrolling (the locked zero-scroll invariant — the frame may not scroll). */}
+        <div className="relative z-[1] grid h-full grid-rows-[auto_minmax(0,1fr)] gap-[18px] xl:grid-cols-[1fr_386px]">
+          {/* Top-left: the overview tile, now carrying the Key-Details column (Move #1). */}
+          <OverviewCard
+            tags={tags}
+            agencyLine={agencyLine}
+            title={title}
+            summary={summary}
+            meta={meta}
+            eligibility={eligibility}
+            allowableUses={allowableUses}
+            keyDetails={keyDetails}
+            sourceUrl={sourceUrl}
+          />
+
+          {/* Top-right: the ONLY thing pinned to the rail now — Fit Score + Your Decision + the
+              IntellEngine buttons. Key Details moved into the overview tile; the award map into the Intel
+              box; so the rail no longer trails a half-empty column beside the Intel prose. */}
+          <div className="flex min-h-0 flex-col gap-3.5">
+            <ScoreCard score={fitScore} verdict={verdict} consequence={consequence} feedback={feedback} decision={decision} />
+            {concept}
+          </div>
+
+          {/* Full-width IntellEngine Intel (Move #3): spans both columns so no empty rail sits beside it,
+              and the Program Award History rides INSIDE it (Move #2) as a small secondary band below the
+              prose — it is context, not a headline. The wrapper is the grid item; RationaleCard's own
+              flex-1 section fills it, and its internal scroll valve is unchanged. */}
+          <div className="flex min-h-0 min-w-0 flex-col xl:col-span-2">
             <RationaleCard
               rationale={rationale}
               factors={factors}
@@ -229,24 +246,8 @@ export function GrantReviewConsole({
               qaVerdict={qaVerdict}
               recommendation={recommendation}
               verdictLead={verdictLead}
+              programAward={programAward}
             />
-          </div>
-
-          <div className="flex min-h-0 flex-col gap-3.5">
-            <ScoreCard score={fitScore} verdict={verdict} consequence={consequence} feedback={feedback} decision={decision} />
-            {concept}
-            {/* When the program-award map is present it is the flex-1 element that fills the column, so
-                Key Details sizes to its content (grow={false}); the map absorbs the height the Key Details
-                box used to balloon into. No map → Key Details keeps flex-1 as before. */}
-            <KeyDetailsCard details={keyDetails} sourceUrl={sourceUrl} grow={!programAward} />
-            {programAward && (
-              <ProgramAwardMap
-                compact
-                grantId={programAward.grantId}
-                initialSummary={programAward.summary}
-                hasCfda={programAward.hasCfda}
-              />
-            )}
           </div>
         </div>
       </div>
@@ -288,6 +289,8 @@ export function OverviewCard({
   meta,
   eligibility,
   allowableUses,
+  keyDetails = null,
+  sourceUrl = null,
 }: {
   tags: { label: string; role: boolean }[];
   agencyLine: string | null;
@@ -296,6 +299,13 @@ export function OverviewCard({
   meta: ReviewMeta[];
   eligibility: EligibilityVerdict;
   allowableUses: AllowableUses | null;
+  // Optional Key-Details column (opportunity #, CFDA, cost sharing, days remaining, official-posting
+  // link). Passed ONLY by GrantReviewConsole — the overview tile then splits into Uses-of-funds (left) |
+  // Key Details (right), filling the whitespace right of Uses. Absent on /grants/[id] (Ledger) and
+  // /intel/[id] (prospect), which feed OverviewCard grant-level props via buildGrantSummary and pass
+  // neither — so those surfaces render exactly as before (Uses full-width, no Key-Details column).
+  keyDetails?: ReviewKeyDetail[] | null;
+  sourceUrl?: string | null;
 }) {
   return (
     <section className={`shrink-0 ${CARD} px-5 pb-[15px] pt-4`}>
@@ -327,7 +337,25 @@ export function OverviewCard({
 
       <ProgrammeSummary raw={summary} />
 
-      <AllowableUsesBlock value={allowableUses} />
+      {/* Move #1: when the console passes Key Details, the overview tile splits — Uses of funds on the
+          LEFT (its lines wrap within the column, lossless: no truncation, no char cap), the Key-Details
+          box on the RIGHT, filling the whitespace right of Uses. When Uses is absent (the portal while
+          ALLOWABLE_USES_CLIENT_VISIBLE is off), Key Details stands alone rather than a 2-col with an empty
+          half. When no Key Details is passed (Ledger / prospect), Uses stays full-width, byte-identical. */}
+      {keyDetails && keyDetails.length > 0 ? (
+        allowableUses != null ? (
+          <div className="mt-[13px] grid gap-x-6 gap-y-3 border-t border-hairline-strong pt-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,290px)] lg:items-start">
+            <AllowableUsesBlock value={allowableUses} embedded />
+            <KeyDetailsCard details={keyDetails} sourceUrl={sourceUrl} grow={false} />
+          </div>
+        ) : (
+          <div className="mt-[13px] border-t border-hairline-strong pt-3">
+            <KeyDetailsCard details={keyDetails} sourceUrl={sourceUrl} grow={false} />
+          </div>
+        )
+      ) : (
+        <AllowableUsesBlock value={allowableUses} />
+      )}
 
       <MetaTiles meta={meta} />
 
@@ -496,7 +524,7 @@ function ProgrammeSummary({ raw }: { raw: string | null }) {
 // a reader who wants to check a line can hover it, and a reader who does not is spared a
 // block quote per bullet. Staff get the same treatment as clients here on purpose — if the
 // quote is not good enough to show a client, it should not have passed the gate.
-function AllowableUsesBlock({ value }: { value: AllowableUses | null }) {
+function AllowableUsesBlock({ value, embedded = false }: { value: AllowableUses | null; embedded?: boolean }) {
   if (!value) return null;
 
   // Two lists off the one column: what funds MAY be spent on (navy checks) and what they may NOT
@@ -505,8 +533,11 @@ function AllowableUsesBlock({ value }: { value: AllowableUses | null }) {
   const allowed = value.items.filter((i) => i.kind !== "not_allowed");
   const notAllowed = value.items.filter((i) => i.kind === "not_allowed");
 
+  // `embedded`: the caller (the overview tile's Uses | Key-Details 2-col) already owns the top rule and
+  // spacing, so drop this block's own `mt/border-t/pt`. Standalone (the Ledger / prospect surfaces, where
+  // Uses is full-width) keeps them — byte-identical to before.
   return (
-    <div className="mt-[13px] border-t border-hairline-strong pt-3">
+    <div className={embedded ? "" : "mt-[13px] border-t border-hairline-strong pt-3"}>
       {/* orange rule + orangeDeep label, matching the mock. The check icons are navy, not the
           mock's teal (STAGE.approved) — a "you may spend on this" tick is not a pipeline stage. */}
       <div className="flex items-center gap-3">
@@ -584,6 +615,7 @@ function RationaleCard({
   qaVerdict,
   recommendation,
   verdictLead,
+  programAward = null,
 }: {
   rationale: { lead: string | null; blocking: string | null; mitigation: string | null; narrative?: string | null };
   factors: FitFactorView;
@@ -592,6 +624,11 @@ function RationaleCard({
   qaVerdict: QaVerdictView | null;
   recommendation: Recommendation | null;
   verdictLead: VerdictLead | null;
+  // Program Award History (Move #2): a small secondary band at the FOOT of this box, below the prose +
+  // factor table — context, not a headline. Present only when the grant has a CFDA to profile; null →
+  // no band, the box is exactly today's. The map is a one-color gradient, so it stays small/muted (the
+  // colour-blind rule: never lean on the gradient to carry meaning).
+  programAward?: { grantId: string; summary: ProgramAwardSummary | null; hasCfda: boolean } | null;
 }) {
   // Last-line seat-code scrub. The matcher's internal codes ("S0_1", "S1_2", the truncated "S0_") live in
   // the engine's why-this-org / consortium prose, which feed rationale.lead + rationale.mitigation here.
@@ -683,6 +720,22 @@ function RationaleCard({
                 is the verdict. A PASS is staff-only and never reaches here on the client side (the page
                 passes null). */}
             {recommendation && <RecommendationLine rec={recommendation} spaced={!!(lead || hasProse)} />}
+            {/* Move #2: Program Award History, tucked below the prose — small + secondary (context, not a
+                headline). It sits in the prose column, so the one-color gradient map is constrained to
+                ~44% width and stays modest; the colour-blind rule holds (never lean on the gradient). It
+                rides the middle's overflow-y-auto valve, so it cannot break the zero-scroll frame. Null →
+                nothing renders and the box is exactly today's. */}
+            {programAward && (
+              <div className="mt-4 border-t border-hairline-strong pt-3">
+                <p className={`mb-2 ${EYEBROW} tracking-[0.12em]`}>Program award history</p>
+                <ProgramAwardMap
+                  compact
+                  grantId={programAward.grantId}
+                  initialSummary={programAward.summary}
+                  hasCfda={programAward.hasCfda}
+                />
+              </div>
+            )}
           </div>
         )}
         {showLeft && <span aria-hidden="true" className="w-px shrink-0 self-stretch bg-brand-navy/[0.08]" />}
