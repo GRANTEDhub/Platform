@@ -137,6 +137,22 @@ const card = (over: Partial<IntelCard> = {}): IntelCard => ({
   ...over,
 });
 
+// NorthWest Arkansas Community College — the PURPOSE-FIT fixture (Shannon's live audit target). One
+// confirmed identity that makes the four purpose-fit cases below discriminate: an entity-eligible IHE that
+// GENUINELY performs technical/workforce education (its core mission) and runs a routine campus library,
+// but has NO museum and NO research capacity. So: museum-workforce → demote (no museum), national library
+// research → demote (a library ≠ national research), library workforce → affirm (genuine overlap),
+// technician education → affirm (its core work, even as a smaller competitor).
+const nwacc = (over: Partial<Client> = {}): Client =>
+  client({
+    name: "NorthWest Arkansas Community College",
+    org_type: "higher_education",
+    location_state: "AR",
+    known_constraints:
+      "Two-year, teaching-focused community college. Core mission is associate-degree career/technical and workforce education. Runs a routine campus library serving students and the local community. NO museum, no museum collection, no curatorial staff. No research faculty, no sponsored-research office, no principal investigators; not a research institution. No graduate library-science (MLIS) program.",
+    ...over,
+  });
+
 async function runN<T>(n: number, fn: () => Promise<T>): Promise<T[]> {
   // Small serial loop — the eval is low-volume and a live model; no need to hammer concurrently.
   const out: T[] = [];
@@ -568,6 +584,181 @@ describe.skipIf(!RUN)("IntellEngine QA eval (live Opus + fetch)", () => {
         expect.soft(narrativeNoSeatCodes(r.narrative!), "the fossil-energy narrative must carry no internal seat/role codes (S0_2, P0)").toBe(true);
       }
       expect.soft(narrated.length === 0 || majority(bothHalves), "the narrative should distinguish entity-eligibility from the research-capacity gap (both halves) in the majority of narrated runs").toBe(true);
+    },
+    RUNS * 200_000,
+  );
+
+  // ── PURPOSE-FIT cohort (entity-eligible but does not perform the funded work) ─────────────────────────
+  // The engine scores ENTITY eligibility as if it were PROGRAM fit: an eligible IHE lands a conditional 2 on
+  // a program whose funded activity the org does not perform. The second QA error class SCORES that mismatch
+  // (demote), not just narrates it. Two DEMOTE cases (a clear one and the subtler "has-the-asset" one) and
+  // two AFFIRM controls (a genuine same-domain overlap, and the competitive-weakness guard) prove the class
+  // catches the miss WITHOUT over-demoting a real fit — the top risk, since broad apply runs it unattended.
+  // IMLS is neither seeded (allocation-sources) nor formula-tagged, so grounding is via the fetched
+  // source_url (real, live imls.gov / nsf.gov program pages) — the CFDA numbers are illustrative only.
+
+  it(
+    "9. IMLS 21st Century Museum Professionals × NWACC → GROUNDED PURPOSE-FIT DEMOTE (no museum)",
+    async () => {
+      // Shannon's live audit: the engine scored a conditional 2 on ENTITY eligibility (an IHE is eligible),
+      // but the program funds the MUSEUM WORKFORCE and NWACC has no museum. QA must FETCH the IMLS program
+      // page, read the museum-workforce purpose, and SCORE the mismatch (demote) — not merely narrate it (the
+      // exact "sees it, says it, doesn't score it" failure this fixes). Bar mirrors JAG #1 / VOCA #4: a
+      // GROUNDED demote in the majority of runs; the fail-safe (no adverse without a grounded fetch) is HARD.
+      const results = await runN(RUNS, () =>
+        runIntelReview(
+          card({
+            fit_score: 2,
+            proposed_role: "Prime",
+            why_this_org: ["Institution of higher education; entity-eligible for the program."],
+            reasoning_context: { fit_score_derivation: "IHEs are eligible; scored a conditional 2 on entity eligibility." },
+          }),
+          grant({
+            title: "21st Century Museum Professionals Program",
+            funder: "Institute of Museum and Library Services",
+            assistance_listings: [{ number: "45.301", program_title: "21st Century Museum Professionals" }],
+            program_type: "Competitive Grant",
+            eligible_entity_types: ["institutions of higher education", "museums", "nonprofit organizations"],
+            source_url: "https://www.imls.gov/find-funding/funding-opportunities/grant-programs/21st-century-museum-professionals-program",
+          }),
+          nwacc(),
+          { discovery: true, narrative: true },
+        ),
+      );
+      const demoted = results.map((r) => r.verdict === "demote");
+      const grounded = results.map((r) => r.fetched.some((f) => f.ok));
+      const reasoned = results.map((r) => /museum/i.test(r.summary));
+      // A demote from the engine's 2 must actually LOWER the score (Shannon's point: score it, don't narrate).
+      const scoreDropped = results.map((r) => r.verdict !== "demote" || (r.qa_fit_score != null && r.qa_fit_score < 2));
+      console.log("[intel-eval] 21MP verdicts:", results.map((r) => `${r.verdict}${r.qa_fit_score != null ? `→${r.qa_fit_score}` : ""}`).join(", "));
+      console.log("[intel-eval] 21MP summaries:", results.map((r) => r.summary));
+      for (const r of results) {
+        if (r.verdict === "demote" || r.verdict === "flag") {
+          expect.soft(r.fetched.some((f) => f.ok), "an adverse 21MP verdict must rest on a grounded .gov fetch (fail-safe)").toBe(true);
+        }
+      }
+      expect.soft(majority(grounded), "should fetch + ground on the IMLS museum-program page in the majority of runs").toBe(true);
+      expect.soft(majority(demoted), "the museum-workforce purpose mismatch (no museum) must be SCORED (demote), not just narrated, in the majority of runs").toBe(true);
+      expect.soft(scoreDropped.every(Boolean), "a 21MP demote must actually lower the score below the engine's 2").toBe(true);
+      expect.soft(majority(reasoned), "the 21MP demote summary should name the museum purpose it grounded on").toBe(true);
+    },
+    RUNS * 240_000,
+  );
+
+  it(
+    "10. IMLS National Leadership Grants for Libraries × NWACC → GROUNDED PURPOSE-FIT DEMOTE (has a library, not the funded national research)",
+    async () => {
+      // The SUBTLER miss (why generic-nexus misses it and it must live in QA): NWACC HAS a library, so the
+      // broad "library" nexus is entailed — but NLG-L funds NATIONAL-IMPACT, replicable, applied-research
+      // library innovation, which a community-college library doing routine local service does not do.
+      // "Has a library" ≠ "does the funded national research." Grounded on the imls.gov program page, which
+      // states the replicable / national-implementation / applied-research purpose.
+      const results = await runN(RUNS, () =>
+        runIntelReview(
+          card({
+            fit_score: 2,
+            proposed_role: "Prime",
+            why_this_org: ["Institution of higher education with a library; entity-eligible for the program."],
+            reasoning_context: { fit_score_derivation: "IHEs / libraries are eligible; scored a conditional 2 — the college has a library." },
+          }),
+          grant({
+            title: "National Leadership Grants for Libraries",
+            funder: "Institute of Museum and Library Services",
+            assistance_listings: [{ number: "45.312", program_title: "National Leadership Grants" }],
+            program_type: "Competitive Grant",
+            eligible_entity_types: ["libraries", "institutions of higher education", "nonprofit organizations"],
+            source_url: "https://www.imls.gov/find-funding/funding-opportunities/grant-programs/national-leadership-grants-for-libraries",
+          }),
+          nwacc(),
+          { discovery: true, narrative: true },
+        ),
+      );
+      const demoted = results.map((r) => r.verdict === "demote");
+      const grounded = results.map((r) => r.fetched.some((f) => f.ok));
+      const scoreDropped = results.map((r) => r.verdict !== "demote" || (r.qa_fit_score != null && r.qa_fit_score < 2));
+      const reasoned = results.map((r) => /national|research|replicab|innovation|field-wide|leadership|scal/i.test(r.summary));
+      console.log("[intel-eval] NLG-L verdicts:", results.map((r) => `${r.verdict}${r.qa_fit_score != null ? `→${r.qa_fit_score}` : ""}`).join(", "));
+      console.log("[intel-eval] NLG-L summaries:", results.map((r) => r.summary));
+      for (const r of results) {
+        if (r.verdict === "demote" || r.verdict === "flag") {
+          expect.soft(r.fetched.some((f) => f.ok), "an adverse NLG-L verdict must rest on a grounded .gov fetch (fail-safe)").toBe(true);
+        }
+      }
+      expect.soft(majority(grounded), "should fetch + ground on the IMLS NLG-L program page in the majority of runs").toBe(true);
+      expect.soft(majority(demoted), "the 'has a library != does the funded national research' mismatch must be SCORED (demote) in the majority of runs").toBe(true);
+      expect.soft(scoreDropped.every(Boolean), "an NLG-L demote must actually lower the score below the engine's 2").toBe(true);
+      expect.soft(majority(reasoned), "the NLG-L demote summary should name the national-impact / research purpose it grounded on").toBe(true);
+    },
+    RUNS * 240_000,
+  );
+
+  it(
+    "11. IMLS Laura Bush 21st Century Librarian × NWACC → NOT DEMOTED (genuine library-workforce overlap — the no-false-demote control)",
+    async () => {
+      // The control Shannon designated (LB21 is correctly a conditional 2). LB21 funds the LIBRARY workforce —
+      // developing library staff and services — which a college that employs library staff can genuinely
+      // pursue. GENUINE purpose overlap, NOT a categorical mismatch, so QA must NOT demote it. This is the
+      // boundary that fails if the purpose-fit class over-fires on "not the strongest fit."
+      const results = await runN(RUNS, () =>
+        runIntelReview(
+          card({
+            fit_score: 2,
+            proposed_role: "Prime",
+            why_this_org: ["Institution of higher education with a library and library staff; entity-eligible."],
+            reasoning_context: { fit_score_derivation: "IHEs / libraries are eligible; scored a conditional 2 on genuine library-workforce overlap." },
+          }),
+          grant({
+            title: "Laura Bush 21st Century Librarian Program",
+            funder: "Institute of Museum and Library Services",
+            assistance_listings: [{ number: "45.313", program_title: "Laura Bush 21st Century Librarian" }],
+            program_type: "Competitive Grant",
+            eligible_entity_types: ["libraries", "institutions of higher education", "nonprofit organizations"],
+            source_url: "https://www.imls.gov/find-funding/funding-opportunities/grant-programs/laura-bush-21st-century-librarian-program",
+          }),
+          nwacc(),
+          { discovery: false },
+        ),
+      );
+      const notDemoted = results.map((r) => r.verdict !== "demote");
+      console.log("[intel-eval] LB21 verdicts:", results.map((r) => `${r.verdict}${r.qa_fit_score != null ? `→${r.qa_fit_score}` : ""}`).join(", "));
+      console.log("[intel-eval] LB21 summaries:", results.map((r) => r.summary));
+      expect.soft(majority(notDemoted), "LB21 funds the library workforce — a college with a library has genuine purpose overlap; QA must not demote a genuine (if conditional) fit").toBe(true);
+    },
+    RUNS * 200_000,
+  );
+
+  it(
+    "12. NSF Advanced Technological Education × NWACC → NOT DEMOTED (performs the funded work, just a smaller competitor — the competitive-weakness control)",
+    async () => {
+      // THE case that fails if QA demotes on COMPETITIVE WEAKNESS instead of CATEGORICAL mismatch. Two-year
+      // community colleges are the CORE ATE audience and technician/workforce education is NWACC's core
+      // mission — it genuinely PERFORMS the funded activity. A smaller, less-resourced applicant than a large
+      // college is still a real applicant: "weaker applicant" is NOT "does not do this work." QA must AFFIRM
+      // (not demote). A different funder (NSF) than the IMLS cases, so the affirm cohort isn't one program.
+      const results = await runN(RUNS, () =>
+        runIntelReview(
+          card({
+            fit_score: 2,
+            proposed_role: "Prime",
+            why_this_org: ["Two-year community college running associate-degree technical/workforce programs; core ATE audience."],
+            reasoning_context: { fit_score_derivation: "Two-year IHEs are the core ATE audience; scored a conditional 2." },
+          }),
+          grant({
+            title: "Advanced Technological Education (ATE)",
+            funder: "National Science Foundation",
+            assistance_listings: [{ number: "47.076", program_title: "Advanced Technological Education" }],
+            program_type: "Competitive Grant",
+            eligible_entity_types: ["two-year institutions of higher education", "community colleges", "universities"],
+            source_url: "https://www.nsf.gov/funding/opportunities/ate-advanced-technological-education",
+          }),
+          nwacc(),
+          { discovery: false },
+        ),
+      );
+      const notDemoted = results.map((r) => r.verdict !== "demote");
+      console.log("[intel-eval] ATE verdicts:", results.map((r) => `${r.verdict}${r.qa_fit_score != null ? `→${r.qa_fit_score}` : ""}`).join(", "));
+      console.log("[intel-eval] ATE summaries:", results.map((r) => r.summary));
+      expect.soft(majority(notDemoted), "NWACC genuinely performs technician education (ATE's core purpose) — a smaller competitor is a real applicant; QA must NOT demote on competitive weakness").toBe(true);
     },
     RUNS * 200_000,
   );
