@@ -1,5 +1,4 @@
 import type { FactorRating, FactorScores } from "@/types/database";
-import { FIT_BAND } from "@/lib/report/shape";
 import { stripSeatCodes } from "@/lib/grants/fit-narrative";
 
 // The six fit factors as the grant-review screen reads them.
@@ -12,8 +11,8 @@ import { stripSeatCodes } from "@/lib/grants/fit-narrative";
 // EXACTLY ONE ROW LIGHTS. The screen's whole argument is that this grant is capped for
 // one reason, and the eye should find that reason without reading. Lighting every weak
 // factor would make a highlight into a background. So `lead` is the single worst factor
-// and everything else renders neutral — but `weakCount` reports the truth, so the copy
-// can say "and two others" rather than the page quietly implying there is only one.
+// and everything else renders neutral — but the copy still NAMES the other weak factors
+// (blockingReason) rather than quietly implying the lead is the only problem.
 
 export type FactorKey = keyof FactorScores;
 
@@ -58,8 +57,9 @@ export interface FitFactorView {
   factors: ReviewFactor[];
   // The single worst factor, or null when nothing is below strong (or nothing is scored).
   lead: ReviewFactor | null;
-  // How many factors are weak or unassessed, INCLUDING the lead. The copy needs this to
-  // avoid implying the lead is the only problem when it is not.
+  // How many factors are genuinely WEAK (rating "weak"), INCLUDING the lead. "insufficient_data"
+  // ("Not assessed") is deliberately EXCLUDED: not knowing a factor is not the same as scoring
+  // short on it, and folding the two let a never-scored factor read as a fit shortfall.
   weakCount: number;
   // True when the card predates per-factor scoring entirely (#105).
   unscored: boolean;
@@ -100,7 +100,7 @@ export function viewFitFactors(scores: FactorScores | null): FitFactorView {
   return {
     factors,
     lead,
-    weakCount: scored.filter((f) => f.rating === "weak" || f.rating === "insufficient_data").length,
+    weakCount: scored.filter((f) => f.rating === "weak").length,
     unscored: scored.length === 0,
   };
 }
@@ -119,12 +119,18 @@ export function blockingReason(
   fitScore: 1 | 2 | 3,
   opts: { calibrated: boolean },
 ): string | null {
+  void fitScore; // the displayed score is already shown by the bars; the sentence names the blocker, not the band
   if (opts.calibrated) {
     return "Adjusted below the machine score based on past feedback on similar grants.";
   }
   if (!view.lead?.rationale) return null;
-  const others = Math.max(0, view.weakCount - (view.lead ? 1 : 0));
-  return `Capped at ${FIT_BAND[fitScore].label.toLowerCase()} on ${view.lead.label.toLowerCase()} — ${
-    view.lead.rationale
-  }${others > 0 ? ` (${others} other factor${others === 1 ? "" : "s"} also scored short.)` : ""}`;
+  // Gate-first: lead with the limiting factor and its reason — no band word glued to an analyst
+  // factor label ("Capped at conditional on match / cost-share —"), which read as machine output.
+  // The other genuinely-WEAK factors are NAMED (not a bare count that pointed at nothing), and a
+  // "Not assessed" factor is never listed — it is unknown, not a shortfall.
+  const alsoShort = view.factors
+    .filter((f) => !f.lead && f.rating === "weak")
+    .map((f) => f.label.toLowerCase());
+  const tail = alsoShort.length > 0 ? ` Also short: ${alsoShort.join(", ")}.` : "";
+  return `Capped by ${view.lead.label.toLowerCase()}: ${view.lead.rationale}${tail}`;
 }

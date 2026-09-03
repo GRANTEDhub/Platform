@@ -40,3 +40,30 @@ describe("toReportItem — QA verdict client/staff gate", () => {
     expect(toReportItem(row(), "staff").qa).toBeNull();
   });
 });
+
+describe("toReportItem — award count (numAwards)", () => {
+  const grants = (over: Record<string, unknown> = {}): ReportCardRow["grants"] =>
+    ({
+      title: "T",
+      funder: "F",
+      submission_deadline: null,
+      award_range_min: null,
+      award_range_max: null,
+      award_range_is_estimate: null,
+      focus_areas: [],
+      ...over,
+    }) as ReportCardRow["grants"];
+
+  it("carries the stored count verbatim (surfaced on the report card facts strip)", () => {
+    expect(toReportItem(row({ grants: grants({ num_awards: "8" }) }), "staff").numAwards).toBe("8");
+    // A range string is passed through unchanged — no numeric parsing.
+    expect(toReportItem(row({ grants: grants({ num_awards: "8 to 12" }) }), "staff").numAwards).toBe("8 to 12");
+  });
+
+  it("empty/whitespace count → null (never '0'), and an absent field → null", () => {
+    expect(toReportItem(row({ grants: grants({ num_awards: "   " }) }), "staff").numAwards).toBeNull();
+    expect(toReportItem(row({ grants: grants() }), "staff").numAwards).toBeNull();
+    // A null grants join is also safe.
+    expect(toReportItem(row(), "staff").numAwards).toBeNull();
+  });
+});

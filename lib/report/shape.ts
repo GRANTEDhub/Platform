@@ -135,6 +135,10 @@ export interface ReportItem {
   focusAreas: string[];
   awardRange: string;
   awardIsEstimate: boolean;
+  // The expected number of awards, verbatim from the stored grant field ("8", "8 to 12", ""). Rendered
+  // as-is with a non-numeric fallback — never a computed "N awards" phrase, so an empty value shows the
+  // fallback, never "0 awards".
+  numAwards: string | null;
   deadlineLabel: string;
   deadlineDaysLeft: number | null;
   deadlineSoon: boolean; // within 30 days (and not past)
@@ -243,7 +247,7 @@ export type ReportCardRow = Pick<
         Grant,
         "title" | "funder" | "submission_deadline" | "award_range_min" | "award_range_max" | "award_range_is_estimate" | "focus_areas"
       > &
-        Partial<Pick<Grant, "total_funding" | "cost_share" | "geographic_eligibility" | "eligible_entity_types" | "description" | "fon" | "source_url">>)
+        Partial<Pick<Grant, "total_funding" | "cost_share" | "geographic_eligibility" | "eligible_entity_types" | "description" | "fon" | "source_url" | "num_awards">>)
     | null;
 };
 
@@ -273,6 +277,7 @@ export function toReportItem(card: ReportCardRow, side: ReadSide): ReportItem {
     focusAreas: (g?.focus_areas ?? []).slice(0, 2),
     awardRange: formatAwardRange(g?.award_range_min, g?.award_range_max),
     awardIsEstimate: !!g?.award_range_is_estimate,
+    numAwards: g?.num_awards?.trim() || null,
     deadlineLabel: formatDeadlineShort(g?.submission_deadline),
     deadlineDaysLeft: days,
     deadlineSoon: days !== null && days >= 0 && days <= 30,
