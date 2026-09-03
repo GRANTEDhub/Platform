@@ -545,8 +545,8 @@ export function ClientForm({
                   <span>
                     <span className="font-medium">Include research grants for this client</span>
                     <span className="block text-xs text-muted-foreground">
-                      Off by default. GRANTED excludes research funders (e.g. NIH) from matching and the
-                      forecast horizon. Check this only if this organization pursues federal research grants.
+                      Off by default. GRANTED excludes research funders (e.g. NIH) from the forecast horizon.
+                      Check this only if this organization pursues federal research grants.
                     </span>
                   </span>
                 </label>
