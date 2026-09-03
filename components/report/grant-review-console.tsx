@@ -220,6 +220,8 @@ export function GrantReviewConsole({
               meta={meta}
               eligibility={eligibility}
               allowableUses={allowableUses}
+              keyDetails={keyDetails}
+              sourceUrl={sourceUrl}
             />
             <RationaleCard
               rationale={rationale}
@@ -235,10 +237,10 @@ export function GrantReviewConsole({
           <div className="flex min-h-0 flex-col gap-3.5">
             <ScoreCard score={fitScore} verdict={verdict} consequence={consequence} feedback={feedback} decision={decision} />
             {concept}
-            {/* When the program-award map is present it is the flex-1 element that fills the column, so
-                Key Details sizes to its content (grow={false}); the map absorbs the height the Key Details
-                box used to balloon into. No map → Key Details keeps flex-1 as before. */}
-            <KeyDetailsCard details={keyDetails} sourceUrl={sourceUrl} grow={!programAward} />
+            {/* Program Award History lives at the foot of the rail. Key details moved OUT of the rail into
+                the overview tile as text (Move #1), so the map is now the rail's sole filler: its compact
+                shell is flex-1 and absorbs the column's spare height when a CFDA is present. No CFDA → the
+                rail sizes to the score + concept (no filler; the branded ground shows below). */}
             {programAward && (
               <ProgramAwardMap
                 compact
@@ -288,6 +290,8 @@ export function OverviewCard({
   meta,
   eligibility,
   allowableUses,
+  keyDetails = null,
+  sourceUrl = null,
 }: {
   tags: { label: string; role: boolean }[];
   agencyLine: string | null;
@@ -296,9 +300,15 @@ export function OverviewCard({
   meta: ReviewMeta[];
   eligibility: EligibilityVerdict;
   allowableUses: AllowableUses | null;
+  // Key details (opportunity #, CFDA, cost sharing, days remaining) + the official-posting link, rendered
+  // as TEXT beside Uses of funds (Move #1) rather than a boxed tile in the rail. Optional, default null, so
+  // the Ledger (/grants/[id]) and prospect (/intel/[id]) callers — which build props via buildGrantSummary
+  // and pass neither — render exactly as before (Uses full-width, no Key details column).
+  keyDetails?: ReviewKeyDetail[] | null;
+  sourceUrl?: string | null;
 }) {
   return (
-    <section className={`shrink-0 ${CARD} px-5 pb-[15px] pt-4`}>
+    <section className={`shrink-0 ${CARD} px-5 pb-[18px] pt-4`}>
       <div className="flex flex-wrap items-center gap-2">
         {/* The role tag (Prime / Partner) is the navy pill; focus-area tags are the light
             neutral chip. Keyed on the role flag, NOT index — proposed_role is nullable, so an
@@ -327,7 +337,31 @@ export function OverviewCard({
 
       <ProgrammeSummary raw={summary} />
 
-      <AllowableUsesBlock value={allowableUses} />
+      {/* Move #1: Key details ride BESIDE Uses of funds as TEXT (not a boxed tile), a thin grey vertical
+          divider between — the same hairline-strong the card's horizontal section rules use, so it reads as
+          part of the overview. Present only when the page passes keyDetails (the report + client portal);
+          the Ledger/prospect callers pass none and keep the full-width Uses block exactly as before. When
+          Uses is null (portal, allowable-uses flag off) but key details exist, key details take the full
+          width with no divider. Below lg the two columns stack and the divider becomes a horizontal rule. */}
+      {keyDetails && keyDetails.length > 0 ? (
+        allowableUses ? (
+          <div className="mt-4 grid gap-x-5 gap-y-3 border-t border-hairline-strong pt-[14px] lg:grid-cols-[minmax(0,1fr)_minmax(0,266px)]">
+            {/* No lg:items-start — the columns STRETCH to the row's height so the Key Details column's
+                left-border divider spans the full height of the taller Uses list, not just its own ~4 rows
+                (a half-height rule reads as broken). Content in each column stays top-aligned regardless. */}
+            <AllowableUsesBlock value={allowableUses} embedded />
+            <div className="border-t border-hairline-strong pt-[14px] lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
+              <KeyDetailsList details={keyDetails} sourceUrl={sourceUrl} />
+            </div>
+          </div>
+        ) : (
+          <div className="mt-4 border-t border-hairline-strong pt-[14px]">
+            <KeyDetailsList details={keyDetails} sourceUrl={sourceUrl} />
+          </div>
+        )
+      ) : (
+        <AllowableUsesBlock value={allowableUses} />
+      )}
 
       <MetaTiles meta={meta} />
 
@@ -357,14 +391,14 @@ function MetaTiles({ meta }: { meta: ReviewMeta[] }) {
   const isDeadline = (m: ReviewMeta) => m.label.trim().toLowerCase() === "deadline";
   const ordered = [...meta.filter((m) => !isDeadline(m)), ...meta.filter(isDeadline)];
   return (
-    <div className="mt-[11px] grid grid-cols-2 gap-1.5 border-t border-hairline-strong pt-[10px] sm:grid-cols-3 lg:grid-cols-5">
+    <div className="mt-4 grid grid-cols-2 gap-2 border-t border-hairline-strong pt-[13px] sm:grid-cols-3 lg:grid-cols-5">
       {ordered.map((m) => {
         const overdue = m.tone === "danger";
         const accent = isDeadline(m) && !overdue;
         return (
           <div
             key={m.label}
-            className={`relative overflow-hidden rounded-sharp border px-[12px] py-[8px] ${
+            className={`relative overflow-hidden rounded-sharp border px-[13px] py-[10px] ${
               overdue || accent ? "border-transparent" : "border-edge bg-brand-cream"
             }`}
             style={overdue ? { backgroundColor: BRAND.reject } : accent ? { backgroundColor: BRAND.navy } : undefined}
@@ -416,7 +450,7 @@ function MetaTiles({ meta }: { meta: ReviewMeta[] }) {
 function EligibilityCallout({ eligibility }: { eligibility: EligibilityVerdict }) {
   const hasLimits = eligibility.excluded || eligibility.reasons.length > 0;
   return (
-    <div className="mt-[10px] rounded-sharp border border-edge bg-brand-cream/60 px-4 py-[9px]">
+    <div className="mt-4 rounded-sharp border border-edge bg-brand-cream/60 px-4 py-[11px]">
       <div className="flex flex-wrap items-center gap-2.5">
         <EligibilityChip verdict={eligibility} />
         {eligibility.matchedType && (
@@ -496,7 +530,7 @@ function ProgrammeSummary({ raw }: { raw: string | null }) {
 // a reader who wants to check a line can hover it, and a reader who does not is spared a
 // block quote per bullet. Staff get the same treatment as clients here on purpose — if the
 // quote is not good enough to show a client, it should not have passed the gate.
-function AllowableUsesBlock({ value }: { value: AllowableUses | null }) {
+function AllowableUsesBlock({ value, embedded = false }: { value: AllowableUses | null; embedded?: boolean }) {
   if (!value) return null;
 
   // Two lists off the one column: what funds MAY be spent on (navy checks) and what they may NOT
@@ -505,8 +539,11 @@ function AllowableUsesBlock({ value }: { value: AllowableUses | null }) {
   const allowed = value.items.filter((i) => i.kind !== "not_allowed");
   const notAllowed = value.items.filter((i) => i.kind === "not_allowed");
 
+  // embedded = rendered inside the shared Uses/Key-details wrapper (Move #1), which already owns the top
+  // hairline rule + top margin, so drop this block's own. Standalone (Ledger/prospect, no key details) keeps
+  // them, byte-identical to before.
   return (
-    <div className="mt-[13px] border-t border-hairline-strong pt-3">
+    <div className={embedded ? "" : "mt-[13px] border-t border-hairline-strong pt-3"}>
       {/* orange rule + orangeDeep label, matching the mock. The check icons are navy, not the
           mock's teal (STAGE.approved) — a "you may spend on this" tick is not a pipeline stage. */}
       <div className="flex items-center gap-3">
@@ -942,25 +979,30 @@ function ScoreCard({
   );
 }
 
-function KeyDetailsCard({
-  details,
-  sourceUrl,
-  grow = true,
-}: {
-  details: ReviewKeyDetail[];
-  sourceUrl: string | null;
-  // grow=true (no map): flex-1 + justify-around fills the column, as before. grow=false (map present):
-  // size to content so the map below is the element that absorbs the column's spare height.
-  grow?: boolean;
-}) {
+// Key details as TEXT (Move #1) — a sibling of the Uses-of-funds list, not a boxed tile. Same orange-rule
+// header treatment as Uses so the two columns read as parallel sections of the overview; label/value rows
+// as plain text (values are short — opp #, CFDA, cost sharing, days remaining — so they wrap rather than
+// truncate, with the full value on hover); the official-posting link closes the block.
+function KeyDetailsList({ details, sourceUrl }: { details: ReviewKeyDetail[]; sourceUrl: string | null }) {
   return (
-    <section className={`flex min-h-0 ${grow ? "flex-1" : "shrink-0"} flex-col ${CARD} px-[17px] py-3.5`}>
-      <p className={`${EYEBROW} tracking-[0.13em]`}>Key details</p>
-      <div className={`flex flex-col py-1 ${grow ? "flex-1 justify-around" : "gap-2.5"}`}>
+    <div>
+      <div className="flex items-center gap-3">
+        <span aria-hidden="true" className="h-[3px] w-9 shrink-0 bg-brand-orange" />
+        <h2 className="text-[10px] font-bold uppercase tracking-[0.12em]" style={{ color: BRAND.orangeDeep }}>
+          Key details
+        </h2>
+      </div>
+      <div className="mt-[9px] space-y-[5px]">
         {details.map((d) => (
-          <div key={d.label} className="flex items-center justify-between gap-2.5">
-            <span className="shrink-0 text-[12px] text-ink-muted">{d.label}</span>
-            <span className="min-w-0 truncate text-[12px] font-semibold tabular-nums text-brand-navy" title={d.value}>
+          <div
+            key={d.label}
+            className="flex items-baseline justify-between gap-3 text-[13px] leading-[1.45]"
+          >
+            <span className="shrink-0 text-ink-muted">{d.label}</span>
+            <span
+              className="min-w-0 text-right font-semibold tabular-nums text-brand-navy [text-wrap:pretty]"
+              title={d.value}
+            >
               {d.value}
             </span>
           </div>
@@ -971,13 +1013,13 @@ function KeyDetailsCard({
           href={sourceUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-[7px] border-t border-hairline-strong pt-[11px] text-[12px] font-semibold transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60"
+          className="mt-[11px] inline-flex items-center gap-[7px] text-[12px] font-semibold transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60"
           style={{ color: BRAND.orangeDeep }}
         >
           <ExternalLink className="h-[13px] w-[13px]" aria-hidden="true" />
           View the official posting
         </a>
       )}
-    </section>
+    </div>
   );
 }
