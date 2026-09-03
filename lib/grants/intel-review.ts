@@ -187,14 +187,24 @@ THE ERROR YOU EXIST TO CATCH: for formula / allocation programs, ENTITY-TYPE eli
 
 BUT DO NOT OVER-CORRECT — AFFIRM THE LEGITIMATE PRIME. A formula program's pass-through structure disqualifies the entity BENEATH it, not the one AT THE TOP of it. The DESIGNATED RECIPIENT is a genuine direct/prime applicant and you must AFFIRM it: the Governor-designated STATE ADMINISTERING AGENCY (the SAA), or a jurisdiction that is DIRECTLY ALLOCATED and may file on its OWN — i.e. NOT marked disparate / "asterisk" and NOT required to apply jointly. DEMOTE ONLY an entity that is NOT such a direct applicant — a nonprofit or other organization that participates as a SUBGRANTEE through the state agency; a disparate / "asterisk" jurisdiction that must apply JOINTLY (through a single fiscal agent, the county, or the SAA) — the asterisk / joint-application requirement is the disqualifier, NOT whether an allocation amount is shown for it, since a disparate unit can still carry its own formula figure; a non-entitlement locality that participates through the state. The pass-through merely EXISTING is not a demote reason — WHO the client is on the allocation source is. Before you demote, confirm against that source which side of this line the client falls on: the SAA, or a directly-allocated jurisdiction that files on its own, is the PRIME to affirm; a disparate/'asterisk' unit or a subgrantee is the demote. Affirming a genuine direct recipient is exactly as important as catching a genuine sub; a formula program is not a blanket demote.
 
+A SECOND ERROR YOU EXIST TO CATCH — PURPOSE-FIT MISMATCH: the client is ENTITY-ELIGIBLE but does not perform the specific ACTIVITY the program funds, or does not serve the POPULATION it funds. A NOFO can make an org's entity TYPE eligible (any institution of higher education, any nonprofit) while the program funds a SPECIFIC kind of work. The engine reads the eligible entity type and scores a fit; the NOFO's stated PURPOSE shows the org does not do this work. Examples: a museum-workforce program (funds the professional development of museum staff / the museum field) matched to a community college that has NO museum; a national library-RESEARCH / field-innovation program (funds replicable, national-impact models and applied research) matched to a college whose library does routine LOCAL service. Read the NOFO, name the SPECIFIC funded activity or population, and compare it to the client's CONFIRMED identity.
+
+THIS TEST IS CATEGORICAL, NOT COMPETITIVE — draw the line sharply, because a wrong demote here lowers a REAL match:
+- DEMOTE only when the client's CONFIRMED identity does NOT perform the funded activity / serve the funded population AT ALL. Name the funded activity from the NOFO you read AND the client fact that rules it out (no museum; no research faculty; does not serve this population).
+- A BROAD ASSET IS NOT THE FUNDED WORK. Having a library is not doing national library-innovation research; having a campus is not running a museum; being adjacent to a field is not doing the specific funded activity. Do not let "the org has X" stand in for "the org does the funded work."
+- NEVER demote on ENTITY-ELIGIBILITY ALONE. That the client is "only" an eligible IHE / nonprofit is not a mismatch — it is the baseline the engine already scored.
+- NEVER demote on COMPETITIVE WEAKNESS. A client that GENUINELY performs the funded activity but is smaller, newer, lacks the strongest track record, or faces stiff competition is a real applicant — AFFIRM it. "Weaker applicant" is not "does not do this work." If the client performs the funded activity / serves the funded population, AFFIRM even when it is not the strongest applicant.
+- The corrected factor for a purpose mismatch is mission and/or program_history (what the org actually does), NOT eligibility or seat_role (which the allocation error above uses).
+This is grounded exactly like the allocation error: you must FETCH the NOFO / program source and read the funded purpose there — never demote a purpose-fit from memory.
+
 HOW TO VERIFY:
 - You have ONE tool: fetch_grant_source, a read-only GET of a public U.S. .gov page. Use it. Read the authoritative source(s) you are given and the NOFO's own source URL. Follow a .gov link to the specific allocation / eligibility table when the landing page points to one.
 - Verify against what you ACTUALLY READ, never from memory. If you cannot retrieve a source you need to decide, say so plainly — do NOT infer or reconstruct an allocation reality you could not read.
 - Judge from the client's CONFIRMED identity (entity type, location, service area, rules) and the grant's authoritative rules. Ignore any distilled narrative.
 
 YOUR VERDICT (state it explicitly at the end):
-- AFFIRM: the engine's score and eligibility read hold up — the client genuinely fills the role the score implies.
-- DEMOTE: the engine over-credited; the client cannot participate the way the score implies (e.g. can't prime — asterisk/disparate jurisdiction, MOU-partner-only). Name the score it SHOULD be (1, 2, or 3, lower than the engine's), and quote the source that establishes it.
+- AFFIRM: the engine's score and eligibility read hold up — the client is a directly-eligible recipient AND it genuinely performs the funded activity / serves the funded population (even if it is not the strongest applicant).
+- DEMOTE: the engine over-credited. Either the client cannot participate the way the score implies (an allocation error — can't prime; asterisk/disparate jurisdiction; MOU-partner-only), OR the client is entity-eligible but does not perform the funded activity / serve the funded population (a purpose-fit mismatch). Name the score it SHOULD be (1, 2, or 3, lower than the engine's), and quote the source that establishes it.
 - FLAG: a real ELIGIBILITY concern worth surfacing, but not a clean score proposal. A metadata / record defect on an OTHERWISE-ELIGIBLE recipient — a wrong program-type label, a mismatched CFDA in the record, a sibling program run by a different agency — is NOT an eligibility concern: AFFIRM the recipient and note the defect in your analysis; do not FLAG or demote on it.
 - UNVERIFIED: you could not retrieve a source you needed to decide. This is an honest outcome, not a failure to hide.
 
@@ -208,7 +218,7 @@ Use ONLY what the analysis states — do not add findings it did not make.
 
 GROUNDING (this is how you avoid hallucinating a concern): every evidence item's source_url MUST be a page the analysis ACTUALLY FETCHED (it appears in the "PAGES FETCHED" list). Quote the most specific span you can from that page — but you do NOT need a clean contiguous verbatim sentence: allocation tables, PDFs, and structured pages rarely yield one, and a correct read of a table is still a real finding. Give the closest supporting text or a faithful paraphrase of the exact cell/row, plus its source_url. What you may NOT do is cite a page the analysis never fetched, or a claim the fetched pages do not support. If the analysis reached an adverse read (demote/flag) but fetched no relevant page to back it, return verdict "unverified".
 
-For "demote", qa_fit_score is the lower score the analysis named (1-3) and qa_factor_scores contains ONLY the factor(s) the finding actually changes — usually eligibility and/or seat_role. Do NOT restate the factors you did not change: you were not given the engine's per-factor ratings, so inventing them would fabricate data. Code merges your changed factor(s) onto the engine's real factors. Each changed factor's rationale is the plain-language "why". For "affirm"/"flag"/"unverified", leave qa_fit_score and qa_factor_scores null.
+For "demote", qa_fit_score is the lower score the analysis named (1-3) and qa_factor_scores contains ONLY the factor(s) the finding actually changes — usually eligibility and/or seat_role for an allocation/eligibility miss, or mission and/or program_history for a purpose-fit miss (the org does not perform the funded activity / serve the funded population). Do NOT restate the factors you did not change: you were not given the engine's per-factor ratings, so inventing them would fabricate data. Code merges your changed factor(s) onto the engine's real factors. Each changed factor's rationale is the plain-language "why". For "affirm"/"flag"/"unverified", leave qa_fit_score and qa_factor_scores null.
 
 confidence is your honest self-assessment of how solid the verdict is given what you read (high/medium/low).`;
 
@@ -241,7 +251,7 @@ const SUBMIT_TOOL = {
       qa_factor_scores: {
         type: ["object", "null"],
         description:
-          "For 'demote' ONLY: an object with JUST the factor(s) your finding changes (usually eligibility and/or seat_role), so the card's factor bars stay consistent with the new score. Do NOT include factors you did not change — code merges these onto the engine's real factors. Null for affirm/flag/unverified.",
+          "For 'demote' ONLY: an object with JUST the factor(s) your finding changes (usually eligibility and/or seat_role for an allocation/eligibility miss, or mission and/or program_history for a purpose-fit miss), so the card's factor bars stay consistent with the new score. Do NOT include factors you did not change — code merges these onto the engine's real factors. Null for affirm/flag/unverified.",
         properties: {
           seat_role: FACTOR_SCHEMA,
           eligibility: FACTOR_SCHEMA,
@@ -277,9 +287,13 @@ const SUBMIT_TOOL = {
 // evidence actually support lowering the score? It is deliberately biased toward NOT supporting, so a
 // confident misread of a page (the failure the quote-guard was a proxy for) is caught. supported=true only
 // when the fetched pages clearly back the concern.
-const REFUTE_SYSTEM_PROMPT = `You are a skeptical reviewer checking an IntellEngine QA verdict before it changes a client's score. The QA pass proposed lowering (DEMOTE) or flagging this match. Your job is to try to REFUTE that concern using ONLY the fetched page text provided — do not use outside knowledge or memory.
+const REFUTE_SYSTEM_PROMPT = `You are a skeptical reviewer checking an IntellEngine QA verdict before it changes a client's score. The QA pass proposed lowering (DEMOTE) or flagging this match. Your job is to try to REFUTE that concern using ONLY (a) the fetched .gov page text provided and (b) the client's CONFIRMED identity provided below — do NOT use any outside knowledge or memory of the program or the organization. Both are ground truth: the fetched page is the authoritative program source; the client's confirmed identity is the client record (entity type, service area, known constraints), not a guess.
 
-Return supported=true ONLY if the fetched pages CLEARLY establish the concern (e.g. the allocation table really does list this jurisdiction as an asterisk/disparate unit that cannot prime). Return supported=false if the fetched pages do NOT establish it — including when the basis for the concern is not actually present in the fetched text, when the pages are ambiguous, or when they contradict the concern. When in doubt, supported=false: a score change must rest on what the sources actually show. Give a one-sentence reason.`;
+The two concern types rest on different evidence — check the RIGHT source for each:
+- ALLOCATION / eligibility (a disparate / "asterisk" jurisdiction or a subgrantee that cannot prime): the FETCHED PAGES must establish the client is on the sub / ineligible side of the allocation source.
+- PURPOSE-FIT (the client is entity-eligible but does not perform the funded ACTIVITY / serve the funded POPULATION): this rests on TWO facts and BOTH must hold — the FUNDED PURPOSE must be established by the fetched page (this program funds museum-workforce / national library research / etc.), AND the client's LACK of that activity or population must be established by the client's CONFIRMED identity (the record shows no museum / no research capacity / does not serve this population). One without the other does NOT support the concern.
+
+Return supported=true ONLY if the provided evidence CLEARLY establishes the concern. Return supported=false if it does not — including when the fetched pages do not establish the funded purpose, when the client's confirmed identity does not establish the missing activity/population, when the evidence is ambiguous, or when it contradicts the concern. When in doubt, supported=false: a score change must rest on what the sources and the confirmed record actually show. Give a one-sentence reason.`;
 
 const REFUTE_TOOL = {
   name: "submit_refute_check",
@@ -708,6 +722,12 @@ async function realRefute(
   fetchedBodies: string[],
   engineFitScore: number | null,
   timeoutMs: number,
+  // The client's CONFIRMED identity (clientContextForJudge). A PURPOSE-FIT demote rests on TWO facts — the
+  // funded purpose (on the fetched page) AND the client's lack of that activity (in the client record, NOT
+  // on a .gov program page) — so without this the refute cannot establish the client-side half and correctly
+  // returns supported=false, which under broad apply (requireRefuteClean) would leave every purpose-fit
+  // demote staff-held and never lower the score (Codex #496 P1). It is ground truth, not memory.
+  clientContext: string,
 ): Promise<RefuteResult> {
   const anthropic = getAnthropicClient();
   // Give EACH fetched page an equal share of the refute budget rather than slicing the fetch-order
@@ -737,7 +757,10 @@ async function realRefute(
       messages: [
         {
           role: "user",
-          content: `THE QA CONCERN TO CHECK:\n${claim}\n\nFETCHED PAGE TEXT (the only evidence you may use):\n${pages}`,
+          content:
+            `THE QA CONCERN TO CHECK:\n${claim}\n\n` +
+            `CLIENT (confirmed identity — ground truth for the client-side half of a purpose-fit concern):\n${clientContext}\n\n` +
+            `FETCHED PAGE TEXT (the authoritative program source; the ONLY web evidence you may use):\n${pages}`,
         },
       ],
     },
@@ -757,8 +780,9 @@ export interface RunIntelOptions {
   // Injected seams for deterministic tests (no live model / network).
   callModel?: CallModel;
   structure?: (analysisText: string, audit: FetchAuditRecord[], timeoutMs: number) => Promise<RawVerdict | null>;
-  // The phase-3 adversarial refute (correctness half of the grounding guard). Injected in tests.
-  refute?: (parsed: RawVerdict, fetchedBodies: string[], engineFitScore: number | null, timeoutMs: number) => Promise<RefuteResult>;
+  // The phase-3 adversarial refute (correctness half of the grounding guard). Injected in tests. Takes the
+  // client's confirmed identity so a purpose-fit demote's client-side fact (e.g. "no museum") is verifiable.
+  refute?: (parsed: RawVerdict, fetchedBodies: string[], engineFitScore: number | null, timeoutMs: number, clientContext: string) => Promise<RefuteResult>;
   fetcher?: (url: string) => Promise<FetchResult>;
   deadlineMs?: number;
   // Web-search discovery (INTEL_WEB_SEARCH_ENABLED). Defaults to the flag; overridable in tests so the
@@ -858,7 +882,9 @@ export async function runIntelReview(
       const remaining = INTEL_TOTAL_BUDGET_MS - (clock() - startMs);
       if (remaining >= MIN_REFUTE_BUDGET_MS) {
         try {
-          const r = await refute(parsed, fetchedBodies, card.fit_score, remaining);
+          // Pass the client's CONFIRMED identity so the refute can verify a purpose-fit demote's client-side
+          // fact (e.g. "no museum") — it is not on any .gov program page (Codex #496 P1).
+          const r = await refute(parsed, fetchedBodies, card.fit_score, remaining, clientContextForJudge(client));
           refuteSurvived = r.supported; // true = survived, false = genuinely refuted by the second read
         } catch {
           refuteSurvived = null; // COULD NOT COMPLETE the check (threw) — distinct from a genuine refutation;
