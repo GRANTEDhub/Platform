@@ -345,7 +345,10 @@ export function OverviewCard({
           width with no divider. Below lg the two columns stack and the divider becomes a horizontal rule. */}
       {keyDetails && keyDetails.length > 0 ? (
         allowableUses ? (
-          <div className="mt-4 grid gap-x-5 gap-y-3 border-t border-hairline-strong pt-[14px] lg:grid-cols-[minmax(0,1fr)_minmax(0,266px)] lg:items-start">
+          <div className="mt-4 grid gap-x-5 gap-y-3 border-t border-hairline-strong pt-[14px] lg:grid-cols-[minmax(0,1fr)_minmax(0,266px)]">
+            {/* No lg:items-start — the columns STRETCH to the row's height so the Key Details column's
+                left-border divider spans the full height of the taller Uses list, not just its own ~4 rows
+                (a half-height rule reads as broken). Content in each column stays top-aligned regardless. */}
             <AllowableUsesBlock value={allowableUses} embedded />
             <div className="border-t border-hairline-strong pt-[14px] lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
               <KeyDetailsList details={keyDetails} sourceUrl={sourceUrl} />
