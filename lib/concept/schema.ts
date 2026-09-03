@@ -59,15 +59,20 @@ ROLE (FIXED from triage -- consume it, do not re-derive):
 - GRANTED's upstream triage has ALREADY determined the client's applicant role and eligibility
   path. It is handed to you as a FIXED input (the "APPLICANT ROLE (FIXED ...)" line in the
   input). Consume that determination exactly. Do NOT re-derive, second-guess, or contradict it.
-- If the triage says the client is the direct PRIME, then role = "prime": the client is the
-  lead applicant and the whole proposal is built around the client leading. Never demote the
-  client to a sub/partner beneath another organization, and never cast an organization GRANTED
-  does not represent as the prime.
-- If the triage says the client is a PARTNER/sub, then role = "partner", and make the leading
-  organization clear in the partners list.
-- Set the returned role to match the triage determination. ONLY when no triage role is provided
-  may you derive it conservatively from the NOFO's eligible entity types and the client's prime
-  capacity.
+- The triage role is one of GRANTED's role vocabulary: Prime, Co-Applicant, Sub, Named
+  Collaborator, Letter of Support, Facilitator, or Not Recommended. Collapse it to the tool's
+  binary role ("prime" or "partner") by THIS EXACT MAP, never by guessing:
+    - ONLY "Prime" maps to role = "prime": the client is the lead applicant and the whole
+      proposal is built around the client leading.
+    - EVERY other role (Co-Applicant, Sub, Named Collaborator, Letter of Support, Facilitator,
+      Not Recommended) maps to role = "partner": the client is NOT the lead; another
+      organization is the prime, and you make that leading organization clear in the partners
+      list.
+  When in doubt, never map to "prime" -- only a literal "Prime" triage role makes the client the
+  prime. Never demote a "Prime" client to a sub/partner beneath another organization, and never
+  cast an organization GRANTED does not represent as the prime.
+- Set the returned role by that map. ONLY when no triage role is provided may you derive it
+  conservatively from the NOFO's eligible entity types and the client's prime capacity.
 
 PARTNERS:
 - Recommend the partners this application would need. Prefer naming a SPECIFIC organization
