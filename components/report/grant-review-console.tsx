@@ -208,11 +208,15 @@ export function GrantReviewConsole({
       <div className="relative flex-1 overflow-hidden px-[30px] pb-5 pt-[18px]">
         <Decor ghost={fitScore} />
 
-        {/* Layout: a TOP ROW (overview tile | the pinned Fit-Score/decision rail) over a FULL-WIDTH
-            IntellEngine Intel row. grid-template-rows [auto minmax(0,1fr)] — row 1 sizes to the taller of
-            the two top cells; row 2 fills the remainder, and the Intel box's own overflow-y-auto valve
-            keeps the PAGE from scrolling (the locked zero-scroll invariant — the frame may not scroll). */}
-        <div className="relative z-[1] grid h-full grid-rows-[auto_minmax(0,1fr)] gap-[18px] xl:grid-cols-[1fr_386px]">
+        {/* Layout. AT xl (≥1280px, 2 cols): a TOP ROW (overview tile | the pinned Fit-Score/decision rail)
+            over a FULL-WIDTH IntellEngine Intel row — xl:grid-rows-[auto minmax(0,1fr)] with the Intel box
+            (col-span-2) in the bounded row 2. BELOW xl (1 col, the 3 items STACK): grid-rows-[auto auto
+            minmax(0,1fr)] so the Intel box — the 3rd stacked item — still lands in a BOUNDED flexible row
+            and its own overflow-y-auto valve engages. This responsive row template is load-bearing: a
+            2-track template below xl would drop the Intel box into an UNBOUNDED implicit auto row, its
+            valve would never fire, and long content would be clipped by the outer overflow-hidden — a
+            break of the locked zero-scroll invariant (the frame may not scroll). */}
+        <div className="relative z-[1] grid h-full grid-rows-[auto_auto_minmax(0,1fr)] gap-[18px] xl:grid-cols-[1fr_386px] xl:grid-rows-[auto_minmax(0,1fr)]">
           {/* Top-left: the overview tile, now carrying the Key-Details column (Move #1). */}
           <OverviewCard
             tags={tags}
