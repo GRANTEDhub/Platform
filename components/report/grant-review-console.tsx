@@ -173,9 +173,10 @@ export function GrantReviewConsole({
   concept: React.ReactNode | null;
   keyDetails: ReviewKeyDetail[];
   sourceUrl: string | null;
-  // The program-award map for the right column (#107 resurfaced). Present only when the grant has a CFDA
-  // to profile; when present it becomes the flex-1 element that fills the column, so Key Details sizes to
-  // content instead of ballooning under the tall IntellEngine box. Null → today's layout, no map.
+  // The program-award map (#107 resurfaced). Present only when the grant has a CFDA to profile; passed
+  // straight through to RationaleCard, where it renders as a small secondary band at the FOOT of the
+  // IntellEngine Intel box, below the prose + factor table (Move #2, 2026-09-03) — no longer in the right
+  // rail. Null → no band, the box is exactly today's.
   programAward?: { grantId: string; summary: ProgramAwardSummary | null; hasCfda: boolean } | null;
 }) {
   return (
