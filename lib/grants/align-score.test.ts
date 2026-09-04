@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   matchDirectAlignEnabled,
   matchFunderCapEnabled,
+  alignModelRequest,
   seatRefForRole,
   buildAlignUserContent,
   finalizeAlignMatch,
@@ -378,6 +379,28 @@ describe("direct-alignment scorer -- funder cap", () => {
     expect(matchFunderCapEnabled()).toBe(false);
     process.env[CAP_FLAG] = "true";
     expect(matchFunderCapEnabled()).toBe(true);
+  });
+
+  it("model contract is byte-identical OFF: cap-OFF omits the classification ask + tool fields; cap-ON only ADDS them", () => {
+    const off = alignModelRequest(false);
+    const on = alignModelRequest(true);
+    // OFF: the base prompt + tool carry no funder-cap classification (the model never sees it).
+    expect(off.system).not.toContain("is_money_mover");
+    expect(off.tool.input_schema.properties).not.toHaveProperty("is_money_mover");
+    expect(off.tool.input_schema.required).not.toContain("is_money_mover");
+    expect(off.tool.input_schema.required).not.toContain("concrete_role_on_this_grant");
+    // ON: the ask + both required fields are present.
+    expect(on.system).toContain("is_money_mover");
+    expect(on.system).toContain("concrete_role_on_this_grant");
+    expect(on.tool.input_schema.properties).toHaveProperty("is_money_mover");
+    expect(on.tool.input_schema.properties).toHaveProperty("concrete_role_on_this_grant");
+    expect(on.tool.input_schema.required).toContain("is_money_mover");
+    expect(on.tool.input_schema.required).toContain("concrete_role_on_this_grant");
+    // ON is a strict SUPERSET of OFF: the base prompt is a prefix, and every base required key is retained.
+    expect(on.system.startsWith(off.system)).toBe(true);
+    for (const k of off.tool.input_schema.required) {
+      expect(on.tool.input_schema.required).toContain(k);
+    }
   });
 
   it("FIRES: flag on + can_prime=FALSE money-mover + no concrete role -> caps fit_score to 1 with an explainable note", () => {

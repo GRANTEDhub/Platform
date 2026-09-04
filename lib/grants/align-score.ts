@@ -49,8 +49,9 @@ export function matchDirectAlignEnabled(): boolean {
 // alone could not enforce (across two prompt iterations the model kept handing a topical
 // conservation-foundation-on-a-conservation-grant a consolation partner-2 despite the no-go rule). The
 // SEMANTIC read stays with the model (is_money_mover / concrete_role_on_this_grant booleans on the submit
-// tool); code owns only the CONSEQUENCE. OFF is byte-identical: finalizeAlignMatch never reads the flag, so
-// fit_score is exactly the model's.
+// tool); code owns only the CONSEQUENCE. OFF is byte-identical at BOTH ends (Codex #505 P2): realRunModel
+// hands the model the pre-PR system prompt + tool schema (no classification ask, no extra required fields),
+// and finalizeAlignMatch never reads the flag -- so an align-ON/cap-OFF world scores exactly as before this PR.
 export function matchFunderCapEnabled(): boolean {
   return process.env.MATCH_FUNDER_CAP_ENABLED === "true";
 }
@@ -105,9 +106,17 @@ HONESTY + OUTPUT
 - If the client carries authoritative Matching Rules or code-enforced Hard Constraints, apply them BEFORE the general logic; they override a general conclusion.
 - draft_outreach_email: body only, no "Subject:" line, no sender signature, greet the actual Primary Contact by name (or "Hello,"), no em-dashes.
 - factor_scores: rate each of the 6 factors strong|moderate|weak|insufficient_data with a one-line rationale drawn from the reasoning you already did (invent no new analysis). The keys are fixed: seat_role (the appropriateness/strength of the assigned role), eligibility (entity-type + program-scope), geographic, program_history, cost_share, mission (funded-purpose alignment). Use insufficient_data when the client data a factor needs is blank -- never guess. Descriptive only; it does not change fit_score.
-- is_money_mover / concrete_role_on_this_grant (two booleans, ALWAYS set): record the QUESTION 2 funder read. is_money_mover=TRUE when the client's OWN function is to raise/hold/grant/fiscal-sponsor money rather than implement the funded work (foundation/grantmaker/funder/fiscal sponsor, typically can_prime=FALSE); FALSE for a direct implementer. concrete_role_on_this_grant=TRUE ONLY when it fills a real partner/sub slot, a fiscal-sponsor tie to a NAMED implementer applying to THIS grant, or an enumerated supporting function it genuinely performs matching the funded activity -- NEVER a shared topic/mission overlap, same-theme grantmaking, or "could partner." When genuinely unsure: is_money_mover TRUE and concrete_role_on_this_grant FALSE (the safe direction). Set these to match your QUESTION 2 reasoning; still score fit_score by the rules above.
 
 Return the evaluation via the submit_match tool exactly once.`;
+
+// Appended to ALIGN_SYSTEM_PROMPT ONLY when MATCH_FUNDER_CAP_ENABLED is on, so flag-OFF is byte-identical at
+// the MODEL CONTRACT level, not just in finalizeAlignMatch: the model never sees the classification ask and
+// never emits the two extra fields (Codex #505 P2 -- the cap's kill-switch must roll back the request body
+// too, or an align-ON/cap-OFF world still shifts scoring at temp 0). Mirrors the subseat-routing addendum
+// pattern (a prompt block appended only when its flag is on; OFF yields the unchanged base prompt).
+const FUNDER_CAP_INSTRUCTION = `
+
+- is_money_mover / concrete_role_on_this_grant (two booleans, ALWAYS set): record the QUESTION 2 funder read. is_money_mover=TRUE when the client's OWN function is to raise/hold/grant/fiscal-sponsor money rather than implement the funded work (foundation/grantmaker/funder/fiscal sponsor, typically can_prime=FALSE); FALSE for a direct implementer. concrete_role_on_this_grant=TRUE ONLY when it fills a real partner/sub slot, a fiscal-sponsor tie to a NAMED implementer applying to THIS grant, or an enumerated supporting function it genuinely performs matching the funded activity -- NEVER a shared topic/mission overlap, same-theme grantmaking, or "could partner." When genuinely unsure: is_money_mover TRUE and concrete_role_on_this_grant FALSE (the safe direction). Set these to match your QUESTION 2 reasoning; still score fit_score by the rules above.`;
 
 // The submit tool -- the SAME MatchResult schema the occupancy path emits, MINUS seat_ref / entity_required
 // (the model no longer picks a seat; code derives seat_ref from the role). Keeping every other field means
@@ -183,20 +192,6 @@ const SUBMIT_ALIGN_TOOL = {
       suppress_reason: { type: ["string", "null"] },
       disqualified: { type: "boolean" },
       disqualify_reason: { type: ["string", "null"] },
-      // Funder-cap classification (read by the deterministic cap in finalizeAlignMatch when
-      // MATCH_FUNDER_CAP_ENABLED is on; NOT persisted on MatchResult). The MODEL owns the semantic read; code
-      // owns the consequence. Both default to the SAFE direction on genuine ambiguity (money-mover TRUE,
-      // concrete-role FALSE) so an unsure case still engages the cap rather than escaping it.
-      is_money_mover: {
-        type: "boolean",
-        description:
-          "TRUE if this client's OWN function is to RAISE, HOLD, GRANT, or FISCAL-SPONSOR money (a foundation, grantmaker, funder, or fiscal sponsor) rather than to PERFORM the funded activity itself (typically can_prime=FALSE). FALSE for an organization that directly implements/delivers the funded work. When genuinely unsure, return TRUE (the safe direction: it only engages the cap, which then still requires no concrete role).",
-      },
-      concrete_role_on_this_grant: {
-        type: "boolean",
-        description:
-          "TRUE ONLY if the client fills a CONCRETE role on THIS SPECIFIC grant: a real partner/sub slot it actually fills, a fiscal-sponsor tie to a NAMED implementer applying to this grant, or an enumerated supporting function it genuinely performs that matches the funded activity. A SHARED TOPIC / MISSION / same-theme grantmaking overlap is NOT a role; 'could partner' is NOT a role. When genuinely unsure, return FALSE (the safe direction: ambiguity must not rescue a money-mover from the cap).",
-      },
     },
     required: [
       "fit_score",
@@ -212,6 +207,37 @@ const SUBMIT_ALIGN_TOOL = {
       "factor_scores",
       "suppressed",
       "disqualified",
+    ],
+  },
+} as const;
+
+// The two funder-cap classification fields (read by the deterministic cap in finalizeAlignMatch; NOT persisted
+// on MatchResult). The MODEL owns the semantic read; code owns the consequence. Both default to the SAFE
+// direction on genuine ambiguity (money-mover TRUE, concrete-role FALSE) so an unsure case still engages the
+// cap rather than escaping it. Kept OUT of the base tool and added ONLY when MATCH_FUNDER_CAP_ENABLED is on
+// (Codex #505 P2: byte-identical OFF must cover the tool schema too, not just finalizeAlignMatch).
+const FUNDER_CAP_TOOL_PROPS = {
+  is_money_mover: {
+    type: "boolean",
+    description:
+      "TRUE if this client's OWN function is to RAISE, HOLD, GRANT, or FISCAL-SPONSOR money (a foundation, grantmaker, funder, or fiscal sponsor) rather than to PERFORM the funded activity itself (typically can_prime=FALSE). FALSE for an organization that directly implements/delivers the funded work. When genuinely unsure, return TRUE (the safe direction: it only engages the cap, which then still requires no concrete role).",
+  },
+  concrete_role_on_this_grant: {
+    type: "boolean",
+    description:
+      "TRUE ONLY if the client fills a CONCRETE role on THIS SPECIFIC grant: a real partner/sub slot it actually fills, a fiscal-sponsor tie to a NAMED implementer applying to this grant, or an enumerated supporting function it genuinely performs that matches the funded activity. A SHARED TOPIC / MISSION / same-theme grantmaking overlap is NOT a role; 'could partner' is NOT a role. When genuinely unsure, return FALSE (the safe direction: ambiguity must not rescue a money-mover from the cap).",
+  },
+} as const;
+
+// The submit tool WITH the funder-cap classification fields folded in (properties + required). realRunModel
+// picks base vs this by matchFunderCapEnabled(); OFF hands the byte-identical base tool to the model.
+const SUBMIT_ALIGN_TOOL_WITH_CAP = {
+  ...SUBMIT_ALIGN_TOOL,
+  input_schema: {
+    ...SUBMIT_ALIGN_TOOL.input_schema,
+    properties: { ...SUBMIT_ALIGN_TOOL.input_schema.properties, ...FUNDER_CAP_TOOL_PROPS },
+    required: [
+      ...SUBMIT_ALIGN_TOOL.input_schema.required,
       "is_money_mover",
       "concrete_role_on_this_grant",
     ],
@@ -464,14 +490,30 @@ export interface AlignDeps {
   runModel?: (userContent: string) => Promise<Record<string, unknown> | null>;
 }
 
+// PURE: the flag-conditioned model request (system prompt + submit tool). capOn=false returns the pre-PR base
+// pair unchanged; capOn=true appends the classification instruction and folds in the two tool fields. Exported
+// so a unit test can LOCK the byte-identical-OFF model contract without a network call (the intelPhase1Config
+// discipline). realRunModel is the only caller in prod; it passes matchFunderCapEnabled().
+export function alignModelRequest(capOn: boolean): {
+  system: string;
+  tool: typeof SUBMIT_ALIGN_TOOL | typeof SUBMIT_ALIGN_TOOL_WITH_CAP;
+} {
+  return capOn
+    ? { system: ALIGN_SYSTEM_PROMPT + FUNDER_CAP_INSTRUCTION, tool: SUBMIT_ALIGN_TOOL_WITH_CAP }
+    : { system: ALIGN_SYSTEM_PROMPT, tool: SUBMIT_ALIGN_TOOL };
+}
+
 async function realRunModel(userContent: string): Promise<Record<string, unknown> | null> {
   const anthropic = getAnthropicClient();
+  // Byte-identical OFF at the model contract (Codex #505 P2): with the cap flag off the model gets exactly the
+  // pre-PR system prompt and tool schema, so an align-ON/cap-OFF world scores identically to before this PR.
+  const { system, tool } = alignModelRequest(matchFunderCapEnabled());
   const response = await anthropic.messages.create({
     model: MODEL,
     max_tokens: 8000,
     temperature: 0, // stable scoring: a borderline 2-vs-3 must not flip run to run
-    system: ALIGN_SYSTEM_PROMPT,
-    tools: [SUBMIT_ALIGN_TOOL],
+    system,
+    tools: [tool],
     tool_choice: { type: "tool", name: "submit_match" },
     messages: [{ role: "user", content: userContent }],
   });
