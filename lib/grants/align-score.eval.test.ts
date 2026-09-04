@@ -199,25 +199,36 @@ const FIXTURES: Fixture[] = [
     },
   },
 
+  // ── NO-GO band, ENTITY-TYPE EXCLUSION (grant-driven, distinct from AGFF's identity / NWACC's mission) ──
+  // Harbor House x BJA Smart Reentry: RECLASSIFIED from KEEP (2026-09-04, verified from source). This NOFO's
+  // eligible-entity list is GOVERNMENT-ONLY (state/local/tribal); nonprofits are explicitly NOT eligible primes.
+  // (A DIFFERENT Second Chance Act door -- Community-Based Reentry -- DOES allow nonprofits; Harbor House fits
+  // the program AREA, just not this DOOR -- a classic applicant-routing distinction.) Harbor House is a
+  // can_prime=TRUE nonprofit reentry implementer, so this fixture proves the guardrail's LOAD-BEARING property:
+  // the identity-first guardrail rescues a can_prime=TRUE implementer from MANUFACTURED eligibility doubt, but it
+  // must NOT override a GROUNDED exclusion stated in the grant's own eligible-entity list -- forcing a fit there
+  // is the exact false-positive the rebuild kills. The scorer correctly scores 1 ("hard, unambiguous
+  // disqualification", grounded in the NOFO's stated list), so the guardrail is WORKING, not failing. It was a
+  // mislabel in the answer key -- same class as AGFF x NAWCA / Fish Passage. reDistillSkip: the exclusion is
+  // grant-driven, so the profile is irrelevant -- score on the real profile (what run #6/#7 validated at [1]).
+  {
+    label: "Harbor House x BJA Smart Reentry -- nonprofit barred at a GOVERNMENT-ONLY door [correct no-go]",
+    clientNameLike: "%harbor house%",
+    grantUuid: "9e70946c-6830-4c6c-be95-20bcba375534",
+    band: "no-go",
+    stripCrutch: true,
+    reDistillSkip: true,
+  },
+
   // ── KEEP band (must stay >= 2, STRICT every run) -- one real "would-send" match per entity type ─────
   // Named by Shannon's judgment (bar = "real match in SOME role", not "must prime"). Keyed by the Simpler
   // opportunity UUID so the fixture is exact. stripCrutch=true on all (rule G1): a KEEP that only holds
   // because of a hand-written matching_rule isn't proving the scorer -- the profile must carry it.
   // READINESS (drop each once its grant reaches shred_depth='full'):
-  //   READY NOW  -- Harbor House x Offender Reentry (full shred, real client_profile).
   //   NEEDS INGEST (POST /api/grants/ingest) -- CCBHC, Strengthening CC, USDA RD, EDA PWEAA, DOT RAISE.
   //   NEEDS RE-SHRED (POST /api/grants/backfill-reshred) -- the transit grant (summary-only today).
   //   CONFIRM -- NWACC's distilled client_profile (name is the acronym "NWACC"); Mississippi County name.
-  {
-    label: "Harbor House x Offender Reentry (BJA Smart Reentry) -- nonprofit implementer [READY]",
-    clientNameLike: "%harbor house%",
-    grantUuid: "9e70946c-6830-4c6c-be95-20bcba375534",
-    band: "keep",
-    stripCrutch: true,
-    // Keep the REAL profile under ALIGN_REDISTILL: this fixture regressed 2->1 with the identity-first
-    // scorer, so we isolate the scorer/render cause on its actual profile, not a freshly re-distilled one.
-    reDistillSkip: true,
-  },
+  //   (Harbor House x Smart Reentry moved to the NO-GO band above -- government-only door, a correct no-go.)
   {
     label: "Arisa Health x CCBHC Improvement & Advancement -- health system [needs ingest]",
     clientNameLike: "%arisa%",
@@ -344,8 +355,10 @@ const inSubset = (label: string) => ONLY.length === 0 || ONLY.some((s) => label.
 // client, cached. reDistillSkip fixtures keep their real stored profile.
 const REDISTILL = process.env.ALIGN_REDISTILL === "1";
 // ALIGN_RENDER_INFERRED=false -> empty each scored profile's inferred[] IN-MEMORY so the shared formatter
-// naturally skips it (no diagnostic branch in production code). Isolates whether rendering inferred[] caused
-// the Harbor House KEEP regression.
+// naturally skips it (no diagnostic branch in production code). A general lever to isolate whether rendering
+// inferred[] moves a score. (It was added to chase a suspected Harbor House "KEEP regression"; that turned
+// out to be a CORRECT grant-driven no-go -- BJA Smart Reentry is government-only -- not a render effect, so
+// Harbor House is now in the NO-GO band. The lever stays for future render-isolation diagnostics.)
 const RENDER_INFERRED = process.env.ALIGN_RENDER_INFERRED !== "false";
 const reDistillCache = new Map<string, ClientProfile>();
 // The manufactured "implementer/operator" signature the distiller fix is meant to strip from a funder's
@@ -497,10 +510,13 @@ async function loadGrant(db: ReturnType<typeof createServiceClient>, fx: Fixture
             .toBe(true);
         }
       },
-      // 300s: each fixture runs RUNS (=3) sequential align calls at ~75s each (~225s); 120s timed every
-      // fixture out and reddened the run on infra. The job cap (align-spotcheck.yml) is raised to 90 min
-      // to fit 13 fixtures x ~225s.
-      300_000,
+      // 600s, not 300s: each fixture runs RUNS (=3) sequential align calls. A heavy ingested grant (Arisa
+      // CCBHC, Mississippi County USDA RD, NWA Council EDA) is ~130-160s/call, so 3x overran the old 300s cap
+      // and TIMED OUT on the full gate (run #6) -- an infra timeout, not a score miss (each scored >=2 at
+      // runs=1 in run #7). 600s lets a 3-call fixture complete; the job cap (align-spotcheck.yml) is raised to
+      // 120 min to fit 16 fixtures x up to ~500s. (A lighter alternative -- a per-fixture runs override -- was
+      // rejected as more interface surface than a single timeout bump that keeps runs=3 stability for all.)
+      600_000,
     );
   }
 });
