@@ -280,6 +280,23 @@ async function loadGrant(db: ReturnType<typeof createServiceClient>, fx: Fixture
           scores.push(res.fit_score);
         }
 
+        // Per-band report in the CI job log: confirms which REAL rows resolved (the name-pattern check
+        // Shannon asked for) AND the scores, readable in the browser whether the assertion passes or fails.
+        const verdict =
+          fx.band === "no-go"
+            ? scores.filter((s) => s <= 1).length > RUNS / 2
+              ? "PASS (majority <=1)"
+              : "FAIL (not majority <=1)"
+            : scores.every((s) => s >= 2)
+              ? "PASS (all >=2)"
+              : "FAIL (a run <2)";
+        console.log(
+          `[${fx.band}] ${fx.label}\n` +
+            `    client: "${client.name}" (${client.id})\n` +
+            `    grant:  "${grant.title}" (${grant.id})\n` +
+            `    scores: [${scores.join(", ")}]  -> ${verdict}`,
+        );
+
         if (fx.band === "no-go") {
           // Majority of runs must Pass it (fit <= 1). Cheaper-error direction; temp-0 still flickers.
           const passes = scores.filter((s) => s <= 1).length;
