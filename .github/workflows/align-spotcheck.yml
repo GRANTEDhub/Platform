@@ -28,7 +28,7 @@ on:
   workflow_dispatch:
     inputs:
       runs:
-        description: "Runs per fixture (stability sampling; ALIGN_SPOTCHECK_RUNS). no-go needs a MAJORITY <=1; keep/keep-140 need EVERY run >=2, so raising this hardens the strict bands but grows cost."
+        description: "Runs per fixture (stability sampling; ALIGN_SPOTCHECK_RUNS). Pass bands are MAJORITY-based, not unanimous: no-go needs a majority of runs <=1; keep/keep-140 need a majority of runs >=2. Raising this samples more (and costs more) without changing the majority rule."
         required: false
         default: "3"
 
@@ -82,7 +82,8 @@ jobs:
           RUN_ALIGN_SPOTCHECK: "1"
           ALIGN_SPOTCHECK_RUNS: ${{ inputs.runs }}
           # Exercise the deterministic funder cap: finalizeAlignMatch reads MATCH_FUNDER_CAP_ENABLED, so the
-          # spot-check gate ("AGFF funder specimens drop to <=1 AND all 7 KEEP + NWA Council stay >=2") is only
+          # spot-check gate ("AGFF funder specimens drop to <=1 AND all 7 KEEP + NWA Council stay >=2", each band
+          # judged by a MAJORITY of runs) is only
           # a valid flip gate for the cap when the cap is actually ON here. (The scorer itself does NOT read
           # MATCH_DIRECT_ALIGN_ENABLED -- the eval calls alignScoreClient directly -- so that flag stays unset.)
           MATCH_FUNDER_CAP_ENABLED: "true"
