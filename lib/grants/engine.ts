@@ -14,6 +14,7 @@ import { formatClientProfileForEnrichment } from "@/lib/clients/profile";
 import { routeSupportingSeat } from "@/lib/grants/subseat-routing";
 import { applyMissionGate } from "@/lib/grants/mission-gate";
 import { lowAwardSkipReason } from "@/lib/grants/award-count-gate";
+import { matchDirectAlignEnabled, alignScoreClient } from "@/lib/grants/align-score";
 import type { Client, Grant, IdealApplicantProfile, FactorScores } from "@/types/database";
 
 export interface ExtractedGrant {
@@ -732,6 +733,9 @@ export async function matchGrantToClient(
   client: Client,
   usaSpendingContext?: string
 ): Promise<MatchResult> {
+       if (matchDirectAlignEnabled()) {
+       return alignScoreClient(grant, client, usaSpendingContext);
+     }
   const anthropic = getAnthropicClient();
   const { menu: seatMenu, seats: seatTable } = buildSeatMenu(grant.ideal_applicant_profile);
 
