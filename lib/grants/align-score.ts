@@ -190,13 +190,16 @@ const SUBMIT_ALIGN_TOOL = {
   },
 } as const;
 
-// Role -> seat_ref FAMILY, so calibration's seatFamily (P*->prime, S*->supporting, else none) still
-// classifies a card the same way it did off the occupancy seat. seat_ref is otherwise vestigial after the
-// replace; this keeps the one downstream consumer that reads its family (feedback -> calibration) correct.
+// Role -> a seat_ref that BOTH downstream seat_ref readers accept: calibration's seatFamily
+// (P*->prime, S*->supporting, else none) AND consortium.ts's parseSeat, whose PRIME_RE (/^P(\d+)$/)
+// and SUPPORTING_RE (/^S(\d+)_\d+$/) require a "P{n}" prime and a "S{n}_{m}" supporting id. A bare "S0"
+// passes seatFamily but FAILS SUPPORTING_RE, silently dropping an align-scored partner card out of the
+// grant-detail consortium-pairing feature -- so a supporting role emits "S0_0" (matches both forms).
+// seat_ref is otherwise vestigial after the replace: derived from the role, never a scoring input.
 export function seatRefForRole(role: string | null | undefined): string {
   const r = (role ?? "").trim().toLowerCase();
-  if (r === "prime") return "P0";
-  if (r === "co-applicant" || r === "sub" || r === "named collaborator") return "S0";
+  if (r === "prime") return "P0"; // matches PRIME_RE + seatFamily
+  if (r === "co-applicant" || r === "sub" || r === "named collaborator") return "S0_0"; // matches SUPPORTING_RE + seatFamily
   return "NONE"; // facilitator / letter of support / not recommended / unknown -> no recipient seat
 }
 

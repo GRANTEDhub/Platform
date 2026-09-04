@@ -135,14 +135,20 @@ describe("direct-alignment scorer -- plumbing", () => {
 
   it("derives the seat_ref FAMILY from the role so calibration's seatFamily still classifies the card", () => {
     expect(seatRefForRole("Prime")).toBe("P0");
-    expect(seatRefForRole("Co-Applicant")).toBe("S0");
-    expect(seatRefForRole("Sub")).toBe("S0");
-    expect(seatRefForRole("Named Collaborator")).toBe("S0");
+    expect(seatRefForRole("Co-Applicant")).toBe("S0_0");
+    expect(seatRefForRole("Sub")).toBe("S0_0");
+    expect(seatRefForRole("Named Collaborator")).toBe("S0_0");
     expect(seatRefForRole("Facilitator")).toBe("NONE");
     expect(seatRefForRole("Letter of Support")).toBe("NONE");
     expect(seatRefForRole("Not Recommended")).toBe("NONE");
     expect(seatRefForRole(null)).toBe("NONE");
     expect(seatRefForRole("")).toBe("NONE");
+    // Lock the consortium.ts contract (PRIME_RE /^P\d+$/, SUPPORTING_RE /^S\d+_\d+$/) so an align-scored
+    // partner card is never silently dropped from grant-detail consortium pairing (a bare "S0" would be).
+    expect(seatRefForRole("Prime")).toMatch(/^P\d+$/);
+    expect(seatRefForRole("Co-Applicant")).toMatch(/^S\d+_\d+$/);
+    expect(seatRefForRole("Sub")).toMatch(/^S\d+_\d+$/);
+    expect(seatRefForRole("Named Collaborator")).toMatch(/^S\d+_\d+$/);
   });
 
   it("the scoring formatter LEADS with can_prime, includes core_capabilities, and is empty for a null profile", () => {
@@ -172,7 +178,7 @@ describe("direct-alignment scorer -- plumbing", () => {
   it("clamps an out-of-range score and backfills safe defaults for missing arrays", () => {
     const res = finalizeAlignMatch({ fit_score: 9, proposed_role: "Sub" }, mkClient(), mkGrant());
     expect(res.fit_score).toBe(3);
-    expect(res.seat_ref).toBe("S0");
+    expect(res.seat_ref).toBe("S0_0");
     expect(Array.isArray(res.before_you_approve)).toBe(true);
     expect(Array.isArray(res.why_this_org)).toBe(true);
   });
@@ -187,7 +193,7 @@ describe("direct-alignment scorer -- plumbing", () => {
     expect(res.proposed_role).toBe("sub");
     expect(res.fit_score).toBeLessThanOrEqual(2);
     // seat_ref must reflect the capped role (S0), not the model's original Prime (P0).
-    expect(res.seat_ref).toBe("S0");
+    expect(res.seat_ref).toBe("S0_0");
   });
 
   it("sanitizes the drafted outreach email (strips a Subject: line)", () => {
