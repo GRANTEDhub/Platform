@@ -176,6 +176,25 @@ describe("direct-alignment scorer -- plumbing", () => {
     expect(out.indexOf("can_prime")).toBeLessThan(out.indexOf("Core capabilities"));
   });
 
+  it("renders can_prime=null as UNKNOWN, never FALSE (a conditional/undistilled profile like NWA Council)", () => {
+    // The DB can hold can_prime: null despite the boolean type. null must NOT coerce to FALSE -- "FALSE"
+    // tells the scorer the org can NEVER prime, which silently kneecaps a conditional-prime convener.
+    const out = formatClientProfileForScoring(
+      mkProfile({
+        prime_capacity: { can_prime: null as unknown as boolean, rationale: "Conditional prime capacity." },
+      }),
+    );
+    expect(out).toContain("can_prime=UNKNOWN");
+    expect(out).not.toContain("can_prime=FALSE");
+    // TRUE / FALSE still render correctly.
+    expect(
+      formatClientProfileForScoring(mkProfile({ prime_capacity: { can_prime: true, rationale: "r" } })),
+    ).toContain("can_prime=TRUE");
+    expect(
+      formatClientProfileForScoring(mkProfile({ prime_capacity: { can_prime: false, rationale: "r" } })),
+    ).toContain("can_prime=FALSE");
+  });
+
   it("finalizeAlignMatch coerces the model output into a MatchResult with a derived seat_ref", () => {
     const res = finalizeAlignMatch(mkRaw({ fit_score: 3, proposed_role: "Prime" }), mkClient(), mkGrant());
     expect(res.fit_score).toBe(3);

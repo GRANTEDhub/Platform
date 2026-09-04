@@ -469,8 +469,20 @@ export function formatClientProfileForScoring(profile: ClientProfile | null | un
   // role or none. This is the single most load-bearing scoring fact in the profile.
   const pc = profile.prime_capacity;
   if (pc) {
+    // Three-way: TRUE / FALSE / UNKNOWN. The DB can carry null despite the boolean type (an undistilled or
+    // genuinely-conditional profile), and null must NOT read as FALSE -- "FALSE" tells the scorer the org can
+    // NEVER prime (full stop), so coercing null->FALSE silently kneecaps a conditional-prime convener (NWA
+    // Council's real profile stores can_prime: null). UNKNOWN steers the model to assess prime capacity from
+    // the confirmed facts instead of assuming it cannot prime.
+    const cp = pc.can_prime as boolean | null | undefined;
+    const canPrimeLabel =
+      cp === true
+        ? "TRUE"
+        : cp === false
+          ? "FALSE"
+          : "UNKNOWN (not recorded; assess prime capacity from the confirmed facts, do NOT assume the org cannot prime)";
     lines.push(
-      `Prime capacity: can_prime=${pc.can_prime ? "TRUE" : "FALSE"}` +
+      `Prime capacity: can_prime=${canPrimeLabel}` +
         (pc.conditional_on?.trim() ? ` (conditional on: ${pc.conditional_on.trim()})` : ""),
     );
     if (pc.rationale?.trim()) lines.push(`  Prime-capacity rationale: ${pc.rationale.trim()}`);
