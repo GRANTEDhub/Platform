@@ -35,7 +35,7 @@ import { sanitizeOutreachEmail } from "@/lib/email/sanitize";
 import { applyHardConstraints, formatConstraintsForPrompt } from "@/lib/grants/constraints";
 import { formatSamForMatcher } from "@/lib/sam/expiry";
 import { formatClientProfileForScoring } from "@/lib/clients/profile";
-import type { Client, Grant, IdealApplicantProfile } from "@/types/database";
+import type { Client, Grant, IdealApplicantProfile, FactorScores } from "@/types/database";
 // Type-only import (erased at runtime -> no cycle with engine.ts, which is a protected file this must not
 // modify). We only borrow the MatchResult shape so downstream sees an identical contract.
 import type { MatchResult } from "@/lib/grants/engine";
@@ -271,14 +271,58 @@ ${formatConstraintsForPrompt(client)}`;
   return `Evaluate this grant-client match.\n\n${grantContext}\n\n${clientContext}\n${profileText}`;
 }
 
+// #105 honesty backstop, mirrored from the occupancy path (engine.ts enforceFactorDataFloors, ~693-728).
+// That function is a PRIVATE local in the protected engine.ts, so this path cannot import it without touching
+// the protected file -- hence a byte-faithful mirror here (locked against the occupancy version in the test).
+// Forces insufficient_data on the three DATA-DEPENDENT factors when the gating client fields are blank -- a
+// deterministic guarantee that a factor sub-score is never a confident guess off missing inputs, no matter
+// what the model returned. Descriptive only; it never touches fit_score. Phase 2 consolidates the two copies
+// when the occupancy path is deleted.
+export function enforceAlignFactorDataFloors(
+  fs: FactorScores | undefined,
+  client: Client,
+  usaSpendingContext: string | undefined,
+): void {
+  if (!fs) return;
+  const blank = (s?: string | null) => !s || !s.trim();
+  const set = (k: keyof FactorScores, rationale: string) => {
+    fs[k] = { rating: "insufficient_data", rationale };
+  };
+  // cost_share: no budget AND no match/cost-share capacity on file.
+  if (blank(client.annual_budget) && blank(client.match_cost_share_capacity)) {
+    set("cost_share", "No annual budget or match/cost-share capacity on file.");
+  }
+  // program_history: no federal award history data of any kind (a cached "no awards found" is a REAL answer,
+  // so only fire when there is no lookup data at all).
+  if (
+    !client.federal_history_verified &&
+    !client.usaspending_summary &&
+    blank(client.federal_grant_history) &&
+    !usaSpendingContext
+  ) {
+    set("program_history", "Federal award history not on file (USASpending not checked).");
+  }
+  // geographic: no service area, no RUCC, and no location at all.
+  if (
+    (!client.service_area || client.service_area.length === 0) &&
+    blank(client.rucc_codes) &&
+    blank(client.location_city) &&
+    blank(client.location_county) &&
+    blank(client.location_state)
+  ) {
+    set("geographic", "No service area, RUCC, or location on file.");
+  }
+}
+
 // PURE: coerce the raw model tool-input into a MatchResult, derive seat_ref from the role, apply the KEPT
-// deterministic post-processing (hard constraints + email sanitize), and backfill safe defaults so no
-// downstream reader NPEs. Exported for the unit test. Mirrors the tail of the occupancy path's
+// deterministic post-processing (factor-data floors + hard constraints + email sanitize), and backfill safe
+// defaults so no downstream reader NPEs. Exported for the unit test. Mirrors the tail of the occupancy path's
 // matchGrantToClient (minus the seat-ceiling clamp, which no longer exists).
 export function finalizeAlignMatch(
   raw: Record<string, unknown>,
   client: Client,
   grant: Grant,
+  usaSpendingContext?: string,
 ): MatchResult {
   const r = raw as Partial<MatchResult> & Record<string, unknown>;
   const result = {
@@ -312,8 +356,10 @@ export function finalizeAlignMatch(
     disqualify_reason: (r.disqualify_reason as string | undefined) ?? undefined,
   } as MatchResult;
 
-  // KEPT verbatim from the occupancy path: hard client constraints (role ceilings / funder exclusions /
-  // do-not-surface -- all seat-independent) then email sanitize. Same deterministic overrides, same order.
+  // KEPT verbatim from the occupancy path, in the SAME order matchGrantToClient runs them: the #105
+  // factor-data honesty floor, then hard client constraints (role ceilings / funder exclusions /
+  // do-not-surface -- all seat-independent), then email sanitize.
+  enforceAlignFactorDataFloors(result.factor_scores, client, usaSpendingContext);
   applyHardConstraints(result, client, grant);
   // Re-derive seat_ref from the FINAL role: a role_ceiling constraint can cap Prime -> Sub, and calibration's
   // seatFamily must reflect the role the card actually carries, not the model's pre-cap proposal.
@@ -362,5 +408,5 @@ export async function alignScoreClient(
   const runModel = deps.runModel ?? realRunModel;
   const raw = await runModel(userContent);
   if (!raw) throw new Error(`Direct-align scorer returned no structured match for client ${client.name}`);
-  return finalizeAlignMatch(raw, client, grant);
+  return finalizeAlignMatch(raw, client, grant, usaSpendingContext);
 }

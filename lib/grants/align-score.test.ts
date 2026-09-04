@@ -232,4 +232,61 @@ describe("direct-alignment scorer -- plumbing", () => {
       alignScoreClient(mkGrant(), mkClient(), undefined, { runModel: async () => null }),
     ).rejects.toThrow();
   });
+
+  it("restores the #105 factor-data floor: blank client fields force insufficient_data (parity with the occupancy path)", () => {
+    const blankClient = mkClient({
+      annual_budget: null,
+      match_cost_share_capacity: null,
+      federal_history_verified: false,
+      usaspending_summary: null,
+      federal_grant_history: null,
+      service_area: [],
+      rucc_codes: null,
+      location_city: null,
+      location_county: null,
+      location_state: null,
+    } as unknown as Partial<Client>);
+    const raw = mkRaw({
+      factor_scores: {
+        seat_role: { rating: "strong", rationale: "r" },
+        eligibility: { rating: "strong", rationale: "r" },
+        geographic: { rating: "strong", rationale: "r" },
+        program_history: { rating: "strong", rationale: "r" },
+        cost_share: { rating: "strong", rationale: "r" },
+        mission: { rating: "strong", rationale: "r" },
+      },
+    });
+    const res = finalizeAlignMatch(raw, blankClient, mkGrant());
+    // The three DATA-DEPENDENT factors are forced honest when the client record is blank.
+    expect(res.factor_scores.cost_share.rating).toBe("insufficient_data");
+    expect(res.factor_scores.program_history.rating).toBe("insufficient_data");
+    expect(res.factor_scores.geographic.rating).toBe("insufficient_data");
+    // Non-data-dependent factors are left exactly as the model rated them.
+    expect(res.factor_scores.seat_role.rating).toBe("strong");
+    expect(res.factor_scores.mission.rating).toBe("strong");
+  });
+
+  it("the factor-data floor does NOT override a rating when the client HAS the data", () => {
+    const richClient = mkClient({
+      annual_budget: "$1,200,000",
+      match_cost_share_capacity: "10% cash on hand",
+      federal_history_verified: true,
+      service_area: ["AR -- Statewide"],
+      location_state: "AR",
+    } as unknown as Partial<Client>);
+    const raw = mkRaw({
+      factor_scores: {
+        seat_role: { rating: "strong", rationale: "r" },
+        eligibility: { rating: "strong", rationale: "r" },
+        geographic: { rating: "moderate", rationale: "r" },
+        program_history: { rating: "moderate", rationale: "r" },
+        cost_share: { rating: "strong", rationale: "r" },
+        mission: { rating: "strong", rationale: "r" },
+      },
+    });
+    const res = finalizeAlignMatch(raw, richClient, mkGrant());
+    expect(res.factor_scores.cost_share.rating).toBe("strong");
+    expect(res.factor_scores.program_history.rating).toBe("moderate");
+    expect(res.factor_scores.geographic.rating).toBe("moderate");
+  });
 });
