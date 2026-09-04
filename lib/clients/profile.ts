@@ -507,7 +507,8 @@ export function formatClientProfileForScoring(profile: ClientProfile | null | un
   // inferred[] is an IDENTITY signal the scorer's IDENTITY GOVERNS rule explicitly cites: a funder /
   // support-org "gray area" or eligibility caveat often lives HERE, not in summary (AGFF is the canonical
   // case). It went unrendered, so the scorer was told to weigh a fact it never received -- emit it, flagged
-  // as inferred, in the identity block above the capability list.
+  // as inferred, in the identity block above the capability list. (An empty inferred[] renders nothing --
+  // the eval's inferred-suppression diagnostic empties the array in-memory rather than branching here.)
   push(
     "Inferred (NOT confirmed -- weigh as an identity / eligibility signal, never as a proven capability)",
     joined(profile.inferred),
