@@ -106,7 +106,8 @@ async function loadGrant(db: ReturnType<typeof createServiceClient>, titleLike: 
     .from("grants")
     .select("*")
     .ilike("title", titleLike)
-    .order("created_at", { ascending: false })
+    // grants has no created_at; ingested_at is the ingest timestamp (most-recent match wins).
+    .order("ingested_at", { ascending: false })
     .limit(1)
     .maybeSingle<Grant>();
   return data ?? null;
