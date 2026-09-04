@@ -322,6 +322,10 @@ const inSubset = (label: string) => ONLY.length === 0 || ONLY.some((s) => label.
 // distiller prompt before scoring, the real "clean profile + identity-first scorer" test. One model call per
 // client, cached. reDistillSkip fixtures keep their real stored profile.
 const REDISTILL = process.env.ALIGN_REDISTILL === "1";
+// ALIGN_RENDER_INFERRED=false -> empty each scored profile's inferred[] IN-MEMORY so the shared formatter
+// naturally skips it (no diagnostic branch in production code). Isolates whether rendering inferred[] caused
+// the Harbor House KEEP regression.
+const RENDER_INFERRED = process.env.ALIGN_RENDER_INFERRED !== "false";
 const reDistillCache = new Map<string, ClientProfile>();
 // The manufactured "implementer/operator" signature the distiller fix is meant to strip from a funder's
 // capability/role lists (AGFF's "habitat restoration implementing partner / on-the-ground operator").
@@ -403,6 +407,11 @@ async function loadGrant(db: ReturnType<typeof createServiceClient>, fx: Fixture
             );
           }
           client = { ...clientRaw, client_profile: fresh };
+        }
+
+        // Diagnostic inferred-suppression: empty inferred[] so the formatter skips it (harness-only toggle).
+        if (!RENDER_INFERRED && client.client_profile?.inferred?.length) {
+          client = { ...client, client_profile: { ...client.client_profile, inferred: [] } };
         }
 
         // Rule G1: strip the hand-written matching_rules crutch so the verdict is earned from the profile.

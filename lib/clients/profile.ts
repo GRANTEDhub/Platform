@@ -507,16 +507,12 @@ export function formatClientProfileForScoring(profile: ClientProfile | null | un
   // inferred[] is an IDENTITY signal the scorer's IDENTITY GOVERNS rule explicitly cites: a funder /
   // support-org "gray area" or eligibility caveat often lives HERE, not in summary (AGFF is the canonical
   // case). It went unrendered, so the scorer was told to weigh a fact it never received -- emit it, flagged
-  // as inferred, in the identity block above the capability list.
-  // ALIGN_RENDER_INFERRED=false suppresses it -- a diagnostic toggle to isolate whether rendering inferred[]
-  // (added late via a review-bot catch) caused the Harbor House KEEP regression. Default (unset) renders it,
-  // so prod behavior is unchanged.
-  if (process.env.ALIGN_RENDER_INFERRED !== "false") {
-    push(
-      "Inferred (NOT confirmed -- weigh as an identity / eligibility signal, never as a proven capability)",
-      joined(profile.inferred),
-    );
-  }
+  // as inferred, in the identity block above the capability list. (An empty inferred[] renders nothing --
+  // the eval's inferred-suppression diagnostic empties the array in-memory rather than branching here.)
+  push(
+    "Inferred (NOT confirmed -- weigh as an identity / eligibility signal, never as a proven capability)",
+    joined(profile.inferred),
+  );
   push(
     "Capabilities claimed in the intake (READ THROUGH the identity above -- a claim that contradicts can_prime/summary/mission is work the org FUNDS or CONVENES, not work it performs)",
     joined(profile.core_capabilities),
