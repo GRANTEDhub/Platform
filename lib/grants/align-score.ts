@@ -190,16 +190,19 @@ const SUBMIT_ALIGN_TOOL = {
   },
 } as const;
 
-// Role -> a seat_ref that BOTH downstream seat_ref readers accept: calibration's seatFamily
-// (P*->prime, S*->supporting, else none) AND consortium.ts's parseSeat, whose PRIME_RE (/^P(\d+)$/)
-// and SUPPORTING_RE (/^S(\d+)_\d+$/) require a "P{n}" prime and a "S{n}_{m}" supporting id. A bare "S0"
-// passes seatFamily but FAILS SUPPORTING_RE, silently dropping an align-scored partner card out of the
-// grant-detail consortium-pairing feature -- so a supporting role emits "S0_0" (matches both forms).
-// seat_ref is otherwise vestigial after the replace: derived from the role, never a scoring input.
+// Role -> a FAMILY-ONLY seat_ref: calibration's seatFamily (P*->prime, S*->supporting, else none)
+// classifies it, but consortium.ts's parseSeat -- whose PRIME_RE (/^P(\d+)$/) and SUPPORTING_RE
+// (/^S(\d+)_\d+$/) both require a numeric archetype INDEX -- deliberately REJECTS it. Align scoring
+// produces NO archetype (it is not seat/occupancy matching), so a bare "P"/"S" is the honest shape: the
+// card is still classified for feedback calibration, while an align-scored card never enters occupancy
+// consortium pairing. An earlier version emitted "P0"/"S0_0" to keep it parse-able, but that FABRICATED
+// archetype 0 collided with real occupancy archetype-0 seats and produced spurious grant-detail consortium
+// pairings on a mixed-scorer grant (#503). seat_ref is otherwise vestigial after the replace: derived from
+// the role, never a scoring input.
 export function seatRefForRole(role: string | null | undefined): string {
   const r = (role ?? "").trim().toLowerCase();
-  if (r === "prime") return "P0"; // matches PRIME_RE + seatFamily
-  if (r === "co-applicant" || r === "sub" || r === "named collaborator") return "S0_0"; // matches SUPPORTING_RE + seatFamily
+  if (r === "prime") return "P"; // seatFamily->prime; parseSeat rejects (no index) -> excluded from pairing
+  if (r === "co-applicant" || r === "sub" || r === "named collaborator") return "S"; // seatFamily->supporting; parseSeat rejects
   return "NONE"; // facilitator / letter of support / not recommended / unknown -> no recipient seat
 }
 

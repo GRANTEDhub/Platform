@@ -7,6 +7,8 @@ import {
   alignScoreClient,
 } from "./align-score";
 import { formatClientProfileForScoring } from "@/lib/clients/profile";
+import { computeConsortiumPairings, type SeatedClient } from "@/lib/grants/consortium";
+import { seatFamily } from "@/lib/grants/calibration";
 import type { Client, Grant, ClientProfile } from "@/types/database";
 
 // Deterministic tests for the direct-alignment scorer. They FAKE the model, so they prove the PLUMBING --
@@ -133,22 +135,30 @@ describe("direct-alignment scorer -- plumbing", () => {
     expect(matchDirectAlignEnabled()).toBe(true);
   });
 
-  it("derives the seat_ref FAMILY from the role so calibration's seatFamily still classifies the card", () => {
-    expect(seatRefForRole("Prime")).toBe("P0");
-    expect(seatRefForRole("Co-Applicant")).toBe("S0_0");
-    expect(seatRefForRole("Sub")).toBe("S0_0");
-    expect(seatRefForRole("Named Collaborator")).toBe("S0_0");
+  it("emits a FAMILY-only seat_ref: calibration classifies it, but consortium pairing excludes align cards", () => {
+    expect(seatRefForRole("Prime")).toBe("P");
+    expect(seatRefForRole("Co-Applicant")).toBe("S");
+    expect(seatRefForRole("Sub")).toBe("S");
+    expect(seatRefForRole("Named Collaborator")).toBe("S");
     expect(seatRefForRole("Facilitator")).toBe("NONE");
     expect(seatRefForRole("Letter of Support")).toBe("NONE");
     expect(seatRefForRole("Not Recommended")).toBe("NONE");
     expect(seatRefForRole(null)).toBe("NONE");
     expect(seatRefForRole("")).toBe("NONE");
-    // Lock the consortium.ts contract (PRIME_RE /^P\d+$/, SUPPORTING_RE /^S\d+_\d+$/) so an align-scored
-    // partner card is never silently dropped from grant-detail consortium pairing (a bare "S0" would be).
-    expect(seatRefForRole("Prime")).toMatch(/^P\d+$/);
-    expect(seatRefForRole("Co-Applicant")).toMatch(/^S\d+_\d+$/);
-    expect(seatRefForRole("Sub")).toMatch(/^S\d+_\d+$/);
-    expect(seatRefForRole("Named Collaborator")).toMatch(/^S\d+_\d+$/);
+
+    // Calibration's seatFamily still classifies the card by family (P*->prime, S*->supporting).
+    expect(seatFamily(seatRefForRole("Prime"))).toBe("prime");
+    expect(seatFamily(seatRefForRole("Sub"))).toBe("supporting");
+
+    // But an align card carries NO archetype index, so consortium pairing EXCLUDES it: a bare "P" prime and
+    // "S" supporter on one grant yield NO pairing (parseSeat rejects both). The old fabricated "P0"/"S0_0"
+    // would have bucketed under archetype 0 and collided with real occupancy arch-0 seats -> a phantom
+    // grant-detail pairing (#503).
+    const seated: SeatedClient[] = [
+      { clientId: "a", clientName: "A", fitScore: 3, proposedRole: "Prime", seatRef: seatRefForRole("Prime") },
+      { clientId: "b", clientName: "B", fitScore: 2, proposedRole: "Sub", seatRef: seatRefForRole("Sub") },
+    ];
+    expect(computeConsortiumPairings(seated, null)).toEqual([]);
   });
 
   it("the scoring formatter LEADS with can_prime, includes core_capabilities, and is empty for a null profile", () => {
@@ -170,7 +180,7 @@ describe("direct-alignment scorer -- plumbing", () => {
     const res = finalizeAlignMatch(mkRaw({ fit_score: 3, proposed_role: "Prime" }), mkClient(), mkGrant());
     expect(res.fit_score).toBe(3);
     expect(res.proposed_role).toBe("Prime");
-    expect(res.seat_ref).toBe("P0");
+    expect(res.seat_ref).toBe("P");
     expect(res.entity_required).toBe(false);
     expect(res.client_id).toBe("c1");
   });
@@ -178,7 +188,7 @@ describe("direct-alignment scorer -- plumbing", () => {
   it("clamps an out-of-range score and backfills safe defaults for missing arrays", () => {
     const res = finalizeAlignMatch({ fit_score: 9, proposed_role: "Sub" }, mkClient(), mkGrant());
     expect(res.fit_score).toBe(3);
-    expect(res.seat_ref).toBe("S0_0");
+    expect(res.seat_ref).toBe("S");
     expect(Array.isArray(res.before_you_approve)).toBe(true);
     expect(Array.isArray(res.why_this_org)).toBe(true);
   });
@@ -192,8 +202,8 @@ describe("direct-alignment scorer -- plumbing", () => {
     const res = finalizeAlignMatch(mkRaw({ fit_score: 3, proposed_role: "Prime" }), client, mkGrant());
     expect(res.proposed_role).toBe("sub");
     expect(res.fit_score).toBeLessThanOrEqual(2);
-    // seat_ref must reflect the capped role (S0), not the model's original Prime (P0).
-    expect(res.seat_ref).toBe("S0_0");
+    // seat_ref must reflect the capped role (S), not the model's original Prime (P).
+    expect(res.seat_ref).toBe("S");
   });
 
   it("sanitizes the drafted outreach email (strips a Subject: line)", () => {
