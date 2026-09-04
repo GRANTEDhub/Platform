@@ -44,6 +44,17 @@ export function matchDirectAlignEnabled(): boolean {
   return process.env.MATCH_DIRECT_ALIGN_ENABLED === "true";
 }
 
+// The deterministic funder cap (MATCH_FUNDER_CAP_ENABLED, default OFF). When on, finalizeAlignMatch caps a
+// can_prime=FALSE money-mover with NO concrete role on THIS grant at fit_score 1 -- the code lever the prompt
+// alone could not enforce (across two prompt iterations the model kept handing a topical
+// conservation-foundation-on-a-conservation-grant a consolation partner-2 despite the no-go rule). The
+// SEMANTIC read stays with the model (is_money_mover / concrete_role_on_this_grant booleans on the submit
+// tool); code owns only the CONSEQUENCE. OFF is byte-identical: finalizeAlignMatch never reads the flag, so
+// fit_score is exactly the model's.
+export function matchFunderCapEnabled(): boolean {
+  return process.env.MATCH_FUNDER_CAP_ENABLED === "true";
+}
+
 const ALIGN_SYSTEM_PROMPT = `You are GRANTED's grant-client fit evaluator. GRANTED is a U.S.-only grant consulting firm. For ONE grant and ONE client you decide whether the client should pursue the grant, by answering the two questions a skilled grant analyst asks -- and NOTHING else:
 
   1. ELIGIBILITY + ROLE. Is this client an eligible RECIPIENT of this grant, and in what ROLE?
@@ -94,6 +105,7 @@ HONESTY + OUTPUT
 - If the client carries authoritative Matching Rules or code-enforced Hard Constraints, apply them BEFORE the general logic; they override a general conclusion.
 - draft_outreach_email: body only, no "Subject:" line, no sender signature, greet the actual Primary Contact by name (or "Hello,"), no em-dashes.
 - factor_scores: rate each of the 6 factors strong|moderate|weak|insufficient_data with a one-line rationale drawn from the reasoning you already did (invent no new analysis). The keys are fixed: seat_role (the appropriateness/strength of the assigned role), eligibility (entity-type + program-scope), geographic, program_history, cost_share, mission (funded-purpose alignment). Use insufficient_data when the client data a factor needs is blank -- never guess. Descriptive only; it does not change fit_score.
+- is_money_mover / concrete_role_on_this_grant (two booleans, ALWAYS set): record the QUESTION 2 funder read. is_money_mover=TRUE when the client's OWN function is to raise/hold/grant/fiscal-sponsor money rather than implement the funded work (foundation/grantmaker/funder/fiscal sponsor, typically can_prime=FALSE); FALSE for a direct implementer. concrete_role_on_this_grant=TRUE ONLY when it fills a real partner/sub slot, a fiscal-sponsor tie to a NAMED implementer applying to THIS grant, or an enumerated supporting function it genuinely performs matching the funded activity -- NEVER a shared topic/mission overlap, same-theme grantmaking, or "could partner." When genuinely unsure: is_money_mover TRUE and concrete_role_on_this_grant FALSE (the safe direction). Set these to match your QUESTION 2 reasoning; still score fit_score by the rules above.
 
 Return the evaluation via the submit_match tool exactly once.`;
 
@@ -171,6 +183,20 @@ const SUBMIT_ALIGN_TOOL = {
       suppress_reason: { type: ["string", "null"] },
       disqualified: { type: "boolean" },
       disqualify_reason: { type: ["string", "null"] },
+      // Funder-cap classification (read by the deterministic cap in finalizeAlignMatch when
+      // MATCH_FUNDER_CAP_ENABLED is on; NOT persisted on MatchResult). The MODEL owns the semantic read; code
+      // owns the consequence. Both default to the SAFE direction on genuine ambiguity (money-mover TRUE,
+      // concrete-role FALSE) so an unsure case still engages the cap rather than escaping it.
+      is_money_mover: {
+        type: "boolean",
+        description:
+          "TRUE if this client's OWN function is to RAISE, HOLD, GRANT, or FISCAL-SPONSOR money (a foundation, grantmaker, funder, or fiscal sponsor) rather than to PERFORM the funded activity itself (typically can_prime=FALSE). FALSE for an organization that directly implements/delivers the funded work. When genuinely unsure, return TRUE (the safe direction: it only engages the cap, which then still requires no concrete role).",
+      },
+      concrete_role_on_this_grant: {
+        type: "boolean",
+        description:
+          "TRUE ONLY if the client fills a CONCRETE role on THIS SPECIFIC grant: a real partner/sub slot it actually fills, a fiscal-sponsor tie to a NAMED implementer applying to this grant, or an enumerated supporting function it genuinely performs that matches the funded activity. A SHARED TOPIC / MISSION / same-theme grantmaking overlap is NOT a role; 'could partner' is NOT a role. When genuinely unsure, return FALSE (the safe direction: ambiguity must not rescue a money-mover from the cap).",
+      },
     },
     required: [
       "fit_score",
@@ -186,6 +212,8 @@ const SUBMIT_ALIGN_TOOL = {
       "factor_scores",
       "suppressed",
       "disqualified",
+      "is_money_mover",
+      "concrete_role_on_this_grant",
     ],
   },
 } as const;
@@ -393,6 +421,36 @@ export function finalizeAlignMatch(
   // do-not-surface -- all seat-independent), then email sanitize.
   enforceAlignFactorDataFloors(result.factor_scores, client, usaSpendingContext);
   applyHardConstraints(result, client, grant);
+  // Deterministic funder cap (MATCH_FUNDER_CAP_ENABLED, default OFF). The prompt's no-go rule for a
+  // can_prime=FALSE money-mover with no concrete role could not be enforced by reasoning alone (two prompt
+  // iterations still handed a topical conservation-foundation-on-a-conservation-grant a consolation
+  // partner-2), so code owns the CONSEQUENCE while the model owns the semantic read (is_money_mover /
+  // concrete_role_on_this_grant, off the RAW tool input -- these are classification-only and never join
+  // MatchResult, so no downstream reader changes). Guardrails, each load-bearing: it fires ONLY when
+  //   (1) can_prime === false STRICT -- excludes null (UNKNOWN, e.g. NWA Council) and true (real implementers);
+  //   (2) the model judged it a money-mover; and
+  //   (3) it has NO concrete role on this grant (!== true also catches a missing/undefined flag).
+  // Math.min never RAISES a score (a 0 stays 0) and caps at 1 (a Pass -- does not surface). Explainable:
+  // the note is appended to fit_score_derivation. Placed AFTER hard constraints so a role_ceiling has already
+  // resolved, and BEFORE the seat_ref re-derive (the cap touches fit_score only, never the role).
+  if (
+    matchFunderCapEnabled() &&
+    client.client_profile?.prime_capacity?.can_prime === false &&
+    raw.is_money_mover === true &&
+    raw.concrete_role_on_this_grant !== true
+  ) {
+    const capped = Math.min(result.fit_score, 1) as 0 | 1 | 2 | 3;
+    if (capped !== result.fit_score) {
+      const prior = result.reasoning_context.fit_score_derivation ?? "";
+      result.reasoning_context = {
+        ...result.reasoning_context,
+        fit_score_derivation:
+          `${prior}${prior ? " " : ""}Funder cap: lowered ${result.fit_score}->${capped} -- ` +
+          `can_prime=FALSE money-mover with no concrete role on this grant (topical/mission overlap is not a role).`,
+      };
+      result.fit_score = capped;
+    }
+  }
   // Re-derive seat_ref from the FINAL role: a role_ceiling constraint can cap Prime -> Sub, and calibration's
   // seatFamily must reflect the role the card actually carries, not the model's pre-cap proposal.
   result.seat_ref = seatRefForRole(result.proposed_role);
