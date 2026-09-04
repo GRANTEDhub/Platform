@@ -195,10 +195,23 @@ const FIXTURES: Fixture[] = [
     stripCrutch: true,
   },
 
-  // ── KEEP-140 anchor (must stay >= 2) -- STILL NEEDED FROM SHANNON, the #140 guard ────────────────────
-  // An integrative-fit regional multi-sector org on a broad grant (the class the seat model buried). The
-  // GATE test below stays RED until this is supplied -- do NOT flip the flag on a run without it.
-  // { label: "<regional multi-sector org> x <broad grant>", clientNameLike: "%...%", grantUuid: "...", band: "keep-140", stripCrutch: true },
+  // ── KEEP-140 anchor (must stay >= 2, STRICT) -- the #140 guard ───────────────────────────────────────
+  // The integrative-fit archetype the seat model buried: NWA Council, a 501(c)(3) regional convener with 7
+  // workstreams (CareersNWA workforce, InvestNWA econ-dev, StartupNWA entrepreneurship, Groundwork housing,
+  // NWAC Health, EngageNWA, infrastructure/policy) x EDA PWEAA, a BROAD economic-development program a
+  // regional econ-dev convener genuinely fits. This is the exact class the razor protects: a broad-mission
+  // org that legitimately fits MANY sectors must NOT be scored down for breadth or "not the strongest
+  // applicant". EDA (not rural-designated) is deliberate: NWA Council is RUCC-2 metro and hard-blocked from
+  // rural programs, so USDA RD would be a real no-go, not a keep. stripCrutch strips its matching_rules
+  // (incl. the "cannot prime major infrastructure" note) so the >=2 is earned from the profile alone --
+  // a partner/econ-adjustment slice at fit 2 is a PASS of this band (must stay surfaced in SOME role).
+  {
+    label: "NWA Council x EDA PWEAA -- broad regional multi-sector convener (#140 integrative-fit anchor) [needs ingest + confirm profile]",
+    clientNameLike: "%nwa council%",
+    grantUuid: "b5365cea-b07c-4e8d-8313-e23ab0fd3766",
+    band: "keep-140",
+    stripCrutch: true,
+  },
 ];
 
 const RUN = process.env.RUN_ALIGN_SPOTCHECK === "1" && !!process.env.ANTHROPIC_API_KEY;
