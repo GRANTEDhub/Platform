@@ -36,7 +36,12 @@ type Band = "no-go" | "keep" | "keep-140";
 interface Fixture {
   label: string;
   clientNameLike: string; // ilike on clients.name
-  grantTitleLike: string; // ilike on grants.title (most-recent match wins)
+  // Identify the grant by EITHER its Simpler opportunity UUID (exact + dupe-proof: matched on
+  // source_url, which ingest builds as https://simpler.grants.gov/opportunity/<uuid>) OR a title
+  // ilike. Prefer the UUID for ingested Simpler grants; title is the fallback for the pre-existing
+  // no-go specimens. Most-recent (ingested_at) wins either way.
+  grantUuid?: string;
+  grantTitleLike?: string;
   band: Band;
   // Blank matching_rules before scoring (rule G1): the verdict must come from the profile, not a crutch.
   stripCrutch?: boolean;
@@ -80,18 +85,69 @@ const FIXTURES: Fixture[] = [
     band: "no-go",
   },
 
-  // ── KEEP band (must stay >= 2) -- SHANNON SUPPLIES, one per entity type ─────────────────────────────
-  // A real match you would send, per entity type (county / nonprofit implementer / community college /
-  // health system / transit authority). Uncomment and fill clientNameLike + grantTitleLike:
-  // { label: "County <X> x <real county grant>", clientNameLike: "%...%", grantTitleLike: "%...%", band: "keep" },
-  // { label: "<nonprofit implementer> x <real fit>", clientNameLike: "%...%", grantTitleLike: "%...%", band: "keep" },
-  // { label: "<community college> x <real fit>", clientNameLike: "%...%", grantTitleLike: "%...%", band: "keep" },
-  // { label: "<health system> x <real fit>", clientNameLike: "%...%", grantTitleLike: "%...%", band: "keep" },
-  // { label: "<transit authority> x <real fit>", clientNameLike: "%...%", grantTitleLike: "%...%", band: "keep" },
+  // ── KEEP band (must stay >= 2, STRICT every run) -- one real "would-send" match per entity type ─────
+  // Named by Shannon's judgment (bar = "real match in SOME role", not "must prime"). Keyed by the Simpler
+  // opportunity UUID so the fixture is exact. stripCrutch=true on all (rule G1): a KEEP that only holds
+  // because of a hand-written matching_rule isn't proving the scorer -- the profile must carry it.
+  // READINESS (drop each once its grant reaches shred_depth='full'):
+  //   READY NOW  -- Harbor House x Offender Reentry (full shred, real client_profile).
+  //   NEEDS INGEST (POST /api/grants/ingest) -- CCBHC, Strengthening CC, USDA RD, EDA PWEAA, DOT RAISE.
+  //   NEEDS RE-SHRED (POST /api/grants/backfill-reshred) -- the transit grant (summary-only today).
+  //   CONFIRM -- NWACC's distilled client_profile (name is the acronym "NWACC"); Mississippi County name.
+  {
+    label: "Harbor House x Offender Reentry (BJA Smart Reentry) -- nonprofit implementer [READY]",
+    clientNameLike: "%harbor house%",
+    grantUuid: "9e70946c-6830-4c6c-be95-20bcba375534",
+    band: "keep",
+    stripCrutch: true,
+  },
+  {
+    label: "Arisa Health x CCBHC Improvement & Advancement -- health system [needs ingest]",
+    clientNameLike: "%arisa%",
+    grantUuid: "0e5c874f-2e12-4e93-a878-7e80d00b3287",
+    band: "keep",
+    stripCrutch: true,
+  },
+  {
+    label: "NWACC x Strengthening Community Colleges -- community college [needs ingest + confirm profile]",
+    clientNameLike: "%nwacc%",
+    grantUuid: "c05cfe8d-504c-49b0-84fa-d7b581e0a635",
+    band: "keep",
+    stripCrutch: true,
+  },
+  {
+    label: "Ozark Regional Transit x ICAM Pilot -- transit authority [needs re-shred]",
+    clientNameLike: "%ozark%transit%",
+    grantUuid: "9f37fa10-8d49-42f4-81c4-d46fee2768dd",
+    band: "keep",
+    stripCrutch: true,
+  },
+  {
+    label: "Mississippi County x USDA Rural Development -- local gov [needs ingest]",
+    clientNameLike: "%mississippi county%",
+    grantUuid: "e407af15-6c31-41de-80ac-3ffcaf61ea88",
+    band: "keep",
+    stripCrutch: true,
+  },
+  {
+    label: "Mississippi County x EDA PWEAA -- local gov [needs ingest]",
+    clientNameLike: "%mississippi county%",
+    grantUuid: "b5365cea-b07c-4e8d-8313-e23ab0fd3766",
+    band: "keep",
+    stripCrutch: true,
+  },
+  {
+    label: "Mississippi County x DOT BUILD/RAISE -- local gov [needs ingest]",
+    clientNameLike: "%mississippi county%",
+    grantUuid: "4d8f5775-ff01-4a6f-ab4e-b125899043b3",
+    band: "keep",
+    stripCrutch: true,
+  },
 
-  // ── KEEP-140 anchor (must stay >= 2) -- SHANNON SUPPLIES, the #140 guard ────────────────────────────
-  // An integrative-fit regional multi-sector org on a broad grant (the class the seat model buried).
-  // { label: "<regional multi-sector org> x <broad grant>", clientNameLike: "%...%", grantTitleLike: "%...%", band: "keep-140" },
+  // ── KEEP-140 anchor (must stay >= 2) -- STILL NEEDED FROM SHANNON, the #140 guard ────────────────────
+  // An integrative-fit regional multi-sector org on a broad grant (the class the seat model buried). The
+  // GATE test below stays RED until this is supplied -- do NOT flip the flag on a run without it.
+  // { label: "<regional multi-sector org> x <broad grant>", clientNameLike: "%...%", grantUuid: "...", band: "keep-140", stripCrutch: true },
 ];
 
 const RUN = process.env.RUN_ALIGN_SPOTCHECK === "1" && !!process.env.ANTHROPIC_API_KEY;
@@ -101,11 +157,12 @@ async function loadClient(db: ReturnType<typeof createServiceClient>, nameLike: 
   const { data } = await db.from("clients").select("*").ilike("name", nameLike).limit(1).maybeSingle<Client>();
   return data ?? null;
 }
-async function loadGrant(db: ReturnType<typeof createServiceClient>, titleLike: string): Promise<Grant | null> {
-  const { data } = await db
-    .from("grants")
-    .select("*")
-    .ilike("title", titleLike)
+async function loadGrant(db: ReturnType<typeof createServiceClient>, fx: Fixture): Promise<Grant | null> {
+  let q = db.from("grants").select("*");
+  if (fx.grantUuid) q = q.ilike("source_url", `%${fx.grantUuid}%`); // exact: ingest stores .../opportunity/<uuid>
+  else if (fx.grantTitleLike) q = q.ilike("title", fx.grantTitleLike);
+  else return null;
+  const { data } = await q
     // grants has no created_at; ingested_at is the ingest timestamp (most-recent match wins).
     .order("ingested_at", { ascending: false })
     .limit(1)
@@ -141,9 +198,9 @@ async function loadGrant(db: ReturnType<typeof createServiceClient>, titleLike: 
       `[${fx.band}] ${fx.label}`,
       async () => {
         const client = await loadClient(db, fx.clientNameLike);
-        const grant = await loadGrant(db, fx.grantTitleLike);
+        const grant = await loadGrant(db, fx);
         expect(client, `client not found for "${fx.clientNameLike}"`).toBeTruthy();
-        expect(grant, `grant not found for "${fx.grantTitleLike}"`).toBeTruthy();
+        expect(grant, `grant not found for "${fx.grantUuid ?? fx.grantTitleLike}"`).toBeTruthy();
         if (!client || !grant) return;
 
         // Rule G1: strip the hand-written matching_rules crutch so the verdict is earned from the profile.
