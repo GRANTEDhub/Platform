@@ -93,8 +93,6 @@
       "mcp__Supabase__rebase_branch",
       "mcp__Supabase__reset_branch",
       "mcp__Vercel__update_project_deployment_protection",
-      "Edit(lib/grants/engine.ts)",
-      "Write(lib/grants/engine.ts)",
       "Edit(lib/grants/pipeline.ts)",
       "Write(lib/grants/pipeline.ts)",
       "Edit(lib/clients/match-queue.ts)",
