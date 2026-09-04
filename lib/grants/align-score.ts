@@ -222,6 +222,21 @@ function fundedPurposeLine(profile: IdealApplicantProfile | null | undefined): s
   return parts.length ? `Funded purpose (distilled from the NOFO): ${parts.join(" -- ")}` : "";
 }
 
+// The CLIENT PROFILE section. When no distilled client_profile exists -- a prospect scored via
+// prospectAsClient (client_profile: null), or a real client the distiller has not reached yet -- profileText
+// is empty, yet the system prompt asserts "you are given the distilled profile" and treats can_prime as
+// AUTHORITATIVE. A silent gap would have the model judge on a profile it does not have, so emit an EXPLICIT
+// no-profile block: mark can_prime UNKNOWN, forbid assuming Prime off an absent profile, and steer to a
+// conservative score. finalizeAlignMatch adds a deterministic before_you_approve flag on the SAME emptiness
+// test, so the honesty guarantee does not depend on the model reading this block.
+function clientProfileSection(profileText: string): string {
+  if (profileText && profileText.trim()) return profileText;
+  return `CLIENT PROFILE: NONE ON FILE.
+No distilled profile is available for this client (mission, core capabilities, prime_capacity/can_prime, populations). Do NOT assume any of these. Score ONLY from the CLIENT confirmed facts above:
+- Treat prime_capacity.can_prime as UNKNOWN. Do NOT assign Prime on the strength of an absent profile: assign Prime only if the confirmed facts (org type, service area, eligibility) plainly support it; otherwise prefer a partner role or a conservative score, and record the missing profile in inferred_fields.
+- Without a profile the functional-alignment read is inferred, so a clean 3 is rarely justified. Prefer a 2 with a caveat when the fit is real but unconfirmed; a genuine eligible fit still surfaces.`;
+}
+
 // PURE: the user message. Mirrors the occupancy path's grant/client blocks (so raw-fact parity holds) but
 // drops the seat menu / ideal-profile JSON dump and ADDS the scoring-facing client profile. Exported for
 // the unit test.
@@ -274,7 +289,7 @@ Matching Rules (AUTHORITATIVE OVERRIDES -- apply before general logic): ${client
 Hard Constraints (CODE-ENFORCED -- authoritative; enforced in code regardless of your output, listed so your role assignment aligns):
 ${formatConstraintsForPrompt(client)}`;
 
-  return `Evaluate this grant-client match.\n\n${grantContext}\n\n${clientContext}\n${profileText}`;
+  return `Evaluate this grant-client match.\n\n${grantContext}\n\n${clientContext}\n${clientProfileSection(profileText)}`;
 }
 
 // #105 honesty backstop, mirrored from the occupancy path (engine.ts enforceFactorDataFloors, ~693-728).
@@ -361,6 +376,17 @@ export function finalizeAlignMatch(
     disqualified: r.disqualified === true,
     disqualify_reason: (r.disqualify_reason as string | undefined) ?? undefined,
   } as MatchResult;
+
+  // Honesty flag (deterministic, not model-dependent): no distilled profile was on file, so prime capacity
+  // and functional fit were inferred from raw confirmed facts only. Keyed on the SAME emptiness test the
+  // prompt's no-profile block uses, so the flag fires exactly when the model was told "no profile on file"
+  // (a prospect via prospectAsClient carries client_profile: null; a not-yet-distilled client is the same).
+  if (!formatClientProfileForScoring(client.client_profile).trim()) {
+    result.before_you_approve = [
+      "No distilled client profile on file: prime capacity and functional fit are inferred from raw facts only. Verify directly before outreach.",
+      ...result.before_you_approve,
+    ];
+  }
 
   // KEPT verbatim from the occupancy path, in the SAME order matchGrantToClient runs them: the #105
   // factor-data honesty floor, then hard client constraints (role ceilings / funder exclusions /

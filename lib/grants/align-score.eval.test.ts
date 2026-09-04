@@ -42,10 +42,39 @@ interface Fixture {
   // no-go specimens. Most-recent (ingested_at) wins either way.
   grantUuid?: string;
   grantTitleLike?: string;
+  // INLINE-FIXTURE FALLBACK: for a grant that cannot be ingested/shredded to full -- a non-Simpler NOFO
+  // (SAMHSA TI-26-015) or a Simpler grant stuck at summary (deep-shred source unfetchable) -- carry the
+  // real NOFO facts here instead of a DB lookup. The client is still the REAL DB row; only the grant is
+  // hand-built. Fill from the OFFICIAL NOFO; verify awards/deadline/eligibility from source, do not guess.
+  grantInline?: Partial<Grant>;
   band: Band;
   // Blank matching_rules before scoring (rule G1): the verdict must come from the profile, not a crutch.
   stripCrutch?: boolean;
 }
+
+// Safe defaults so a Partial<Grant> inline fixture never NPEs the scorer's grant/client block builder.
+const INLINE_GRANT_SKELETON = {
+  id: "inline",
+  source_url: null,
+  funder: null,
+  fon: null,
+  title: null,
+  description: null,
+  ideal_applicant_profile: null,
+  award_range_min: null,
+  award_range_max: null,
+  total_funding: null,
+  submission_deadline: null,
+  cost_share: null,
+  eligible_entity_types: null,
+  geographic_eligibility: null,
+  ineligible_entities: null,
+  focus_areas: null,
+  program_type: null,
+  subaward_prohibited: null,
+  scoring_criteria_high_value: null,
+  raw_text: null,
+} as unknown as Grant;
 
 const FIXTURES: Fixture[] = [
   // ── NO-GO band (confirmed specimens; must drop to a Pass) ──────────────────────────────────────────
@@ -122,6 +151,28 @@ const FIXTURES: Fixture[] = [
     band: "keep",
     stripCrutch: true,
   },
+  // INLINE FALLBACK if the transit grants stay stuck at summary (deep-shred source unfetchable): drop the
+  // real FTA NOFO facts here and delete the UUID fixture above. Same shape works for SAMHSA TI-26-015.
+  // Fill <from NOFO> from the official source -- do not guess awards/deadline.
+  // {
+  //   label: "Ozark Regional Transit x FTA 5310 ICAM (inline) -- transit [summary-stuck fallback]",
+  //   clientNameLike: "%ozark%transit%",
+  //   band: "keep",
+  //   stripCrutch: true,
+  //   grantInline: {
+  //     title: "Enhanced Mobility of Seniors & Individuals with Disabilities (Section 5310) -- ICAM Pilot",
+  //     funder: "Federal Transit Administration (FTA)",
+  //     fon: "<from NOFO>",
+  //     description: "<paste the NOFO's funded purpose: coordinated access & mobility for seniors and people with disabilities>",
+  //     eligible_entity_types: ["States", "Designated recipients", "Local governmental authorities", "Nonprofit organizations"],
+  //     geographic_eligibility: "United States",
+  //     focus_areas: ["Transit", "Mobility", "Access"],
+  //     program_type: "Formula/Discretionary",
+  //     submission_deadline: "<from NOFO>",
+  //     award_range_min: "<from NOFO>",
+  //     award_range_max: "<from NOFO>",
+  //   },
+  // },
   {
     label: "Mississippi County x USDA Rural Development -- local gov [needs ingest]",
     clientNameLike: "%mississippi county%",
@@ -158,6 +209,7 @@ async function loadClient(db: ReturnType<typeof createServiceClient>, nameLike: 
   return data ?? null;
 }
 async function loadGrant(db: ReturnType<typeof createServiceClient>, fx: Fixture): Promise<Grant | null> {
+  if (fx.grantInline) return { ...INLINE_GRANT_SKELETON, ...fx.grantInline } as Grant; // hand-built NOFO facts
   let q = db.from("grants").select("*");
   if (fx.grantUuid) q = q.ilike("source_url", `%${fx.grantUuid}%`); // exact: ingest stores .../opportunity/<uuid>
   else if (fx.grantTitleLike) q = q.ilike("title", fx.grantTitleLike);
@@ -200,7 +252,7 @@ async function loadGrant(db: ReturnType<typeof createServiceClient>, fx: Fixture
         const client = await loadClient(db, fx.clientNameLike);
         const grant = await loadGrant(db, fx);
         expect(client, `client not found for "${fx.clientNameLike}"`).toBeTruthy();
-        expect(grant, `grant not found for "${fx.grantUuid ?? fx.grantTitleLike}"`).toBeTruthy();
+        expect(grant, `grant not found for "${fx.grantUuid ?? fx.grantTitleLike ?? "(inline)"}"`).toBeTruthy();
         if (!client || !grant) return;
 
         // Rule G1: strip the hand-written matching_rules crutch so the verdict is earned from the profile.

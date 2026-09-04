@@ -234,6 +234,33 @@ describe("direct-alignment scorer -- plumbing", () => {
     expect(out).not.toContain("seat_ref");
   });
 
+  it("buildAlignUserContent emits an EXPLICIT no-profile block (not a silent gap) when profileText is empty", () => {
+    // A prospect (prospectAsClient -> client_profile null) or a not-yet-distilled client: the prompt must
+    // NOT let the model judge on an absent profile as if present. can_prime is stated UNKNOWN, Prime is not
+    // assumed, and the read is steered conservative.
+    const out = buildAlignUserContent(mkGrant(), mkClient(), undefined, "");
+    expect(out).toContain("CLIENT PROFILE: NONE ON FILE");
+    expect(out).toContain("can_prime as UNKNOWN");
+    // A populated profile takes the real text, NOT the no-profile block.
+    const withProfile = buildAlignUserContent(
+      mkGrant(),
+      mkClient(),
+      undefined,
+      formatClientProfileForScoring(mkProfile()),
+    );
+    expect(withProfile).not.toContain("NONE ON FILE");
+  });
+
+  it("finalizeAlignMatch prepends a deterministic no-profile flag ONLY when client_profile is absent", () => {
+    const noProfile = finalizeAlignMatch(mkRaw(), mkClient({ client_profile: null }), mkGrant());
+    expect(noProfile.before_you_approve[0]).toMatch(/No distilled client profile on file/);
+    // The original model-supplied caveats are preserved after the flag.
+    expect(noProfile.before_you_approve).toContain("Confirm SAM.gov is active.");
+
+    const withProfile = finalizeAlignMatch(mkRaw(), mkClient({ client_profile: mkProfile() }), mkGrant());
+    expect(withProfile.before_you_approve.some((s) => /No distilled client profile/.test(s))).toBe(false);
+  });
+
   it("alignScoreClient returns the finalized match from an INJECTED model (no network)", async () => {
     const res = await alignScoreClient(mkGrant(), mkClient(), undefined, {
       runModel: async () => mkRaw({ fit_score: 1, proposed_role: "Not Recommended" }),
