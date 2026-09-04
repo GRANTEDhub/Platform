@@ -87,25 +87,20 @@ const INLINE_GRANT_SKELETON = {
 const FIXTURES: Fixture[] = [
   // ── NO-GO band (confirmed specimens; must drop to a Pass) ──────────────────────────────────────────
   // AGFF is a fundraising / fiscal-sponsor foundation (client_profile.prime_capacity.can_prime=false).
-  // Strip its matching_rules so the no-go is earned from the profile alone (rule G1).
+  // Strip its matching_rules so the no-go is earned from the profile alone (rule G1). Only BLM T&E is a
+  // CLEAN AGFF no-go: a pure field-implementation grant with NO partner/match seat (AGFF is a funder, not a
+  // field implementer) AND a geographic wall (AR has ~no BLM-managed land). AGFF x NAWCA and x National Fish
+  // Passage were RECLASSIFIED to KEEP (2026-09-04, Shannon's call): on the re-distilled clean profile the
+  // identity-first scorer rated each a conditional 2 -- "a concrete role (property holder / match partner),
+  // not a manufactured one" -- because both are habitat programs where AGFF contributes REAL property it
+  // holds (Little Osage Creek, Fred Berry Crooked Creek) as a site/match partner, and NAWCA is an explicit
+  // public-private PARTNERSHIP grant with a mandatory 1:1 non-federal MATCH (match-assembly via AGFF's Impact
+  // Fund is the funded structure). That is a genuine funder-as-partner seat, NOT the entity-eligibility
+  // disease, so asserting them as full no-gos would be force-fitting. They now live in the KEEP band below.
   {
     label: "AGFF x BLM Threatened & Endangered Species (funder, not field implementer)",
     clientNameLike: "%game and fish foundation%",
     grantTitleLike: "%Threatened and Endangered Species%",
-    band: "no-go",
-    stripCrutch: true,
-  },
-  {
-    label: "AGFF x NAWCA Wetlands (funder, not implementer)",
-    clientNameLike: "%game and fish foundation%",
-    grantTitleLike: "%NAWCA%",
-    band: "no-go",
-    stripCrutch: true,
-  },
-  {
-    label: "AGFF x National Fish Passage (funder, not implementer)",
-    clientNameLike: "%game and fish foundation%",
-    grantTitleLike: "%National Fish Passage%",
     band: "no-go",
     stripCrutch: true,
   },
@@ -284,6 +279,32 @@ const FIXTURES: Fixture[] = [
     label: "Mississippi County x DOT BUILD/RAISE -- local gov [needs ingest]",
     clientNameLike: "%mississippi county%",
     grantUuid: "4d8f5775-ff01-4a6f-ab4e-b125899043b3",
+    band: "keep",
+    stripCrutch: true,
+  },
+
+  // ── KEEP band, funder-as-partner archetype: AGFF conditional partner-seat 2s (reclassified from NO-GO,
+  // 2026-09-04) ───────────────────────────────────────────────────────────────────────────────────────────
+  // AGFF is can_prime=FALSE (a funder/convener), but these two are NOT the entity-eligibility disease: each is
+  // a habitat grant where AGFF holds REAL property (Little Osage Creek ~150ac, Fred Berry Crooked Creek) it
+  // contributes as a site/match partner, and NAWCA specifically is a public-private PARTNERSHIP grant with a
+  // mandatory 1:1 non-federal MATCH -- match-assembly (AGFF's Impact Fund) IS the funded structure. On the
+  // re-distilled clean profile the identity-first scorer landed each a conditional 2, explicitly reasoning "a
+  // concrete role (property holder / match partner), not a manufactured one" -- the correct funder-as-partner
+  // call. They must stay SURFACED (>=2) in a partner/sub role; the KEEP bar is "real match in SOME role", not
+  // "must prime". NOT reDistillSkip: AGFF's STORED profile still carries the pre-distiller-fix "implementer"
+  // line, so the clean verdict requires the re-distilled profile -- the gate must run redistill=true.
+  {
+    label: "AGFF x NAWCA Wetlands -- property + match partner on a partnership grant [conditional 2]",
+    clientNameLike: "%game and fish foundation%",
+    grantTitleLike: "%NAWCA%",
+    band: "keep",
+    stripCrutch: true,
+  },
+  {
+    label: "AGFF x National Fish Passage -- property holder / match partner [conditional 2]",
+    clientNameLike: "%game and fish foundation%",
+    grantTitleLike: "%National Fish Passage%",
     band: "keep",
     stripCrutch: true,
   },
