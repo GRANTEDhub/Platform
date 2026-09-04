@@ -1,0 +1,87 @@
+name: Align Spotcheck
+
+# Manual-only. Runs the model-in-the-loop direct-alignment spot-check
+# (lib/grants/align-score.eval.test.ts) — the GATE that must pass before
+# MATCH_DIRECT_ALIGN_ENABLED is flipped on. It is NOT part of CI: it makes real
+# (paid) Anthropic calls (the align scorer) and reads production client/grant
+# rows (read-only, service role), so it only runs when a human clicks
+# "Run workflow".
+#
+# The button appears under Actions → "Align Spotcheck" only once this file is on
+# the default branch (main). Because the eval also reads the wired FIXTURES and
+# the prod rows, the align-score.eval.test.ts on main is what runs — so this gate
+# is a MERGE-THEN-DISPATCH step: merge #503 inert (MATCH_DIRECT_ALIGN_ENABLED
+# defaults OFF -> byte-identical prod), dispatch this workflow on main, read the
+# per-band result, and flip the flag only if it is green. (The eval calls
+# alignScoreClient directly and does NOT read MATCH_DIRECT_ALIGN_ENABLED, so that
+# flag is deliberately NOT set here.)
+#
+# SECRETS ARE ENVIRONMENT-SCOPED, NOT REPO-SCOPED. This job reuses the SAME protected
+# GitHub Environment as the subseat / mission-gate / generic-nexus evals — "subseat-eval"
+# (Settings → Environments) — which already holds ANTHROPIC_API_KEY, NEXT_PUBLIC_SUPABASE_URL,
+# and SUPABASE_SERVICE_ROLE_KEY, restricted to the `main` branch. SUPABASE_SERVICE_ROLE_KEY
+# bypasses RLS (full prod DB); a repo-level secret would be readable by ANY workflow on ANY
+# branch, so it stays environment-scoped and only a job declaring `environment: subseat-eval`
+# (this one) can read it. No new environment or secrets to add — reusing the existing one.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Runs per fixture (stability sampling; ALIGN_SPOTCHECK_RUNS). no-go needs a MAJORITY <=1; keep/keep-140 need EVERY run >=2, so raising this hardens the strict bands but grows cost."
+        required: false
+        default: "3"
+
+# Never let two eval runs race on the same paid/prod-reading job.
+concurrency:
+  group: align-spotcheck
+  cancel-in-progress: false
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    # Environment-scoped secrets (see header): GitHub injects this environment's secrets only
+    # into a job that declares it, and enforces the environment's branch policy at the platform
+    # level — so the RLS-bypassing service-role key can't be read by an arbitrary dispatch ref or
+    # an attacker-authored workflow that doesn't declare this environment.
+    environment: subseat-eval
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # 22, not 20: createServiceClient() pulls in @supabase/realtime-js, which throws at
+          # construction ("Node.js 20 detected without native WebSocket support") when there is no
+          # global WebSocket. Node exposes WebSocket unflagged from 22.4; Node 20 never does. This is
+          # isolated to the eval job — ci.yml stays on 20 — so it needs no app-code change.
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Fail LOUD if a secret is unset/misnamed. Without this, an empty ANTHROPIC_API_KEY trips the
+      # eval's own RUN gate (skipIf), every fixture is skipped, and vitest still exits 0 — a green
+      # check that verified nothing. The whole point of this job is to be a trustworthy flip gate,
+      # so a silent skip must be a hard failure instead.
+      - name: Verify required secrets are present
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          missing=0
+          for v in ANTHROPIC_API_KEY NEXT_PUBLIC_SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+            if [ -z "${!v}" ]; then
+              echo "::error::$v is empty or unset — add it to the 'subseat-eval' GitHub Environment (Settings → Environments). The eval would otherwise silently skip and report a false green."
+              missing=1
+            fi
+          done
+          [ "$missing" = 0 ]
+      - name: Run align spot-check
+        env:
+          RUN_ALIGN_SPOTCHECK: "1"
+          ALIGN_SPOTCHECK_RUNS: ${{ inputs.runs }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        # The per-fixture resolved-row logs + per-band assertion messages are captured in this
+        # step's log, so the no-go / keep / keep-140 report is readable in the browser with pass/fail.
+        run: npx vitest run lib/grants/align-score.eval.test.ts

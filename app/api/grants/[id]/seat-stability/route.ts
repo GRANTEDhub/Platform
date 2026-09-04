@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { matchGrantToClient } from "@/lib/grants/engine";
+import { matchDirectAlignEnabled } from "@/lib/grants/align-score";
 import { formatStoredUSASpending } from "@/lib/grants/usaspending";
 import type { Client, Grant } from "@/types/database";
 
@@ -162,16 +163,25 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     };
   };
 
+  // The profile-invariance guard is OCCUPANCY-ONLY. With MATCH_DIRECT_ALIGN_ENABLED on,
+  // matchGrantToClient dispatches to alignScoreClient, which reads client_profile BY DESIGN --
+  // so the "on" vs "off" variants are EXPECTED to differ and a false profileInvariant would be a
+  // spurious "profile leaked into occupancy" alarm. Under align the guard reports null (N/A).
+  const alignActive = matchDirectAlignEnabled();
+
   const report = clients.map((client) => {
     const on = variants.includes("on") ? aggregate(byKey.get(key(client.id, "on")) ?? []) : null;
     const off = variants.includes("off") ? aggregate(byKey.get(key(client.id, "off")) ?? []) : null;
     // Invariance guard: when both variants ran, occupancy (seat category + score
     // set) MUST match. A mismatch means the profile leaked back into occupancy.
+    // N/A under align (the profile is a deliberate scoring input there).
     const profileInvariant =
-      on && off
-        ? JSON.stringify(on.categories.sort()) === JSON.stringify(off.categories.sort()) &&
-          JSON.stringify(on.scores) === JSON.stringify(off.scores)
-        : null;
+      alignActive
+        ? null
+        : on && off
+          ? JSON.stringify(on.categories.sort()) === JSON.stringify(off.categories.sort()) &&
+            JSON.stringify(on.scores) === JSON.stringify(off.scores)
+          : null;
     return { clientId: client.id, name: client.name, profileOn: on, profileOff: off, profileInvariant };
   });
 
@@ -182,9 +192,14 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     variants,
     runsPerClient: runs,
     totalCalls: tasks.length,
-    // True only when profile=both ran and occupancy matched for every client.
+    // Which scorer this probe exercised. Under "align" the profile-invariance guard does not
+    // apply (alignScoreClient reads client_profile by design), so the profileInvariant fields are
+    // null rather than a regression signal.
+    scorer: alignActive ? "align" : "occupancy",
+    // True only when profile=both ran and OCCUPANCY matched for every client. Null under align
+    // (invariant N/A) or when a single variant ran.
     allProfileInvariant:
-      variants.length === 2 ? report.every((r) => r.profileInvariant === true) : null,
+      alignActive || variants.length !== 2 ? null : report.every((r) => r.profileInvariant === true),
     report,
   });
 }

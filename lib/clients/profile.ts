@@ -444,6 +444,77 @@ export function formatClientProfileForEnrichment(profile: ClientProfile | null |
   );
 }
 
+// Scoring-facing rendering of a ClientProfile (the direct-alignment scorer, MATCH_DIRECT_ALIGN_ENABLED).
+//
+// This is the DELIBERATE opposite of formatClientProfileForEnrichment. The enrichment formatter grounds
+// the outward NARRATIVE after the score is already fixed, and under the retired seat model the profile was
+// structurally BARRED from scoring (the #138->#140 discipline: a distilled profile pushed the occupancy
+// scorer into itemized seat-matching that buried integrative-fit orgs). The direct-alignment scorer has no
+// seats to itemize against -- it asks "eligible? and does the org do the funded work?" -- so it both CAN and
+// SHOULD read the profile: the mission/scope/capabilities ARE the functional-fit question. This formatter is
+// what feeds it, and it LEADS with prime_capacity.can_prime -- the structured, authoritative "can this org
+// perform a core funded role as a prime" signal the occupancy scorer was blind to (the exact field that lets
+// a funder / fiscal-sponsor like AGFF earn the no-go from its own record, no hand-written rule needed) --
+// then core_capabilities (what the org ACTUALLY performs). Returns "" for a null/undefined profile.
+export function formatClientProfileForScoring(profile: ClientProfile | null | undefined): string {
+  if (!profile) return "";
+  const lines: string[] = [];
+  const joined = (a: string[] | undefined) => (a && a.length ? a.join(", ") : null);
+  const push = (label: string, val: string | null | undefined) => {
+    if (val && val.trim()) lines.push(`${label}: ${val.trim()}`);
+  };
+
+  // LEAD with prime capacity -- the authoritative can-this-org-prime signal. can_prime=FALSE means the
+  // client CANNOT be scored as a Prime, full stop; the scorer then checks for a genuine partner/facilitator
+  // role or none. This is the single most load-bearing scoring fact in the profile.
+  const pc = profile.prime_capacity;
+  if (pc) {
+    // Three-way: TRUE / FALSE / UNKNOWN. The DB can carry null despite the boolean type (an undistilled or
+    // genuinely-conditional profile), and null must NOT read as FALSE -- "FALSE" tells the scorer the org can
+    // NEVER prime (full stop), so coercing null->FALSE silently kneecaps a conditional-prime convener (NWA
+    // Council's real profile stores can_prime: null). UNKNOWN steers the model to assess prime capacity from
+    // the confirmed facts instead of assuming it cannot prime.
+    const cp = pc.can_prime as boolean | null | undefined;
+    const canPrimeLabel =
+      cp === true
+        ? "TRUE"
+        : cp === false
+          ? "FALSE"
+          : "UNKNOWN (not recorded; assess prime capacity from the confirmed facts, do NOT assume the org cannot prime)";
+    lines.push(
+      `Prime capacity: can_prime=${canPrimeLabel}` +
+        (pc.conditional_on?.trim() ? ` (conditional on: ${pc.conditional_on.trim()})` : ""),
+    );
+    if (pc.rationale?.trim()) lines.push(`  Prime-capacity rationale: ${pc.rationale.trim()}`);
+  }
+  push("Core capabilities (the funded roles this org can ACTUALLY perform)", joined(profile.core_capabilities));
+  push("Mission", profile.mission);
+  push("Summary", profile.summary);
+
+  if (Array.isArray(profile.program_areas) && profile.program_areas.length) {
+    lines.push("Programs the org actually runs:");
+    for (const p of profile.program_areas) {
+      const demo = joined(p.target_demographics);
+      const desc = p.description?.trim() ? ` -- ${p.description.trim().slice(0, 160)}` : "";
+      lines.push(`  - [${p.status}] ${p.name}${demo ? ` (serves: ${demo})` : ""}${desc}`);
+    }
+  }
+  push("Populations served", joined(profile.populations_served));
+
+  const geo = profile.geographic_scope;
+  if (geo) push("Geographic scope", [geo.footprint, geo.scale].filter(Boolean).join(" -- "));
+
+  push("Supporting / partner roles it can genuinely fill", joined(profile.supporting_roles));
+  push("What they want to fund", joined(profile.funding_priorities));
+  // Surface thin/missing data so the scorer can honestly rate a factor insufficient_data rather than guess.
+  push("Data gaps (thin/unconfirmed -- do not infer capability from these)", joined(profile.gaps));
+
+  return (
+    `\nCLIENT PROFILE (distilled -- use to judge ELIGIBILITY (especially can_prime) and, above all, ` +
+    `MISSION/SCOPE ALIGNMENT: does this org actually perform the funded work?):\n${lines.join("\n")}`
+  );
+}
+
 // The "distilled profile first, else fall back to the structured fields" preface shared by every
 // narrative renderer (section drafting + concept). The distilled profile is the priority signal;
 // when it is absent the caller still grounds on the structured fields it renders below this line, so
