@@ -171,10 +171,16 @@ describe("direct-alignment scorer -- plumbing", () => {
       mkProfile({
         prime_capacity: { can_prime: false, rationale: "A fundraising foundation, not an implementer." },
         core_capabilities: ["Fundraising", "Fiscal sponsorship"],
+        inferred: ["Supporting-org / fiscal-sponsor gray area on pass-through grants"],
       }),
     );
     expect(out).toContain("can_prime=FALSE");
     expect(out).toContain("Fiscal sponsorship");
+    // inferred[] is an identity signal the scorer's IDENTITY GOVERNS rule cites (AGFF's disqualifying "gray
+    // area" lives here) -- it must RENDER, in the identity block ABOVE the capability list, not be dropped.
+    expect(out).toContain("Supporting-org / fiscal-sponsor gray area");
+    expect(out.indexOf("Inferred")).toBeGreaterThan(-1);
+    expect(out.indexOf("Inferred")).toBeLessThan(out.indexOf("Capabilities claimed in the intake"));
     // can_prime (identity) must appear BEFORE the capabilities list -- it is the authoritative lead the
     // capabilities are read THROUGH (the identity-first ordering the scorer's IDENTITY GOVERNS rule relies on).
     expect(out.indexOf("can_prime")).toBeGreaterThan(-1);

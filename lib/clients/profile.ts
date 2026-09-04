@@ -504,6 +504,14 @@ export function formatClientProfileForScoring(profile: ClientProfile | null | un
   // the header and the model reads identity BEFORE the capability list it must interpret through it.
   push("Summary", profile.summary);
   push("Mission", profile.mission);
+  // inferred[] is an IDENTITY signal the scorer's IDENTITY GOVERNS rule explicitly cites: a funder /
+  // support-org "gray area" or eligibility caveat often lives HERE, not in summary (AGFF is the canonical
+  // case). It went unrendered, so the scorer was told to weigh a fact it never received -- emit it, flagged
+  // as inferred, in the identity block above the capability list.
+  push(
+    "Inferred (NOT confirmed -- weigh as an identity / eligibility signal, never as a proven capability)",
+    joined(profile.inferred),
+  );
   push(
     "Capabilities claimed in the intake (READ THROUGH the identity above -- a claim that contradicts can_prime/summary/mission is work the org FUNDS or CONVENES, not work it performs)",
     joined(profile.core_capabilities),
