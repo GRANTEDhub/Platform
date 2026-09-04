@@ -500,12 +500,14 @@ export function formatClientProfileForScoring(profile: ClientProfile | null | un
     );
     if (pc.rationale?.trim()) lines.push(`  Prime-capacity rationale: ${pc.rationale.trim()}`);
   }
+  // Identity narrative leads (right after can_prime), so the layout matches the "identity first" claim in
+  // the header and the model reads identity BEFORE the capability list it must interpret through it.
+  push("Summary", profile.summary);
+  push("Mission", profile.mission);
   push(
-    "Capabilities claimed in the intake (READ THROUGH the identity above -- a claim that contradicts can_prime/summary is work the org FUNDS or CONVENES, not work it performs)",
+    "Capabilities claimed in the intake (READ THROUGH the identity above -- a claim that contradicts can_prime/summary/mission is work the org FUNDS or CONVENES, not work it performs)",
     joined(profile.core_capabilities),
   );
-  push("Mission", profile.mission);
-  push("Summary", profile.summary);
 
   if (Array.isArray(profile.program_areas) && profile.program_areas.length) {
     lines.push("Programs the org actually runs:");
@@ -529,10 +531,11 @@ export function formatClientProfileForScoring(profile: ClientProfile | null | un
   push("Data gaps (thin/unconfirmed -- do not infer capability from these)", joined(profile.gaps));
 
   return (
-    `\nCLIENT PROFILE (distilled). The IDENTITY fields (can_prime + summary + gaps, listed FIRST) are ` +
+    `\nCLIENT PROFILE (distilled). The IDENTITY signals -- can_prime, summary, and mission, listed FIRST -- are ` +
     `AUTHORITATIVE and OUTRANK the capability / role lists beneath them. Judge ELIGIBILITY (especially ` +
     `can_prime) and, above all, MISSION/SCOPE ALIGNMENT -- does this org actually PERFORM the funded work? ` +
-    `-- and when a capability line contradicts the identity, believe the identity:\n${lines.join("\n")}`
+    `-- and when a capability line contradicts the identity, believe the identity. (Data gaps, listed last, ` +
+    `flag thin/unconfirmed inputs -- do not infer capability from them.):\n${lines.join("\n")}`
   );
 }
 
