@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   matchDirectAlignEnabled,
+  matchFunderCapEnabled,
+  alignModelRequest,
   seatRefForRole,
   buildAlignUserContent,
   finalizeAlignMatch,
@@ -18,8 +20,10 @@ import type { Client, Grant, ClientProfile } from "@/types/database";
 // before MATCH_DIRECT_ALIGN_ENABLED is flipped. Green here means "the swap mechanics are reliable".
 
 const FLAG = "MATCH_DIRECT_ALIGN_ENABLED";
+const CAP_FLAG = "MATCH_FUNDER_CAP_ENABLED";
 afterEach(() => {
   delete process.env[FLAG];
+  delete process.env[CAP_FLAG];
 });
 
 const mkClient = (over: Partial<Client> = {}): Client =>
@@ -350,5 +354,120 @@ describe("direct-alignment scorer -- plumbing", () => {
     expect(res.factor_scores.cost_share.rating).toBe("strong");
     expect(res.factor_scores.program_history.rating).toBe("moderate");
     expect(res.factor_scores.geographic.rating).toBe("moderate");
+  });
+});
+
+// The deterministic funder cap (MATCH_FUNDER_CAP_ENABLED). The MODEL classifies is_money_mover /
+// concrete_role_on_this_grant (faked here on the raw tool input); CODE enforces the cap. These tests prove the
+// consequence + every structural guardrail, with no network. The classification QUALITY is the model-in-the-
+// loop gate (align-score.eval.test.ts); green here means "the cap fires exactly when, and only when, it must".
+describe("direct-alignment scorer -- funder cap", () => {
+  // A can_prime={true|false|null} money-mover profile (grantmaker / fiscal sponsor).
+  const funderProfile = (canPrime: boolean | null): ClientProfile =>
+    mkProfile({
+      prime_capacity: { can_prime: canPrime, rationale: "Grantmaker / fiscal sponsor." },
+    } as unknown as Partial<ClientProfile>);
+  // A can_prime=FALSE money-mover with only topical overlap: the exact shape the cap targets.
+  const topicalFunder = (over: Record<string, unknown> = {}) =>
+    mkRaw({ fit_score: 2, proposed_role: "Sub", is_money_mover: true, concrete_role_on_this_grant: false, ...over });
+
+  it("matchFunderCapEnabled is true ONLY when the env flag is exactly 'true' (byte-identical OFF)", () => {
+    expect(matchFunderCapEnabled()).toBe(false);
+    process.env[CAP_FLAG] = "1";
+    expect(matchFunderCapEnabled()).toBe(false);
+    process.env[CAP_FLAG] = "TRUE";
+    expect(matchFunderCapEnabled()).toBe(false);
+    process.env[CAP_FLAG] = "true";
+    expect(matchFunderCapEnabled()).toBe(true);
+  });
+
+  it("model contract is byte-identical OFF: cap-OFF omits the classification ask + tool fields; cap-ON only ADDS them", () => {
+    const off = alignModelRequest(false);
+    const on = alignModelRequest(true);
+    // OFF: the base prompt + tool carry no funder-cap classification (the model never sees it).
+    expect(off.system).not.toContain("is_money_mover");
+    expect(off.tool.input_schema.properties).not.toHaveProperty("is_money_mover");
+    expect(off.tool.input_schema.required).not.toContain("is_money_mover");
+    expect(off.tool.input_schema.required).not.toContain("concrete_role_on_this_grant");
+    // ON: the ask + both required fields are present.
+    expect(on.system).toContain("is_money_mover");
+    expect(on.system).toContain("concrete_role_on_this_grant");
+    expect(on.tool.input_schema.properties).toHaveProperty("is_money_mover");
+    expect(on.tool.input_schema.properties).toHaveProperty("concrete_role_on_this_grant");
+    expect(on.tool.input_schema.required).toContain("is_money_mover");
+    expect(on.tool.input_schema.required).toContain("concrete_role_on_this_grant");
+    // ON is a strict SUPERSET of OFF: the base prompt is a prefix, and every base required key is retained.
+    expect(on.system.startsWith(off.system)).toBe(true);
+    for (const k of off.tool.input_schema.required) {
+      expect(on.tool.input_schema.required).toContain(k);
+    }
+  });
+
+  it("FIRES: flag on + can_prime=FALSE money-mover + no concrete role -> caps fit_score to 1 with an explainable note", () => {
+    process.env[CAP_FLAG] = "true";
+    const client = mkClient({ client_profile: funderProfile(false) });
+    const res = finalizeAlignMatch(topicalFunder({ fit_score: 2 }), client, mkGrant());
+    expect(res.fit_score).toBe(1);
+    expect(res.reasoning_context.fit_score_derivation).toContain("Funder cap: lowered 2->1");
+  });
+
+  it("is byte-identical OFF: same money-mover inputs, flag unset -> score UNCHANGED (no cap, no note)", () => {
+    // flag not set
+    const client = mkClient({ client_profile: funderProfile(false) });
+    const res = finalizeAlignMatch(topicalFunder({ fit_score: 2 }), client, mkGrant());
+    expect(res.fit_score).toBe(2);
+    expect(res.reasoning_context.fit_score_derivation).not.toContain("Funder cap");
+  });
+
+  it("does NOT fire on can_prime=TRUE (a real implementer, even if flagged money_mover) -> score unchanged", () => {
+    process.env[CAP_FLAG] = "true";
+    const client = mkClient({ client_profile: funderProfile(true) });
+    const res = finalizeAlignMatch(topicalFunder({ fit_score: 2 }), client, mkGrant());
+    expect(res.fit_score).toBe(2);
+  });
+
+  it("does NOT fire on can_prime=NULL (UNKNOWN -- e.g. NWA Council; strict === false excludes it) -> score unchanged", () => {
+    process.env[CAP_FLAG] = "true";
+    const client = mkClient({ client_profile: funderProfile(null) });
+    const res = finalizeAlignMatch(topicalFunder({ fit_score: 2 }), client, mkGrant());
+    expect(res.fit_score).toBe(2);
+  });
+
+  it("does NOT fire when the money-mover has a CONCRETE role on this grant -> score unchanged", () => {
+    process.env[CAP_FLAG] = "true";
+    const client = mkClient({ client_profile: funderProfile(false) });
+    const res = finalizeAlignMatch(
+      topicalFunder({ fit_score: 2, concrete_role_on_this_grant: true }),
+      client,
+      mkGrant(),
+    );
+    expect(res.fit_score).toBe(2);
+  });
+
+  it("does NOT fire when the client is NOT a money-mover (a can_prime=FALSE org that genuinely implements)", () => {
+    process.env[CAP_FLAG] = "true";
+    const client = mkClient({ client_profile: funderProfile(false) });
+    const res = finalizeAlignMatch(
+      topicalFunder({ fit_score: 2, is_money_mover: false }),
+      client,
+      mkGrant(),
+    );
+    expect(res.fit_score).toBe(2);
+  });
+
+  it("never RAISES a score: a capped money-mover already at 0 stays 0 (Math.min, not a forced 1)", () => {
+    process.env[CAP_FLAG] = "true";
+    const client = mkClient({ client_profile: funderProfile(false) });
+    const res = finalizeAlignMatch(topicalFunder({ fit_score: 0, proposed_role: "Not Recommended" }), client, mkGrant());
+    expect(res.fit_score).toBe(0);
+    // No move -> no cap note (the note is appended only when the score actually changes).
+    expect(res.reasoning_context.fit_score_derivation).not.toContain("Funder cap");
+  });
+
+  it("does NOT fire when the flag is on but there is no client_profile (can_prime is not === false)", () => {
+    process.env[CAP_FLAG] = "true";
+    const client = mkClient({ client_profile: null });
+    const res = finalizeAlignMatch(topicalFunder({ fit_score: 2 }), client, mkGrant());
+    expect(res.fit_score).toBe(2);
   });
 });
