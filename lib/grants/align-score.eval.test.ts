@@ -2,7 +2,12 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { createServiceClient } from "@/lib/supabase/server";
 import { alignScoreClient } from "@/lib/grants/align-score";
 import { formatStoredUSASpending } from "@/lib/grants/usaspending";
-import type { Client, Grant } from "@/types/database";
+import {
+  buildClientProfileInput,
+  constructClientProfile,
+  formatClientProfileForScoring,
+} from "@/lib/clients/profile";
+import type { Client, Grant, ClientProfile } from "@/types/database";
 
 // ── Direct-alignment scorer spot-check (MATCH_DIRECT_ALIGN_ENABLED) ──────────────────────────────────
 //
@@ -50,6 +55,9 @@ interface Fixture {
   band: Band;
   // Blank matching_rules before scoring (rule G1): the verdict must come from the profile, not a crutch.
   stripCrutch?: boolean;
+  // Diagnostic (ALIGN_REDISTILL=1): opt this fixture OUT of the in-memory re-distill so it scores against its
+  // REAL stored profile -- for isolating a scorer/render regression (Harbor House) from a profile-lie issue.
+  reDistillSkip?: boolean;
 }
 
 // Safe defaults so a Partial<Grant> inline fixture never NPEs the scorer's grant/client block builder.
@@ -211,6 +219,9 @@ const FIXTURES: Fixture[] = [
     grantUuid: "9e70946c-6830-4c6c-be95-20bcba375534",
     band: "keep",
     stripCrutch: true,
+    // Keep the REAL profile under ALIGN_REDISTILL: this fixture regressed 2->1 with the identity-first
+    // scorer, so we isolate the scorer/render cause on its actual profile, not a freshly re-distilled one.
+    reDistillSkip: true,
   },
   {
     label: "Arisa Health x CCBHC Improvement & Advancement -- health system [needs ingest]",
@@ -299,6 +310,23 @@ const FIXTURES: Fixture[] = [
 const RUN = process.env.RUN_ALIGN_SPOTCHECK === "1" && !!process.env.ANTHROPIC_API_KEY;
 const RUNS = Math.max(1, parseInt(process.env.ALIGN_SPOTCHECK_RUNS || "3", 10));
 
+// ── Diagnostic controls (all OFF by default -> the eval behaves exactly as the gate run) ─────────────
+// ALIGN_SPOTCHECK_ONLY="AGFF,Harbor House" -> run ONLY fixtures whose label contains one of the substrings
+// (a cheap focused re-run). Empty = every fixture.
+const ONLY = (process.env.ALIGN_SPOTCHECK_ONLY || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const inSubset = (label: string) => ONLY.length === 0 || ONLY.some((s) => label.includes(s));
+// ALIGN_REDISTILL=1 -> re-distill each scored client's profile IN-MEMORY (non-destructive) with the CURRENT
+// distiller prompt before scoring, the real "clean profile + identity-first scorer" test. One model call per
+// client, cached. reDistillSkip fixtures keep their real stored profile.
+const REDISTILL = process.env.ALIGN_REDISTILL === "1";
+const reDistillCache = new Map<string, ClientProfile>();
+// The manufactured "implementer/operator" signature the distiller fix is meant to strip from a funder's
+// capability/role lists (AGFF's "habitat restoration implementing partner / on-the-ground operator").
+const IMPLEMENTER_LINE = /implement|operator|on-the-ground|land steward|field (work|crew)|construction|steward/i;
+
 async function loadClient(db: ReturnType<typeof createServiceClient>, nameLike: string): Promise<Client | null> {
   const { data } = await db.from("clients").select("*").ilike("name", nameLike).limit(1).maybeSingle<Client>();
   return data ?? null;
@@ -344,11 +372,38 @@ async function loadGrant(db: ReturnType<typeof createServiceClient>, fx: Fixture
     it(
       `[${fx.band}] ${fx.label}`,
       async () => {
-        const client = await loadClient(db, fx.clientNameLike);
+        if (!inSubset(fx.label)) {
+          console.log(`[${fx.band}] ${fx.label}\n    (skipped: not in ALIGN_SPOTCHECK_ONLY subset)`);
+          return;
+        }
+        const clientRaw = await loadClient(db, fx.clientNameLike);
         const grant = await loadGrant(db, fx);
-        expect(client, `client not found for "${fx.clientNameLike}"`).toBeTruthy();
+        expect(clientRaw, `client not found for "${fx.clientNameLike}"`).toBeTruthy();
         expect(grant, `grant not found for "${fx.grantUuid ?? fx.grantTitleLike ?? "(inline)"}"`).toBeTruthy();
-        if (!client || !grant) return;
+        if (!clientRaw || !grant) return;
+
+        // Diagnostic: re-distill the profile IN-MEMORY with the current distiller prompt (non-destructive, one
+        // model call per client, cached). This is the real "clean profile + identity-first scorer" test --
+        // AGFF's stored profile still carries the manufactured "implementing partner" line the distiller fix
+        // removes, so scoring the stored profile only proves the scorer can't out-reason a lie still in it.
+        let client = clientRaw;
+        if (REDISTILL && !fx.reDistillSkip && clientRaw.client_profile) {
+          let fresh = reDistillCache.get(clientRaw.id);
+          if (!fresh) {
+            fresh = await constructClientProfile(buildClientProfileInput(clientRaw));
+            reDistillCache.set(clientRaw.id, fresh);
+            const caps = [...(fresh.core_capabilities ?? []), ...(fresh.supporting_roles ?? [])];
+            const hits = caps.filter((c) => IMPLEMENTER_LINE.test(c));
+            console.log(
+              `    RE-DISTILLED ${clientRaw.name} (clean profile, in-memory):\n` +
+                `      core_capabilities: ${JSON.stringify(fresh.core_capabilities)}\n` +
+                `      supporting_roles:  ${JSON.stringify(fresh.supporting_roles)}\n` +
+                `      inferred:          ${JSON.stringify(fresh.inferred)}\n` +
+                `      MANUFACTURED IMPLEMENTER LINE: ${hits.length ? `STILL PRESENT -> ${JSON.stringify(hits)}` : "GONE"}`,
+            );
+          }
+          client = { ...clientRaw, client_profile: fresh };
+        }
 
         // Rule G1: strip the hand-written matching_rules crutch so the verdict is earned from the profile.
         const scored: Client = fx.stripCrutch ? ({ ...client, matching_rules: null } as Client) : client;
@@ -356,10 +411,25 @@ async function loadGrant(db: ReturnType<typeof createServiceClient>, fx: Fixture
           ? undefined
           : formatStoredUSASpending(scored.usaspending_summary);
 
+        // Log the EXACT profile text the scorer receives (reveals what inferred[] rendered, etc.) -- only in a
+        // focused subset run, so a full gate run's log stays clean.
+        if (ONLY.length > 0) {
+          console.log(`    PROFILE SENT TO SCORER (${fx.label}):\n${formatClientProfileForScoring(scored.client_profile)}`);
+        }
+
         const scores: number[] = [];
         for (let i = 0; i < RUNS; i++) {
           const res = await alignScoreClient(grant, scored, usa);
           scores.push(res.fit_score);
+          // Reasoning on the first run (why this score) -- the diagnostic Shannon asked for on Harbor House.
+          if (i === 0 && ONLY.length > 0) {
+            console.log(
+              `    [run0 reasoning] role=${res.proposed_role} fit=${res.fit_score}\n` +
+                `      fit_score_derivation: ${res.reasoning_context?.fit_score_derivation ?? ""}\n` +
+                `      eligibility_analysis: ${res.reasoning_context?.eligibility_analysis ?? ""}\n` +
+                `      before_you_approve: ${JSON.stringify(res.before_you_approve)}`,
+            );
+          }
         }
 
         // Per-band report in the CI job log: confirms which REAL rows resolved (the name-pattern check

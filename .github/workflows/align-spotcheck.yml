@@ -31,6 +31,18 @@ on:
         description: "Runs per fixture (stability sampling; ALIGN_SPOTCHECK_RUNS). Pass bands are MAJORITY-based, not unanimous: no-go needs a majority of runs <=1; keep/keep-140 need a majority of runs >=2. Raising this samples more (and costs more) without changing the majority rule."
         required: false
         default: "3"
+      only:
+        description: "Diagnostic: run ONLY fixtures whose label contains one of these comma-separated substrings (ALIGN_SPOTCHECK_ONLY). Empty = every fixture (the gate run)."
+        required: false
+        default: ""
+      redistill:
+        description: "Diagnostic: 'true' re-distills each scored client's profile IN-MEMORY with the current distiller prompt before scoring (ALIGN_REDISTILL) -- the clean-profile + scorer test. Default 'false' scores the stored profile (the gate run)."
+        required: false
+        default: "false"
+      render_inferred:
+        description: "Diagnostic: 'false' suppresses rendering inferred[] in the scoring profile (ALIGN_RENDER_INFERRED) to isolate the Harbor House regression. Default 'true' renders it (prod behavior)."
+        required: false
+        default: "true"
 
 # Never let two eval runs race on the same paid/prod-reading job.
 concurrency:
@@ -81,6 +93,10 @@ jobs:
         env:
           RUN_ALIGN_SPOTCHECK: "1"
           ALIGN_SPOTCHECK_RUNS: ${{ inputs.runs }}
+          # Diagnostic controls -- empty/false (the defaults) make this the normal gate run.
+          ALIGN_SPOTCHECK_ONLY: ${{ inputs.only }}
+          ALIGN_REDISTILL: ${{ inputs.redistill == 'true' && '1' || '' }}
+          ALIGN_RENDER_INFERRED: ${{ inputs.render_inferred }}
           # MATCH_FUNDER_CAP_ENABLED is intentionally UNSET (cap OFF). This run validates the identity-first
           # ROOT fix: the AGFF funder specimens AND the NWACC no-gos must drop to <=1 (majority of runs) from
           # REASONING alone, with no deterministic cap. If the root fix holds here, the #505 funder cap is
