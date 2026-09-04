@@ -107,12 +107,8 @@ const FIXTURES: Fixture[] = [
     grantTitleLike: "%Emergency Citrus Disease%",
     band: "no-go",
   },
-  {
-    label: "GreenLab x DOE ASPECT chemical scale-up (wrong activity)",
-    clientNameLike: "%greenlab%",
-    grantTitleLike: "%ASPECT%",
-    band: "no-go",
-  },
+  // (GreenLab x DOE ASPECT removed: GreenLab is plant-biotech, ASPECT funds emerging CHEMICAL tech -- a
+  // borderline genuine 2, not a clean scorer no-go; the fit hinges on ASPECT's bio-manufacturing scope.)
 
   // ── KEEP band (must stay >= 2, STRICT every run) -- one real "would-send" match per entity type ─────
   // Named by Shannon's judgment (bar = "real match in SOME role", not "must prime"). Keyed by the Simpler
@@ -310,7 +306,10 @@ async function loadGrant(db: ReturnType<typeof createServiceClient>, fx: Fixture
           expect.soft(kept, `expected all runs >= 2 (must stay), got scores [${scores.join(", ")}]`).toBe(true);
         }
       },
-      120_000,
+      // 300s: each fixture runs RUNS (=3) sequential align calls at ~75s each (~225s); 120s timed every
+      // fixture out and reddened the run on infra. The job cap (align-spotcheck.yml) is raised to 90 min
+      // to fit 13 fixtures x ~225s.
+      300_000,
     );
   }
 });
