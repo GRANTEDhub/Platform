@@ -58,6 +58,19 @@ PRIME VS PARTNER (never flatten this):
 - You are NOT assigning a seat. The matcher decides the per-grant seat later; you
   describe capacity. An org that can prime one program may only partner on another.
 
+IDENTITY CONSISTENCY (never contradict yourself -- this is the single worst error):
+- core_capabilities and supporting_roles MUST be consistent with prime_capacity and the
+  org's fundamental identity. If can_prime is FALSE because the org FUNDS, fiscal-sponsors,
+  or CONVENES work rather than performing it, you may NOT then list that same work as a
+  capability the org "performs" or as an "implementing partner / land steward / on-the-ground
+  operator" role. Describe what the org ACTUALLY does: "funds and convenes habitat restoration
+  with partners", NOT "habitat restoration implementing partner". A funder's capability is
+  funding and convening; a teaching college's capability is instruction and workforce training,
+  not research it does not perform. A capability or role that contradicts the identity you just
+  recorded MANUFACTURES a fit the org cannot deliver -- the downstream matcher will believe it
+  over the identity. When a program appears in the intake, capture the org's REAL relationship
+  to it (funds / convenes / operates / partners), never a role the identity rules out.
+
 FEDERAL HISTORY:
 - federal_history.self_reported is the organization's OWN answer and is
   AUTHORITATIVE. USASpending (in the auto-pulled block) is a fuzzy org-name match:
@@ -487,9 +500,22 @@ export function formatClientProfileForScoring(profile: ClientProfile | null | un
     );
     if (pc.rationale?.trim()) lines.push(`  Prime-capacity rationale: ${pc.rationale.trim()}`);
   }
-  push("Core capabilities (the funded roles this org can ACTUALLY perform)", joined(profile.core_capabilities));
-  push("Mission", profile.mission);
+  // Identity narrative leads (right after can_prime), so the layout matches the "identity first" claim in
+  // the header and the model reads identity BEFORE the capability list it must interpret through it.
   push("Summary", profile.summary);
+  push("Mission", profile.mission);
+  // inferred[] is an IDENTITY signal the scorer's IDENTITY GOVERNS rule explicitly cites: a funder /
+  // support-org "gray area" or eligibility caveat often lives HERE, not in summary (AGFF is the canonical
+  // case). It went unrendered, so the scorer was told to weigh a fact it never received -- emit it, flagged
+  // as inferred, in the identity block above the capability list.
+  push(
+    "Inferred (NOT confirmed -- weigh as an identity / eligibility signal, never as a proven capability)",
+    joined(profile.inferred),
+  );
+  push(
+    "Capabilities claimed in the intake (READ THROUGH the identity above -- a claim that contradicts can_prime/summary/mission is work the org FUNDS or CONVENES, not work it performs)",
+    joined(profile.core_capabilities),
+  );
 
   if (Array.isArray(profile.program_areas) && profile.program_areas.length) {
     lines.push("Programs the org actually runs:");
@@ -504,14 +530,20 @@ export function formatClientProfileForScoring(profile: ClientProfile | null | un
   const geo = profile.geographic_scope;
   if (geo) push("Geographic scope", [geo.footprint, geo.scale].filter(Boolean).join(" -- "));
 
-  push("Supporting / partner roles it can genuinely fill", joined(profile.supporting_roles));
+  push(
+    "Supporting / partner roles it can genuinely fill (only where consistent with the identity above)",
+    joined(profile.supporting_roles),
+  );
   push("What they want to fund", joined(profile.funding_priorities));
   // Surface thin/missing data so the scorer can honestly rate a factor insufficient_data rather than guess.
   push("Data gaps (thin/unconfirmed -- do not infer capability from these)", joined(profile.gaps));
 
   return (
-    `\nCLIENT PROFILE (distilled -- use to judge ELIGIBILITY (especially can_prime) and, above all, ` +
-    `MISSION/SCOPE ALIGNMENT: does this org actually perform the funded work?):\n${lines.join("\n")}`
+    `\nCLIENT PROFILE (distilled). The IDENTITY signals -- can_prime, summary, and mission, listed FIRST -- are ` +
+    `AUTHORITATIVE and OUTRANK the capability / role lists beneath them. Judge ELIGIBILITY (especially ` +
+    `can_prime) and, above all, MISSION/SCOPE ALIGNMENT -- does this org actually PERFORM the funded work? ` +
+    `-- and when a capability line contradicts the identity, believe the identity. (Data gaps, listed last, ` +
+    `flag thin/unconfirmed inputs -- do not infer capability from them.):\n${lines.join("\n")}`
   );
 }
 
