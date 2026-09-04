@@ -110,6 +110,92 @@ const FIXTURES: Fixture[] = [
   // (GreenLab x DOE ASPECT removed: GreenLab is plant-biotech, ASPECT funds emerging CHEMICAL tech -- a
   // borderline genuine 2, not a clean scorer no-go; the fit hinges on ASPECT's bio-manufacturing scope.)
 
+  // ── NO-GO band, SECOND client type: NWACC (a teaching community college) ─────────────────────────────
+  // From the GOH NWACC calibration key. These validate the identity-first fix on a DIFFERENT archetype than
+  // AGFF -- proving the root fix (identity outranks the capability list; entity-eligibility is not fit) is
+  // client-type-agnostic. Only the three CLEAN-IDENTITY no-gos are asserted; the partials (EPA Brownfields,
+  // water-workforce) are DELIBERATELY excluded -- their no-go rests on a threshold/track mechanic the
+  // identity fix does not provide, so asserting them here would be force-fitting. grantInline (not ingest):
+  // the sandbox cannot run prod ingest, and the interface's inline path keeps the eval self-contained; facts
+  // are from the official listings, with deadline/award/match held NEUTRAL so the no-go is earned from the
+  // IDENTITY mismatch alone (NWACC is entity-eligible as an IHE on all three), not a deadline/match crutch.
+  // NWACC must simultaneously KEEP its real fit (x Strengthening Community Colleges, below) -- the #140 half.
+  {
+    label: "NWACC x NETL University Fossil-Energy R&D -- teaching college, not a research institution",
+    clientNameLike: "%nwacc%",
+    band: "no-go",
+    stripCrutch: true,
+    grantInline: {
+      title: "University Training and Research in Fossil Energy and Carbon Management",
+      funder: "U.S. Department of Energy -- National Energy Technology Laboratory (NETL)",
+      fon: "DE-FOA-0003215",
+      description:
+        "Supports novel, early-stage RESEARCH and development in fossil energy and carbon management performed by university research faculty. A Principal Investigator with an active research program is required; the award funds laboratory research, graduate research training, and R&D deliverables. This is a research/R&D cooperative agreement, not a workforce-training, credential, or continuing-education program.",
+      eligible_entity_types: ["Institutions of higher education (public and private)"],
+      geographic_eligibility: "United States",
+      ineligible_entities: "",
+      focus_areas: ["Fossil energy research and development", "Carbon management", "University research training"],
+      program_type: "Research and development (R&D) cooperative agreement",
+      subaward_prohibited: false,
+      submission_deadline: "2027-03-31",
+      award_range_min: "$200,000",
+      award_range_max: "$1,000,000",
+      total_funding: "$5,000,000",
+      cost_share: "None",
+      scoring_criteria_high_value: ["Research approach and innovation", "PI and research team qualifications"],
+    },
+  },
+  {
+    label: "NWACC x USFS Urban Forestry Wood-Products Utilization -- no forestry/wood-utilization operation",
+    clientNameLike: "%nwacc%",
+    band: "no-go",
+    stripCrutch: true,
+    grantInline: {
+      title: "National Urban & Community Forestry Challenge Cost Share -- Community Tree Resource Utilization",
+      funder: "USDA Forest Service",
+      fon: "USDA-FS-UCF-01-2026",
+      description:
+        "Funds turning community and urban tree waste (pruning, removals, storm and pest debris) into wood products -- lumber, slabs, furniture, flooring, biochar -- with associated workforce development and certifications. A national demonstration and replication program; performance is measured in tons of wood diverted, board feet produced, certifications earned, and recurring wood-product buyers. The funded activity is wood-utilization operations, not general workforce training.",
+      eligible_entity_types: ["Nonprofit organizations", "Institutions of higher education", "Local governments"],
+      geographic_eligibility: "United States",
+      ineligible_entities: "",
+      focus_areas: ["Urban and community forestry", "Wood products / utilization", "Workforce development"],
+      program_type: "Challenge cost-share grant",
+      subaward_prohibited: false,
+      submission_deadline: "2027-02-28",
+      award_range_min: "$100,000",
+      award_range_max: "$500,000",
+      total_funding: "$1,000,000",
+      cost_share: "Non-federal match encouraged (not mandatory)",
+      scoring_criteria_high_value: ["Wood-utilization operation and capacity", "National scalability"],
+    },
+  },
+  {
+    label: "NWACC x NSF STEM-Education Research award -- teaching college, no research PI / capacity",
+    clientNameLike: "%nwacc%",
+    band: "no-go",
+    stripCrutch: true,
+    grantInline: {
+      title: "NSF Improving Undergraduate STEM Education -- Investigator-Led Research and Education Award",
+      funder: "National Science Foundation (NSF)",
+      fon: "NSF 24-551",
+      description:
+        "A peer-reviewed NSF research and education award. It requires a Principal Investigator leading an investigator-designed research or evaluation program and institutional research capacity; awards fund research-grade STEM-education studies judged on intellectual merit. It is a research competition, not a workforce or programmatic-services grant. (The real program additionally requires current federal HSI designation -- a separate threshold gate not modeled here; this fixture isolates the research-intensity identity mismatch.)",
+      eligible_entity_types: ["Institutions of higher education"],
+      geographic_eligibility: "United States",
+      ineligible_entities: "",
+      focus_areas: ["STEM education research", "Undergraduate research capacity"],
+      program_type: "Research and education award (peer-reviewed)",
+      subaward_prohibited: false,
+      submission_deadline: "2027-01-31",
+      award_range_min: "$100,000",
+      award_range_max: "$1,000,000",
+      total_funding: "$10,000,000",
+      cost_share: "None",
+      scoring_criteria_high_value: ["Intellectual merit (research)", "PI qualifications", "Broader impacts"],
+    },
+  },
+
   // ── KEEP band (must stay >= 2, STRICT every run) -- one real "would-send" match per entity type ─────
   // Named by Shannon's judgment (bar = "real match in SOME role", not "must prime"). Keyed by the Simpler
   // opportunity UUID so the fixture is exact. stripCrutch=true on all (rule G1): a KEEP that only holds

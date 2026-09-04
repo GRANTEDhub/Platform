@@ -175,9 +175,12 @@ describe("direct-alignment scorer -- plumbing", () => {
     );
     expect(out).toContain("can_prime=FALSE");
     expect(out).toContain("Fiscal sponsorship");
-    // can_prime must appear BEFORE core_capabilities -- it is the load-bearing lead.
+    // can_prime (identity) must appear BEFORE the capabilities list -- it is the authoritative lead the
+    // capabilities are read THROUGH (the identity-first ordering the scorer's IDENTITY GOVERNS rule relies on).
     expect(out.indexOf("can_prime")).toBeGreaterThan(-1);
-    expect(out.indexOf("can_prime")).toBeLessThan(out.indexOf("Core capabilities"));
+    expect(out.indexOf("can_prime")).toBeLessThan(out.indexOf("Capabilities claimed in the intake"));
+    // The label frames capabilities as claims read through identity, not authoritative "what it performs".
+    expect(out).toContain("READ THROUGH the identity above");
   });
 
   it("renders can_prime=null as UNKNOWN, never FALSE (a conditional/undistilled profile like NWA Council)", () => {

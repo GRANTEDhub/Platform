@@ -81,12 +81,11 @@ jobs:
         env:
           RUN_ALIGN_SPOTCHECK: "1"
           ALIGN_SPOTCHECK_RUNS: ${{ inputs.runs }}
-          # Exercise the deterministic funder cap: finalizeAlignMatch reads MATCH_FUNDER_CAP_ENABLED, so the
-          # spot-check gate ("AGFF funder specimens drop to <=1 AND all 7 KEEP + NWA Council stay >=2", each band
-          # judged by a MAJORITY of runs) is only
-          # a valid flip gate for the cap when the cap is actually ON here. (The scorer itself does NOT read
-          # MATCH_DIRECT_ALIGN_ENABLED -- the eval calls alignScoreClient directly -- so that flag stays unset.)
-          MATCH_FUNDER_CAP_ENABLED: "true"
+          # MATCH_FUNDER_CAP_ENABLED is intentionally UNSET (cap OFF). This run validates the identity-first
+          # ROOT fix: the AGFF funder specimens AND the NWACC no-gos must drop to <=1 (majority of runs) from
+          # REASONING alone, with no deterministic cap. If the root fix holds here, the #505 funder cap is
+          # redundant and gets retired (follow-up). (The scorer does NOT read MATCH_DIRECT_ALIGN_ENABLED -- the
+          # eval calls alignScoreClient directly -- so that flag stays unset too.)
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
