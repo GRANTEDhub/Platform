@@ -45,7 +45,9 @@ jobs:
     # level — so the RLS-bypassing service-role key can't be read by an arbitrary dispatch ref or
     # an attacker-authored workflow that doesn't declare this environment.
     environment: subseat-eval
-    timeout-minutes: 60
+    # 90, not 60: with the per-test timeout raised to 300s, 13 fixtures x ~225s (~50 min) plus npm ci must
+    # fit inside the job cap; 60 min was too tight once tests run to completion instead of being killed at 120s.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
