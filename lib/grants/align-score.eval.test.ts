@@ -36,7 +36,7 @@ import type { Client, Grant, ClientProfile } from "@/types/database";
 // The KEEP / KEEP-140 bands are intentionally EMPTY here -- Shannon supplies those pairs. The gate test
 // below FAILS until they are populated, so a green run genuinely means "safe to flip".
 
-type Band = "no-go" | "keep" | "keep-140";
+type Band = "no-go" | "keep" | "keep-140" | "keep-sub";
 
 interface Fixture {
   label: string;
@@ -320,6 +320,34 @@ const FIXTURES: Fixture[] = [
     stripCrutch: true,
   },
 
+  // ── KEEP-SUB anchor: SUPPORTING-ROLE PRESERVATION (issue #510) ────────────────────────────────────────
+  // The one axis the flip gate never tested: does the identity-first align scorer, having replaced the
+  // occupancy engine (and its MATCH_SUBSEAT_ROUTING_ENABLED supporting-seat routing), PRESERVE a genuine
+  // Sub/supporting-role fit -- or does "REFUSE TO CONSTRUCT A FIT" over-swing and re-introduce the
+  // under-credit bug (disqualifying a real sub to 1)? Sub/partner is ~25% of the book, so this can't get
+  // buried. Assertion (keep-sub band): majority-of-3 fit >= 2 AND proposed_role in {Sub, Co-Applicant} --
+  // a genuine funded supporting-recipient role, NOT Prime (gov-only, can't prime), NOT Not Recommended, NOT
+  // the weaker Named Collaborator/Letter (which would itself under-credit a direct-service seat). run0
+  // reasoning is ALWAYS logged for this band (even in a full gate run) -- the REASON is load-bearing:
+  //   - fit 1 on PRIME-INELIGIBILITY grounds  => the under-credit bug is real; needs a supporting-seat clause
+  //     in the align prompt (a scorer fix), and the live engine is NOT trustworthy on partner/sub until then.
+  //   - fit 1 on SUPPLANTING grounds          => defensible, NOT the bug, but INCONCLUSIVE -- this fixture is
+  //     too confounded to settle the axis (see COVERAGE GAP).
+  // COVERAGE GAP (do not fake coverage): this is the roster's ONLY clean sub-only case today, and it is
+  // CONFOUNDED -- Arisa carries a mild post-CMHC-exit supplanting caution and CARA funds NEW first-responder
+  // work, so a decline can be supplanting rather than a routing failure (subseat-routing.eval coverage note,
+  // lines 33-38). A GREEN here validates ONE example, NOT the whole sub-role axis. Add a SECOND clean,
+  // non-confounded sub-only fixture when the roster grows one; until then this is a canary, not full coverage.
+  // stripCrutch strips Arisa's supplanting-caution matching_rule so the routing question is isolated from it;
+  // redistilled (no reDistillSkip) to match the live post-backfill profile state.
+  {
+    label: "Arisa Health x First Responders-CARA -- gov-only prime, subaward-allowed; Arisa fills the SUD direct-service sub-seat [supporting-role must-surface]",
+    clientNameLike: "%arisa%",
+    grantUuid: "e14b2acd-e780-4b05-a183-254228c788a5",
+    band: "keep-sub",
+    stripCrutch: true,
+  },
+
   // ── KEEP-140 anchor (must stay >= 2, STRICT) -- the #140 guard ───────────────────────────────────────
   // The integrative-fit archetype the seat model buried: NWA Council, a 501(c)(3) regional convener with 7
   // workstreams (CareersNWA workforce, InvestNWA econ-dev, StartupNWA entrepreneurship, Groundwork housing,
@@ -461,11 +489,16 @@ async function loadGrant(db: ReturnType<typeof createServiceClient>, fx: Fixture
         }
 
         const scores: number[] = [];
+        const roles: (string | null)[] = [];
         for (let i = 0; i < RUNS; i++) {
           const res = await alignScoreClient(grant, scored, usa);
           scores.push(res.fit_score);
-          // Reasoning on the first run (why this score) -- the diagnostic Shannon asked for on Harbor House.
-          if (i === 0 && ONLY.length > 0) {
+          roles.push(res.proposed_role ?? null);
+          // Reasoning on the first run (why this score). Logged in a focused subset run (the Harbor House
+          // diagnostic) AND ALWAYS for a keep-sub fixture -- its supporting-role verdict is only trustworthy
+          // if the REASON is on record (prime-ineligibility disqualification vs. a defensible supplanting
+          // decline vs. a genuine Sub route), so it must be readable even in a full gate run (issue #510).
+          if (i === 0 && (ONLY.length > 0 || fx.band === "keep-sub")) {
             console.log(
               `    [run0 reasoning] role=${res.proposed_role} fit=${res.fit_score}\n` +
                 `      fit_score_derivation: ${res.reasoning_context?.fit_score_derivation ?? ""}\n` +
@@ -477,19 +510,33 @@ async function loadGrant(db: ReturnType<typeof createServiceClient>, fx: Fixture
 
         // Per-band report in the CI job log: confirms which REAL rows resolved (the name-pattern check
         // Shannon asked for) AND the scores, readable in the browser whether the assertion passes or fails.
+        const SUPPORTING_ROLES = ["Sub", "Co-Applicant"];
+        const surfacedMajority = scores.filter((s) => s >= 2).length > RUNS / 2;
+        // keep-sub gates on a per-RUN conjunction, NOT two independent majorities: a majority of runs must EACH
+        // be fit>=2 AND role in {Sub,Co-Applicant} in the SAME run. Two separate majorities could both pass on
+        // DISJOINT runs (one surfaced-but-wrong-role, one right-role-but-not-surfaced) while the joint condition
+        // never held in a majority (Claude Code Review #511).
+        const supportingMajority =
+          scores.filter((s, i) => s >= 2 && roles[i] != null && SUPPORTING_ROLES.includes(roles[i] as string))
+            .length >
+          RUNS / 2;
         const verdict =
           fx.band === "no-go"
             ? scores.filter((s) => s <= 1).length > RUNS / 2
               ? "PASS (majority <=1)"
               : "FAIL (not majority <=1)"
-            : scores.filter((s) => s >= 2).length > RUNS / 2
-              ? "PASS (majority >=2)"
-              : "FAIL (not majority >=2)";
+            : fx.band === "keep-sub"
+              ? supportingMajority
+                ? "PASS (majority of runs BOTH >=2 AND Sub/Co-Applicant)"
+                : "FAIL (need majority of runs BOTH >=2 AND Sub/Co-Applicant)"
+              : surfacedMajority
+                ? "PASS (majority >=2)"
+                : "FAIL (not majority >=2)";
         console.log(
           `[${fx.band}] ${fx.label}\n` +
             `    client: "${client.name}" (${client.id})\n` +
             `    grant:  "${grant.title}" (${grant.id})\n` +
-            `    scores: [${scores.join(", ")}]  -> ${verdict}`,
+            `    scores: [${scores.join(", ")}]  roles: [${roles.join(", ")}]  -> ${verdict}`,
         );
 
         if (fx.band === "no-go") {
@@ -498,15 +545,29 @@ async function loadGrant(db: ReturnType<typeof createServiceClient>, fx: Fixture
           expect
             .soft(passes, `expected majority no-go, got scores [${scores.join(", ")}]`)
             .toBeGreaterThan(RUNS / 2);
+        } else if (fx.band === "keep-sub") {
+          // SUPPORTING-ROLE PRESERVATION (issue #510): the flipped align scorer must NOT under-credit a genuine
+          // Sub/supporting-role fit. ONE per-run-conjunction check (majority-of-3): a majority of runs must EACH be
+          // fit >= 2 AND proposed_role in {Sub, Co-Applicant} together (a genuine funded supporting-recipient
+          // surface). The message carries both raw arrays so a fail shows which half drove it. If it lands <=1, the
+          // ALWAYS-logged run0 reason above tells which: prime-ineligibility disqualification (the under-credit bug
+          // -> needs the supporting-seat scorer fix) vs. a defensible supplanting decline (INCONCLUSIVE; fixture too
+          // confounded -- see the coverage-gap note by the fixture). A supplanting decline reads as neither a pass
+          // nor the bug.
+          expect
+            .soft(
+              supportingMajority,
+              `keep-sub: expected majority of runs BOTH fit>=2 AND role in {Sub, Co-Applicant}; got scores [${scores.join(", ")}] roles [${roles.join(", ")}]`,
+            )
+            .toBe(true);
         } else {
           // KEEP / KEEP-140: MAJORITY of runs must stay surfaced (fit >= 2). Relaxed from every-run: Harbor
           // House flickered [2,2,1] at temp-0, and a single-run dip is sampling noise, not the funder cap
           // overcorrecting. Over-killing a good match on the MAJORITY (or repeating #140 on the integrative-fit
           // anchor) is still the expensive error this band guards -- and the cap's guardrails (strict
           // can_prime===false, money-mover-only) keep it off every KEEP implementer regardless.
-          const keptMajority = scores.filter((s) => s >= 2).length > RUNS / 2;
           expect
-            .soft(keptMajority, `expected majority of runs >= 2 (must stay), got scores [${scores.join(", ")}]`)
+            .soft(surfacedMajority, `expected majority of runs >= 2 (must stay), got scores [${scores.join(", ")}]`)
             .toBe(true);
         }
       },
