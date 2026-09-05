@@ -91,7 +91,14 @@ interface Fixture {
 const G_SMART_REENTRY = "652cab62-5180-43e5-8ac8-9340af696ac4"; // BJA FY2026 Smart Reentry Demonstration (carve-out base)
 const G_REENTRY_ED = "4335a5d5-611c-4258-b70f-52e8b494fe30"; // BJA FY2026 Second Chance Act Improving Reentry Education
 const G_WATER_WORKFORCE = "43827e63-a945-4004-b56c-578013cd0ad2"; // Innovative Water Infrastructure Workforce Development
-const G_FIRST_RESPONDERS_CARA = "e14b2acd-e780-4b05-a183-254228c788a5"; // First Responders–CARA (gov-only prime, subawards allowed)
+// STALE REFERENCE (flagged 2026-09-05): this UUID no longer resolves in prod -- the FR-CARA opportunity was
+// archived Aug 2025 and dropped from the grants table, so every fixture using it (the canonical MISS + all three
+// carve-outs below) fails-fast on "grant not found" when RUN_SUBSEAT_EVAL is run (surfaced by the align eval's
+// keep-sub port, which hit the same dead UUID). Not blindly re-pointed: the live opportunity (f9457257-...) is
+// ALSO archived, so another UUID would likely go stale too. Fix when this eval is next run: inline the grant
+// (see align-score.eval.test.ts's FR-CARA grantInline -- gov-only eligibility + subawards-allowed verified from
+// the SAMHSA NOFO TI-24-006/TI-25-001) or re-point to a live sub-permitting gov-only grant.
+const G_FIRST_RESPONDERS_CARA = "e14b2acd-e780-4b05-a183-254228c788a5"; // First Responders–CARA (gov-only prime, subawards allowed) -- STALE, see note above
 
 const FIXTURES: Fixture[] = [
   // Canonical MISS. Arisa (behavioral-health nonprofit) is prime-INELIGIBLE on this gov-only NOFO

@@ -340,12 +340,52 @@ const FIXTURES: Fixture[] = [
   // non-confounded sub-only fixture when the roster grows one; until then this is a canary, not full coverage.
   // stripCrutch strips Arisa's supplanting-caution matching_rule so the routing question is isolated from it;
   // redistilled (no reDistillSkip) to match the live post-backfill profile state.
+  // GRANT IS INLINE (not a UUID lookup): the real FR-CARA opportunity was ARCHIVED Aug 2025 and is no longer in
+  // the prod grants table -- the stale UUID e14b2acd... (still referenced in subseat-routing.eval.test.ts)
+  // resolved to null and the fixture failed-fast (run #9). Facts below are verified VERBATIM from the official
+  // SAMHSA FR-CARA NOFO (TI-24-006 / TI-25-001), the two load-bearing ones being make-or-break for this test:
+  //   - ELIGIBLE APPLICANTS: "Eligibility for this program is statutorily limited ... to states, local
+  //     governmental entities, and American Indian/Alaska Native (AI/AN) tribes and tribal organizations"
+  //     (Section 546, Public Health Service Act) -> GOVERNMENT-ONLY; Arisa (a nonprofit) CANNOT prime.
+  //   - SUBAWARDS ALLOWED (if they were prohibited there'd be no sub seat and this fixture would be worthless):
+  //     "All required activities must be provided by applicants directly, BY SUBRECIPIENTS, or through referrals
+  //     to partner agencies" -> subaward_prohibited=false; a nonprofit SUD provider is a first-class subrecipient.
+  // Award/deadline held NEUTRAL (null; the NWACC-no-go convention) so the test turns on eligibility + purpose +
+  // the sub seat, not a date.
   {
-    label: "Arisa Health x First Responders-CARA -- gov-only prime, subaward-allowed; Arisa fills the SUD direct-service sub-seat [supporting-role must-surface]",
+    label: "Arisa Health x First Responders-CARA (inline) -- gov-only prime, subawards ALLOWED; Arisa fills the SUD direct-service sub-seat [supporting-role must-surface]",
     clientNameLike: "%arisa%",
-    grantUuid: "e14b2acd-e780-4b05-a183-254228c788a5",
     band: "keep-sub",
     stripCrutch: true,
+    grantInline: {
+      title: "First Responders - Comprehensive Addiction and Recovery Act (FR-CARA)",
+      funder: "U.S. Department of Health and Human Services -- SAMHSA (Center for Substance Abuse Prevention)",
+      fon: "TI-25-001",
+      description:
+        "Trains and equips first responders and community members to administer and distribute FDA-approved opioid overdose reversal medication (naloxone) and to link individuals to substance use disorder (SUD) treatment and recovery support services. Required activities may be provided by the recipient DIRECTLY, BY SUBRECIPIENTS, or through referrals to partner agencies; recipients partner with SUD prevention/treatment/recovery-support provider organizations to deliver the funded services.",
+      eligible_entity_types: [
+        "States",
+        "Units of local government",
+        "Federally recognized American Indian/Alaska Native tribes and tribal organizations",
+      ],
+      geographic_eligibility: "United States",
+      // Nonprofit / community-based / SUD-provider orgs are NOT eligible PRIME applicants (statutory limit); they
+      // participate as SUBRECIPIENTS or partner service providers under a government prime -- the sub seat here.
+      ineligible_entities:
+        "Nonprofit and community-based organizations are not eligible to apply as the prime applicant (statutorily limited to states, local governments, and tribes/tribal organizations); they may participate as subrecipients or partners.",
+      subaward_prohibited: false,
+      focus_areas: [
+        "Substance use disorder",
+        "Opioid overdose response / naloxone",
+        "First responders",
+        "Treatment linkage and recovery support",
+      ],
+      program_type: "Grant (SUD services / overdose response)",
+      scoring_criteria_high_value: [
+        "Capacity to deliver SUD direct services",
+        "Established provider partnerships / subrecipients",
+      ],
+    },
   },
 
   // ── KEEP-140 anchor (must stay >= 2, STRICT) -- the #140 guard ───────────────────────────────────────
