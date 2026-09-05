@@ -512,17 +512,23 @@ async function loadGrant(db: ReturnType<typeof createServiceClient>, fx: Fixture
         // Shannon asked for) AND the scores, readable in the browser whether the assertion passes or fails.
         const SUPPORTING_ROLES = ["Sub", "Co-Applicant"];
         const surfacedMajority = scores.filter((s) => s >= 2).length > RUNS / 2;
-        const subRoleMajority =
-          roles.filter((r) => r != null && SUPPORTING_ROLES.includes(r)).length > RUNS / 2;
+        // keep-sub gates on a per-RUN conjunction, NOT two independent majorities: a majority of runs must EACH
+        // be fit>=2 AND role in {Sub,Co-Applicant} in the SAME run. Two separate majorities could both pass on
+        // DISJOINT runs (one surfaced-but-wrong-role, one right-role-but-not-surfaced) while the joint condition
+        // never held in a majority (Claude Code Review #511).
+        const supportingMajority =
+          scores.filter((s, i) => s >= 2 && roles[i] != null && SUPPORTING_ROLES.includes(roles[i] as string))
+            .length >
+          RUNS / 2;
         const verdict =
           fx.band === "no-go"
             ? scores.filter((s) => s <= 1).length > RUNS / 2
               ? "PASS (majority <=1)"
               : "FAIL (not majority <=1)"
             : fx.band === "keep-sub"
-              ? surfacedMajority && subRoleMajority
-                ? "PASS (majority >=2 AND Sub/Co-Applicant)"
-                : "FAIL (need majority >=2 AND Sub/Co-Applicant)"
+              ? supportingMajority
+                ? "PASS (majority of runs BOTH >=2 AND Sub/Co-Applicant)"
+                : "FAIL (need majority of runs BOTH >=2 AND Sub/Co-Applicant)"
               : surfacedMajority
                 ? "PASS (majority >=2)"
                 : "FAIL (not majority >=2)";
@@ -541,18 +547,17 @@ async function loadGrant(db: ReturnType<typeof createServiceClient>, fx: Fixture
             .toBeGreaterThan(RUNS / 2);
         } else if (fx.band === "keep-sub") {
           // SUPPORTING-ROLE PRESERVATION (issue #510): the flipped align scorer must NOT under-credit a genuine
-          // Sub/supporting-role fit. Two soft, majority-of-3 checks: (1) surfaced at fit >= 2, and (2) routed to a
-          // genuine funded supporting-recipient role (Sub or Co-Applicant). If it lands <=1, the ALWAYS-logged
-          // run0 reason above tells which: prime-ineligibility disqualification (the under-credit bug -> needs the
-          // supporting-seat scorer fix) vs. a defensible supplanting decline (INCONCLUSIVE; fixture too confounded
-          // -- see the coverage-gap note by the fixture). A supplanting decline reads as neither a pass nor the bug.
-          expect
-            .soft(surfacedMajority, `keep-sub: expected majority fit >= 2 (surfaced), got scores [${scores.join(", ")}]`)
-            .toBe(true);
+          // Sub/supporting-role fit. ONE per-run-conjunction check (majority-of-3): a majority of runs must EACH be
+          // fit >= 2 AND proposed_role in {Sub, Co-Applicant} together (a genuine funded supporting-recipient
+          // surface). The message carries both raw arrays so a fail shows which half drove it. If it lands <=1, the
+          // ALWAYS-logged run0 reason above tells which: prime-ineligibility disqualification (the under-credit bug
+          // -> needs the supporting-seat scorer fix) vs. a defensible supplanting decline (INCONCLUSIVE; fixture too
+          // confounded -- see the coverage-gap note by the fixture). A supplanting decline reads as neither a pass
+          // nor the bug.
           expect
             .soft(
-              subRoleMajority,
-              `keep-sub: expected majority role in {Sub, Co-Applicant}, got roles [${roles.join(", ")}]`,
+              supportingMajority,
+              `keep-sub: expected majority of runs BOTH fit>=2 AND role in {Sub, Co-Applicant}; got scores [${scores.join(", ")}] roles [${roles.join(", ")}]`,
             )
             .toBe(true);
         } else {
