@@ -26,6 +26,8 @@
 import { randomUUID } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/server";
 import { runIntelReview, type IntelReview, type IntelCard } from "@/lib/grants/intel-review";
+import { scoreGrantClientPair } from "@/lib/grants/pipeline";
+import { reextractAllowableUses } from "@/lib/grants/allowable-uses";
 import type { Grant, Client, FactorScores } from "@/types/database";
 
 type DB = ReturnType<typeof createServiceClient>;
@@ -33,6 +35,14 @@ type DB = ReturnType<typeof createServiceClient>;
 // ── Flag + config (env-overridable; defaults are conservative) ────────────────────────────────────
 export function autoIntelEnabled(): boolean {
   return process.env.AUTO_INTEL_ENABLED === "true";
+}
+
+// Merged "Re-run grant match" (PR 1). Gates the ONE staff action that re-runs the whole review in the
+// background — engine re-match → QA → uses — via a kind='full_rerun' queue job the existing drain runs.
+// OFF (default): the /rerun route 404s, no full_rerun row is ever enqueued, and the drain's re-match
+// prelude is dead code → byte-identical to today. Read by the route (gate) and the card page (button swap).
+export function mergedRerunEnabled(): boolean {
+  return process.env.MERGED_RERUN_ENABLED === "true";
 }
 
 // ── Apply-the-gate (Step 3, PR B) ──────────────────────────────────────────────────────────────────
@@ -223,6 +233,8 @@ interface QueueRow {
   client_id: string;
   status: string;
   attempts: number;
+  // 'auto' (poller QA-only, 0087 behavior) | 'full_rerun' (staff-requested engine re-match → QA → uses).
+  kind: string;
 }
 
 export interface DrainOptions {
@@ -352,6 +364,11 @@ export async function pollAndEnqueue(db: DB, opts: { now?: () => number; limit?:
   const rows = toEnqueue.map((c) => ({
     grant_id: c.grant_id,
     client_id: c.client_id,
+    // EXPLICIT 'auto' (not just the column default): the poller may upsert over a pair whose prior job was
+    // a completed 'full_rerun' (its verdict was later cleared by a /rematch, making the pair eligible
+    // again). Setting kind here RESETS it to 'auto' so an ordinary auto re-QA never inherits the stale
+    // 'full_rerun' marker and wrongly re-runs the engine match. On a first insert it equals the default.
+    kind: "auto",
     status: "queued",
     attempts: 0,
     error_detail: null,
@@ -428,7 +445,7 @@ export async function drainIntelQueue(db: DB, opts: DrainOptions = {}): Promise<
   // 3. Claim a batch of queued jobs (oldest first) → mark processing.
   const { data: queued } = await db
     .from("intel_review_queue")
-    .select("id, grant_id, client_id, status, attempts")
+    .select("id, grant_id, client_id, status, attempts, kind")
     .eq("status", "queued")
     .order("enqueued_at", { ascending: true })
     .limit(batchSize)
@@ -479,6 +496,61 @@ async function processOne(
   // number (row.attempts + 1). Judge the cap against that post-increment count — checking the stale
   // row.attempts would run one extra Opus+web attempt (and cost-log entry) past INTEL_MAX_ATTEMPTS.
   const attemptsSoFar = row.attempts + 1;
+
+  // ── FULL RE-RUN prelude (merged "Re-run grant match", PR 1) ─────────────────────────────────────────
+  // The engine re-match + uses leg of the merged action, run BEFORE the QA below so the QA scores the
+  // freshly re-matched card. It fires ONLY for a staff-requested 'full_rerun' job (kind), and ONLY on the
+  // job's FIRST attempt (row.attempts === 0, the pre-increment snapshot). An 'auto' job skips this block
+  // entirely, so the poller's QA-only path is byte-identical to 0087; and a RETRY (a re-queued job whose
+  // QA failed, attempts > 0) re-runs only the QA below, never the engine match again. Whole block is
+  // best-effort: any failure logs and falls through to the QA flow, which no-ops safely if the card is gone.
+  if (row.kind === "full_rerun" && row.attempts === 0) {
+    try {
+      const [{ data: g }, { data: cl }] = await Promise.all([
+        db.from("grants").select("*").eq("id", row.grant_id).maybeSingle<Grant>(),
+        db.from("clients").select("*").eq("id", row.client_id).maybeSingle<Client>(),
+      ]);
+      // Skip the re-match for a missing grant/client or a PAUSED client (match_active=false, migration
+      // 0091) — the same gate the poller and the QA flow enforce. Falls through to the QA flow, which
+      // then marks the job done with no cost (missing/paused → skipped there).
+      if (g && cl && cl.match_active !== false) {
+        // Re-score the pair through the SAME primitive the per-card Re-match button and the daily drain
+        // use. It reconciles the ONE card: refreshing it, or DROPPING it (deleting the card) when it no
+        // longer qualifies. scoreGrantClientPair records its own match_attempts row and swallows its own
+        // match errors, so this resolves; wrap it anyway so an unexpected throw can't fail the job.
+        await scoreGrantClientPair(g, cl, db);
+
+        // A refresh leaves the card in place, so its stored QA verdict now describes the OLD score — clear
+        // it so the QA below runs FRESH. (A drop already cascade-removed the verdict with the card; the
+        // card lookup then finds nothing and the job finishes with no QA.) Keyed on the CURRENT pending card.
+        const { data: afterCard } = await db
+          .from("review_cards")
+          .select("id")
+          .eq("grant_id", row.grant_id)
+          .eq("client_id", row.client_id)
+          .eq("decision", "pending")
+          .is("sme_released_at", null)
+          .eq("card_type", "client")
+          .maybeSingle<{ id: string }>();
+        if (afterCard) {
+          await db.from("card_intel_reviews").delete().eq("review_card_id", afterCard.id);
+        }
+
+        // The uses-of-funds leg. Best-effort inside its own try so a uses failure never fails the re-run;
+        // reuses the exact generate+save path the admin re-extract route and the hourly recut share (it
+        // HOLDS a thinner re-extract rather than clobbering a good list). Grant is a structural superset
+        // of AllowableUsesGrant (id/title/funder/raw_text), so it passes straight through.
+        try {
+          await reextractAllowableUses(db, g);
+        } catch (usesErr) {
+          console.error(`[merged-rerun] uses re-extract failed grant=${row.grant_id}`, usesErr);
+        }
+      }
+    } catch (rematchErr) {
+      // The engine re-match failed unexpectedly — log and fall through to QA on whatever card state exists.
+      console.error(`[merged-rerun] engine re-match failed grant=${row.grant_id} client=${row.client_id}`, rematchErr);
+    }
+  }
 
   // The current pending, unreleased, client card for this pair. If it's gone (decided / released /
   // removed since enqueue), there is nothing to QA — mark done, no cost. (H1 never held it.)
@@ -835,6 +907,57 @@ async function finalizeRun(
 // The real QA pass, with no reviewer (the automatic run) — the on-demand route passes the staff user id.
 function defaultRunReview(card: IntelCard, grant: Grant, client: Client): Promise<IntelReview> {
   return runIntelReview(card, grant, client, { reviewedBy: null });
+}
+
+// ── Merged "Re-run grant match" (PR 1): enqueue + status read ────────────────────────────────────────
+export type RerunStatus = "queued" | "processing" | "done" | "error";
+
+// Enqueue a staff-requested FULL re-run for one (grant, client) pair — engine re-match → QA → uses, run in
+// the BACKGROUND by the existing drain (+ its watchdog, so it completes even if the tab closes). The upsert
+// on the (grant, client) unique key OVERRIDES any auto QA-only job already queued for the pair: it sets
+// kind='full_rerun' and resets attempts/status, so the manual action supersedes the poller's. The route
+// gates this behind MERGED_RERUN_ENABLED; with the flag off no caller reaches here, so no 'full_rerun' row
+// ever exists and the drain's re-match prelude stays dead code.
+export async function enqueueFullRerun(
+  db: DB,
+  grantId: string,
+  clientId: string,
+  opts: { now?: () => number } = {},
+): Promise<void> {
+  const now = opts.now ?? (() => Date.now());
+  const nowIso = new Date(now()).toISOString();
+  const { error } = await db.from("intel_review_queue").upsert(
+    {
+      grant_id: grantId,
+      client_id: clientId,
+      kind: "full_rerun",
+      status: "queued",
+      attempts: 0,
+      error_detail: null,
+      enqueued_at: nowIso,
+      started_at: null,
+      finished_at: null,
+      updated_at: nowIso,
+    },
+    { onConflict: "grant_id,client_id" },
+  );
+  if (error) throw new Error(`enqueueFullRerun failed: ${error.message}`);
+}
+
+// The persistent state the merged button reads: the status of THIS pair's full-rerun job, or null when
+// there is none. Server-derived so "Running…" survives navigation (the button never holds it in client
+// state). An auto QA-only job (kind 'auto') is deliberately reported as null — the staffer didn't start it,
+// so it must not light up their re-run button. 'done'/'error' are returned (not null) so the poll can see
+// the queued→processing→done transition and refresh; the button treats 'done' as idle (the card is fresh).
+export async function getRerunJobStatus(db: DB, grantId: string, clientId: string): Promise<RerunStatus | null> {
+  const { data } = await db
+    .from("intel_review_queue")
+    .select("status, kind")
+    .eq("grant_id", grantId)
+    .eq("client_id", clientId)
+    .maybeSingle<{ status: string; kind: string }>();
+  if (!data || data.kind !== "full_rerun") return null;
+  return data.status as RerunStatus;
 }
 
 // One entry point for the cron: poll then drain, honoring the flag. OFF → no work, byte-identical.

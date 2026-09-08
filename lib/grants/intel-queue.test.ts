@@ -1,6 +1,17 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { pollAndEnqueue, drainIntelQueue, runAutoIntel, INTEL_MAX_ATTEMPTS, buildQaPatch, applyQaPatch, cardCfdaApplyEligible, backfillBroadApply } from "./intel-queue";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { pollAndEnqueue, drainIntelQueue, runAutoIntel, INTEL_MAX_ATTEMPTS, buildQaPatch, applyQaPatch, cardCfdaApplyEligible, backfillBroadApply, enqueueFullRerun, getRerunJobStatus, mergedRerunEnabled } from "./intel-queue";
 import type { IntelReview } from "./intel-review";
+
+// The merged full-rerun prelude calls scoreGrantClientPair (engine re-match) and reextractAllowableUses
+// (uses) — both REAL Anthropic calls — so they're mocked: the tests assert they're invoked with the right
+// gating (full_rerun + first attempt only), not their output. Inert for every auto-QA test (the prelude
+// never fires there), so the existing suites are unaffected.
+vi.mock("@/lib/grants/pipeline", () => ({ scoreGrantClientPair: vi.fn(async () => {}) }));
+vi.mock("@/lib/grants/allowable-uses", () => ({
+  reextractAllowableUses: vi.fn(async () => ({ ok: true, saved: true, value: null, previous: null })),
+}));
+import { scoreGrantClientPair } from "@/lib/grants/pipeline";
+import { reextractAllowableUses } from "@/lib/grants/allowable-uses";
 
 // Deterministic — NO model, NO network, NO real Supabase. A tiny in-memory fake DB implements just the
 // query chains intel-queue.ts uses, so we can lock the invariants:
@@ -15,7 +26,7 @@ type Row = Record<string, unknown>;
 class Query {
   private rows: Row[];
   private filters: ((r: Row) => boolean)[] = [];
-  private op: "select" | "update" | "upsert" | "insert" = "select";
+  private op: "select" | "update" | "upsert" | "insert" | "delete" = "select";
   private patch: Row = {};
   private inserts: Row[] = [];
   private onConflict: string[] = [];
@@ -42,6 +53,7 @@ class Query {
   update(patch: Row) { this.op = "update"; this.patch = patch; return this; }
   upsert(rows: Row | Row[], opts?: { onConflict?: string; ignoreDuplicates?: boolean }) { this.op = "upsert"; this.inserts = Array.isArray(rows) ? rows : [rows]; this.onConflict = (opts?.onConflict ?? "").split(",").map((s) => s.trim()).filter(Boolean); this.ignoreDuplicates = opts?.ignoreDuplicates ?? false; return this; }
   insert(rows: Row | Row[]) { this.op = "insert"; this.inserts = Array.isArray(rows) ? rows : [rows]; return this; }
+  delete() { this.op = "delete"; return this; }
   maybeSingle() { this.single = true; return this.exec(); }
   private matched(): Row[] {
     let out = this.rows.filter((r) => this.filters.every((f) => f(r)));
@@ -69,6 +81,12 @@ class Query {
       return Promise.resolve({ data: this.selectAfterWrite ? m.map((r) => ({ ...r })) : null, error: null });
     }
     if (this.op === "insert") { for (const r of this.inserts) this.rows.push({ ...r }); return Promise.resolve({ data: null, error: null }); }
+    if (this.op === "delete") {
+      // Remove matched rows IN PLACE so store.tables[table] (the same array reference) reflects it.
+      const removed = this.rows.filter((r) => this.filters.every((f) => f(r)));
+      for (const r of removed) { const i = this.rows.indexOf(r); if (i >= 0) this.rows.splice(i, 1); }
+      return Promise.resolve({ data: null, error: null });
+    }
     // upsert. ignoreDuplicates → ON CONFLICT DO NOTHING (leave the existing row untouched).
     for (const nr of this.inserts) {
       const existing = this.onConflict.length ? this.rows.find((r) => this.onConflict.every((k) => r[k] === nr[k])) : undefined;
@@ -889,5 +907,80 @@ describe("backfillBroadApply — one-time re-projection of the inert demotes", (
     const s = seedTwoClean();
     const r = await backfillBroadApply(asDb(s), { apply: true, limit: 1 });
     expect(r.applied).toHaveLength(1);
+  });
+});
+
+// ── Merged "Re-run grant match" (PR 1): flag, enqueue/status, and the drain's full-rerun prelude ────────
+describe("mergedRerunEnabled — flag gate", () => {
+  const prev = process.env.MERGED_RERUN_ENABLED;
+  afterEach(() => { if (prev === undefined) delete process.env.MERGED_RERUN_ENABLED; else process.env.MERGED_RERUN_ENABLED = prev; });
+  it("true only when the env var is exactly 'true'", () => {
+    process.env.MERGED_RERUN_ENABLED = "true"; expect(mergedRerunEnabled()).toBe(true);
+    process.env.MERGED_RERUN_ENABLED = "1"; expect(mergedRerunEnabled()).toBe(false);
+    delete process.env.MERGED_RERUN_ENABLED; expect(mergedRerunEnabled()).toBe(false);
+  });
+});
+
+describe("enqueueFullRerun + getRerunJobStatus", () => {
+  it("enqueues a kind='full_rerun' queued job for the pair", async () => {
+    const s = db();
+    await enqueueFullRerun(asDb(s), "g1", "c1", { now });
+    expect(s.tables.intel_review_queue).toHaveLength(1);
+    expect(s.tables.intel_review_queue[0]).toMatchObject({ grant_id: "g1", client_id: "c1", kind: "full_rerun", status: "queued", attempts: 0 });
+  });
+
+  it("OVERRIDES an existing auto QA-only job for the same pair (the manual action supersedes the poller's)", async () => {
+    const s = db();
+    s.tables.intel_review_queue = [{ grant_id: "g1", client_id: "c1", kind: "auto", status: "queued", attempts: 0 }];
+    await enqueueFullRerun(asDb(s), "g1", "c1", { now });
+    expect(s.tables.intel_review_queue).toHaveLength(1); // upsert in place on the (grant, client) key
+    expect(s.tables.intel_review_queue[0]).toMatchObject({ kind: "full_rerun", status: "queued" });
+  });
+
+  it("getRerunJobStatus returns a full_rerun job's status, but NULL for an auto job (not the staffer's action)", async () => {
+    const s = db();
+    s.tables.intel_review_queue = [{ grant_id: "g1", client_id: "c1", kind: "full_rerun", status: "processing" }];
+    expect(await getRerunJobStatus(asDb(s), "g1", "c1")).toBe("processing");
+    s.tables.intel_review_queue = [{ grant_id: "g1", client_id: "c1", kind: "auto", status: "processing" }];
+    expect(await getRerunJobStatus(asDb(s), "g1", "c1")).toBeNull(); // auto → not a rerun
+    expect(await getRerunJobStatus(asDb(s), "g1", "c-none")).toBeNull(); // no job for the pair
+  });
+});
+
+describe("drainIntelQueue — merged full re-run prelude", () => {
+  beforeEach(() => { vi.mocked(scoreGrantClientPair).mockClear(); vi.mocked(reextractAllowableUses).mockClear(); });
+
+  const seedFullRerun = (over: Row = {}) => {
+    const s = db(); seedPairData(s);
+    s.tables.review_cards = [pendingCard()];
+    s.tables.intel_review_queue = [{ id: "q1", grant_id: "g1", client_id: "c1", kind: "full_rerun", status: "queued", attempts: 0, enqueued_at: "2026-08-27T11:00:00Z", ...over }];
+    return s;
+  };
+
+  it("full_rerun on the FIRST attempt: runs the engine re-match + uses, clears the stale verdict, then re-QAs", async () => {
+    const s = seedFullRerun();
+    s.tables.card_intel_reviews = [{ review_card_id: "card-1", created_by: null, intel_review: { verdict: "affirm" } }]; // a STALE verdict
+    const r = await drainIntelQueue(asDb(s), { now, runReview: async () => okReview("demote", 1) });
+    expect(vi.mocked(scoreGrantClientPair)).toHaveBeenCalledTimes(1);   // engine re-match ran (once)
+    expect(vi.mocked(reextractAllowableUses)).toHaveBeenCalledTimes(1); // uses refreshed
+    expect(r.done).toBe(1);
+    // The stale verdict was cleared and re-QA'd fresh — the card now carries the drain's new demote.
+    expect(s.tables.card_intel_reviews).toHaveLength(1);
+    expect((s.tables.card_intel_reviews[0].intel_review as IntelReview).verdict).toBe("demote");
+    expect(s.tables.intel_review_queue[0].status).toBe("done");
+  });
+
+  it("an AUTO job never triggers the engine re-match (the QA-only path is byte-identical to 0087)", async () => {
+    const s = seedFullRerun({ kind: "auto" });
+    const r = await drainIntelQueue(asDb(s), { now, runReview: async () => okReview("affirm") });
+    expect(vi.mocked(scoreGrantClientPair)).not.toHaveBeenCalled();
+    expect(vi.mocked(reextractAllowableUses)).not.toHaveBeenCalled();
+    expect(r.done).toBe(1);
+  });
+
+  it("a full_rerun RETRY (attempts > 0) does NOT re-run the engine match — only the QA is retried", async () => {
+    const s = seedFullRerun({ attempts: 1 }); // a prior attempt already did the re-match
+    await drainIntelQueue(asDb(s), { now, runReview: async () => okReview("affirm") });
+    expect(vi.mocked(scoreGrantClientPair)).not.toHaveBeenCalled(); // re-match is attempt-0-only
   });
 });
