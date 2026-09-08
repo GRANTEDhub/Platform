@@ -411,13 +411,21 @@ function StaffBell({ role }: { role: string }) {
     const next = !open;
     setOpen(next);
     if (next) {
-      // Opening the panel marks everything currently shown as seen → the badge clears.
-      const now = Date.now();
-      setLastSeen(now);
-      try {
-        window.localStorage.setItem(SEEN_KEY, String(now));
-      } catch {
-        /* ignore */
+      // Mark seen up to the NEWEST completion actually in the list — NOT wall-clock now. Advancing to now
+      // would suppress a completion that finished just before the click but hadn't loaded yet (polls are
+      // 45s apart): it arrives on a later poll with finishedAt < now, so it'd never light the badge — the
+      // exact "your re-run finished" ping this feature exists for. Nothing to advance on an empty list.
+      const newest = items.reduce((max, i) => {
+        const t = i.finishedAt ? Date.parse(i.finishedAt) : NaN;
+        return Number.isFinite(t) && t > max ? t : max;
+      }, lastSeen);
+      if (newest > lastSeen) {
+        setLastSeen(newest);
+        try {
+          window.localStorage.setItem(SEEN_KEY, String(newest));
+        } catch {
+          /* ignore */
+        }
       }
     }
   };
