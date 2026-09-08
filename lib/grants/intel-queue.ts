@@ -26,6 +26,8 @@
 import { randomUUID } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/server";
 import { runIntelReview, type IntelReview, type IntelCard } from "@/lib/grants/intel-review";
+import { scoreGrantClientPair } from "@/lib/grants/pipeline";
+import { reextractAllowableUses } from "@/lib/grants/allowable-uses";
 import type { Grant, Client, FactorScores } from "@/types/database";
 
 type DB = ReturnType<typeof createServiceClient>;
@@ -33,6 +35,14 @@ type DB = ReturnType<typeof createServiceClient>;
 // ── Flag + config (env-overridable; defaults are conservative) ────────────────────────────────────
 export function autoIntelEnabled(): boolean {
   return process.env.AUTO_INTEL_ENABLED === "true";
+}
+
+// Merged "Re-run grant match" (PR 1). Gates the ONE staff action that re-runs the whole review in the
+// background — engine re-match → QA → uses — via a kind='full_rerun' queue job the existing drain runs.
+// OFF (default): the /rerun route 404s, no full_rerun row is ever enqueued, and the drain's re-match
+// prelude is dead code → byte-identical to today. Read by the route (gate) and the card page (button swap).
+export function mergedRerunEnabled(): boolean {
+  return process.env.MERGED_RERUN_ENABLED === "true";
 }
 
 // ── Apply-the-gate (Step 3, PR B) ──────────────────────────────────────────────────────────────────
@@ -200,6 +210,10 @@ const intEnv = (v: string | undefined, d: number): number => Math.floor(numEnv(v
 // A single QA run is Opus + a few web_searches + fetched-page tokens — roughly this. A flat estimate is
 // enough for the ceiling (a safety cap, not billing). Real per-token accounting is a later refinement.
 export const INTEL_EST_COST_PER_CARD_USD = numEnv(process.env.INTEL_EST_COST_PER_CARD_USD, 0.3);
+// A full-rerun job ALSO spends the prelude's engine re-match (matchGrantToClient + enrich + generic-nexus)
+// and uses re-extract (Sonnet) before the QA. Flat estimate of that extra spend, folded into the job's
+// reserved cost so the daily cap counts it — the QA-only 0.3 would under-count a full rerun several-fold.
+export const INTEL_EST_REMATCH_COST_USD = numEnv(process.env.INTEL_EST_REMATCH_COST_USD, 0.6);
 // Hard daily ceiling: once today's summed estimate reaches this, the drain stops and defers to tomorrow.
 export const INTEL_AUTO_DAILY_CAP_USD = numEnv(process.env.INTEL_AUTO_DAILY_CAP_USD, 30);
 // How many eligible cards the poller enqueues per invocation, and the page size it scans in.
@@ -223,6 +237,8 @@ interface QueueRow {
   client_id: string;
   status: string;
   attempts: number;
+  // 'auto' (poller QA-only, 0087 behavior) | 'full_rerun' (staff-requested engine re-match → QA → uses).
+  kind: string;
 }
 
 export interface DrainOptions {
@@ -352,6 +368,11 @@ export async function pollAndEnqueue(db: DB, opts: { now?: () => number; limit?:
   const rows = toEnqueue.map((c) => ({
     grant_id: c.grant_id,
     client_id: c.client_id,
+    // EXPLICIT 'auto' (not just the column default): the poller may upsert over a pair whose prior job was
+    // a completed 'full_rerun' (its verdict was later cleared by a /rematch, making the pair eligible
+    // again). Setting kind here RESETS it to 'auto' so an ordinary auto re-QA never inherits the stale
+    // 'full_rerun' marker and wrongly re-runs the engine match. On a first insert it equals the default.
+    kind: "auto",
     status: "queued",
     attempts: 0,
     error_detail: null,
@@ -428,7 +449,7 @@ export async function drainIntelQueue(db: DB, opts: DrainOptions = {}): Promise<
   // 3. Claim a batch of queued jobs (oldest first) → mark processing.
   const { data: queued } = await db
     .from("intel_review_queue")
-    .select("id, grant_id, client_id, status, attempts")
+    .select("id, grant_id, client_id, status, attempts, kind")
     .eq("status", "queued")
     .order("enqueued_at", { ascending: true })
     .limit(batchSize)
@@ -471,14 +492,81 @@ async function processOne(
   deps: { now: () => number; runReview: (c: IntelCard, g: Grant, cl: Client) => Promise<IntelReview>; estCost: number },
 ): Promise<"done" | "skipped" | "error"> {
   const { now, runReview, estCost } = deps;
+  // finish stamps a terminal status on THE JOB THIS WORKER CLAIMED — guard on kind too, not just id. A
+  // staffer's enqueueFullRerun can re-purpose this exact (grant, client) row from 'auto' to 'full_rerun'
+  // (upsert on the unique pair key) WHILE this worker's QA model call is in flight (tens of seconds). Keyed
+  // on id ALONE, this worker's finish() would then stamp status='done' on the re-purposed row — leaving
+  // kind='full_rerun', status='done', attempts=0 with the engine re-match NEVER run, so the merged button
+  // reports "Re-run complete" for a re-run that never happened. Keyed on kind too, a row whose kind changed
+  // under this worker matches 0 rows here → the finish no-ops → the row re-drains as the full_rerun it now
+  // is, and the prelude runs. No-op for the common path (nothing mutates kind mid-run). (CCR race, PR #515.)
   const finish = (patch: Record<string, unknown>) =>
-    db.from("intel_review_queue").update({ ...patch, updated_at: new Date(now()).toISOString() }).eq("id", row.id);
+    db.from("intel_review_queue").update({ ...patch, updated_at: new Date(now()).toISOString() }).eq("id", row.id).eq("kind", row.kind);
 
   // The claim step already wrote attempts = row.attempts + 1 to the DB, but the SELECT'd `row` is a
   // detached snapshot from BEFORE that increment (supabase does not mutate it), so THIS run is attempt
   // number (row.attempts + 1). Judge the cap against that post-increment count — checking the stale
   // row.attempts would run one extra Opus+web attempt (and cost-log entry) past INTEL_MAX_ATTEMPTS.
   const attemptsSoFar = row.attempts + 1;
+
+  // ── FULL RE-RUN prelude (merged "Re-run grant match", PR 1) ─────────────────────────────────────────
+  // The engine re-match + uses leg of the merged action, run BEFORE the QA below so the QA scores the
+  // freshly re-matched card. Fires for a staff-requested 'full_rerun' job (kind) on EVERY attempt — NOT
+  // attempts===0. Both legs are IDEMPOTENT (scoreGrantClientPair reconciles the one card to the same
+  // result; reextractAllowableUses holds a thinner list), so a retry re-doing them is correct, and the
+  // count is bounded by INTEL_MAX_ATTEMPTS. Gating on attempts===0 instead SILENTLY DROPPED the re-match:
+  // a job killed out-of-process mid-re-match (maxDuration=300s / OOM) is reclaimed by the watchdog with
+  // attempts already incremented at claim, so its retry saw attempts>0 and ran QA-only on the un-re-matched
+  // score, yet finished 'done' — the button lied "complete" (CCR finding, PR #515). An 'auto' job still
+  // skips this block (kind gate), so the poller's QA-only path stays byte-identical to 0087. Whole block is
+  // best-effort: any failure logs and falls through to the QA flow, which no-ops safely if the card is gone.
+  if (row.kind === "full_rerun") {
+    try {
+      const [{ data: g }, { data: cl }] = await Promise.all([
+        db.from("grants").select("*").eq("id", row.grant_id).maybeSingle<Grant>(),
+        db.from("clients").select("*").eq("id", row.client_id).maybeSingle<Client>(),
+      ]);
+      // Skip the re-match for a missing grant/client or a PAUSED client (match_active=false, migration
+      // 0091) — the same gate the poller and the QA flow enforce. Falls through to the QA flow, which
+      // then marks the job done with no cost (missing/paused → skipped there).
+      if (g && cl && cl.match_active !== false) {
+        // Skip the per-pair re-match while a ROSTER scoring episode is live for this grant (status
+        // processing/queued/matching) — the SAME race the sibling /rematch route refuses on. scoreGrantClientPair
+        // writes a match_attempts row at `now` (at/after the episode marker), so runMatching's cursor-free resume
+        // (scoredClientIdsSince) then counts this client as already-scored-this-episode and SKIPS it, leaving the
+        // card scored against the OLD pre-reshred profile while the re-shred is rebuilding it. The live roster run
+        // re-scores this client anyway, so let it: skip our re-match and fall through to QA (CCR finding, PR #515).
+        const grantScoring = g.status === "processing" || g.status === "queued" || g.status === "matching";
+        if (!grantScoring) {
+          // Re-score the pair through the SAME primitive the per-card Re-match button and the daily drain
+          // use. It reconciles the ONE card: refreshing it, or DROPPING it (deleting the card) when it no
+          // longer qualifies. scoreGrantClientPair records its own match_attempts row and swallows its own
+          // match errors, so this resolves; wrap it anyway so an unexpected throw can't fail the job.
+          await scoreGrantClientPair(g, cl, db);
+        } else {
+          console.warn(`[merged-rerun] grant ${row.grant_id} is mid-roster-scoring (${g.status}); skipping per-pair re-match, QA will run on the roster's score`);
+        }
+
+        // (A refresh leaves the card in place, so its stored QA verdict now describes the OLD score. The
+        // stale verdict is cleared BELOW — after the pair's single pending card is resolved with .limit(1)
+        // — not here: a per-pair lookup here would .maybeSingle() over a pair that can legitimately carry
+        // more than one pending card and error. A drop already cascade-removed the verdict with the card.)
+
+        // The uses-of-funds leg. Best-effort inside its own try so a uses failure never fails the re-run;
+        // reuses the exact generate+save path the admin re-extract route and the hourly recut share (it
+        // HOLDS a thinner re-extract rather than clobbering a good list). Grant is a structural superset
+        // of AllowableUsesGrant (id/title/funder/raw_text), so it passes straight through.
+        try {
+          await reextractAllowableUses(db, g);
+        } catch (usesErr) {
+          console.error(`[merged-rerun] uses re-extract failed grant=${row.grant_id}`, usesErr);
+        }
+      }
+    } catch (rematchErr) {
+      // The engine re-match failed unexpectedly — log and fall through to QA on whatever card state exists.
+      console.error(`[merged-rerun] engine re-match failed grant=${row.grant_id} client=${row.client_id}`, rematchErr);
+    }
+  }
 
   // The current pending, unreleased, client card for this pair. If it's gone (decided / released /
   // removed since enqueue), there is nothing to QA — mark done, no cost. (H1 never held it.)
@@ -495,6 +583,17 @@ async function processOne(
   if (!card) {
     await finish({ status: "done", finished_at: new Date(now()).toISOString(), error_detail: "card no longer pending" });
     return "skipped";
+  }
+
+  // FULL RE-RUN stale-verdict clear (merged "Re-run grant match", PR 1). The prelude above re-matched this
+  // card in place, so its stored QA verdict describes the OLD score — drop it here, keyed on the pair's ONE
+  // resolved card (card.id, from the .limit(1) lookup above), so the existingVerdict check below finds
+  // nothing and the QA runs FRESH. Fires on any full_rerun attempt (matching the prelude gate); an 'auto'
+  // job leaves the card's verdict untouched. A retry's clear is a harmless no-op (its prior QA failed, so no
+  // verdict was written). Keying on card.id (not a per-pair lookup) means a pair legitimately carrying >1
+  // pending card can never error the delete.
+  if (row.kind === "full_rerun") {
+    await db.from("card_intel_reviews").delete().eq("review_card_id", card.id);
   }
 
   // A verdict can appear between enqueue and now — most likely a staffer ran the on-demand Intel pass
@@ -548,7 +647,13 @@ async function processOne(
   // Reserve the cost BEFORE the killable model call (see reserveRun) so a hard maxDuration timeout still
   // counts against the daily cap. Backfilled with the outcome below; left 'processing' if the attempt dies.
   const runLogId = randomUUID();
-  await reserveRun(db, now, { runLogId, grant_id: row.grant_id, client_id: row.client_id, review_card_id: card.id, estCost });
+  // A full_rerun job also spent the prelude's engine re-match + uses re-extract above — neither writes its
+  // own ledger row — so fold a flat estimate of that into THIS job's reserved cost, else dailySpentUsd (and
+  // the daily cap it feeds) sees only the QA estimate and repeated re-runs blow past the cap uncounted.
+  // (A card DROPPED by the re-match returns at `if (!card)` before here — its re-match is the one uncounted
+  // case, bounded and rare.) Cost-accounting finding, PR #515.
+  const jobEstCost = row.kind === "full_rerun" ? estCost + INTEL_EST_REMATCH_COST_USD : estCost;
+  await reserveRun(db, now, { runLogId, grant_id: row.grant_id, client_id: row.client_id, review_card_id: card.id, estCost: jobEstCost });
 
   let review: IntelReview;
   try {
@@ -835,6 +940,60 @@ async function finalizeRun(
 // The real QA pass, with no reviewer (the automatic run) — the on-demand route passes the staff user id.
 function defaultRunReview(card: IntelCard, grant: Grant, client: Client): Promise<IntelReview> {
   return runIntelReview(card, grant, client, { reviewedBy: null });
+}
+
+// ── Merged "Re-run grant match" (PR 1): enqueue + status read ────────────────────────────────────────
+export type RerunStatus = "queued" | "processing" | "done" | "error";
+
+// Enqueue a staff-requested FULL re-run for one (grant, client) pair — engine re-match → QA → uses, run in
+// the BACKGROUND by the existing drain (+ its watchdog, so it completes even if the tab closes). The upsert
+// on the (grant, client) unique key OVERRIDES any auto QA-only job already queued for the pair: it sets
+// kind='full_rerun' and resets attempts/status, so the manual action supersedes the poller's. If that auto
+// job was already CLAIMED (status='processing', its QA in flight) this upsert re-purposes the row under the
+// worker; processOne's finish() guards on kind so the stale worker can't then stamp the re-purposed row
+// 'done' with the re-match unrun — it re-drains as full_rerun instead (see finish()). The route gates this
+// behind MERGED_RERUN_ENABLED; with the flag off no caller reaches here, so no 'full_rerun' row ever exists
+// and the drain's re-match prelude stays dead code.
+export async function enqueueFullRerun(
+  db: DB,
+  grantId: string,
+  clientId: string,
+  opts: { now?: () => number } = {},
+): Promise<void> {
+  const now = opts.now ?? (() => Date.now());
+  const nowIso = new Date(now()).toISOString();
+  const { error } = await db.from("intel_review_queue").upsert(
+    {
+      grant_id: grantId,
+      client_id: clientId,
+      kind: "full_rerun",
+      status: "queued",
+      attempts: 0,
+      error_detail: null,
+      enqueued_at: nowIso,
+      started_at: null,
+      finished_at: null,
+      updated_at: nowIso,
+    },
+    { onConflict: "grant_id,client_id" },
+  );
+  if (error) throw new Error(`enqueueFullRerun failed: ${error.message}`);
+}
+
+// The persistent state the merged button reads: the status of THIS pair's full-rerun job, or null when
+// there is none. Server-derived so "Running…" survives navigation (the button never holds it in client
+// state). An auto QA-only job (kind 'auto') is deliberately reported as null — the staffer didn't start it,
+// so it must not light up their re-run button. 'done'/'error' are returned (not null) so the poll can see
+// the queued→processing→done transition and refresh; the button treats 'done' as idle (the card is fresh).
+export async function getRerunJobStatus(db: DB, grantId: string, clientId: string): Promise<RerunStatus | null> {
+  const { data } = await db
+    .from("intel_review_queue")
+    .select("status, kind")
+    .eq("grant_id", grantId)
+    .eq("client_id", clientId)
+    .maybeSingle<{ status: string; kind: string }>();
+  if (!data || data.kind !== "full_rerun") return null;
+  return data.status as RerunStatus;
 }
 
 // One entry point for the cron: poll then drain, honoring the flag. OFF → no work, byte-identical.

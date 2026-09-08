@@ -9,6 +9,8 @@ import { MarkUnreadButton } from "@/components/report/mark-unread-button";
 import { ScoreFactorsBackfill } from "@/components/report/score-factors-backfill";
 import { IntelRerunButton } from "@/components/report/intel-rerun-button";
 import { AllowableRefreshButton } from "@/components/report/allowable-refresh-button";
+import { MergedRerunButton } from "@/components/report/merged-rerun-button";
+import { mergedRerunEnabled } from "@/lib/grants/intel-queue";
 import type { IntelReview } from "@/lib/grants/intel-review";
 import { GrantReviewConsole, type ReviewKeyDetail, type ReviewMeta } from "@/components/report/grant-review-console";
 import { AlertSend } from "@/app/(app)/review/[id]/alert-send";
@@ -153,6 +155,23 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
       .eq("review_card_id", params.cardId)
       .maybeSingle<{ intel_review: IntelReview }>();
     intelReview = intelRow?.intel_review ?? null;
+  }
+
+  // Merged "Re-run grant match" (PR 1): the button's persistent "Running…" state, read from the queue so it
+  // survives navigation (the staffer leaves and comes back and it still shows Running). Only when the flag
+  // is on and the re-run affordance is shown for a real (grant, client) pair. Reports ONLY a 'full_rerun'
+  // job — an ordinary auto QA job (kind 'auto') is not the staffer's action and must not light the button.
+  let rerunStatus: "queued" | "processing" | "done" | "error" | null = null;
+  if (mergedRerunEnabled() && showIntel && card.grant_id) {
+    const { data: rerunJob } = await supabase
+      .from("intel_review_queue")
+      .select("status, kind")
+      .eq("grant_id", card.grant_id)
+      .eq("client_id", params.id)
+      .maybeSingle<{ status: string; kind: string }>();
+    if (rerunJob && rerunJob.kind === "full_rerun") {
+      rerunStatus = rerunJob.status as "queued" | "processing" | "done" | "error";
+    }
   }
 
   const [{ count: queueCount }, attempts] = await Promise.all([
@@ -487,10 +506,26 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
               anchorHref="#concept"
               overdue={overdueConfig}
               showConcept={showConcept}
-              rerun={showIntel ? <IntelRerunButton cardId={params.cardId} hasVerdict={intelReview !== null} /> : null}
-              // Same staff gate as the re-run (admin + pending + not released) plus a grant to
-              // re-extract. Admin-only again at the route; the portal never passes this slot.
-              reextract={showIntel && card.grant_id ? <AllowableRefreshButton grantId={card.grant_id} /> : null}
+              rerun={
+                showIntel ? (
+                  mergedRerunEnabled() ? (
+                    // ONE button: background full re-run (engine re-match → QA → uses), with a persistent
+                    // server-derived "Running…" state.
+                    <MergedRerunButton cardId={params.cardId} initialStatus={rerunStatus} backHref={backHref} />
+                  ) : (
+                    <IntelRerunButton cardId={params.cardId} hasVerdict={intelReview !== null} />
+                  )
+                ) : null
+              }
+              // Same staff gate as the re-run (admin + pending + not released) plus a grant to re-extract.
+              // Admin-only again at the route; the portal never passes this slot. The merged re-run folds
+              // uses-of-funds into the one button, so this separate control is DROPPED when the flag is on
+              // (byte-identical to today when off).
+              reextract={
+                showIntel && card.grant_id && !mergedRerunEnabled() ? (
+                  <AllowableRefreshButton grantId={card.grant_id} />
+                ) : null
+              }
             />
           ) : null
         }

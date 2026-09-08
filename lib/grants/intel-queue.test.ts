@@ -1,6 +1,17 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { pollAndEnqueue, drainIntelQueue, runAutoIntel, INTEL_MAX_ATTEMPTS, buildQaPatch, applyQaPatch, cardCfdaApplyEligible, backfillBroadApply } from "./intel-queue";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { pollAndEnqueue, drainIntelQueue, runAutoIntel, INTEL_MAX_ATTEMPTS, INTEL_EST_COST_PER_CARD_USD, INTEL_EST_REMATCH_COST_USD, buildQaPatch, applyQaPatch, cardCfdaApplyEligible, backfillBroadApply, enqueueFullRerun, getRerunJobStatus, mergedRerunEnabled } from "./intel-queue";
 import type { IntelReview } from "./intel-review";
+
+// The merged full-rerun prelude calls scoreGrantClientPair (engine re-match) and reextractAllowableUses
+// (uses) — both REAL Anthropic calls — so they're mocked: the tests assert they're invoked with the right
+// gating (full_rerun jobs, on every attempt — idempotent + crash-safe), not their output. Inert for every
+// auto-QA test (the prelude never fires there), so the existing suites are unaffected.
+vi.mock("@/lib/grants/pipeline", () => ({ scoreGrantClientPair: vi.fn(async () => {}) }));
+vi.mock("@/lib/grants/allowable-uses", () => ({
+  reextractAllowableUses: vi.fn(async () => ({ ok: true, saved: true, value: null, previous: null })),
+}));
+import { scoreGrantClientPair } from "@/lib/grants/pipeline";
+import { reextractAllowableUses } from "@/lib/grants/allowable-uses";
 
 // Deterministic — NO model, NO network, NO real Supabase. A tiny in-memory fake DB implements just the
 // query chains intel-queue.ts uses, so we can lock the invariants:
@@ -15,7 +26,7 @@ type Row = Record<string, unknown>;
 class Query {
   private rows: Row[];
   private filters: ((r: Row) => boolean)[] = [];
-  private op: "select" | "update" | "upsert" | "insert" = "select";
+  private op: "select" | "update" | "upsert" | "insert" | "delete" = "select";
   private patch: Row = {};
   private inserts: Row[] = [];
   private onConflict: string[] = [];
@@ -42,6 +53,7 @@ class Query {
   update(patch: Row) { this.op = "update"; this.patch = patch; return this; }
   upsert(rows: Row | Row[], opts?: { onConflict?: string; ignoreDuplicates?: boolean }) { this.op = "upsert"; this.inserts = Array.isArray(rows) ? rows : [rows]; this.onConflict = (opts?.onConflict ?? "").split(",").map((s) => s.trim()).filter(Boolean); this.ignoreDuplicates = opts?.ignoreDuplicates ?? false; return this; }
   insert(rows: Row | Row[]) { this.op = "insert"; this.inserts = Array.isArray(rows) ? rows : [rows]; return this; }
+  delete() { this.op = "delete"; return this; }
   maybeSingle() { this.single = true; return this.exec(); }
   private matched(): Row[] {
     let out = this.rows.filter((r) => this.filters.every((f) => f(r)));
@@ -56,6 +68,13 @@ class Query {
     // `attempts` would appear pre-incremented and mask the retry-cap off-by-one this suite locks.
     if (this.op === "select") {
       const m = this.matched().map((r) => ({ ...r }));
+      // Faithful PostgREST: .maybeSingle() ERRORS (406) when more than one row matches — it does not silently
+      // take the first. A query that can legitimately match >1 row MUST narrow with .limit(1) (which caps
+      // `matched()` at one) before .maybeSingle(). Emulating this is what catches the "afterCard .maybeSingle()
+      // without .limit(1) over a pair with >1 pending card" bug class (VADE, PR #515) at test time.
+      if (this.single && m.length > 1) {
+        return Promise.resolve({ data: null, error: { message: "JSON object requested, multiple (or no) rows returned" } });
+      }
       return Promise.resolve({ data: this.single ? (m[0] ?? null) : m, error: null });
     }
     if (this.op === "update") {
@@ -69,6 +88,12 @@ class Query {
       return Promise.resolve({ data: this.selectAfterWrite ? m.map((r) => ({ ...r })) : null, error: null });
     }
     if (this.op === "insert") { for (const r of this.inserts) this.rows.push({ ...r }); return Promise.resolve({ data: null, error: null }); }
+    if (this.op === "delete") {
+      // Remove matched rows IN PLACE so store.tables[table] (the same array reference) reflects it.
+      const removed = this.rows.filter((r) => this.filters.every((f) => f(r)));
+      for (const r of removed) { const i = this.rows.indexOf(r); if (i >= 0) this.rows.splice(i, 1); }
+      return Promise.resolve({ data: null, error: null });
+    }
     // upsert. ignoreDuplicates → ON CONFLICT DO NOTHING (leave the existing row untouched).
     for (const nr of this.inserts) {
       const existing = this.onConflict.length ? this.rows.find((r) => this.onConflict.every((k) => r[k] === nr[k])) : undefined;
@@ -889,5 +914,145 @@ describe("backfillBroadApply — one-time re-projection of the inert demotes", (
     const s = seedTwoClean();
     const r = await backfillBroadApply(asDb(s), { apply: true, limit: 1 });
     expect(r.applied).toHaveLength(1);
+  });
+});
+
+// ── Merged "Re-run grant match" (PR 1): flag, enqueue/status, and the drain's full-rerun prelude ────────
+describe("mergedRerunEnabled — flag gate", () => {
+  const prev = process.env.MERGED_RERUN_ENABLED;
+  afterEach(() => { if (prev === undefined) delete process.env.MERGED_RERUN_ENABLED; else process.env.MERGED_RERUN_ENABLED = prev; });
+  it("true only when the env var is exactly 'true'", () => {
+    process.env.MERGED_RERUN_ENABLED = "true"; expect(mergedRerunEnabled()).toBe(true);
+    process.env.MERGED_RERUN_ENABLED = "1"; expect(mergedRerunEnabled()).toBe(false);
+    delete process.env.MERGED_RERUN_ENABLED; expect(mergedRerunEnabled()).toBe(false);
+  });
+});
+
+describe("enqueueFullRerun + getRerunJobStatus", () => {
+  it("enqueues a kind='full_rerun' queued job for the pair", async () => {
+    const s = db();
+    await enqueueFullRerun(asDb(s), "g1", "c1", { now });
+    expect(s.tables.intel_review_queue).toHaveLength(1);
+    expect(s.tables.intel_review_queue[0]).toMatchObject({ grant_id: "g1", client_id: "c1", kind: "full_rerun", status: "queued", attempts: 0 });
+  });
+
+  it("OVERRIDES an existing auto QA-only job for the same pair (the manual action supersedes the poller's)", async () => {
+    const s = db();
+    s.tables.intel_review_queue = [{ grant_id: "g1", client_id: "c1", kind: "auto", status: "queued", attempts: 0 }];
+    await enqueueFullRerun(asDb(s), "g1", "c1", { now });
+    expect(s.tables.intel_review_queue).toHaveLength(1); // upsert in place on the (grant, client) key
+    expect(s.tables.intel_review_queue[0]).toMatchObject({ kind: "full_rerun", status: "queued" });
+  });
+
+  it("getRerunJobStatus returns a full_rerun job's status, but NULL for an auto job (not the staffer's action)", async () => {
+    const s = db();
+    s.tables.intel_review_queue = [{ grant_id: "g1", client_id: "c1", kind: "full_rerun", status: "processing" }];
+    expect(await getRerunJobStatus(asDb(s), "g1", "c1")).toBe("processing");
+    s.tables.intel_review_queue = [{ grant_id: "g1", client_id: "c1", kind: "auto", status: "processing" }];
+    expect(await getRerunJobStatus(asDb(s), "g1", "c1")).toBeNull(); // auto → not a rerun
+    expect(await getRerunJobStatus(asDb(s), "g1", "c-none")).toBeNull(); // no job for the pair
+  });
+});
+
+describe("drainIntelQueue — merged full re-run prelude", () => {
+  beforeEach(() => { vi.mocked(scoreGrantClientPair).mockClear(); vi.mocked(reextractAllowableUses).mockClear(); });
+
+  const seedFullRerun = (over: Row = {}) => {
+    const s = db(); seedPairData(s);
+    s.tables.review_cards = [pendingCard()];
+    s.tables.intel_review_queue = [{ id: "q1", grant_id: "g1", client_id: "c1", kind: "full_rerun", status: "queued", attempts: 0, enqueued_at: "2026-08-27T11:00:00Z", ...over }];
+    return s;
+  };
+
+  it("full_rerun on the FIRST attempt: runs the engine re-match + uses, clears the stale verdict, then re-QAs", async () => {
+    const s = seedFullRerun();
+    s.tables.card_intel_reviews = [{ review_card_id: "card-1", created_by: null, intel_review: { verdict: "affirm" } }]; // a STALE verdict
+    const r = await drainIntelQueue(asDb(s), { now, runReview: async () => okReview("demote", 1) });
+    expect(vi.mocked(scoreGrantClientPair)).toHaveBeenCalledTimes(1);   // engine re-match ran (once)
+    expect(vi.mocked(reextractAllowableUses)).toHaveBeenCalledTimes(1); // uses refreshed
+    expect(r.done).toBe(1);
+    // The stale verdict was cleared and re-QA'd fresh — the card now carries the drain's new demote.
+    expect(s.tables.card_intel_reviews).toHaveLength(1);
+    expect((s.tables.card_intel_reviews[0].intel_review as IntelReview).verdict).toBe("demote");
+    expect(s.tables.intel_review_queue[0].status).toBe("done");
+    // The logged cost folds the prelude (re-match + uses) into the QA estimate, so the daily cap counts it.
+    expect(s.tables.intel_auto_run_log[0].cost_estimate_usd).toBe(INTEL_EST_COST_PER_CARD_USD + INTEL_EST_REMATCH_COST_USD);
+  });
+
+  it("full_rerun with >1 pending card for the pair: clears the RESOLVED card's stale verdict and re-QAs (no .maybeSingle error)", async () => {
+    // The (g1, c1) pair legitimately carries TWO pending client cards. The stale-verdict clear must key on
+    // the ONE card the QA flow resolves via .limit(1) — a per-pair .maybeSingle() lookup would ERROR on the
+    // two matches (now faithfully modeled above), leave the stale verdict in place, and silently skip QA as
+    // "verdict already present" (VADE finding, PR #515). With the fix the drain completes and re-QAs fresh.
+    const s = seedFullRerun();
+    s.tables.review_cards = [pendingCard(), pendingCard({ id: "card-2" })];
+    s.tables.card_intel_reviews = [{ review_card_id: "card-1", created_by: null, intel_review: { verdict: "affirm" } }];
+    const r = await drainIntelQueue(asDb(s), { now, runReview: async () => okReview("demote", 1) });
+    expect(r.done).toBe(1);
+    expect(vi.mocked(scoreGrantClientPair)).toHaveBeenCalledTimes(1);
+    // The resolved card's stale verdict was cleared and re-QA'd fresh — not skipped as "already present".
+    expect(s.tables.card_intel_reviews).toHaveLength(1);
+    expect(s.tables.card_intel_reviews[0]).toMatchObject({ review_card_id: "card-1" });
+    expect((s.tables.card_intel_reviews[0].intel_review as IntelReview).verdict).toBe("demote");
+  });
+
+  it("an AUTO job never triggers the engine re-match (the QA-only path is byte-identical to 0087)", async () => {
+    const s = seedFullRerun({ kind: "auto" });
+    const r = await drainIntelQueue(asDb(s), { now, runReview: async () => okReview("affirm") });
+    expect(vi.mocked(scoreGrantClientPair)).not.toHaveBeenCalled();
+    expect(vi.mocked(reextractAllowableUses)).not.toHaveBeenCalled();
+    expect(r.done).toBe(1);
+  });
+
+  it("a full_rerun RETRY (attempts > 0) STILL re-runs the engine match — crash-safe, not skipped", async () => {
+    // A job killed out-of-process mid-re-match is reclaimed by the watchdog with attempts already
+    // incremented at claim. Gating the prelude on attempts===0 skipped the re-match on that retry and QA'd a
+    // stale score while reporting "done" (CCR finding, PR #515). Both legs are idempotent, so the retry
+    // re-runs them; the count is bounded by INTEL_MAX_ATTEMPTS.
+    const s = seedFullRerun({ attempts: 1 }); // a prior attempt was reclaimed (its re-match may never have run)
+    await drainIntelQueue(asDb(s), { now, runReview: async () => okReview("affirm") });
+    expect(vi.mocked(scoreGrantClientPair)).toHaveBeenCalledTimes(1);   // re-match re-ran on the retry
+    expect(vi.mocked(reextractAllowableUses)).toHaveBeenCalledTimes(1); // uses re-ran too
+  });
+
+  it("full_rerun SKIPS the per-pair re-match while the grant is mid-roster-scoring (avoids the scoredClientIdsSince race)", async () => {
+    // A roster scoring episode is live for this grant (status 'matching'). A per-pair re-match here would
+    // write a match_attempts row at `now`, which makes runMatching's cursor-free resume skip this client —
+    // the same race the sibling /rematch route refuses on. Skip our re-match (the roster scores the client)
+    // and fall through to QA. Uses (which doesn't touch match_attempts) still runs. (CCR finding, PR #515.)
+    const s = seedFullRerun();
+    s.tables.grants = [{ id: "g1", title: "JAG", assistance_listings: [{ number: "16.738" }], source_url: "https://x.gov", status: "matching" }];
+    const r = await drainIntelQueue(asDb(s), { now, runReview: async () => okReview("affirm") });
+    expect(vi.mocked(scoreGrantClientPair)).not.toHaveBeenCalled();     // re-match skipped — no roster race
+    expect(vi.mocked(reextractAllowableUses)).toHaveBeenCalledTimes(1); // uses doesn't race, still runs
+    expect(r.done).toBe(1);                                             // QA still ran, job completed
+  });
+
+  it("clobber race: enqueueFullRerun re-purposing an in-flight 'auto' row does NOT get stamped 'done' by the stale worker", async () => {
+    // An auto QA-only job is claimed (status='processing'); while its model call is in flight the staffer
+    // clicks Re-run, so enqueueFullRerun upserts the SAME (grant, client) row to kind='full_rerun',
+    // status='queued', attempts=0. The stale auto worker then finishes — but finish() guards on kind, so it
+    // can't stamp the re-purposed row 'done' with the engine re-match unrun. The row stays a queued
+    // full_rerun that the next drain will actually re-match. (CCR race finding, PR #515.)
+    const s = db();
+    seedPairData(s);
+    s.tables.review_cards = [pendingCard()];
+    s.tables.intel_review_queue = [{ id: "q1", grant_id: "g1", client_id: "c1", kind: "auto", status: "queued", attempts: 0, enqueued_at: "2026-08-27T11:00:00Z" }];
+    await drainIntelQueue(asDb(s), {
+      now,
+      runReview: async () => {
+        // The merged Re-run click lands mid-flight: re-purpose the claimed row to a full_rerun.
+        await enqueueFullRerun(asDb(s), "g1", "c1", { now });
+        return okReview("affirm");
+      },
+    });
+    // The stale auto worker's finish() no-op'd (kind changed under it) — the row is NOT 'done'.
+    expect(s.tables.intel_review_queue[0]).toMatchObject({ kind: "full_rerun", status: "queued", attempts: 0 });
+    expect(s.tables.intel_review_queue[0].status).not.toBe("done");
+    // Nothing marked the pair complete, so getRerunJobStatus reports it still pending a real re-run.
+    expect(await getRerunJobStatus(asDb(s), "g1", "c1")).toBe("queued");
+    // The engine re-match has NOT run yet (it runs when the row re-drains as full_rerun), so the staffer is
+    // not falsely told "complete". The auto QA that raced is harmless — the full_rerun's prelude clears it.
+    expect(vi.mocked(scoreGrantClientPair)).not.toHaveBeenCalled();
   });
 });
