@@ -89,8 +89,13 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   const r = await resolve(params.id);
   if (r.error) return r.error;
   const { db, card } = r;
-  if (!card || !card.client_id || !card.grant_id) return NextResponse.json({ status: null });
+  // `cardPresent` lets the button tell a DROPPED card apart from a normal finish. The full re-run's engine
+  // re-match can DELETE the card when it no longer qualifies; the card row is then gone, so a poll that was
+  // watching a running job and now finds no card means the re-match dropped it. The button must NOT
+  // router.refresh() in that case — the detail page re-queries this cardId and hits notFound(), hard-404ing
+  // the page the staffer is on. Instead it shows a "card removed" note and links back to the roadmap.
+  if (!card || !card.client_id || !card.grant_id) return NextResponse.json({ status: null, cardPresent: false });
 
   const status = await getRerunJobStatus(db, card.grant_id, card.client_id);
-  return NextResponse.json({ status });
+  return NextResponse.json({ status, cardPresent: true });
 }

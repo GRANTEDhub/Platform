@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { pollAndEnqueue, drainIntelQueue, runAutoIntel, INTEL_MAX_ATTEMPTS, buildQaPatch, applyQaPatch, cardCfdaApplyEligible, backfillBroadApply, enqueueFullRerun, getRerunJobStatus, mergedRerunEnabled } from "./intel-queue";
+import { pollAndEnqueue, drainIntelQueue, runAutoIntel, INTEL_MAX_ATTEMPTS, INTEL_EST_COST_PER_CARD_USD, INTEL_EST_REMATCH_COST_USD, buildQaPatch, applyQaPatch, cardCfdaApplyEligible, backfillBroadApply, enqueueFullRerun, getRerunJobStatus, mergedRerunEnabled } from "./intel-queue";
 import type { IntelReview } from "./intel-review";
 
 // The merged full-rerun prelude calls scoreGrantClientPair (engine re-match) and reextractAllowableUses
 // (uses) — both REAL Anthropic calls — so they're mocked: the tests assert they're invoked with the right
-// gating (full_rerun + first attempt only), not their output. Inert for every auto-QA test (the prelude
-// never fires there), so the existing suites are unaffected.
+// gating (full_rerun jobs, on every attempt — idempotent + crash-safe), not their output. Inert for every
+// auto-QA test (the prelude never fires there), so the existing suites are unaffected.
 vi.mock("@/lib/grants/pipeline", () => ({ scoreGrantClientPair: vi.fn(async () => {}) }));
 vi.mock("@/lib/grants/allowable-uses", () => ({
   reextractAllowableUses: vi.fn(async () => ({ ok: true, saved: true, value: null, previous: null })),
@@ -975,6 +975,8 @@ describe("drainIntelQueue — merged full re-run prelude", () => {
     expect(s.tables.card_intel_reviews).toHaveLength(1);
     expect((s.tables.card_intel_reviews[0].intel_review as IntelReview).verdict).toBe("demote");
     expect(s.tables.intel_review_queue[0].status).toBe("done");
+    // The logged cost folds the prelude (re-match + uses) into the QA estimate, so the daily cap counts it.
+    expect(s.tables.intel_auto_run_log[0].cost_estimate_usd).toBe(INTEL_EST_COST_PER_CARD_USD + INTEL_EST_REMATCH_COST_USD);
   });
 
   it("full_rerun with >1 pending card for the pair: clears the RESOLVED card's stale verdict and re-QAs (no .maybeSingle error)", async () => {
@@ -1002,9 +1004,42 @@ describe("drainIntelQueue — merged full re-run prelude", () => {
     expect(r.done).toBe(1);
   });
 
-  it("a full_rerun RETRY (attempts > 0) does NOT re-run the engine match — only the QA is retried", async () => {
-    const s = seedFullRerun({ attempts: 1 }); // a prior attempt already did the re-match
+  it("a full_rerun RETRY (attempts > 0) STILL re-runs the engine match — crash-safe, not skipped", async () => {
+    // A job killed out-of-process mid-re-match is reclaimed by the watchdog with attempts already
+    // incremented at claim. Gating the prelude on attempts===0 skipped the re-match on that retry and QA'd a
+    // stale score while reporting "done" (CCR finding, PR #515). Both legs are idempotent, so the retry
+    // re-runs them; the count is bounded by INTEL_MAX_ATTEMPTS.
+    const s = seedFullRerun({ attempts: 1 }); // a prior attempt was reclaimed (its re-match may never have run)
     await drainIntelQueue(asDb(s), { now, runReview: async () => okReview("affirm") });
-    expect(vi.mocked(scoreGrantClientPair)).not.toHaveBeenCalled(); // re-match is attempt-0-only
+    expect(vi.mocked(scoreGrantClientPair)).toHaveBeenCalledTimes(1);   // re-match re-ran on the retry
+    expect(vi.mocked(reextractAllowableUses)).toHaveBeenCalledTimes(1); // uses re-ran too
+  });
+
+  it("clobber race: enqueueFullRerun re-purposing an in-flight 'auto' row does NOT get stamped 'done' by the stale worker", async () => {
+    // An auto QA-only job is claimed (status='processing'); while its model call is in flight the staffer
+    // clicks Re-run, so enqueueFullRerun upserts the SAME (grant, client) row to kind='full_rerun',
+    // status='queued', attempts=0. The stale auto worker then finishes — but finish() guards on kind, so it
+    // can't stamp the re-purposed row 'done' with the engine re-match unrun. The row stays a queued
+    // full_rerun that the next drain will actually re-match. (CCR race finding, PR #515.)
+    const s = db();
+    seedPairData(s);
+    s.tables.review_cards = [pendingCard()];
+    s.tables.intel_review_queue = [{ id: "q1", grant_id: "g1", client_id: "c1", kind: "auto", status: "queued", attempts: 0, enqueued_at: "2026-08-27T11:00:00Z" }];
+    await drainIntelQueue(asDb(s), {
+      now,
+      runReview: async () => {
+        // The merged Re-run click lands mid-flight: re-purpose the claimed row to a full_rerun.
+        await enqueueFullRerun(asDb(s), "g1", "c1", { now });
+        return okReview("affirm");
+      },
+    });
+    // The stale auto worker's finish() no-op'd (kind changed under it) — the row is NOT 'done'.
+    expect(s.tables.intel_review_queue[0]).toMatchObject({ kind: "full_rerun", status: "queued", attempts: 0 });
+    expect(s.tables.intel_review_queue[0].status).not.toBe("done");
+    // Nothing marked the pair complete, so getRerunJobStatus reports it still pending a real re-run.
+    expect(await getRerunJobStatus(asDb(s), "g1", "c1")).toBe("queued");
+    // The engine re-match has NOT run yet (it runs when the row re-drains as full_rerun), so the staffer is
+    // not falsely told "complete". The auto QA that raced is harmless — the full_rerun's prelude clears it.
+    expect(vi.mocked(scoreGrantClientPair)).not.toHaveBeenCalled();
   });
 });

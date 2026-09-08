@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Loader2, RotateCw } from "lucide-react";
 import { BRAND } from "@/lib/brand";
@@ -21,9 +22,11 @@ const POLL_MS = 6000;
 export function MergedRerunButton({
   cardId,
   initialStatus,
+  backHref,
 }: {
   cardId: string;
   initialStatus: RerunStatus | null;
+  backHref: string;
 }) {
   const router = useRouter();
   // Running = the server says a job is queued/processing for this pair. Seeded from initialStatus so a
@@ -31,6 +34,9 @@ export function MergedRerunButton({
   const [running, setRunning] = useState(initialStatus === "queued" || initialStatus === "processing");
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The re-match dropped this card (it no longer qualifies). We must NOT router.refresh() then — the detail
+  // page would notFound()/404. Show a "removed" note + a link back to the roadmap instead.
+  const [dropped, setDropped] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const inFlight = useRef(false);
 
@@ -46,13 +52,17 @@ export function MergedRerunButton({
     inFlight.current = true;
     try {
       const res = await fetch(`/api/review/${cardId}/rerun`, { method: "GET" });
-      const data = (await res.json().catch(() => ({}))) as { status?: RerunStatus | null };
+      const data = (await res.json().catch(() => ({}))) as { status?: RerunStatus | null; cardPresent?: boolean };
       const s = data.status ?? null;
       if (s === "queued" || s === "processing") return; // still going — keep polling
       // Terminal (done / error / gone): stop and reflect it.
       stopPoll();
       setRunning(false);
-      if (s === "error") {
+      if (data.cardPresent === false) {
+        // The re-match DROPPED this card — the card row is gone. A router.refresh() here would 404 the
+        // detail page (notFound on the missing card), so surface the removal and point back to the roadmap.
+        setDropped(true);
+      } else if (s === "error") {
         setError("The re-run hit an error. Try again, or check the card.");
       } else {
         setNote("Re-run complete.");
@@ -78,6 +88,7 @@ export function MergedRerunButton({
     if (running) return; // disable-on-submit (also the disabled button)
     setError(null);
     setNote(null);
+    setDropped(false);
     setRunning(true); // optimistic — the poll effect starts watching
     try {
       const res = await fetch(`/api/review/${cardId}/rerun`, { method: "POST" });
@@ -90,6 +101,22 @@ export function MergedRerunButton({
       setRunning(false); // the effect cleanup clears the interval before it ever fires
       setError(err instanceof Error ? err.message : "Couldn't start the re-run");
     }
+  }
+
+  if (dropped) {
+    // The re-match removed the card. Don't offer to re-run a card that no longer exists — say what happened
+    // and give the way back. (No router.refresh(): the detail page would 404 on the missing card.)
+    return (
+      <div className="rounded-sharp border border-black/10 bg-black/[0.02] p-3">
+        <p className="text-[12px] leading-[1.5] text-ink-muted">
+          The re-run found this grant no longer qualifies for this client, so the card was removed from the
+          roadmap. Nothing else to do here.
+        </p>
+        <Link href={backHref} className="mt-2 inline-flex text-[12px] font-semibold text-ink underline underline-offset-2 hover:opacity-80">
+          ← Back to the roadmap
+        </Link>
+      </div>
+    );
   }
 
   return (

@@ -511,7 +511,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
                   mergedRerunEnabled() ? (
                     // ONE button: background full re-run (engine re-match → QA → uses), with a persistent
                     // server-derived "Running…" state.
-                    <MergedRerunButton cardId={params.cardId} initialStatus={rerunStatus} />
+                    <MergedRerunButton cardId={params.cardId} initialStatus={rerunStatus} backHref={backHref} />
                   ) : (
                     <IntelRerunButton cardId={params.cardId} hasVerdict={intelReview !== null} />
                   )
