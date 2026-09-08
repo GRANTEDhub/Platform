@@ -68,6 +68,13 @@ class Query {
     // `attempts` would appear pre-incremented and mask the retry-cap off-by-one this suite locks.
     if (this.op === "select") {
       const m = this.matched().map((r) => ({ ...r }));
+      // Faithful PostgREST: .maybeSingle() ERRORS (406) when more than one row matches — it does not silently
+      // take the first. A query that can legitimately match >1 row MUST narrow with .limit(1) (which caps
+      // `matched()` at one) before .maybeSingle(). Emulating this is what catches the "afterCard .maybeSingle()
+      // without .limit(1) over a pair with >1 pending card" bug class (VADE, PR #515) at test time.
+      if (this.single && m.length > 1) {
+        return Promise.resolve({ data: null, error: { message: "JSON object requested, multiple (or no) rows returned" } });
+      }
       return Promise.resolve({ data: this.single ? (m[0] ?? null) : m, error: null });
     }
     if (this.op === "update") {
@@ -968,6 +975,23 @@ describe("drainIntelQueue — merged full re-run prelude", () => {
     expect(s.tables.card_intel_reviews).toHaveLength(1);
     expect((s.tables.card_intel_reviews[0].intel_review as IntelReview).verdict).toBe("demote");
     expect(s.tables.intel_review_queue[0].status).toBe("done");
+  });
+
+  it("full_rerun with >1 pending card for the pair: clears the RESOLVED card's stale verdict and re-QAs (no .maybeSingle error)", async () => {
+    // The (g1, c1) pair legitimately carries TWO pending client cards. The stale-verdict clear must key on
+    // the ONE card the QA flow resolves via .limit(1) — a per-pair .maybeSingle() lookup would ERROR on the
+    // two matches (now faithfully modeled above), leave the stale verdict in place, and silently skip QA as
+    // "verdict already present" (VADE finding, PR #515). With the fix the drain completes and re-QAs fresh.
+    const s = seedFullRerun();
+    s.tables.review_cards = [pendingCard(), pendingCard({ id: "card-2" })];
+    s.tables.card_intel_reviews = [{ review_card_id: "card-1", created_by: null, intel_review: { verdict: "affirm" } }];
+    const r = await drainIntelQueue(asDb(s), { now, runReview: async () => okReview("demote", 1) });
+    expect(r.done).toBe(1);
+    expect(vi.mocked(scoreGrantClientPair)).toHaveBeenCalledTimes(1);
+    // The resolved card's stale verdict was cleared and re-QA'd fresh — not skipped as "already present".
+    expect(s.tables.card_intel_reviews).toHaveLength(1);
+    expect(s.tables.card_intel_reviews[0]).toMatchObject({ review_card_id: "card-1" });
+    expect((s.tables.card_intel_reviews[0].intel_review as IntelReview).verdict).toBe("demote");
   });
 
   it("an AUTO job never triggers the engine re-match (the QA-only path is byte-identical to 0087)", async () => {

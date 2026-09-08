@@ -520,21 +520,10 @@ async function processOne(
         // match errors, so this resolves; wrap it anyway so an unexpected throw can't fail the job.
         await scoreGrantClientPair(g, cl, db);
 
-        // A refresh leaves the card in place, so its stored QA verdict now describes the OLD score — clear
-        // it so the QA below runs FRESH. (A drop already cascade-removed the verdict with the card; the
-        // card lookup then finds nothing and the job finishes with no QA.) Keyed on the CURRENT pending card.
-        const { data: afterCard } = await db
-          .from("review_cards")
-          .select("id")
-          .eq("grant_id", row.grant_id)
-          .eq("client_id", row.client_id)
-          .eq("decision", "pending")
-          .is("sme_released_at", null)
-          .eq("card_type", "client")
-          .maybeSingle<{ id: string }>();
-        if (afterCard) {
-          await db.from("card_intel_reviews").delete().eq("review_card_id", afterCard.id);
-        }
+        // (A refresh leaves the card in place, so its stored QA verdict now describes the OLD score. The
+        // stale verdict is cleared BELOW — after the pair's single pending card is resolved with .limit(1)
+        // — not here: a per-pair lookup here would .maybeSingle() over a pair that can legitimately carry
+        // more than one pending card and error. A drop already cascade-removed the verdict with the card.)
 
         // The uses-of-funds leg. Best-effort inside its own try so a uses failure never fails the re-run;
         // reuses the exact generate+save path the admin re-extract route and the hourly recut share (it
@@ -567,6 +556,16 @@ async function processOne(
   if (!card) {
     await finish({ status: "done", finished_at: new Date(now()).toISOString(), error_detail: "card no longer pending" });
     return "skipped";
+  }
+
+  // FULL RE-RUN stale-verdict clear (merged "Re-run grant match", PR 1). A refresh left this card in place,
+  // so its stored QA verdict describes the OLD score — drop it here, keyed on the pair's ONE resolved card
+  // (card.id, from the .limit(1) lookup above), so the existingVerdict check below finds nothing and the QA
+  // runs FRESH. Fires ONLY on a staff-requested full_rerun's first attempt: an 'auto' job (0087 QA-only) and
+  // a QA retry (attempts > 0) both leave the card's verdict untouched. Keying on card.id (not a per-pair
+  // lookup) means a pair legitimately carrying >1 pending card can never error the delete.
+  if (row.kind === "full_rerun" && row.attempts === 0) {
+    await db.from("card_intel_reviews").delete().eq("review_card_id", card.id);
   }
 
   // A verdict can appear between enqueue and now — most likely a staffer ran the on-demand Intel pass
