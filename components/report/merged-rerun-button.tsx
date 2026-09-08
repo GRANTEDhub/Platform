@@ -18,6 +18,10 @@ type RerunStatus = "queued" | "processing" | "done" | "error";
 // Styling mirrors the old IntelRerunButton (full-width chrome button + caption) so the IntellEngine box is
 // unchanged visually — only the behavior (full re-run, backgrounded) and the single-button layout differ.
 const POLL_MS = 6000;
+// Stop polling after this long so a wedged job (drain disabled, grant stuck mid-scoring) doesn't spin the
+// "Running…" state forever — a full re-run realistically finishes in a few minutes. A reload re-derives
+// state from the server, so this is only a client-side cap, not a give-up on the job itself.
+const MAX_POLL_MS = 15 * 60 * 1000;
 
 export function MergedRerunButton({
   cardId,
@@ -38,6 +42,7 @@ export function MergedRerunButton({
   // page would notFound()/404. Show a "removed" note + a link back to the roadmap instead.
   const [dropped, setDropped] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollStartRef = useRef<number | null>(null);
   const inFlight = useRef(false);
 
   const stopPoll = useCallback(() => {
@@ -49,9 +54,20 @@ export function MergedRerunButton({
 
   const poll = useCallback(async () => {
     if (inFlight.current) return; // never overlap polls
+    // Give up after MAX_POLL_MS so a stuck job never leaves "Running…" spinning forever (a reload re-derives
+    // state from the server if it's genuinely still going).
+    if (pollStartRef.current && Date.now() - pollStartRef.current > MAX_POLL_MS) {
+      stopPoll();
+      setRunning(false);
+      setNote("Still running in the background — this is taking longer than usual. Reload the page in a bit to see the result.");
+      return;
+    }
     inFlight.current = true;
     try {
       const res = await fetch(`/api/review/${cardId}/rerun`, { method: "GET" });
+      // A non-2xx (session expired, transient 500, admin-check failure) has no usable status — treat it as a
+      // transient blip and keep polling, NOT as a finished job (which would falsely show "Re-run complete").
+      if (!res.ok) return;
       const data = (await res.json().catch(() => ({}))) as { status?: RerunStatus | null; cardPresent?: boolean };
       const s = data.status ?? null;
       if (s === "queued" || s === "processing") return; // still going — keep polling
@@ -79,6 +95,7 @@ export function MergedRerunButton({
   // enqueue has landed well before the first GET — no "job not found yet → premature done" race.
   useEffect(() => {
     if (running && !pollRef.current) {
+      pollStartRef.current = Date.now(); // anchor the give-up window to when polling begins
       pollRef.current = setInterval(() => void poll(), POLL_MS);
     }
     return stopPoll;

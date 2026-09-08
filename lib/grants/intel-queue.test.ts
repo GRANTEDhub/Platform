@@ -1015,6 +1015,19 @@ describe("drainIntelQueue — merged full re-run prelude", () => {
     expect(vi.mocked(reextractAllowableUses)).toHaveBeenCalledTimes(1); // uses re-ran too
   });
 
+  it("full_rerun SKIPS the per-pair re-match while the grant is mid-roster-scoring (avoids the scoredClientIdsSince race)", async () => {
+    // A roster scoring episode is live for this grant (status 'matching'). A per-pair re-match here would
+    // write a match_attempts row at `now`, which makes runMatching's cursor-free resume skip this client —
+    // the same race the sibling /rematch route refuses on. Skip our re-match (the roster scores the client)
+    // and fall through to QA. Uses (which doesn't touch match_attempts) still runs. (CCR finding, PR #515.)
+    const s = seedFullRerun();
+    s.tables.grants = [{ id: "g1", title: "JAG", assistance_listings: [{ number: "16.738" }], source_url: "https://x.gov", status: "matching" }];
+    const r = await drainIntelQueue(asDb(s), { now, runReview: async () => okReview("affirm") });
+    expect(vi.mocked(scoreGrantClientPair)).not.toHaveBeenCalled();     // re-match skipped — no roster race
+    expect(vi.mocked(reextractAllowableUses)).toHaveBeenCalledTimes(1); // uses doesn't race, still runs
+    expect(r.done).toBe(1);                                             // QA still ran, job completed
+  });
+
   it("clobber race: enqueueFullRerun re-purposing an in-flight 'auto' row does NOT get stamped 'done' by the stale worker", async () => {
     // An auto QA-only job is claimed (status='processing'); while its model call is in flight the staffer
     // clicks Re-run, so enqueueFullRerun upserts the SAME (grant, client) row to kind='full_rerun',

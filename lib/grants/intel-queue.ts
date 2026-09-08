@@ -530,11 +530,22 @@ async function processOne(
       // 0091) — the same gate the poller and the QA flow enforce. Falls through to the QA flow, which
       // then marks the job done with no cost (missing/paused → skipped there).
       if (g && cl && cl.match_active !== false) {
-        // Re-score the pair through the SAME primitive the per-card Re-match button and the daily drain
-        // use. It reconciles the ONE card: refreshing it, or DROPPING it (deleting the card) when it no
-        // longer qualifies. scoreGrantClientPair records its own match_attempts row and swallows its own
-        // match errors, so this resolves; wrap it anyway so an unexpected throw can't fail the job.
-        await scoreGrantClientPair(g, cl, db);
+        // Skip the per-pair re-match while a ROSTER scoring episode is live for this grant (status
+        // processing/queued/matching) — the SAME race the sibling /rematch route refuses on. scoreGrantClientPair
+        // writes a match_attempts row at `now` (at/after the episode marker), so runMatching's cursor-free resume
+        // (scoredClientIdsSince) then counts this client as already-scored-this-episode and SKIPS it, leaving the
+        // card scored against the OLD pre-reshred profile while the re-shred is rebuilding it. The live roster run
+        // re-scores this client anyway, so let it: skip our re-match and fall through to QA (CCR finding, PR #515).
+        const grantScoring = g.status === "processing" || g.status === "queued" || g.status === "matching";
+        if (!grantScoring) {
+          // Re-score the pair through the SAME primitive the per-card Re-match button and the daily drain
+          // use. It reconciles the ONE card: refreshing it, or DROPPING it (deleting the card) when it no
+          // longer qualifies. scoreGrantClientPair records its own match_attempts row and swallows its own
+          // match errors, so this resolves; wrap it anyway so an unexpected throw can't fail the job.
+          await scoreGrantClientPair(g, cl, db);
+        } else {
+          console.warn(`[merged-rerun] grant ${row.grant_id} is mid-roster-scoring (${g.status}); skipping per-pair re-match, QA will run on the roster's score`);
+        }
 
         // (A refresh leaves the card in place, so its stored QA verdict now describes the OLD score. The
         // stale verdict is cleared BELOW — after the pair's single pending card is resolved with .limit(1)

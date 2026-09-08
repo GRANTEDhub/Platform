@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { mergedRerunEnabled, enqueueFullRerun, getRerunJobStatus } from "@/lib/grants/intel-queue";
+import { mergedRerunEnabled, autoIntelEnabled, enqueueFullRerun, getRerunJobStatus } from "@/lib/grants/intel-queue";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +48,15 @@ async function resolve(cardId: string): Promise<Resolved> {
 
 export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
   if (!mergedRerunEnabled()) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  // The drain that runs this job (drainIntelQueue via /api/cron/intel-drain) is gated by AUTO_INTEL_ENABLED,
+  // a SEPARATE flag. If it's off, a queued full_rerun would never be claimed and the button would poll
+  // "Running…" forever. Fail fast so the staffer sees why instead of an endless spinner. (CCR finding.)
+  if (!autoIntelEnabled()) {
+    return NextResponse.json(
+      { error: "Background re-runs are turned off right now (the intel drain is disabled). Ask an admin to enable it." },
+      { status: 503 },
+    );
+  }
 
   const r = await resolve(params.id);
   if (r.error) return r.error;
