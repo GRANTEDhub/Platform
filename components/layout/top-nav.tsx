@@ -20,6 +20,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { BRAND } from "@/lib/brand";
 import { NavSearch } from "@/components/layout/nav-search";
 
 // The command band — a full-width navy bar, replacing the 240px floating sidebar.
@@ -41,10 +42,10 @@ import { NavSearch } from "@/components/layout/nav-search";
 // than no input — and it is scoped to those two entities on purpose, with the results
 // labelled by group so the scope is visible rather than implied.
 //
-// The bell IS here, unlike the two above, because it can tell the truth: it opens and
-// says there is nothing yet. NotificationBell (the client-portal one) is not reused —
-// it reads client-scoped "awaiting the client" state, which is the wrong subject for a
-// staff bell. It becomes the real source once a staff notification feed exists.
+// The bell is now a REAL staff feed (PR 2, StaffBell below): it reports staff-triggered background full
+// re-runs that have finished, so a staffer who kicked one off can walk away and get pinged here. It polls
+// GET /api/staff/rerun-feed and carries an unseen-count badge. NotificationBell (the client-portal one) is
+// still not reused — it reads client-scoped "awaiting the client" state, the wrong subject for a staff bell.
 
 export interface NavItem {
   href: string;
@@ -249,7 +250,7 @@ export function TopNav({
           left of these in the mockup is deliberately absent (see the note at the top). */}
       <div className="ml-auto hidden shrink-0 items-center gap-3 lg:flex">
         <NavSearch />
-        <StaffBell />
+        <StaffBell role={user.role} />
         <div ref={userRef} className="relative">
           <button
             type="button"
@@ -332,40 +333,173 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   );
 }
 
-// Staff notifications. There is no staff notification feed yet, so this opens and says
-// so rather than being omitted (the design draws a bell) or rendered inert (a control
-// that swallows clicks is the failure this bar exists to remove). The design shows no
-// badge on it, so there is no count to fake.
-function StaffBell() {
+// Staff notifications (PR 2). The first real staff feed the bell reports on: staff-triggered background
+// FULL re-runs that have finished, so a staffer who kicked one off can leave the card page and get pinged
+// here when it completes (GET /api/staff/rerun-feed). Global across staff in v1 — for this team size that is
+// effectively per-user. "Seen" is a per-browser localStorage cursor (no schema); opening the panel clears
+// the badge. Admin-only: a non-admin's bell never polls (the feed is admin-gated anyway) and shows empty.
+type RerunFeedItem = {
+  grantId: string;
+  clientId: string;
+  grantTitle: string;
+  clientName: string;
+  status: "done" | "error";
+  finishedAt: string | null;
+  href: string;
+  cardPresent: boolean;
+};
+
+const SEEN_KEY = "granted:staff-rerun-seen"; // localStorage cursor: ms epoch of the last time the bell was opened
+const FEED_POLL_MS = 45000;
+
+// Relative, so it needs no timezone handling — an absolute time would have to be rendered in Central.
+function relTime(iso: string | null): string {
+  if (!iso) return "";
+  const diff = Date.now() - Date.parse(iso);
+  if (diff < 60_000) return "just now";
+  const m = Math.floor(diff / 60_000);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function StaffBell({ role }: { role: string }) {
   const [open, setOpen] = useState(false);
+  const [items, setItems] = useState<RerunFeedItem[]>([]);
+  const [lastSeen, setLastSeen] = useState(0);
   const ref = useDismiss(open, () => setOpen(false));
+  const canPoll = role === "admin";
+
+  // Load the per-browser seen cursor once. Absent → 0, so completions already in the 24h window read as
+  // unseen until the bell is first opened. Storage can throw (private mode) — fall back to 0.
+  useEffect(() => {
+    try {
+      const v = window.localStorage.getItem(SEEN_KEY);
+      if (v) setLastSeen(Number(v) || 0);
+    } catch {
+      /* blocked storage — start from 0 */
+    }
+  }, []);
+
+  // Poll the feed while mounted (admin only). A non-2xx or a network blip keeps the current list rather than
+  // clearing it, so a transient hiccup never wipes the bell.
+  useEffect(() => {
+    if (!canPoll) return;
+    let alive = true;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/staff/rerun-feed", { method: "GET" });
+        if (!res.ok) return;
+        const data = (await res.json().catch(() => ({}))) as { items?: RerunFeedItem[] };
+        if (alive && Array.isArray(data.items)) setItems(data.items);
+      } catch {
+        /* transient — keep the current list */
+      }
+    };
+    void load();
+    const t = setInterval(() => void load(), FEED_POLL_MS);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [canPoll]);
+
+  const unseen = items.filter((i) => i.finishedAt && Date.parse(i.finishedAt) > lastSeen).length;
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next) {
+      // Mark seen up to the NEWEST completion actually in the list — NOT wall-clock now. Advancing to now
+      // would suppress a completion that finished just before the click but hadn't loaded yet (polls are
+      // 45s apart): it arrives on a later poll with finishedAt < now, so it'd never light the badge — the
+      // exact "your re-run finished" ping this feature exists for. Nothing to advance on an empty list.
+      const newest = items.reduce((max, i) => {
+        const t = i.finishedAt ? Date.parse(i.finishedAt) : NaN;
+        return Number.isFinite(t) && t > max ? t : max;
+      }, lastSeen);
+      if (newest > lastSeen) {
+        setLastSeen(newest);
+        try {
+          window.localStorage.setItem(SEEN_KEY, String(newest));
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  };
+
   return (
     <div ref={ref} className="relative">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggle}
         aria-expanded={open}
         aria-haspopup="menu"
-        aria-label="Notifications"
+        aria-label={unseen > 0 ? `Notifications, ${unseen} new` : "Notifications"}
         className={cn(
-          "flex items-center rounded-md p-1 text-white/60 transition-colors duration-[120ms] ease-out hover:text-white",
+          "relative flex items-center rounded-md p-1 text-white/60 transition-colors duration-[120ms] ease-out hover:text-white",
           FOCUS,
         )}
       >
         <Bell className="h-[17px] w-[17px]" />
+        {unseen > 0 && (
+          <span
+            aria-hidden="true"
+            className="absolute -right-0.5 -top-0.5 flex h-[15px] min-w-[15px] items-center justify-center rounded-full bg-brand-orangeFill px-1 text-[9.5px] font-bold leading-none tabular-nums text-white"
+          >
+            {unseen > 9 ? "9+" : unseen}
+          </span>
+        )}
       </button>
       {open && (
         <div
           role="menu"
           className={cn(
-            "absolute right-0 top-full z-50 mt-2 w-64 overflow-hidden rounded-md bg-white p-4 shadow-overlay",
+            "absolute right-0 top-full z-50 mt-2 w-80 overflow-hidden rounded-md bg-white shadow-overlay",
             MENU_IN,
           )}
         >
-          <p className="text-[13px] font-semibold text-brand-navy">No staff notifications yet</p>
-          <p className="mt-1 text-[11.5px] leading-[1.5] text-ink-subtle">
-            Grants awaiting your review show up under Portfolio, on each client&apos;s roadmap.
-          </p>
+          {items.length === 0 ? (
+            <div className="p-4">
+              <p className="text-[13px] font-semibold text-brand-navy">You&apos;re all caught up</p>
+              <p className="mt-1 text-[11.5px] leading-[1.5] text-ink-subtle">
+                Finished background re-runs show up here — kick one off from a grant card and come back.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="border-b border-hairline-strong px-3 py-2">
+                <p className="text-[12px] font-semibold text-brand-navy">Re-runs finished</p>
+              </div>
+              <div className="max-h-[360px] overflow-y-auto py-1">
+                {items.map((it) => (
+                  <Link
+                    key={`${it.grantId}:${it.clientId}:${it.finishedAt}`}
+                    href={it.href}
+                    role="menuitem"
+                    className="block px-3 py-2 transition-colors hover:bg-page"
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="truncate text-[12.5px] font-semibold text-brand-navy">{it.clientName}</span>
+                      <span className="shrink-0 text-[11px] text-ink-subtle">{relTime(it.finishedAt)}</span>
+                    </div>
+                    <p className="mt-0.5 truncate text-[11.5px] text-ink-muted">{it.grantTitle}</p>
+                    {it.status === "error" ? (
+                      <p className="mt-0.5 text-[11px]" style={{ color: BRAND.reject }}>
+                        Re-run hit an error
+                      </p>
+                    ) : (
+                      <p className="mt-0.5 text-[11px] text-ink-subtle">
+                        {it.cardPresent ? "Full re-run complete" : "Re-run complete — card no longer qualifies"}
+                      </p>
+                    )}
+                  </Link>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
