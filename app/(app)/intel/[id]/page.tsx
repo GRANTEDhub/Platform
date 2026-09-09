@@ -152,6 +152,11 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
           : { label: "Closed", value: `${Math.abs(days)} ${Math.abs(days) === 1 ? "day" : "days"} ago` },
     );
   }
+  // Guard the ingest "manual-paste" sentinel: a raw-text paste stores source_url="manual-paste"
+  // (app/api/grants/ingest), which is truthy and would render a broken href. Match the guard the other
+  // source-link call sites use (grant-detail.tsx:271 et al.); the shared KeyDetailsList doesn't filter it,
+  // so filter here at the call site. Manual pastes are common on /intel, so this really bites.
+  const postingUrl = grant.source_url && grant.source_url !== "manual-paste" ? grant.source_url : null;
 
   // Rail action gating (moved OUT of the tile into the navy rail box). Prospecting is hidden once the grant
   // is closed for it / blocked / unscored (the button used to live inside the Prospects card's
@@ -222,7 +227,7 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
               {...summaryProps}
               summary={grant.description_brief || grant.description}
               keyDetails={keyDetails}
-              sourceUrl={grant.source_url}
+              sourceUrl={postingUrl}
               whoCanApply={whoCanApply}
             />
 
