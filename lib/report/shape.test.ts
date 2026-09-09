@@ -67,3 +67,39 @@ describe("toReportItem — award count (numAwards)", () => {
     expect(toReportItem(row(), "staff").numAwards).toBeNull();
   });
 });
+
+describe("toReportItem — award range estimate + double-label guard", () => {
+  const grants = (over: Record<string, unknown> = {}): ReportCardRow["grants"] =>
+    ({
+      title: "T",
+      funder: "F",
+      submission_deadline: null,
+      award_range_min: null,
+      award_range_max: null,
+      award_range_is_estimate: null,
+      num_awards: null,
+      total_funding: null,
+      focus_areas: [],
+      ...over,
+    }) as ReportCardRow["grants"];
+
+  it("stored-zero range + pool/count → the estimate string (matches the card detail)", () => {
+    const g = grants({ award_range_min: "0", award_range_max: "0", total_funding: "$11,960,000", num_awards: "20" });
+    expect(toReportItem(row({ grants: g }), "staff").awardRange).toBe("~$598K est.");
+  });
+
+  it("suppresses awardIsEstimate when the range already self-labels 'est.' (no double '· est.' in consumers)", () => {
+    // engine sets award_range_is_estimate=true for a null/null range; the pool÷awards string already says est.
+    const g = grants({ award_range_is_estimate: true, total_funding: "$10,000,000", num_awards: "20" });
+    const item = toReportItem(row({ grants: g }), "staff");
+    expect(item.awardRange).toBe("~$500K est.");
+    expect(item.awardIsEstimate).toBe(false);
+  });
+
+  it("keeps awardIsEstimate for a REAL range flagged estimate (single suffix, no baked-in est.)", () => {
+    const g = grants({ award_range_min: "$100,000", award_range_max: "$500,000", award_range_is_estimate: true });
+    const item = toReportItem(row({ grants: g }), "staff");
+    expect(item.awardRange).toBe("$100K – $500K");
+    expect(item.awardIsEstimate).toBe(true);
+  });
+});

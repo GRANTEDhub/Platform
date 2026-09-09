@@ -266,6 +266,8 @@ export function toReportItem(card: ReportCardRow, side: ReadSide): ReportItem {
   // selected / no verdict this returns the engine values and qa:null — today's display.
   const resolved = resolveFit(card);
   const fit = resolved.fitScore;
+  // Computed once: the object below reads it for both awardRange and the double-label guard on awardIsEstimate.
+  const awardRange = awardRangeOrEstimate(g?.award_range_min, g?.award_range_max, g?.total_funding, g?.num_awards);
   return {
     id: card.id,
     grantId: card.grant_id,
@@ -278,8 +280,12 @@ export function toReportItem(card: ReportCardRow, side: ReadSide): ReportItem {
     // Estimate wrapper (not bare formatAwardRange) so the list shows the pool÷awards fallback the detail
     // does — total_funding + num_awards are already on the row (below), so no new query field. A stored "0"
     // now reads as absent (formatAwardRange fix) → "~$598K est." here too, matching the card detail.
-    awardRange: awardRangeOrEstimate(g?.award_range_min, g?.award_range_max, g?.total_funding, g?.num_awards),
-    awardIsEstimate: !!g?.award_range_is_estimate,
+    awardRange,
+    // award_range_is_estimate drives a "· est." suffix in consumers (swipe-deck, report console). When the
+    // pool÷awards fallback fired, awardRange ALREADY carries a baked-in "est.", so raising the flag too would
+    // double-label ("Award range · est." beside "~$598K est."). Suppress it in that case; a real range
+    // flagged estimate (no "est." in the string) still gets its single suffix.
+    awardIsEstimate: !!g?.award_range_is_estimate && !awardRange.includes("est."),
     numAwards: g?.num_awards?.trim() || null,
     deadlineLabel: formatDeadlineShort(g?.submission_deadline),
     deadlineDaysLeft: days,
