@@ -172,6 +172,18 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
   // && is_domestic` + `!processing` gate.
   const canProspect = gate !== "not_ready" && !blockedReason && !grant.prospecting_closed_at;
   const canAdd = !!grant.is_domestic && !inFlight;
+  // One-line "can't prospect yet" hint restoring the guidance the removed Prospects tile carried (JUST the
+  // line — not the old empty-state box). Rendered in the action box's Prospect slot when prospecting is off
+  // but the well is still showing (an Add control / prospect history). Null when prospecting is available, or
+  // when the grant is closed (the prospects table's "Closed" badge already says so).
+  const prospectHint =
+    canProspect || grant.prospecting_closed_at
+      ? null
+      : !grant.ideal_applicant_profile
+        ? "Profile incomplete — rebuild from the Ledger to enable prospecting."
+        : gate === "not_ready"
+          ? "Not scored yet — prospecting unlocks once it's evaluated against the roster."
+          : blockedLabel;
 
   // ── INTELLENGINE section: left column — the ideal-application narrative (slimmed to applicant + note). ──
   const iap = grant.ideal_applicant_profile as IAP | null | undefined;
@@ -329,11 +341,15 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
               <p className="text-[10px] font-bold uppercase tracking-[0.11em] text-white/75">IntellEngine Action</p>
               {canProspect || canAdd || prospectCards.length > 0 ? (
                 <div className="mt-3 space-y-3.5 rounded-sharp bg-white p-3.5">
-                  {canProspect && (
+                  {canProspect ? (
                     <div>
                       <p className="mb-1.5 text-[11.5px] text-ink-subtle">Prospect to a non-client</p>
                       <ProspectButton grantId={grant.id} />
                     </div>
+                  ) : (
+                    prospectHint && (
+                      <p className="text-[11.5px] leading-[1.5] text-ink-subtle">{prospectHint}</p>
+                    )
                   )}
                   {canAdd && (
                     <div>
