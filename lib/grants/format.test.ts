@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { awardRangeOrEstimate, compactTerm, parseAwardCount } from "./format";
+import { awardRangeOrEstimate, formatAwardRange, compactTerm, parseAwardCount } from "./format";
 
 // Deterministic — no model, no network. Locks the two PR-A grant-report fixes:
 //   ① Award range never renders a bare blank when the size is deducible (pool ÷ awards, labeled "est.").
@@ -49,6 +49,35 @@ describe("awardRangeOrEstimate", () => {
     expect(awardRangeOrEstimate(null, null, "$10,000,000", null)).toBe("—"); // no count
     expect(awardRangeOrEstimate(null, null, "Varies", "20")).toBe("—"); // pool not numeric
     expect(awardRangeOrEstimate(null, null, "$10,000,000", "0")).toBe("—"); // count zero
+  });
+
+  it("DEDUCES the estimate for a STORED-ZERO range (Simpler.gov's 0 sentinel), not just a null one", () => {
+    // The recurring award-$0 bug: award_range_min/max come back as "0" from the API, which used to render
+    // "$0" and slip past the empty-only fallback. Now the zero reads as absent → pool÷awards fires.
+    // ICAM: $11.96M ÷ 20 ≈ $598K.
+    expect(awardRangeOrEstimate("0", "0", "$11,960,000", "20")).toBe("~$598K est.");
+    expect(awardRangeOrEstimate("$0", "$0.00", "$10,000,000", "20")).toBe("~$500K est.");
+  });
+});
+
+describe("formatAwardRange", () => {
+  it("renders a real range / one-sided range", () => {
+    expect(formatAwardRange("$100,000", "$500,000")).toBe("$100K – $500K");
+    expect(formatAwardRange(null, "$500,000")).toBe("$500K");
+    expect(formatAwardRange(null, null)).toBe("—");
+  });
+
+  it("drops a <= 0 bound so a stored '0'/'$0' never renders as $0", () => {
+    expect(formatAwardRange("0", "0")).toBe("—"); // Simpler.gov's unspecified sentinel → absent, not "$0"
+    expect(formatAwardRange("$0", "$500,000")).toBe("$500K"); // bogus floor dropped, real ceiling kept
+    expect(formatAwardRange("0.00", null)).toBe("—");
+  });
+
+  it("KEEPS a non-numeric range verbatim — never clobbers 'Varies' / 'See NOFO' (regression guard)", () => {
+    // parseAmount returns null for these, so the <= 0 drop can't fire — the stated text must survive.
+    expect(formatAwardRange("Varies", null)).toBe("Varies");
+    expect(formatAwardRange("See NOFO", null)).toBe("See NOFO");
+    expect(formatAwardRange("Varies", "Varies")).toBe("Varies – Varies");
   });
 });
 

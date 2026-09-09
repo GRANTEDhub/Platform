@@ -13,7 +13,7 @@ import type {
   PursuitPath,
   ReviewCard,
 } from "@/types/database";
-import { formatAwardRange, formatDeadlineShort, compactCostShare } from "@/lib/grants/format";
+import { awardRangeOrEstimate, formatDeadlineShort, compactCostShare } from "@/lib/grants/format";
 import { resolveFit, type QaVerdictView } from "@/lib/report/qa-override";
 
 export type FactorKey = keyof FactorScores;
@@ -275,7 +275,10 @@ export function toReportItem(card: ReportCardRow, side: ReadSide): ReportItem {
     band: fit === null ? null : FIT_BAND[fit],
     role: card.proposed_role,
     focusAreas: (g?.focus_areas ?? []).slice(0, 2),
-    awardRange: formatAwardRange(g?.award_range_min, g?.award_range_max),
+    // Estimate wrapper (not bare formatAwardRange) so the list shows the pool÷awards fallback the detail
+    // does — total_funding + num_awards are already on the row (below), so no new query field. A stored "0"
+    // now reads as absent (formatAwardRange fix) → "~$598K est." here too, matching the card detail.
+    awardRange: awardRangeOrEstimate(g?.award_range_min, g?.award_range_max, g?.total_funding, g?.num_awards),
     awardIsEstimate: !!g?.award_range_is_estimate,
     numAwards: g?.num_awards?.trim() || null,
     deadlineLabel: formatDeadlineShort(g?.submission_deadline),
