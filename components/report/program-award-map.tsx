@@ -226,6 +226,13 @@ export function ProgramAwardMap({
             const rec = byStateMap.get(code);
             const isSel = selected === code;
             const fill = rec ? FILLS[binOf(rec.amount, thresholds)] : NODATA_FILL;
+            // Keyboard operability, but ONLY for states you can actually filter by (an interactive map that
+            // has data for this state). A non-interactive map — the client-report choropleth (compact, no
+            // awardTable) — adds NONE of these attributes, so its <path> stays byte-identical.
+            const canSelect = (!compact || awardTable) && !!rec;
+            const selectLabel = rec
+              ? `${STATE_NAMES[code] ?? code}: ${rec.count} award${rec.count === 1 ? "" : "s"}, ${fmtUsd(rec.amount)}`
+              : undefined;
             return (
               <path
                 key={code}
@@ -234,6 +241,23 @@ export function ProgramAwardMap({
                 stroke={isSel ? SELECTED_STROKE : rec ? "#ffffff" : NODATA_BORDER}
                 strokeWidth={isSel ? 2.2 : 0.75}
                 style={{ cursor: rec ? "pointer" : "default" }}
+                // Interactive states are keyboard-operable buttons (Enter/Space toggles the filter, same as
+                // click); aria-pressed exposes the current selection. Undefined ⇒ omitted for non-interactive
+                // or no-data states, so the client report keeps a plain, unfocusable choropleth.
+                role={canSelect ? "button" : undefined}
+                tabIndex={canSelect ? 0 : undefined}
+                aria-label={canSelect ? selectLabel : undefined}
+                aria-pressed={canSelect ? isSel : undefined}
+                onKeyDown={
+                  canSelect
+                    ? (e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setSelected((s) => (s === code ? null : code));
+                        }
+                      }
+                    : undefined
+                }
                 onMouseMove={(e) => {
                   const box = wrapRef.current?.getBoundingClientRect();
                   if (!box) return;
