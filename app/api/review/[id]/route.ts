@@ -141,6 +141,11 @@ export async function PATCH(
         decided_by: pursuing ? user.id : null,
         decided_at: pursuing ? new Date().toISOString() : null,
         decided_by_actor: pursuing ? actor : null,
+        // Choosing (or clearing) a pursuit path moves the card OFF 'forwarded' to approved/pending, so
+        // the referral note must clear too (0093). This branch returns before the main decision block's
+        // cleanup, so honor the "non-forwarded decision → null note" invariant here as well. Harmless
+        // no-op when the feature is off (the note is already null).
+        forwarded_to: null,
       })
       .eq("id", params.id)
       .select()
@@ -163,6 +168,16 @@ export async function PATCH(
     : ["pending", "approved", "passed"];
   if (!body.decision || !valid.includes(body.decision)) {
     return NextResponse.json({ error: "Invalid decision" }, { status: 400 });
+  }
+
+  // 'forwarded' is a CLIENT self-annotation ONLY (0093, Shannon's explicit "no staff-setter"): the
+  // staff-facing label asserts "Client forwarded internally …", so a staff-crafted PATCH setting
+  // 'forwarded' would write a FALSE client-referral record (decided_by_actor='staff' under a
+  // client-voiced label). The portal is the only surface exposing the control; this is the API backstop.
+  // (Client members have no profiles row → actor='client', so real forwards pass.) If staff-set-on-behalf
+  // is ever wanted, that's the separate later add Shannon named — not this.
+  if (body.decision === "forwarded" && actor !== "client") {
+    return NextResponse.json({ error: "Forwarded is a client-only annotation" }, { status: 403 });
   }
 
   const isTerminal = body.decision !== "pending";
