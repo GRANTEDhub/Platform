@@ -331,7 +331,7 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                 {/* RIGHT — Program Award History map, the SAME component the report uses (reused as-is). */}
                 <div className="min-w-0">
                   {hasCfda ? (
-                    <ProgramAwardMap compact grantId={grant.id} initialSummary={programAwardSummary} hasCfda />
+                    <ProgramAwardMap compact awardTable grantId={grant.id} initialSummary={programAwardSummary} hasCfda />
                   ) : (
                     <div className="flex h-full min-h-[140px] items-center justify-center rounded-sharp border border-edge bg-brand-cream/40 px-4 py-6 text-center text-[12px] text-ink-subtle">
                       No CFDA on this grant — no program award history to map.

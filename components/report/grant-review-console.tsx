@@ -293,7 +293,6 @@ export function OverviewCard({
   keyDetails = null,
   sourceUrl = null,
   whoCanApply = null,
-  actions = null,
 }: {
   tags: { label: string; role: boolean }[];
   agencyLine: string | null;
@@ -308,15 +307,12 @@ export function OverviewCard({
   // and pass neither — render exactly as before (Uses full-width, no Key details column).
   keyDetails?: ReviewKeyDetail[] | null;
   sourceUrl?: string | null;
-  // ── Prospecting variant (backward-compatible: BOTH default null, so the client report, the client
-  //    portal and the Ledger render byte-identical to today; only /intel/[id] opts in). ──
+  // ── Prospecting variant (backward-compatible: whoCanApply defaults null, so the client report, the
+  //    client portal and the Ledger render byte-identical to today; only /intel/[id] opts in). ──
   // whoCanApply → render the who-can-apply entity chips (+ geography / subaward) in place of the
   //   EligibilityCallout. NO ineligible / "Limits to check": a prospecting surface names who CAN apply,
   //   not a per-client eligibility verdict.
-  // actions → a top-right control cluster (Prospect + Add-to-client) beside the funder line. A React
-  //   child, so the frame stays decoupled — the page passes the client controls in.
   whoCanApply?: WhoCanApplyData | null;
-  actions?: React.ReactNode;
 }) {
   return (
     <section className={`shrink-0 ${CARD} px-5 pb-[18px] pt-4`}>
@@ -338,14 +334,7 @@ export function OverviewCard({
             {t.label}
           </span>
         ))}
-        {actions ? (
-          <div className="ml-auto flex items-center gap-3">
-            {agencyLine && <span className="text-[11.5px] text-ink-subtle">{agencyLine}</span>}
-            <div className="flex items-center gap-2">{actions}</div>
-          </div>
-        ) : (
-          agencyLine && <span className="ml-auto text-[11.5px] text-ink-subtle">{agencyLine}</span>
-        )}
+        {agencyLine && <span className="ml-auto text-[11.5px] text-ink-subtle">{agencyLine}</span>}
       </div>
 
       {/* Two lines at 22px is the budget. Three pushes the meta row down and the fit-factors
