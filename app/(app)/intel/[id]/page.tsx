@@ -173,10 +173,9 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
   const canProspect = gate !== "not_ready" && !blockedReason && !grant.prospecting_closed_at;
   const canAdd = !!grant.is_domestic && !inFlight;
 
-  // ── INTELLENGINE section: left column — the ideal-application narrative. ──
+  // ── INTELLENGINE section: left column — the ideal-application narrative (slimmed to applicant + note). ──
   const iap = grant.ideal_applicant_profile as IAP | null | undefined;
   const iapArchetypes = iap?.archetypes ?? [];
-  const hasCoApplicants = iapArchetypes.some((a) => (a.partner_seats?.length ?? 0) > 0);
 
   // ── Program award map (right column). Reuse the report's component + its exact data source, untouched. ──
   const hasCfda = Array.isArray(grant.assistance_listings) && grant.assistance_listings.length > 0;
@@ -251,10 +250,11 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                 </span>
               </div>
               <div className="grid gap-6 px-5 py-[18px] lg:grid-cols-[1.3fr_1.65fr]">
-                {/* LEFT — the ideal-application narrative: applicant / co-applicants / scope. Sections a & b
-                    render real profile fields (ideal_prime_shape, partner_seats); c (scope of work) has NO
-                    backing field on IdealApplicantProfile today — the header shows with an honest note rather
-                    than an invented narrative (flagged: populating it is a pipeline change, not presentation). */}
+                {/* LEFT — the ideal-application narrative (slimmed): the intro spiel, then Ideal applicant
+                    (core funded role + archetype prime shapes) with the eligibility note directly under it.
+                    Co-applicants (partner_seats) and the scope placeholder are intentionally NOT rendered on
+                    this surface — the underlying fields stay in the data (IdealApplicantProfile type + engine
+                    unchanged), just not shown here. */}
                 <div className="min-w-0">
                   <p className={EYEBROW}>Ideal application</p>
                   {iap?.summary ? (
@@ -268,7 +268,7 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
 
                   {iap && (
                     <div className="mt-4 space-y-4">
-                      {/* a. Ideal applicant — the ideal PRIME. */}
+                      {/* Ideal applicant — the ideal PRIME. */}
                       <div>
                         <p className="text-[11px] font-bold uppercase tracking-[0.09em] text-brand-navy">
                           Ideal applicant
@@ -297,39 +297,11 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                         )}
                       </div>
 
-                      {/* b. Ideal co-applicants — the partner/sub seats the profile enumerates (if any). */}
-                      {hasCoApplicants && (
-                        <div>
-                          <p className="text-[11px] font-bold uppercase tracking-[0.09em] text-brand-navy">
-                            Ideal co-applicants
-                          </p>
-                          <div className="mt-1.5 space-y-1.5">
-                            {iapArchetypes
-                              .filter((a) => (a.partner_seats?.length ?? 0) > 0)
-                              .map((a, i) => (
-                                <p key={i} className="text-[12.5px] leading-[1.55] text-ink-muted">
-                                  <span className="font-semibold text-brand-navy">{a.label}: </span>
-                                  {a.partner_seats.join(", ")}
-                                </p>
-                              ))}
-                          </div>
-                        </div>
+                      {/* The eligibility note rides directly under Ideal applicant. */}
+                      {iap.eligibility_note && (
+                        <p className="text-[11.5px] leading-[1.5] text-ink-subtle">{iap.eligibility_note}</p>
                       )}
-
-                      {/* c. Ideal scope — GATED (no scope-of-work field on the profile yet). */}
-                      <div>
-                        <p className="text-[11px] font-bold uppercase tracking-[0.09em] text-brand-navy">
-                          Ideal scope
-                        </p>
-                        <p className="mt-1.5 text-[12px] leading-[1.5] text-ink-subtle">
-                          Not yet generated — this grant&apos;s profile has no scope-of-work summary.
-                        </p>
-                      </div>
                     </div>
-                  )}
-
-                  {iap?.eligibility_note && (
-                    <p className="mt-4 text-[11.5px] leading-[1.5] text-ink-subtle">{iap.eligibility_note}</p>
                   )}
                 </div>
 
@@ -345,86 +317,64 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                 </div>
               </div>
             </section>
-
-            {/* PROSPECTS — the discovered non-client orgs + the Prospect action's output. Prospecting's core
-                output; no report analog, so it sits full-width below the IntellEngine section. */}
-            <section className="rounded-sharp border border-edge bg-white px-5 py-[18px]">
-              <div className="flex items-center justify-between gap-3">
-                <p className={EYEBROW}>Prospects ({prospectCards.length})</p>
-                {grant.prospecting_closed_at ? (
-                  <Badge variant="warning">Closed for prospecting</Badge>
-                ) : (
-                  <CloseProspectingButton grantId={grant.id} />
-                )}
-              </div>
-
-              {grant.prospecting_closed_at && (
-                <p className="mt-3 text-sm text-muted-foreground">
-                  Closed for prospecting — removed from the prospect feed. History below is read-only; reopen from the Ledger.
-                </p>
-              )}
-
-              {blockedReason ? (
-                <>
-                  <div className="mt-3 flex items-start gap-2.5">
-                    {blockedLabel && <Badge variant="warning" className="shrink-0">{blockedLabel}</Badge>}
-                    <p className="text-sm text-muted-foreground">{blockedReason}</p>
-                  </div>
-                  {grant.is_domestic && (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      {!grant.ideal_applicant_profile && !grant.skip_reason
-                        ? "Rebuild the grant profile from the Ledger to build one — that is exactly what this case needs."
-                        : "This gate is re-decided from a fresh read of the NOFO, so it can lift as well as hold — rebuild the grant profile if you disagree with it."}
-                    </p>
-                  )}
-                </>
-              ) : gate === "not_ready" ? (
-                <p className="mt-3 text-sm text-muted-foreground">
-                  Not scored yet — this grant hasn&apos;t finished scoring against the roster, so there&apos;s no
-                  profile to discover prospects from.
-                </p>
-              ) : prospectCards.length === 0 ? (
-                <p className="mt-3 text-sm text-muted-foreground">
-                  No prospects surfaced yet. Use the Prospect button in the right-rail action box to search for
-                  fitting non-client orgs.
-                </p>
-              ) : (
-                <ul className="mt-2 divide-y divide-brand-navy/[0.08] text-sm">
-                  {prospectCards.map((pc) => (
-                    <li key={pc.id} className="flex items-center justify-between gap-3 py-3.5">
-                      <Link
-                        href={`/review/${pc.id}`}
-                        className="min-w-0 truncate font-medium text-brand-navy hover:underline"
-                      >
-                        {pc.prospects?.name || "Prospect org"}
-                      </Link>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <ScoreBadge score={(pc.fit_score ?? 2) as 1 | 2 | 3} />
-                        {sentByCard.has(pc.id) ? (
-                          <Badge variant="success">✓ Alerted</Badge>
-                        ) : (
-                          <DecisionBadge decision={pc.decision} />
-                        )}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
           </div>
 
           {/* RAIL — top: the navy action box (the report's ScoreCard slot), then the client-match summary. */}
           <aside className="flex min-w-0 flex-col gap-[18px]">
-            {/* NAVY ACTION BOX — Prospect + Add-to-client, moved out of the top tile. Navy chrome (BRAND
-                token) with a white action well so the default-navy buttons stay legible; both controls carry
-                text labels (colour is never the only signal). */}
+            {/* NAVY ACTION BOX ("IntellEngine Action") — Prospect + Add-to-client (moved out of the top tile),
+                each under a small caption, plus the discovered-prospects table below them (relocated from the
+                old full-width Prospects tile). Navy chrome (BRAND token) with a white action well so the
+                default-navy buttons stay legible; both controls carry text labels + a caption. */}
             <section className="rounded-sharp bg-brand-navy p-4 shadow-sm">
-              <p className="text-[10px] font-bold uppercase tracking-[0.11em] text-white/75">Take action</p>
-              {canProspect || canAdd ? (
-                <div className="mt-3 space-y-3 rounded-sharp bg-white p-3.5">
-                  {canProspect && <ProspectButton grantId={grant.id} />}
-                  {canProspect && canAdd && <div className="border-t border-hairline-strong" />}
-                  {canAdd && <AddToClientControl grantId={grant.id} clients={activeClients} />}
+              <p className="text-[10px] font-bold uppercase tracking-[0.11em] text-white/75">IntellEngine Action</p>
+              {canProspect || canAdd || prospectCards.length > 0 ? (
+                <div className="mt-3 space-y-3.5 rounded-sharp bg-white p-3.5">
+                  {canProspect && (
+                    <div>
+                      <p className="mb-1.5 text-[11.5px] text-ink-subtle">Prospect to a non-client</p>
+                      <ProspectButton grantId={grant.id} />
+                    </div>
+                  )}
+                  {canAdd && (
+                    <div>
+                      <p className="mb-1.5 text-[11.5px] text-ink-subtle">Add to an existing client</p>
+                      <AddToClientControl grantId={grant.id} clients={activeClients} />
+                    </div>
+                  )}
+                  {/* Discovered prospects — compact, scrollable; only rendered when some exist (no empty state).
+                      Same data as the old Prospects tile; CloseProspectingButton rides the header here now. */}
+                  {prospectCards.length > 0 && (
+                    <div className={canProspect || canAdd ? "border-t border-hairline-strong pt-3" : ""}>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[11.5px] text-ink-subtle">Prospects ({prospectCards.length})</p>
+                        {grant.prospecting_closed_at ? (
+                          <Badge variant="warning">Closed</Badge>
+                        ) : (
+                          <CloseProspectingButton grantId={grant.id} />
+                        )}
+                      </div>
+                      <ul className="mt-2 max-h-[220px] divide-y divide-brand-navy/[0.08] overflow-y-auto text-[13px]">
+                        {prospectCards.map((pc) => (
+                          <li key={pc.id} className="flex items-center justify-between gap-2 py-2">
+                            <Link
+                              href={`/review/${pc.id}`}
+                              className="min-w-0 truncate font-medium text-brand-navy hover:underline"
+                            >
+                              {pc.prospects?.name || "Prospect org"}
+                            </Link>
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              <ScoreBadge score={(pc.fit_score ?? 2) as 1 | 2 | 3} />
+                              {sentByCard.has(pc.id) ? (
+                                <Badge variant="success">✓ Alerted</Badge>
+                              ) : (
+                                <DecisionBadge decision={pc.decision} />
+                              )}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <p className="mt-2 text-[12.5px] leading-[1.5] text-white/80">
