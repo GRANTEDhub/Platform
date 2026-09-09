@@ -792,11 +792,14 @@ function assimilated(input: PackInput, items: ContextItem[], stats: PackStats): 
 // Live work first, then everything else in one line each. "Live" = a decision or a send has
 // happened, which is what makes a card worth a paragraph.
 // A held card is `decision: 'pending'` WITH a hold_reason -- there is no 'hold' member of
-// CardDecision (it is pending | approved | passed), and a card parked with a reason is live
-// work as much as an approved one is.
+// CardDecision (it is pending | approved | passed | forwarded), and a card parked with a reason is
+// live work as much as an approved one is. A 'forwarded' card (0093) is live work too: the client
+// forwarded it internally and is actively awaiting a colleague's reply -- and a forward clears
+// pursuit_path to null, so this needs its own branch rather than riding pursuit_path.
 function isLiveCard(c: PackCard): boolean {
   return (
     c.decision === "approved" ||
+    c.decision === "forwarded" ||
     !!c.interested_at ||
     !!c.sent_at ||
     !!c.hold_reason ||

@@ -1,5 +1,7 @@
 import "server-only";
 import type { createClient } from "@/lib/supabase/server";
+import { isDecided } from "@/lib/grants/gate";
+import type { CardDecision } from "@/types/database";
 
 // Post-decision summary for the Matches confirmation screen (DecisionConfirmation).
 // Shared by the two terminal-decision paths: the plain-text outreach approve
@@ -54,7 +56,12 @@ export async function computeGrantSummary(
     .select("decision, sent_at, card_type, clients(name)")
     .eq("grant_id", card.grant_id);
   const clientCards = ((siblings ?? []) as SiblingCard[]).filter((c) => c.card_type !== "prospect");
-  const remaining = clientCards.filter((c) => c.decision === "pending");
+  // "Remaining" = not TERMINALLY decided (approved/passed) — the gate's own isDecided, so this stays in
+  // lockstep with getGrantGateStatus. A 'forwarded' card (0093) is NOT decided: the client forwarded it
+  // internally and is awaiting a reply, so it must keep the grant from reading complete / prospect-eligible
+  // (and stay out of decided_results below). Byte-identical for approved/passed/pending — forwarded only
+  // exists when REFERRAL_TRACKING_ENABLED is on.
+  const remaining = clientCards.filter((c) => !isDecided(c.decision as CardDecision));
   const completed = remaining.length === 0;
 
   let prospect_eligible = false;
@@ -78,7 +85,9 @@ export async function computeGrantSummary(
     prospect_eligible,
     remaining_pending: remaining.map((c) => siblingName(c)).filter((n): n is string => !!n),
     decided_results: clientCards
-      .filter((c) => c.decision !== "pending")
+      // Only TERMINALLY decided cards are a "result"; a 'forwarded' sibling is excluded here (it is
+      // not-yet-decided), which also makes the `as "approved" | "passed"` cast below genuinely safe.
+      .filter((c) => isDecided(c.decision as CardDecision))
       .map((c) => ({
         name: siblingName(c),
         decision: c.decision as "approved" | "passed",
