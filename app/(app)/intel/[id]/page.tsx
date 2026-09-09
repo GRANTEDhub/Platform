@@ -357,18 +357,20 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                       <AddToClientControl grantId={grant.id} clients={activeClients} />
                     </div>
                   )}
-                  {/* Discovered prospects — compact, scrollable; only rendered when some exist (no empty state).
-                      Same data as the old Prospects tile; CloseProspectingButton rides the header here now. */}
-                  {prospectCards.length > 0 && (
-                    <div className={canProspect || canAdd ? "border-t border-hairline-strong pt-3" : ""}>
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-[11.5px] text-ink-subtle">Prospects ({prospectCards.length})</p>
-                        {grant.prospecting_closed_at ? (
-                          <Badge variant="warning">Closed</Badge>
-                        ) : (
-                          <CloseProspectingButton grantId={grant.id} />
-                        )}
-                      </div>
+                  {/* Prospecting header (count + Close / Closed) — rendered whenever the well shows, NOT nested
+                      inside the list: CloseProspectingButton is the only UI entry to close-prospecting, and a
+                      closed grant needs its badge even with zero cards. Only the LIST below is gated on
+                      prospects existing (Shannon: no empty-state table). Same data as the old Prospects tile. */}
+                  <div className={canProspect || canAdd ? "border-t border-hairline-strong pt-3" : ""}>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[11.5px] text-ink-subtle">Prospects ({prospectCards.length})</p>
+                      {grant.prospecting_closed_at ? (
+                        <Badge variant="warning">Closed</Badge>
+                      ) : (
+                        <CloseProspectingButton grantId={grant.id} />
+                      )}
+                    </div>
+                    {prospectCards.length > 0 && (
                       <ul className="mt-2 max-h-[220px] divide-y divide-brand-navy/[0.08] overflow-y-auto text-[13px]">
                         {prospectCards.map((pc) => (
                           <li key={pc.id} className="flex items-center justify-between gap-2 py-2">
@@ -389,8 +391,8 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                           </li>
                         ))}
                       </ul>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               ) : (
                 <p className="mt-2 text-[12.5px] leading-[1.5] text-white/80">
