@@ -34,10 +34,11 @@ function annualBudgetFromFinance(finance: NonprofitFinance): string | null {
   return `${dollars} (${fy}per IRS 990)`;
 }
 
-// The value to seed into annual_budget, or null to leave it untouched. FILL-IF-EMPTY: a value already on
-// file (hand-entered or a prior seed) always wins and is never clobbered -- that is the whole safety property
-// (annual_budget stays staff-editable). Otherwise seed from the 990's expense figure, or null when it has
-// none. Pure, so the never-overwrite guarantee is unit-tested without a DB (exported for that).
+// The value to seed into annual_budget, or null to leave it untouched. FILL-IF-EMPTY first-line guard: a
+// value already on file (hand-entered or a prior seed) returns null so no write is even attempted -- but this
+// is an in-memory pre-check against a possibly-stale read; the AUTHORITATIVE, race-safe never-overwrite is the
+// `.is("annual_budget", null)` condition on the write in refreshClientNonprofitFinance. Otherwise seed from
+// the 990's expense figure, or null when it has none. Pure -> unit-tested without a DB (exported for that).
 export function budgetFillValue(
   currentBudget: string | null | undefined,
   finance: NonprofitFinance,
@@ -98,23 +99,41 @@ export async function refreshClientNonprofitFinance(
   const result = await fetchNonprofitFinancials(ein);
   if (!result.verified) return false; // don't overwrite / don't advance checked_at
 
-  const update: Record<string, unknown> = {
-    nonprofit_finance: result,
-    nonprofit_finance_checked_at: new Date().toISOString(),
-  };
-  // Fill-if-empty: seed annual_budget from the 990's total functional expenses when the client has none on
-  // file. The RUCC/SAM convention -- a hand-entered value always wins (never clobbered), and it writes into
-  // the same free-text field a staffer edits, so this only ever populates an editable DEFAULT. Forward-only
-  // (runs at intake / enrich, never rewrites an existing card). Unlike nonprofit_finance itself
-  // (citation-only), annual_budget IS read by the scorer as context (never a gate) -- the intended effect: a
-  // blank-budget client now carries a grounded figure instead of "Unknown".
-  const budget = budgetFillValue(client.annual_budget, result);
-  if (budget) update.annual_budget = budget;
-
-  const { error } = await db.from("clients").update(update).eq("id", client.id);
+  const { error } = await db
+    .from("clients")
+    .update({
+      nonprofit_finance: result,
+      nonprofit_finance_checked_at: new Date().toISOString(),
+    })
+    .eq("id", client.id);
   if (error) {
     console.error("Nonprofit-finance cache write failed for client", client.id, error.message);
     return false;
+  }
+
+  // Fill-if-empty: seed annual_budget from the 990's total functional expenses when the client has none on
+  // file (the RUCC/SAM convention -- a hand-entered value always wins, and it populates an editable DEFAULT
+  // in the same free-text field a staffer edits). Forward-only (runs at intake / enrich, never rewrites an
+  // existing card). Unlike nonprofit_finance (citation-only), annual_budget IS read by the scorer as context
+  // (never a gate), so a blank-budget client now carries a grounded figure instead of "Unknown".
+  //
+  // ATOMIC never-overwrite: the ProPublica fetch above can be in flight ~15s, so `client.annual_budget` was
+  // read BEFORE it and is stale -- a staffer could have entered a budget meanwhile. budgetFillValue's
+  // in-memory guard only skips the common already-set case; the RACE-SAFE guard is the `.is("annual_budget",
+  // null)` condition on the write, which Postgres evaluates against the CURRENT row -- so the seed lands ONLY
+  // if the column is STILL empty at write time, and a value entered during the fetch is never clobbered.
+  // (actions.ts get() normalizes every blank to NULL, so IS NULL covers all blank cases.) Best-effort: a
+  // budget-fill failure never fails the finance refresh.
+  const budget = budgetFillValue(client.annual_budget, result);
+  if (budget) {
+    const { error: budgetErr } = await db
+      .from("clients")
+      .update({ annual_budget: budget })
+      .eq("id", client.id)
+      .is("annual_budget", null);
+    if (budgetErr) {
+      console.error("annual_budget 990-prefill write failed for client", client.id, budgetErr.message);
+    }
   }
   return true;
 }
