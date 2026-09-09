@@ -369,9 +369,11 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                         <div>
                           <p className="text-[11.5px] leading-[1.5] text-white/[0.72]">Prospect to a non-client</p>
                           {/* ORANGE hero. ProspectButton exposes no variant prop, so its single <Button> is
-                              restyled page-locally (important-flagged to beat the default navy); its status /
-                              error lines lift to cream so they read on the chrome. */}
-                          <div className="mt-1.5 [&_button]:w-full [&_button]:!bg-brand-orangeFill [&_button]:!text-white [&_button:hover]:!bg-brand-orangeFillHover [&_p]:!text-white/70">
+                              restyled page-locally (important-flagged to beat the default navy). The status
+                              line lifts to cream so it reads on the chrome — scoped to .text-muted-foreground
+                              so the sibling error <p> (text-destructive) KEEPS its red, or a failed discovery
+                              run would look identical to a successful one on the dark shell. */}
+                          <div className="mt-1.5 [&_button]:w-full [&_button]:!bg-brand-orangeFill [&_button]:!text-white [&_button:hover]:!bg-brand-orangeFillHover [&_.text-muted-foreground]:!text-white/70">
                             <ProspectButton grantId={grant.id} />
                           </div>
                         </div>
