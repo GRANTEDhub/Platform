@@ -165,11 +165,13 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
 
   // Rail action gating (moved OUT of the tile into the navy rail box). Prospecting is hidden once the grant
   // is closed for it / blocked / unscored (the button used to live inside the Prospects card's
-  // `!prospecting_closed_at` branch — the guard moves with it). Add-to-client only for domestic grants: the
-  // server hard-rejects an international add with a non-overridable 400, matching the Ledger's own
-  // `canCalibrate = admin && is_domestic` gate.
+  // `!prospecting_closed_at` branch — the guard moves with it; `gate="not_ready"` already covers in-flight).
+  // Add-to-client is domestic-only (the server hard-rejects an international add with a non-overridable 400)
+  // AND hidden while the grant is mid-shred/rematch (`!inFlight`): adding a client against mid-flip facts
+  // writes a permanent card the fresh shred won't correct. Both mirror the Ledger's `canCalibrate = admin
+  // && is_domestic` + `!processing` gate.
   const canProspect = gate !== "not_ready" && !blockedReason && !grant.prospecting_closed_at;
-  const canAdd = !!grant.is_domestic;
+  const canAdd = !!grant.is_domestic && !inFlight;
 
   // ── INTELLENGINE section: left column — the ideal-application narrative. ──
   const iap = grant.ideal_applicant_profile as IAP | null | undefined;
