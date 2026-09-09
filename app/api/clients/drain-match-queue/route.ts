@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { drainClientMatchQueue } from "@/lib/clients/match-queue";
+import { anyClientMatchPending } from "@/lib/clients/match-queue-guard";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -26,6 +27,24 @@ export async function GET() {
   if (profile?.role !== "admin") return NextResponse.json({ error: "Admins only" }, { status: 403 });
 
   const db = createServiceClient();
+
+  // Same empty-queue fast-path as the cron: don't pay the drain's ~2.4s whole-pool
+  // load when nothing is queued. Correct for the manual caller too -- an empty queue
+  // has nothing to drain, so this returns the same queueEmpty result the drain would.
+  if (!(await anyClientMatchPending(db))) {
+    return NextResponse.json({
+      advanced: 0,
+      completed: 0,
+      errored: 0,
+      advancedIds: [],
+      completedIds: [],
+      errors: [],
+      queueEmpty: true,
+      budgetExhausted: false,
+      skipped: "no_pending_clients",
+    });
+  }
+
   const result = await drainClientMatchQueue(db);
 
   return NextResponse.json({
