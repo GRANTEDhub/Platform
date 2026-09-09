@@ -1,15 +1,17 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ArrowRight, ExternalLink, Puzzle } from "lucide-react";
+import { ArrowLeft, ArrowRight, Puzzle } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { Badge } from "@/components/ui/badge";
 import { AutoRefresh } from "@/components/ui/auto-refresh";
 import { ScoreBadge, DecisionBadge, GrantStatusBadge } from "@/components/grants/badges";
-import { OverviewCard } from "@/components/report/grant-review-console";
+import { OverviewCard, type ReviewKeyDetail } from "@/components/report/grant-review-console";
 import { ProgramAwardMap } from "@/components/report/program-award-map";
 import type { ProgramAwardSummary } from "@/lib/grants/program-awards";
 import { buildGrantSummary } from "@/lib/report/grant-summary";
+import { deadlineDaysLeft } from "@/lib/report/shape";
+import { compactCostShare } from "@/lib/grants/format";
 import { MatchOutcomes, type OutcomeCard } from "@/components/grants/match-outcomes";
 import { getGrantGateStatus, undecidedClientCount } from "@/lib/grants/gate";
 import { getSentAlertsByCards } from "@/lib/alerts/sent-status";
@@ -20,15 +22,16 @@ import type { Grant, ReviewCard, Client, Prospect, IdealApplicantProfile as IAP 
 
 export const dynamic = "force-dynamic";
 
-// The Prospects detail (Track 2) — restyled to MIRROR the grant-report page (facelift v2). The report's
-// own components/layout/tokens are reused near-1:1 with prospecting substitutions:
+// The Prospects detail (Track 2) — restyled to MIRROR the grant-report page (facelift). The report's own
+// components/layout/tokens are reused near-1:1 with prospecting substitutions:
 //   · TOP TILE   → the shared OverviewCard, in its Prospecting variant: who-can-apply chips (no ineligible)
-//     in place of the eligibility callout, and the Prospect + Add-to-client controls in the top-right in
-//     place of a fit score. Default OverviewCard is untouched, so the client report renders byte-identical.
+//     in place of the eligibility callout; otherwise identical to the report (Key Details panel beside Uses
+//     of Funds, the source link, the facts strip). Default OverviewCard is untouched → client report
+//     renders byte-identical.
 //   · INTELLENGINE SECTION → the report's two-column [narrative | fit-factors] shell, substituted here for
-//     [ condensed ideal-applicant spiel | Program Award History map (the SAME component the report uses) ].
-//   · CLIENT-MATCH SUMMARY → the report's "IntellEngine box" slot (the rail), rendering who among our
-//     clients matched + the conflict gate.
+//     [ Ideal-application narrative | Program Award History map (the SAME component the report uses) ].
+//   · RIGHT RAIL (the report's ScoreCard slot) → a navy action box (Prospect + Add-to-client), then the
+//     client-match summary (who among our clients matched + the conflict gate) below it.
 //   · The discovered prospect orgs — prospecting's core output, no report analog — sit in a full-width
 //     "Prospects" section below the IntellEngine section.
 // Make-or-break + risk factors are dropped (not in this layout).
@@ -123,33 +126,45 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
   // ── TOP TILE props — the shared OverviewCard in its Prospecting variant. ──
   // summary = description_brief || description — EXACTLY what the report tile shows (roadmap/[cardId]:391), so
   // the pre-summarised brief (not the raw full NOFO text) rides the truncating ProgrammeSummary; the
-  // authoritative full text stays one click away via the "View posting" source link in the context bar.
-  // whoCanApply replaces the eligibility callout with who-can-apply chips (no ineligible). actions puts the
-  // two controls top-right.
+  // authoritative full text stays one click away via the "View posting" source link the Key Details panel
+  // renders. whoCanApply replaces the eligibility callout with who-can-apply chips (no ineligible).
   const summaryProps = buildGrantSummary(grant);
   const whoCanApply = {
     types: (grant.eligible_entity_types ?? []).map((t) => t.replace(/_/g, " ")),
     geography: grant.geographic_eligibility ?? null,
     subawardProhibited: !!grant.subaward_prohibited,
   };
-  const topActions = (
-    <>
-      {/* Prospecting is hidden once the grant is closed for it — the button used to live inside the
-          Prospects card's `!prospecting_closed_at` branch; moving it to the tile has to carry that guard,
-          else a "closed / read-only" grant is still discoverable. */}
-      {gate !== "not_ready" && !blockedReason && !grant.prospecting_closed_at && (
-        <ProspectButton grantId={grant.id} />
-      )}
-      {/* Ledger-consistent: only domestic grants can be added to a client (the server hard-rejects an
-          international add with a non-overridable 400), so don't surface a dead-end picker for them —
-          matches the Ledger's own `canCalibrate = admin && is_domestic` gate. */}
-      {grant.is_domestic && <AddToClientControl grantId={grant.id} clients={activeClients} />}
-    </>
-  );
+  // Key Details panel — rebuilt EXACTLY as the report's OverviewCard does (roadmap/[cardId]:305), so the
+  // panel rides to the right of Uses of Funds and carries the "View official posting" link (rendered inside
+  // KeyDetailsList when sourceUrl is passed).
+  const days = deadlineDaysLeft(grant.submission_deadline);
+  const keyDetails: ReviewKeyDetail[] = [
+    { label: "Opportunity number", value: grant.fon?.trim() || "—" },
+    { label: "CFDA", value: (grant.assistance_listings ?? []).map((a) => a.number).join(", ") || "—" },
+    { label: "Cost sharing", value: compactCostShare(grant.cost_share) },
+  ];
+  if (days !== null) {
+    keyDetails.push(
+      days > 0
+        ? { label: "Days remaining", value: String(days) }
+        : days === 0
+          ? { label: "Days remaining", value: "Closes today" }
+          : { label: "Closed", value: `${Math.abs(days)} ${Math.abs(days) === 1 ? "day" : "days"} ago` },
+    );
+  }
 
-  // ── INTELLENGINE section: left column — the condensed ideal-applicant spiel. ──
+  // Rail action gating (moved OUT of the tile into the navy rail box). Prospecting is hidden once the grant
+  // is closed for it / blocked / unscored (the button used to live inside the Prospects card's
+  // `!prospecting_closed_at` branch — the guard moves with it). Add-to-client only for domestic grants: the
+  // server hard-rejects an international add with a non-overridable 400, matching the Ledger's own
+  // `canCalibrate = admin && is_domestic` gate.
+  const canProspect = gate !== "not_ready" && !blockedReason && !grant.prospecting_closed_at;
+  const canAdd = !!grant.is_domestic;
+
+  // ── INTELLENGINE section: left column — the ideal-application narrative. ──
   const iap = grant.ideal_applicant_profile as IAP | null | undefined;
   const iapArchetypes = iap?.archetypes ?? [];
+  const hasCoApplicants = iapArchetypes.some((a) => (a.partner_seats?.length ?? 0) > 0);
 
   // ── Program award map (right column). Reuse the report's component + its exact data source, untouched. ──
   const hasCfda = Array.isArray(grant.assistance_listings) && grant.assistance_listings.length > 0;
@@ -178,29 +193,16 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
           </Badge>
           <GrantStatusBadge status={grant.status} grantStatus={grant.grant_status} />
         </div>
-        {/* Restore the two links the old page's AdditionalInformation card carried: one-click verification
-            against the authoritative posting (org rule), and the Ledger detail the "rebuild the profile"
-            copy below refers to (a dead-end instruction without it). */}
-        <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1">
-          {grant.source_url && (
-            <a
-              href={grant.source_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-[5px] text-[12.5px] font-medium text-ink-muted transition-colors hover:text-brand-navy"
-            >
-              View posting
-              <ExternalLink className="h-3 w-3" aria-hidden="true" />
-            </a>
-          )}
-          <Link
-            href={`/grants/${grant.id}`}
-            className="inline-flex items-center gap-[5px] text-[12.5px] font-medium text-ink-muted transition-colors hover:text-brand-navy"
-          >
-            Open Shred
-            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-          </Link>
-        </div>
+        {/* The authoritative posting link now rides the OverviewCard Key Details panel (as on the report);
+            the context bar keeps the Ledger link the "rebuild the profile" copy below refers to (a dead-end
+            instruction without it). */}
+        <Link
+          href={`/grants/${grant.id}`}
+          className="ml-auto inline-flex items-center gap-[5px] rounded-sharp text-[12.5px] font-medium text-ink-muted transition-colors hover:text-brand-navy"
+        >
+          Open Shred
+          <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+        </Link>
       </div>
 
       <div className="px-[30px] pb-6 pt-[18px]">
@@ -214,12 +216,14 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
             prospecting content is variable-height, so a hard overflow-hidden frame would clip it. */}
         <div className="grid gap-[18px] xl:grid-cols-[1fr_386px] xl:items-start">
           <div className="flex min-w-0 flex-col gap-[18px]">
-            {/* TOP TILE — shared OverviewCard, Prospecting variant. */}
+            {/* TOP TILE — shared OverviewCard, Prospecting variant. Key Details panel + source link restored
+                exactly as the report renders them; actions moved to the rail box (see below). */}
             <OverviewCard
               {...summaryProps}
               summary={grant.description_brief || grant.description}
+              keyDetails={keyDetails}
+              sourceUrl={grant.source_url}
               whoCanApply={whoCanApply}
-              actions={topActions}
             />
 
             {/* INTELLENGINE SECTION — the report's two-column shell, substituted [ ideal-applicant spiel |
@@ -231,13 +235,16 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                 </span>
                 <h2 className="font-serif text-[17px] font-bold text-brand-navy">IntellEngine</h2>
                 <span className="ml-auto rounded-full bg-brand-navy/[0.06] px-3 py-1 text-[11px] font-semibold text-brand-navy">
-                  Ideal applicant · award history
+                  Ideal application · award history
                 </span>
               </div>
               <div className="grid gap-6 px-5 py-[18px] lg:grid-cols-[1.3fr_1.65fr]">
-                {/* LEFT — condensed ideal-applicant spiel. */}
+                {/* LEFT — the ideal-application narrative: applicant / co-applicants / scope. Sections a & b
+                    render real profile fields (ideal_prime_shape, partner_seats); c (scope of work) has NO
+                    backing field on IdealApplicantProfile today — the header shows with an honest note rather
+                    than an invented narrative (flagged: populating it is a pipeline change, not presentation). */}
                 <div className="min-w-0">
-                  <p className={EYEBROW}>Ideal applicant</p>
+                  <p className={EYEBROW}>Ideal application</p>
                   {iap?.summary ? (
                     <p className="mt-2 text-[13px] leading-[1.65] text-ink-muted [text-wrap:pretty]">{iap.summary}</p>
                   ) : (
@@ -246,25 +253,71 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                       to build one.
                     </p>
                   )}
-                  {iap?.core_funded_role && (
-                    <p className="mt-2.5 text-[12.5px] leading-[1.55] text-ink-muted">
-                      <span className="font-semibold text-brand-navy">Core funded role: </span>
-                      {iap.core_funded_role}
-                    </p>
-                  )}
-                  {iapArchetypes.length > 0 && (
-                    <div className="mt-3 space-y-2">
-                      {iapArchetypes.map((a, i) => (
-                        <p key={i} className="text-[12.5px] leading-[1.55] text-ink-muted">
-                          <span className="font-semibold text-brand-navy">{a.label}</span>
-                          {a.ideal_prime_shape ? ` — prime: ${a.ideal_prime_shape}` : ""}
-                          {(a.partner_seats?.length ?? 0) > 0 ? ` · partners: ${a.partner_seats.join(", ")}` : ""}
+
+                  {iap && (
+                    <div className="mt-4 space-y-4">
+                      {/* a. Ideal applicant — the ideal PRIME. */}
+                      <div>
+                        <p className="text-[11px] font-bold uppercase tracking-[0.09em] text-brand-navy">
+                          Ideal applicant
                         </p>
-                      ))}
+                        {iap.core_funded_role && (
+                          <p className="mt-1.5 text-[12.5px] leading-[1.55] text-ink-muted">
+                            <span className="font-semibold text-brand-navy">Core funded role: </span>
+                            {iap.core_funded_role}
+                          </p>
+                        )}
+                        {iapArchetypes.length > 0 ? (
+                          <div className="mt-1.5 space-y-1.5">
+                            {iapArchetypes.map((a, i) => (
+                              <p key={i} className="text-[12.5px] leading-[1.55] text-ink-muted">
+                                <span className="font-semibold text-brand-navy">{a.label}</span>
+                                {a.ideal_prime_shape ? ` — ${a.ideal_prime_shape}` : ""}
+                              </p>
+                            ))}
+                          </div>
+                        ) : (
+                          !iap.core_funded_role && (
+                            <p className="mt-1.5 text-[12px] leading-[1.5] text-ink-subtle">
+                              No prime shape specified.
+                            </p>
+                          )
+                        )}
+                      </div>
+
+                      {/* b. Ideal co-applicants — the partner/sub seats the profile enumerates (if any). */}
+                      {hasCoApplicants && (
+                        <div>
+                          <p className="text-[11px] font-bold uppercase tracking-[0.09em] text-brand-navy">
+                            Ideal co-applicants
+                          </p>
+                          <div className="mt-1.5 space-y-1.5">
+                            {iapArchetypes
+                              .filter((a) => (a.partner_seats?.length ?? 0) > 0)
+                              .map((a, i) => (
+                                <p key={i} className="text-[12.5px] leading-[1.55] text-ink-muted">
+                                  <span className="font-semibold text-brand-navy">{a.label}: </span>
+                                  {a.partner_seats.join(", ")}
+                                </p>
+                              ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* c. Ideal scope — GATED (no scope-of-work field on the profile yet). */}
+                      <div>
+                        <p className="text-[11px] font-bold uppercase tracking-[0.09em] text-brand-navy">
+                          Ideal scope
+                        </p>
+                        <p className="mt-1.5 text-[12px] leading-[1.5] text-ink-subtle">
+                          Not yet generated — this grant&apos;s profile has no scope-of-work summary.
+                        </p>
+                      </div>
                     </div>
                   )}
+
                   {iap?.eligibility_note && (
-                    <p className="mt-3 text-[11.5px] leading-[1.5] text-ink-subtle">{iap.eligibility_note}</p>
+                    <p className="mt-4 text-[11.5px] leading-[1.5] text-ink-subtle">{iap.eligibility_note}</p>
                   )}
                 </div>
 
@@ -320,7 +373,8 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                 </p>
               ) : prospectCards.length === 0 ? (
                 <p className="mt-3 text-sm text-muted-foreground">
-                  No prospects surfaced yet. Use the Prospect button (top right) to search for fitting non-client orgs.
+                  No prospects surfaced yet. Use the Prospect button in the right-rail action box to search for
+                  fitting non-client orgs.
                 </p>
               ) : (
                 <ul className="mt-2 divide-y divide-brand-navy/[0.08] text-sm">
@@ -347,9 +401,26 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
             </section>
           </div>
 
-          {/* RAIL — the report's "IntellEngine box" slot: the client-match summary (status verdict + who
-              matched). */}
+          {/* RAIL — top: the navy action box (the report's ScoreCard slot), then the client-match summary. */}
           <aside className="flex min-w-0 flex-col gap-[18px]">
+            {/* NAVY ACTION BOX — Prospect + Add-to-client, moved out of the top tile. Navy chrome (BRAND
+                token) with a white action well so the default-navy buttons stay legible; both controls carry
+                text labels (colour is never the only signal). */}
+            <section className="rounded-sharp bg-brand-navy p-4 shadow-sm">
+              <p className="text-[10px] font-bold uppercase tracking-[0.11em] text-white/75">Take action</p>
+              {canProspect || canAdd ? (
+                <div className="mt-3 space-y-3 rounded-sharp bg-white p-3.5">
+                  {canProspect && <ProspectButton grantId={grant.id} />}
+                  {canProspect && canAdd && <div className="border-t border-hairline-strong" />}
+                  {canAdd && <AddToClientControl grantId={grant.id} clients={activeClients} />}
+                </div>
+              ) : (
+                <p className="mt-2 text-[12.5px] leading-[1.5] text-white/80">
+                  {blockedLabel ? `${blockedLabel} — ` : ""}not available for prospecting or client-matching.
+                </p>
+              )}
+            </section>
+
             <section className="rounded-sharp border border-edge bg-white p-5">
               <p className={EYEBROW}>Client match</p>
               <div className="mt-3 flex items-start gap-2.5 text-sm text-muted-foreground">
