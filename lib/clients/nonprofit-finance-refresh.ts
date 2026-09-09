@@ -7,6 +7,7 @@
 //    advance nonprofit_finance_checked_at, so it retries on the next refresh.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { NonprofitFinance } from "@/types/database";
 import { fetchNonprofitFinancials, resolveEinCandidates } from "@/lib/grants/propublica";
 
 export interface FinanceRefreshableClient {
@@ -16,6 +17,33 @@ export interface FinanceRefreshableClient {
   org_type?: string | null;
   location_city?: string | null;
   location_state?: string | null;
+  // Current annual_budget, so the fill-if-empty seed (annualBudgetFromFinance) never overwrites a value
+  // already on file. Supplied by the by-id loader's SELECT below.
+  annual_budget?: string | null;
+}
+
+// The editable annual_budget default seeded from the 990: total FUNCTIONAL EXPENSES (the operating-budget
+// proxy -- deliberately NOT revenue) as a dollar figure tagged with its filing year + source, so a staffer
+// sees it is auto-pulled and can override it. Returns null when the 990 has no usable expense figure (a
+// verified "no filings" result, or a non-positive value), so the fill never writes a placeholder.
+function annualBudgetFromFinance(finance: NonprofitFinance): string | null {
+  const exp = finance.total_expenses;
+  if (typeof exp !== "number" || !Number.isFinite(exp) || exp <= 0) return null;
+  const dollars = `$${Math.round(exp).toLocaleString("en-US")}`;
+  const fy = finance.fiscal_year ? `FY${finance.fiscal_year}, ` : "";
+  return `${dollars} (${fy}per IRS 990)`;
+}
+
+// The value to seed into annual_budget, or null to leave it untouched. FILL-IF-EMPTY: a value already on
+// file (hand-entered or a prior seed) always wins and is never clobbered -- that is the whole safety property
+// (annual_budget stays staff-editable). Otherwise seed from the 990's expense figure, or null when it has
+// none. Pure, so the never-overwrite guarantee is unit-tested without a DB (exported for that).
+export function budgetFillValue(
+  currentBudget: string | null | undefined,
+  finance: NonprofitFinance,
+): string | null {
+  if (currentBudget && currentBudget.trim()) return null; // never overwrite a value on file
+  return annualBudgetFromFinance(finance);
 }
 
 // Resolve and store an EIN when none is on file, so the 990 pull has a key to work
@@ -70,13 +98,20 @@ export async function refreshClientNonprofitFinance(
   const result = await fetchNonprofitFinancials(ein);
   if (!result.verified) return false; // don't overwrite / don't advance checked_at
 
-  const { error } = await db
-    .from("clients")
-    .update({
-      nonprofit_finance: result,
-      nonprofit_finance_checked_at: new Date().toISOString(),
-    })
-    .eq("id", client.id);
+  const update: Record<string, unknown> = {
+    nonprofit_finance: result,
+    nonprofit_finance_checked_at: new Date().toISOString(),
+  };
+  // Fill-if-empty: seed annual_budget from the 990's total functional expenses when the client has none on
+  // file. The RUCC/SAM convention -- a hand-entered value always wins (never clobbered), and it writes into
+  // the same free-text field a staffer edits, so this only ever populates an editable DEFAULT. Forward-only
+  // (runs at intake / enrich, never rewrites an existing card). Unlike nonprofit_finance itself
+  // (citation-only), annual_budget IS read by the scorer as context (never a gate) -- the intended effect: a
+  // blank-budget client now carries a grounded figure instead of "Unknown".
+  const budget = budgetFillValue(client.annual_budget, result);
+  if (budget) update.annual_budget = budget;
+
+  const { error } = await db.from("clients").update(update).eq("id", client.id);
   if (error) {
     console.error("Nonprofit-finance cache write failed for client", client.id, error.message);
     return false;
@@ -92,7 +127,7 @@ export async function refreshClientNonprofitFinanceById(
 ): Promise<boolean> {
   const { data } = await db
     .from("clients")
-    .select("id, ein, name, org_type, location_city, location_state")
+    .select("id, ein, name, org_type, location_city, location_state, annual_budget")
     .eq("id", clientId)
     .single<FinanceRefreshableClient>();
   if (!data) return false;
