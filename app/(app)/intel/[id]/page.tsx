@@ -3,7 +3,6 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, Puzzle } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AutoRefresh } from "@/components/ui/auto-refresh";
 import { ScoreBadge, DecisionBadge, GrantStatusBadge } from "@/components/grants/badges";
@@ -318,7 +317,7 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
           {/* RAIL — the report's "IntellEngine box" slot: the client-match summary (status verdict + who
               matched). */}
           <aside className="flex min-w-0 flex-col gap-[18px]">
-            <Card className="p-5">
+            <section className="rounded-sharp border border-edge bg-white p-5">
               <p className={EYEBROW}>Client match</p>
               <div className="mt-3 flex items-start gap-2.5 text-sm text-muted-foreground">
                 {gate === "not_ready" ? (
@@ -349,7 +348,7 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
               <div className="mt-4 border-t border-hairline-strong pt-4">
                 <MatchOutcomes cards={carryOver} emptyText="No client matches on this grant." />
               </div>
-            </Card>
+            </section>
           </aside>
         </div>
       </div>
