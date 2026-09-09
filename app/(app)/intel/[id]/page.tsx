@@ -24,8 +24,8 @@ export const dynamic = "force-dynamic";
 
 // The Prospects detail (Track 2) — restyled to MIRROR the grant-report page (facelift). The report's own
 // components/layout/tokens are reused near-1:1 with prospecting substitutions:
-//   · TOP TILE   → the shared OverviewCard, in its Prospecting variant: who-can-apply chips (no ineligible)
-//     in place of the eligibility callout; otherwise identical to the report (Key Details panel beside Uses
+//   · TOP TILE   → the shared OverviewCard, in its Prospecting variant: who-can-apply chips (WITH ineligible,
+//     a staff-decision surface) in place of the eligibility callout; otherwise identical to the report (Key Details panel beside Uses
 //     of Funds, the source link, the facts strip). Default OverviewCard is untouched → client report
 //     renders byte-identical.
 //   · INTELLENGINE SECTION → the report's two-column [narrative | fit-factors] shell, substituted here for
@@ -127,10 +127,15 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
   // summary = description_brief || description — EXACTLY what the report tile shows (roadmap/[cardId]:391), so
   // the pre-summarised brief (not the raw full NOFO text) rides the truncating ProgrammeSummary; the
   // authoritative full text stays one click away via the "View posting" source link the Key Details panel
-  // renders. whoCanApply replaces the eligibility callout with who-can-apply chips (no ineligible).
+  // renders. whoCanApply replaces the eligibility callout with who-can-apply chips (WITH ineligible — a
+  // staff-decision surface, unlike the client report).
   const summaryProps = buildGrantSummary(grant);
   const whoCanApply = {
     types: (grant.eligible_entity_types ?? []).map((t) => t.replace(/_/g, " ")),
+    // Prospecting is a STAFF decision surface — surface who is explicitly DISQUALIFIED too (Shannon,
+    // reversing the earlier client-report-style drop), so staff see it before reaching out to an org. This
+    // stays Prospecting-only: the client report/Ledger pass no whoCanApply and keep the EligibilityCallout.
+    ineligible: grant.ineligible_entities,
     geography: grant.geographic_eligibility ?? null,
     subawardProhibited: !!grant.subaward_prohibited,
   };

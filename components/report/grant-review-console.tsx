@@ -392,11 +392,14 @@ export function OverviewCard({
   );
 }
 
-// The Prospecting who-can-apply block — the eligible-entity chips (+ geography / subaward), rendered in
-// place of the EligibilityCallout on /intel/[id]. Same container treatment as the callout so the tile
-// reads identically; green-check chips like the shared WhoCanApply. NO ineligible field — prospecting
-// leads with who CAN apply, and the "Limits to check" verdict is a client-fit read this surface omits.
-type WhoCanApplyData = { types: string[]; geography: string | null; subawardProhibited: boolean };
+// The Prospecting who-can-apply block — the eligible-entity chips (+ ineligible / geography / subaward),
+// rendered in place of the EligibilityCallout on /intel/[id]. Same container treatment as the callout so the
+// tile reads identically; green-check chips like the shared WhoCanApply. Prospecting is a STAFF decision
+// surface, so unlike the client report it DOES surface `ineligible` (who is explicitly disqualified) — staff
+// need to see it before reaching out (Shannon, reversing the earlier client-report-style drop). Still
+// Prospecting-only: this block renders ONLY when the caller passes whoCanApply; the client report / Ledger
+// pass none and keep the EligibilityCallout, so the OverviewCard default is unchanged (byte-identical).
+type WhoCanApplyData = { types: string[]; ineligible: string | null; geography: string | null; subawardProhibited: boolean };
 
 function WhoCanApplyInline({ data }: { data: WhoCanApplyData }) {
   return (
@@ -416,6 +419,12 @@ function WhoCanApplyInline({ data }: { data: WhoCanApplyData }) {
         </div>
       ) : (
         <p className="mt-1.5 text-[12.5px] text-ink-muted">Eligible entity types not specified.</p>
+      )}
+      {data.ineligible && (
+        <p className="mt-2.5 text-[12px] leading-[1.5] text-ink-muted [text-wrap:pretty]">
+          <span className="font-semibold" style={{ color: BRAND.orangeDeep }}>Ineligible: </span>
+          {data.ineligible}
+        </p>
       )}
       {data.geography && (
         <p className="mt-2.5 text-[12px] leading-[1.5] text-ink-muted [text-wrap:pretty]">
