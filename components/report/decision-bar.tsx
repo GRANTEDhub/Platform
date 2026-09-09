@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { PursuitChooser } from "./pursuit-chooser";
+import { forwardedStatusLabel } from "@/lib/report/referral";
 import type { CardDecision, PursuitPath } from "@/types/database";
 
 // The shared decision gate on the Grant Report detail. Used by BOTH the client
@@ -24,6 +25,8 @@ export function DecisionBar({
   pursuitPath = null,
   showPursuitPath = false,
   intellEngineComingSoon = false,
+  referralEnabled = false,
+  forwardedTo = null,
 }: {
   cardId: string;
   decision: CardDecision;
@@ -42,21 +45,28 @@ export function DecisionBar({
   // (portal-only), so this never reaches staff. Defaults false.
   intellEngineComingSoon?: boolean;
   pursuitPath?: PursuitPath | null;
+  // Client referral tracking (migration 0093), portal-only + flag-gated: shows the "Forward internally"
+  // control. Off (default) → the control is absent and this component is byte-identical to before.
+  referralEnabled?: boolean;
+  // The stored "sent to" note, rendered in the forwarded status line.
+  forwardedTo?: string | null;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPass, setShowPass] = useState(false);
   const [passReason, setPassReason] = useState("");
+  const [showForward, setShowForward] = useState(false);
+  const [forwardTo, setForwardTo] = useState("");
 
-  async function decide(next: CardDecision, reason?: string) {
+  async function decide(next: CardDecision, reason?: string, forwarded?: string) {
     setBusy(true);
     setError(null);
     try {
       const res = await fetch(`/api/review/${cardId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ decision: next, decision_reason: reason }),
+        body: JSON.stringify({ decision: next, decision_reason: reason, forwarded_to: forwarded }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Couldn't save that");
@@ -78,6 +88,7 @@ export function DecisionBar({
 
   const pursuing = decision === "approved";
   const passed = decision === "passed";
+  const forwarded = decision === "forwarded";
 
   return (
     // Renders inside the fit-score box (bg-brand-chrome) — dark-themed, and no top divider of
@@ -127,6 +138,22 @@ export function DecisionBar({
           >
             {passed ? "Passed — undo" : "Pass"}
           </button>
+          {/* Forward internally (client referral tracking, 0093): record that you sent this to a colleague
+              and are awaiting their response. A real state distinct from Pursue/Pass — you can still
+              Pursue/Pass it in place when they reply. Flag-gated (referralEnabled); portal-only. */}
+          {referralEnabled && (
+            <button
+              disabled={busy}
+              onClick={() => (forwarded ? decide("pending") : setShowForward((v) => !v))}
+              className={`rounded-full px-5 py-2.5 text-sm font-medium transition disabled:opacity-50 ${
+                forwarded
+                  ? "bg-white/[0.1] text-white ring-1 ring-white/20"
+                  : "border border-white/25 text-white/70 hover:text-white"
+              }`}
+            >
+              {forwarded ? "Forwarded — undo" : "Forward internally"}
+            </button>
+          )}
         </div>
 
         {/* Pass reason is REQUIRED: it's the calibration signal (routed to match_feedback
@@ -155,9 +182,39 @@ export function DecisionBar({
           </div>
         )}
 
+        {/* Forward "sent to" note — optional but recommended: "awaiting response" is far more useful with
+            the recipient named. Blank is tolerated (a forward with no name is still a valid forward). */}
+        {referralEnabled && showForward && !forwarded && (
+          <div className="mt-3 space-y-2 rounded-xl border border-white/[0.12] bg-white/[0.05] p-3">
+            <p className="text-xs font-medium text-white/85">
+              Who did you forward this to? (optional — helps you remember who you&apos;re waiting on)
+            </p>
+            <input
+              value={forwardTo}
+              onChange={(e) => setForwardTo(e.target.value)}
+              autoFocus
+              placeholder="e.g. Jane in Finance"
+              className="w-full rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-white/40 outline-none focus:border-white/45"
+            />
+            <button
+              disabled={busy}
+              onClick={() => decide("forwarded", undefined, forwardTo)}
+              className="rounded-full bg-white/[0.12] px-4 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 disabled:opacity-50"
+            >
+              Mark as forwarded
+            </button>
+          </div>
+        )}
+
+        {/* Forwarded status — recipient + "awaiting response". Text-only (colour-blind rule). deciderLabel
+            is null on the portal, so the generic line below never renders here; this shows the state. */}
+        {forwarded && (
+          <p className="mt-3 text-[13px] text-white/70">{forwardedStatusLabel(forwardedTo, "portal")}</p>
+        )}
+
         {deciderLabel && (
           <p className="mt-3 text-[13px] text-white/60">
-            {pursuing ? "Pursuing" : passed ? "Passed" : "Saved"} · decided by {deciderLabel}
+            {pursuing ? "Pursuing" : passed ? "Passed" : forwarded ? "Forwarded internally" : "Saved"} · decided by {deciderLabel}
           </p>
         )}
       </div>

@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { pursuitApiDenied } from "@/lib/pursuit/access";
 import { computeGrantSummary } from "@/lib/review/summary";
 import { recordCardFeedback } from "@/lib/feedback/record";
+import { referralTrackingEnabled } from "@/lib/report/referral";
 import type { CardDecision, PursuitPath } from "@/types/database";
 
 // Re-exported so existing importers (DecisionPanel, DecisionConfirmation) keep
@@ -33,6 +34,8 @@ export async function PATCH(
   let body: {
     decision?: CardDecision;
     decision_reason?: string;
+    // The "sent to" note for decision='forwarded' (migration 0093). Free text; only read on a forward.
+    forwarded_to?: string;
     interested?: boolean;
     sme_interested?: boolean;
     sme_release?: boolean;
@@ -138,6 +141,11 @@ export async function PATCH(
         decided_by: pursuing ? user.id : null,
         decided_at: pursuing ? new Date().toISOString() : null,
         decided_by_actor: pursuing ? actor : null,
+        // Choosing (or clearing) a pursuit path moves the card OFF 'forwarded' to approved/pending, so
+        // the referral note must clear too (0093). This branch returns before the main decision block's
+        // cleanup, so honor the "non-forwarded decision → null note" invariant here as well. Harmless
+        // no-op when the feature is off (the note is already null).
+        forwarded_to: null,
       })
       .eq("id", params.id)
       .select()
@@ -152,9 +160,24 @@ export async function PATCH(
     return NextResponse.json({ card: data, grant_summary: null });
   }
 
-  const valid: CardDecision[] = ["pending", "approved", "passed"];
+  // 'forwarded' (client referral tracking, 0093) is accepted ONLY when the flag is on — so flag-off is
+  // byte-identical to today (rejects it as invalid) and a hand-crafted PATCH can't land the state while
+  // the feature is dark.
+  const valid: CardDecision[] = referralTrackingEnabled()
+    ? ["pending", "approved", "passed", "forwarded"]
+    : ["pending", "approved", "passed"];
   if (!body.decision || !valid.includes(body.decision)) {
     return NextResponse.json({ error: "Invalid decision" }, { status: 400 });
+  }
+
+  // 'forwarded' is a CLIENT self-annotation ONLY (0093, Shannon's explicit "no staff-setter"): the
+  // staff-facing label asserts "Client forwarded internally …", so a staff-crafted PATCH setting
+  // 'forwarded' would write a FALSE client-referral record (decided_by_actor='staff' under a
+  // client-voiced label). The portal is the only surface exposing the control; this is the API backstop.
+  // (Client members have no profiles row → actor='client', so real forwards pass.) If staff-set-on-behalf
+  // is ever wanted, that's the separate later add Shannon named — not this.
+  if (body.decision === "forwarded" && actor !== "client") {
+    return NextResponse.json({ error: "Forwarded is a client-only annotation" }, { status: 403 });
   }
 
   const isTerminal = body.decision !== "pending";
@@ -163,6 +186,9 @@ export async function PATCH(
     .update({
       decision: body.decision,
       decision_reason: body.decision === "passed" ? body.decision_reason || null : null,
+      // The "sent to" note rides ONLY a 'forwarded' decision; any other decision clears it (so switching
+      // forwarded → Pursue/Pass/Save doesn't leave a stale recipient). Trimmed; blank collapses to null.
+      forwarded_to: body.decision === "forwarded" ? body.forwarded_to?.trim() || null : null,
       decided_by: isTerminal ? user.id : null,
       decided_at: isTerminal ? new Date().toISOString() : null,
       decided_by_actor: isTerminal ? actor : null,
