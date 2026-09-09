@@ -378,7 +378,14 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                 </div>
               ) : (
                 <p className="mt-2 text-[12.5px] leading-[1.5] text-white/80">
-                  {blockedLabel ? `${blockedLabel} — ` : ""}not available for prospecting or client-matching.
+                  {/* A permanent block (blockedLabel) wins; else an in-flight grant is only TEMPORARILY
+                      unavailable (AutoRefresh unlocks it), so say so rather than a bare "not available" that
+                      reads as a permanent dead-end — mirrors the client-match box's not_ready copy. */}
+                  {blockedLabel
+                    ? `${blockedLabel} — not available for prospecting or client-matching.`
+                    : inFlight
+                      ? "Still shredding / rematching — this unlocks once it finishes."
+                      : "Not available for prospecting or client-matching."}
                 </p>
               )}
             </section>
