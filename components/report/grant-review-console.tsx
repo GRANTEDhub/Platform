@@ -292,6 +292,8 @@ export function OverviewCard({
   allowableUses,
   keyDetails = null,
   sourceUrl = null,
+  whoCanApply = null,
+  actions = null,
 }: {
   tags: { label: string; role: boolean }[];
   agencyLine: string | null;
@@ -306,6 +308,15 @@ export function OverviewCard({
   // and pass neither — render exactly as before (Uses full-width, no Key details column).
   keyDetails?: ReviewKeyDetail[] | null;
   sourceUrl?: string | null;
+  // ── Prospecting variant (backward-compatible: BOTH default null, so the client report, the client
+  //    portal and the Ledger render byte-identical to today; only /intel/[id] opts in). ──
+  // whoCanApply → render the who-can-apply entity chips (+ geography / subaward) in place of the
+  //   EligibilityCallout. NO ineligible / "Limits to check": a prospecting surface names who CAN apply,
+  //   not a per-client eligibility verdict.
+  // actions → a top-right control cluster (Prospect + Add-to-client) beside the funder line. A React
+  //   child, so the frame stays decoupled — the page passes the client controls in.
+  whoCanApply?: WhoCanApplyData | null;
+  actions?: React.ReactNode;
 }) {
   return (
     <section className={`shrink-0 ${CARD} px-5 pb-[18px] pt-4`}>
@@ -327,7 +338,14 @@ export function OverviewCard({
             {t.label}
           </span>
         ))}
-        {agencyLine && <span className="ml-auto text-[11.5px] text-ink-subtle">{agencyLine}</span>}
+        {actions ? (
+          <div className="ml-auto flex items-center gap-3">
+            {agencyLine && <span className="text-[11.5px] text-ink-subtle">{agencyLine}</span>}
+            <div className="flex items-center gap-2">{actions}</div>
+          </div>
+        ) : (
+          agencyLine && <span className="ml-auto text-[11.5px] text-ink-subtle">{agencyLine}</span>
+        )}
       </div>
 
       {/* Two lines at 22px is the budget. Three pushes the meta row down and the fit-factors
@@ -365,8 +383,52 @@ export function OverviewCard({
 
       <MetaTiles meta={meta} />
 
-      <EligibilityCallout eligibility={eligibility} />
+      {whoCanApply ? (
+        <WhoCanApplyInline data={whoCanApply} />
+      ) : (
+        <EligibilityCallout eligibility={eligibility} />
+      )}
     </section>
+  );
+}
+
+// The Prospecting who-can-apply block — the eligible-entity chips (+ geography / subaward), rendered in
+// place of the EligibilityCallout on /intel/[id]. Same container treatment as the callout so the tile
+// reads identically; green-check chips like the shared WhoCanApply. NO ineligible field — prospecting
+// leads with who CAN apply, and the "Limits to check" verdict is a client-fit read this surface omits.
+type WhoCanApplyData = { types: string[]; geography: string | null; subawardProhibited: boolean };
+
+function WhoCanApplyInline({ data }: { data: WhoCanApplyData }) {
+  return (
+    <div className="mt-4 rounded-sharp border border-edge bg-brand-cream/60 px-4 py-[11px]">
+      <p className={EYEBROW}>Who can apply</p>
+      {data.types.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {data.types.map((t) => (
+            <span
+              key={t}
+              className="inline-flex items-center gap-1 rounded-full bg-brand-navy/[0.06] px-[11px] py-1 text-[11.5px] font-semibold capitalize text-brand-navy"
+            >
+              <Check className="h-3 w-3 shrink-0 text-brand-navy" strokeWidth={3} aria-hidden="true" />
+              {t}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-1.5 text-[12.5px] text-ink-muted">Eligible entity types not specified.</p>
+      )}
+      {data.geography && (
+        <p className="mt-2.5 text-[12px] leading-[1.5] text-ink-muted [text-wrap:pretty]">
+          <span className="font-semibold text-brand-navy">Geography: </span>
+          {data.geography}
+        </p>
+      )}
+      {data.subawardProhibited && (
+        <p className="mt-2 text-[12px] font-semibold" style={{ color: BRAND.orangeDeep }}>
+          Subawards prohibited
+        </p>
+      )}
+    </div>
   );
 }
 
