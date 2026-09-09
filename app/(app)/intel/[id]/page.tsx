@@ -344,35 +344,66 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
 
           {/* RAIL — top: the navy action box (the report's ScoreCard slot), then the client-match summary. */}
           <aside className="flex min-w-0 flex-col gap-[18px]">
-            {/* NAVY ACTION BOX ("IntellEngine Action") — Prospect + Add-to-client (moved out of the top tile),
-                each under a small caption, plus the discovered-prospects table below them (relocated from the
-                old full-width Prospects tile). Navy chrome (BRAND token) with a white action well so the
-                default-navy buttons stay legible; both controls carry text labels + a caption. */}
-            <section className="rounded-sharp bg-brand-navy p-4 shadow-sm">
-              <p className="text-[10px] font-bold uppercase tracking-[0.11em] text-white/75">IntellEngine Action</p>
+            {/* INTELLENGINE ACTION BOX — restyled to the Fit Score box's system (bg-brand-chrome, cream/light
+                captions, orange accents), the report's ScoreCard slot. The controls sit in the orange
+                left-accent region the report uses on its "Your decision" section (roadmap/[cardId]): Prospect
+                is the ORANGE hero (on the chrome, where it pops — the fix for the old navy-on-navy button);
+                Add-to-client is the navy SECONDARY, distinct from the hero, kept on a contained LIGHT input
+                panel because AddToClientControl is the shared Ledger control — its select, soft-block confirm
+                and messages are built for a light surface, so this brands the shell WITHOUT overriding that
+                shared control's internals. JUDGMENT CALL (flagged for Shannon): the discovered-prospects table
+                stays on a legible LIGHT card inside the branded shell — its score chips / status / decision
+                badges are fine-grained and lose legibility reversed onto chrome. Brand tokens only, no hex. */}
+            <section className="rounded-sharp bg-brand-chrome p-4 text-white shadow-sm">
+              <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-white/[0.55]">
+                IntellEngine Action
+              </p>
               {canProspect || canAdd || prospectCards.length > 0 ? (
-                <div className="mt-3 space-y-3.5 rounded-sharp bg-white p-3.5">
-                  {canProspect ? (
-                    <div>
-                      <p className="mb-1.5 text-[11.5px] text-ink-subtle">Prospect to a non-client</p>
-                      <ProspectButton grantId={grant.id} />
+                <div className="mt-3 space-y-4">
+                  {/* Controls — the orange left-accent + cream captions the ScoreCard uses on "Your decision".
+                      Rendered only when there is a control or hint to show (an existing-prospects-only box on a
+                      closed grant collapses straight to the table). */}
+                  {(canProspect || canAdd || prospectHint) && (
+                    <div className="space-y-3.5 border-l-2 border-brand-orange pl-3.5">
+                      {canProspect ? (
+                        <div>
+                          <p className="text-[11.5px] leading-[1.5] text-white/[0.72]">Prospect to a non-client</p>
+                          {/* ORANGE hero. ProspectButton exposes no variant prop, so its single <Button> is
+                              restyled page-locally (important-flagged to beat the default navy). The status
+                              line lifts to cream so it reads on the chrome — scoped to .text-muted-foreground
+                              so the sibling error <p> (text-destructive) KEEPS its red, or a failed discovery
+                              run would look identical to a successful one on the dark shell. */}
+                          <div className="mt-1.5 [&_button]:w-full [&_button]:!bg-brand-orangeFill [&_button]:!text-white [&_button:hover]:!bg-brand-orangeFillHover [&_.text-muted-foreground]:!text-white/70">
+                            <ProspectButton grantId={grant.id} />
+                          </div>
+                        </div>
+                      ) : (
+                        prospectHint && (
+                          <p className="text-[11.5px] leading-[1.5] text-white/[0.72]">{prospectHint}</p>
+                        )
+                      )}
+                      {canAdd && (
+                        <div>
+                          <p className="text-[11.5px] leading-[1.5] text-white/[0.72]">Add to an existing client</p>
+                          {/* Navy SECONDARY (default Button) on its own light panel — visually distinct from the
+                              orange hero, and the shared control's light-native internals render unchanged.
+                              text-foreground RESETS the section's inherited text-white (a background doesn't
+                              reset color): without it the bg-card <select> value and the ghost Cancel buttons
+                              render white-on-white. */}
+                          <div className="mt-1.5 rounded-sharp bg-white p-2.5 text-foreground">
+                            <AddToClientControl grantId={grant.id} clients={activeClients} />
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  ) : (
-                    prospectHint && (
-                      <p className="text-[11.5px] leading-[1.5] text-ink-subtle">{prospectHint}</p>
-                    )
                   )}
-                  {canAdd && (
-                    <div>
-                      <p className="mb-1.5 text-[11.5px] text-ink-subtle">Add to an existing client</p>
-                      <AddToClientControl grantId={grant.id} clients={activeClients} />
-                    </div>
-                  )}
-                  {/* Prospecting header (count + Close / Closed) — rendered whenever the well shows, NOT nested
-                      inside the list: CloseProspectingButton is the only UI entry to close-prospecting, and a
-                      closed grant needs its badge even with zero cards. Only the LIST below is gated on
-                      prospects existing (Shannon: no empty-state table). Same data as the old Prospects tile. */}
-                  <div className={canProspect || canAdd ? "border-t border-hairline-strong pt-3" : ""}>
+                  {/* Prospects — LIGHT card (legibility judgment call). The header always renders when the box
+                      shows (CloseProspectingButton is the only UI entry to close-prospecting, and a closed grant
+                      needs its badge even with zero cards); only the LIST is gated on prospects existing
+                      (Shannon: no empty-state table). Same data + markup as before, now on white.
+                      text-foreground resets the section's inherited text-white so the outline Close button
+                      and its ghost Cancel (no color of their own) don't render white-on-white. */}
+                  <div className="rounded-sharp bg-white p-3 text-foreground">
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-[11.5px] text-ink-subtle">Prospects ({prospectCards.length})</p>
                       {grant.prospecting_closed_at ? (
