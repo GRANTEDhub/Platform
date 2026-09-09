@@ -42,8 +42,18 @@ export function abbrevAmount(raw: string | null | undefined): string | null {
 }
 
 export function formatAwardRange(min: string | null | undefined, max: string | null | undefined): string {
-  const lo = abbrevAmount(min);
-  const hi = abbrevAmount(max);
+  // Drop a bound that parses to <= 0. A stored "0" / "$0" / "0.00" is Simpler.gov's "unspecified" sentinel
+  // (the API returns 0 for a missing floor/ceiling), a bad extraction — never a real $0 award — and
+  // rendering "$0" is worse than "—". The <= 0 test fires ONLY on a real parsed zero/negative; non-numeric
+  // text ("Varies", "See NOFO") parses to null and is KEPT, so this never clobbers a stated-but-unnumeric
+  // range. A genuinely-empty range still becomes "—", which lets awardRangeOrEstimate's pool÷awards
+  // fallback fire (a stored 0 previously slipped past that fallback, which only triggers on "—").
+  const drop = (raw: string | null | undefined) => {
+    const n = parseAmount(raw);
+    return n !== null && n <= 0;
+  };
+  const lo = drop(min) ? null : abbrevAmount(min);
+  const hi = drop(max) ? null : abbrevAmount(max);
   if (!lo && !hi) return "—";
   if (lo && hi) return `${lo} – ${hi}`;
   return (lo || hi)!;

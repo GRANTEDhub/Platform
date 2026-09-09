@@ -70,6 +70,13 @@ export function buildQueue(
 function ceilingOf(item: ReportItem): number | null {
   const range = item.awardRange;
   if (!range || range === "—") return null;
+  // A pool÷awards ESTIMATE ("~$598K est.") is a derived per-award AVERAGE, not a published ceiling. It must
+  // not be summed into the "Combined ceiling" total, whose client-facing title asserts real published
+  // maxima ("the most each program would award any applicant … NOT a forecast"). Excluded here so an
+  // estimate-only grant counts as UNPRICED — exactly as it did before toReportItem's range gained the
+  // estimate fallback. Only the pool÷awards branch bakes "est." into the string; a real range (even one
+  // flagged award_range_is_estimate) never does, so its published max still counts.
+  if (range.includes("est.")) return null;
   const parts = range.split("–").map((p) => p.trim());
   return parseAmount(parts[parts.length - 1]) ?? parseAmount(parts[0]);
 }
