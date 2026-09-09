@@ -86,6 +86,7 @@ export function ProgramAwardMap({
   initialSummary,
   hasCfda,
   compact = false,
+  awardTable = false,
 }: {
   grantId: string;
   initialSummary: ProgramAwardSummary | null;
@@ -93,11 +94,17 @@ export function ProgramAwardMap({
   // Compact: render for the report console's narrow right column — tighter shell, no award table /
   // selection chip (the map + hover + legend are the interactive value there), map still fully interactive.
   compact?: boolean;
+  // awardTable (Prospecting-only, /intel/[id]): render an interactive per-state award-detail table under the
+  // map, and enable click-to-filter EVEN in compact mode. Default false, so every other caller — the client
+  // report / portal (compact) and /review/[id] (full) — is byte-identical. Opens on Arkansas (GRANTED's home
+  // state) and swaps to whatever state is clicked; distinct from the FULL variant's own table.
+  awardTable?: boolean;
 }) {
   const [summary, setSummary] = useState<ProgramAwardSummary | null>(initialSummary);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null);
+  // The Prospecting award table opens on Arkansas; every other caller opens unfiltered (selected = null).
+  const [selected, setSelected] = useState<string | null>(awardTable ? "AR" : null);
   const [hover, setHover] = useState<{ code: string; left: number; top: number } | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
@@ -111,7 +118,7 @@ export function ProgramAwardMap({
   if (grantId !== prevGrantId) {
     setPrevGrantId(grantId);
     setSummary(initialSummary);
-    setSelected(null);
+    setSelected(awardTable ? "AR" : null);
     setHover(null);
     setFailed(false);
     setLoading(false);
@@ -190,6 +197,11 @@ export function ProgramAwardMap({
 
   const selName = selected ? STATE_NAMES[selected] ?? selected : null;
   const rows = (summary.topAwards ?? []).filter((a) => !selected || a.state === selected);
+  // Prospecting table only: surface the Agency column solely when it actually varies across the program's
+  // top awards. Every row is the SAME funded program, so a constant agency would just repeat down the column
+  // (the same reason a program/CFDA column is omitted). A single distinct agency → drop the column.
+  const agencyVaries =
+    awardTable && new Set((summary.topAwards ?? []).map((a) => a.agency).filter(Boolean)).size > 1;
 
   const label = `${summary.cfdas.join(", ")}${summary.programTitles.length ? ` — ${summary.programTitles.join("; ")}` : ""}`;
   const startYear = (summary.timePeriod?.start ?? "").slice(0, 4);
@@ -237,7 +249,7 @@ export function ProgramAwardMap({
                   setHover({ code, left: t.clientX - box.left, top: t.clientY - box.top });
                 }}
                 onClick={
-                  compact
+                  compact && !awardTable
                     ? undefined
                     : () => {
                         if (!rec) return;
@@ -342,6 +354,68 @@ export function ProgramAwardMap({
         </table>
       </div>
         </>
+      )}
+
+      {/* Prospecting-only (/intel/[id]) award-detail table, directly under the map. Reuses the map's
+          `selected` state — it opens on Arkansas and swaps to whatever state is clicked. topAwards is the
+          program-wide top-N by amount, so this is a "notable recipients" view WITHIN that N, never an
+          exhaustive per-state list (the caption says so). No program/CFDA column — every row is the same
+          program the map is showing. */}
+      {awardTable && (
+        <div className="mt-4">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            {selName ? (
+              <button
+                type="button"
+                onClick={() => setSelected(null)}
+                className="inline-flex items-center gap-1.5 rounded-full bg-brand-orange/[0.12] px-3 py-0.5 text-xs font-semibold text-brand-orange"
+              >
+                Showing: {selName} <span aria-hidden className="opacity-70">✕</span>
+              </button>
+            ) : (
+              <span className="text-xs font-semibold text-brand-navy">Showing all states</span>
+            )}
+          </div>
+          {/* Honest scope: this is the top-N by size, not a complete per-state list. */}
+          <p className="mt-1.5 text-[11px] leading-[1.5] text-muted-foreground">
+            Notable recipients — the program-wide top {summary.topAwards.length} awards by size, so a state
+            shows only its awards within that top {summary.topAwards.length}, not a complete list.
+          </p>
+          <div className="mt-2 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-brand-navy/[0.08] text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+                  <th className="py-2 pr-3 font-medium">Recipient</th>
+                  <th className="py-2 pr-3 font-medium">Location</th>
+                  <th className="py-2 pr-3 font-medium">Amount</th>
+                  <th className={agencyVaries ? "py-2 pr-3 font-medium" : "py-2 font-medium"}>Year</th>
+                  {agencyVaries && <th className="py-2 font-medium">Agency</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 ? (
+                  <tr>
+                    <td colSpan={agencyVaries ? 5 : 4} className="py-3 text-sm text-muted-foreground">
+                      No top-{summary.topAwards.length} awards in {selName ?? "any state"}.
+                    </td>
+                  </tr>
+                ) : (
+                  rows.map((a, i) => (
+                    <tr key={`${a.awardId}-${i}`} className="border-b border-brand-navy/[0.06] last:border-0">
+                      <td className="py-2 pr-3 text-foreground">{a.recipient || "—"}</td>
+                      <td className="py-2 pr-3 text-muted-foreground">{a.state ?? "—"}</td>
+                      <td className="py-2 pr-3 font-semibold tabular-nums text-brand-navy">{fmtUsd(a.amount)}</td>
+                      <td className="py-2 pr-3 tabular-nums text-muted-foreground">
+                        {(a.startDate || "").slice(0, 4) || "—"}
+                      </td>
+                      {agencyVaries && <td className="py-2 text-muted-foreground">{a.agency || "—"}</td>}
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
     </SectionShell>
   );
