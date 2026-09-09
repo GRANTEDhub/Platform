@@ -176,14 +176,25 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
   // line — not the old empty-state box). Rendered in the action box's Prospect slot when prospecting is off
   // but the well is still showing (an Add control / prospect history). Null when prospecting is available, or
   // when the grant is closed (the prospects table's "Closed" badge already says so).
+  //
+  // The pure "no profile yet" block is the ONLY reason a rebuild fixes; international / disqualified /
+  // suppressed OUTRANK it (blockedLabel's own precedence) and are permanent — so those must show their real
+  // reason, never a "rebuild the profile" line that would send staff to fix something a rebuild can't change.
+  const noProfileOnly =
+    !!grant.is_domestic &&
+    !(grant.hard_disqualifiers?.length ?? 0) &&
+    !grant.skip_reason &&
+    !grant.ideal_applicant_profile;
   const prospectHint =
     canProspect || grant.prospecting_closed_at
       ? null
-      : !grant.ideal_applicant_profile
+      : noProfileOnly
         ? "Profile incomplete — rebuild from the Ledger to enable prospecting."
-        : gate === "not_ready"
-          ? "Not scored yet — prospecting unlocks once it's evaluated against the roster."
-          : blockedLabel;
+        : blockedLabel
+          ? blockedLabel
+          : gate === "not_ready"
+            ? "Not scored yet — prospecting unlocks once it's evaluated against the roster."
+            : null;
 
   // ── INTELLENGINE section: left column — the ideal-application narrative (slimmed to applicant + note). ──
   const iap = grant.ideal_applicant_profile as IAP | null | undefined;
