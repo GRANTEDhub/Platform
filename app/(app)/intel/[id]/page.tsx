@@ -384,8 +384,11 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                         <div>
                           <p className="text-[11.5px] leading-[1.5] text-white/[0.72]">Add to an existing client</p>
                           {/* Navy SECONDARY (default Button) on its own light panel — visually distinct from the
-                              orange hero, and the shared control's light-native internals render unchanged. */}
-                          <div className="mt-1.5 rounded-sharp bg-white p-2.5">
+                              orange hero, and the shared control's light-native internals render unchanged.
+                              text-foreground RESETS the section's inherited text-white (a background doesn't
+                              reset color): without it the bg-card <select> value and the ghost Cancel buttons
+                              render white-on-white. */}
+                          <div className="mt-1.5 rounded-sharp bg-white p-2.5 text-foreground">
                             <AddToClientControl grantId={grant.id} clients={activeClients} />
                           </div>
                         </div>
@@ -395,8 +398,10 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                   {/* Prospects — LIGHT card (legibility judgment call). The header always renders when the box
                       shows (CloseProspectingButton is the only UI entry to close-prospecting, and a closed grant
                       needs its badge even with zero cards); only the LIST is gated on prospects existing
-                      (Shannon: no empty-state table). Same data + markup as before, now on white. */}
-                  <div className="rounded-sharp bg-white p-3">
+                      (Shannon: no empty-state table). Same data + markup as before, now on white.
+                      text-foreground resets the section's inherited text-white so the outline Close button
+                      and its ghost Cancel (no color of their own) don't render white-on-white. */}
+                  <div className="rounded-sharp bg-white p-3 text-foreground">
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-[11.5px] text-ink-subtle">Prospects ({prospectCards.length})</p>
                       {grant.prospecting_closed_at ? (
