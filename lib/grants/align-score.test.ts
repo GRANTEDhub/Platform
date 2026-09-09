@@ -3,6 +3,7 @@ import {
   matchDirectAlignEnabled,
   matchFunderCapEnabled,
   alignModelRequest,
+  alignSystemBlocks,
   seatRefForRole,
   buildAlignUserContent,
   finalizeAlignMatch,
@@ -137,6 +138,19 @@ describe("direct-alignment scorer -- plumbing", () => {
     expect(matchDirectAlignEnabled()).toBe(false);
     process.env[FLAG] = "true";
     expect(matchDirectAlignEnabled()).toBe(true);
+  });
+
+  it("alignSystemBlocks caches the stable prefix: system is ONE ephemeral cache_control text block", () => {
+    // Locks the prompt-caching breakpoint on the matching call (realRunModel sends system via this helper).
+    // The stable system+tool prefix is grant- and client-independent, so caching it turns a roster drain into
+    // ~one cold write + N warm reads. A silent drop of the breakpoint would quietly kill the savings, so the
+    // shape is asserted here. ONE block only: tools precede system in the cache hierarchy, so marking system
+    // caches tools+system -- no second marker.
+    const blocks = alignSystemBlocks("SYSTEM PROMPT TEXT");
+    expect(blocks).toEqual([
+      { type: "text", text: "SYSTEM PROMPT TEXT", cache_control: { type: "ephemeral" } },
+    ]);
+    expect(blocks).toHaveLength(1);
   });
 
   it("emits a FAMILY-only seat_ref: calibration classifies it, but consortium pairing excludes align cards", () => {
