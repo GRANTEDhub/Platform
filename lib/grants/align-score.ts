@@ -513,6 +513,21 @@ export function alignModelRequest(capOn: boolean): {
     : { system: ALIGN_SYSTEM_PROMPT, tool: SUBMIT_ALIGN_TOOL };
 }
 
+// PURE: wrap the system prompt in a single cache_control:ephemeral text block so Anthropic caches the STABLE,
+// grant- AND client-independent request prefix (the submit tool + this system prompt) across every grant x client
+// call in a matching run. runMatching scores one grant against the whole active roster with a rolling pool of
+// workers calling back-to-back (pipeline.ts), and the prefix is byte-identical for every one of them -- and
+// across grants -- so Sonnet's 5-minute prefix cache turns a drain into ~one cold write + N warm reads (cache
+// read is 0.1x input). ONE breakpoint on the system block is enough: tools sit ahead of system in the cache
+// hierarchy, so marking system caches tools+system. This is a COST/LATENCY optimization only -- the model sees
+// byte-identical input, so scores are unchanged (temperature 0 included), and no eval re-run is needed. Rides the
+// align flag: byte-identical when MATCH_DIRECT_ALIGN_ENABLED is off, because this file is never entered then.
+// Exported so the plumbing test can LOCK the breakpoint (a silent drop would quietly kill the savings).
+type CachedSystemBlock = { type: "text"; text: string; cache_control: { type: "ephemeral" } };
+export function alignSystemBlocks(system: string): CachedSystemBlock[] {
+  return [{ type: "text", text: system, cache_control: { type: "ephemeral" } }];
+}
+
 async function realRunModel(userContent: string): Promise<Record<string, unknown> | null> {
   const anthropic = getAnthropicClient();
   // Byte-identical OFF at the model contract (Codex #505 P2): with the cap flag off the model gets exactly the
@@ -522,7 +537,7 @@ async function realRunModel(userContent: string): Promise<Record<string, unknown
     model: MODEL,
     max_tokens: 8000,
     temperature: 0, // stable scoring: a borderline 2-vs-3 must not flip run to run
-    system,
+    system: alignSystemBlocks(system), // cache the stable system+tool prefix (see alignSystemBlocks)
     tools: [tool],
     tool_choice: { type: "tool", name: "submit_match" },
     messages: [{ role: "user", content: userContent }],
