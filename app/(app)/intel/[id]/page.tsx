@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Puzzle } from "lucide-react";
+import { ArrowLeft, ArrowRight, ExternalLink, Puzzle } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { Badge } from "@/components/ui/badge";
@@ -121,9 +121,11 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
   }));
 
   // ── TOP TILE props — the shared OverviewCard in its Prospecting variant. ──
-  // summary = the full description (the report shows it in the tile's ProgrammeSummary, truncated); the old
-  // staff layout's separate "What it funds" card is gone in the report-mirror. whoCanApply replaces the
-  // eligibility callout with who-can-apply chips (no ineligible). actions puts the two controls top-right.
+  // summary = description_brief || description — EXACTLY what the report tile shows (roadmap/[cardId]:391), so
+  // the pre-summarised brief (not the raw full NOFO text) rides the truncating ProgrammeSummary; the
+  // authoritative full text stays one click away via the "View posting" source link in the context bar.
+  // whoCanApply replaces the eligibility callout with who-can-apply chips (no ineligible). actions puts the
+  // two controls top-right.
   const summaryProps = buildGrantSummary(grant);
   const whoCanApply = {
     types: (grant.eligible_entity_types ?? []).map((t) => t.replace(/_/g, " ")),
@@ -132,8 +134,16 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
   };
   const topActions = (
     <>
-      {gate !== "not_ready" && !blockedReason && <ProspectButton grantId={grant.id} />}
-      <AddToClientControl grantId={grant.id} clients={activeClients} />
+      {/* Prospecting is hidden once the grant is closed for it — the button used to live inside the
+          Prospects card's `!prospecting_closed_at` branch; moving it to the tile has to carry that guard,
+          else a "closed / read-only" grant is still discoverable. */}
+      {gate !== "not_ready" && !blockedReason && !grant.prospecting_closed_at && (
+        <ProspectButton grantId={grant.id} />
+      )}
+      {/* Ledger-consistent: only domestic grants can be added to a client (the server hard-rejects an
+          international add with a non-overridable 400), so don't surface a dead-end picker for them —
+          matches the Ledger's own `canCalibrate = admin && is_domestic` gate. */}
+      {grant.is_domestic && <AddToClientControl grantId={grant.id} clients={activeClients} />}
     </>
   );
 
@@ -168,6 +178,29 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
           </Badge>
           <GrantStatusBadge status={grant.status} grantStatus={grant.grant_status} />
         </div>
+        {/* Restore the two links the old page's AdditionalInformation card carried: one-click verification
+            against the authoritative posting (org rule), and the Ledger detail the "rebuild the profile"
+            copy below refers to (a dead-end instruction without it). */}
+        <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1">
+          {grant.source_url && (
+            <a
+              href={grant.source_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-[5px] text-[12.5px] font-medium text-ink-muted transition-colors hover:text-brand-navy"
+            >
+              View posting
+              <ExternalLink className="h-3 w-3" aria-hidden="true" />
+            </a>
+          )}
+          <Link
+            href={`/grants/${grant.id}`}
+            className="inline-flex items-center gap-[5px] text-[12.5px] font-medium text-ink-muted transition-colors hover:text-brand-navy"
+          >
+            Open Shred
+            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+          </Link>
+        </div>
       </div>
 
       <div className="px-[30px] pb-6 pt-[18px]">
@@ -184,7 +217,7 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
             {/* TOP TILE — shared OverviewCard, Prospecting variant. */}
             <OverviewCard
               {...summaryProps}
-              summary={grant.description}
+              summary={grant.description_brief || grant.description}
               whoCanApply={whoCanApply}
               actions={topActions}
             />
