@@ -475,7 +475,10 @@ export interface Grant {
   ingested_at: string;
 }
 
-export type CardDecision = "pending" | "approved" | "passed";
+// 'forwarded' (migration 0093): the client forwarded the grant to a colleague INTERNALLY and is awaiting
+// their response — a real state distinct from Pursue/Pass, NOT a final decision. It is deliberately NOT in
+// gate.ts's DECIDED_DECISIONS, so a forwarded card stays UNDECIDED (grant gate locked, still "in play").
+export type CardDecision = "pending" | "approved" | "passed" | "forwarded";
 
 // How a client chose to pursue a grant they're interested in (migration 0061).
 // null = they haven't decided how yet (the Grant Report's default "pending
@@ -640,6 +643,10 @@ export interface ReviewCard {
   hold_category: string | null;
   // Reason captured when a match is rejected (Pass).
   decision_reason: string | null;
+  // Free-text "sent to" note for decision='forwarded' (migration 0093): who the client forwarded the grant
+  // to internally. Client-writable alongside the decision fields (the 0093 guard-trigger widening). Null on
+  // any non-forwarded decision (cleared when the decision changes).
+  forwarded_to: string | null;
   decided_by: string | null;
   decided_at: string | null;
   // Which side recorded the decision — 'staff' or 'client' (migration 0056). The

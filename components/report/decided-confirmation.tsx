@@ -18,6 +18,10 @@ const MESSAGES: Record<string, { title: string; sub: string }> = {
     sub: "It stays in your Grant Report, waiting whenever you're ready to decide.",
   },
   approved: { title: "Decision recorded", sub: "We've logged your decision." },
+  forwarded: {
+    title: "Forwarded — recorded",
+    sub: "Noted — you've forwarded this internally. It stays in your Grant Report while you wait to hear back.",
+  },
 };
 
 export function DecidedConfirmation({ outcome }: { outcome: string }) {

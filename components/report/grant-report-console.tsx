@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { AlertTriangle, ArrowLeft, ArrowRight, ChevronRight, Loader2, Search } from "lucide-react";
 import { BRAND, INK, RATING, SURFACE } from "@/lib/brand";
 import { rollUpQueue, sortQueue, type QueueRow, type QueueSort } from "@/lib/report/report-queue";
+import { forwardedStatusLabel } from "@/lib/report/referral";
 import type { StaffBucket } from "@/lib/report/shape";
 import { cn } from "@/lib/utils";
 
@@ -557,6 +558,14 @@ function QueueCard({
           <span className="truncate">{item.title}</span>
         </p>
         <p className="mt-[5px] truncate text-[11.5px] text-ink-muted">{item.funder ?? "Funder not stated"}</p>
+        {item.decision === "forwarded" && (
+          // 4a (client referral tracking, 0093): a forwarded card stays in the awaiting bucket but is
+          // labeled so it reads as distinct at a glance. Text carries the status (colour-blind rule);
+          // orangeDeep is redundant emphasis on the words, never the only signal.
+          <p className="mt-[5px] truncate text-[11px] font-medium" style={{ color: BRAND.orangeDeep }}>
+            {forwardedStatusLabel(item.forwardedTo, "list")}
+          </p>
+        )}
       </div>
 
       <div className="w-[118px] shrink-0 text-right">

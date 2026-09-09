@@ -13,6 +13,7 @@ import { MergedRerunButton } from "@/components/report/merged-rerun-button";
 import { mergedRerunEnabled } from "@/lib/grants/intel-queue";
 import type { IntelReview } from "@/lib/grants/intel-review";
 import { GrantReviewConsole, type ReviewKeyDetail, type ReviewMeta } from "@/components/report/grant-review-console";
+import { forwardedStatusLabel } from "@/lib/report/referral";
 import { AlertSend } from "@/app/(app)/review/[id]/alert-send";
 import { getConceptProposal } from "@/lib/concept/store";
 import { getSentAlertForCard } from "@/lib/alerts/sent-status";
@@ -70,6 +71,7 @@ type CardRow = {
   qa_engine_fit_score: number | null;
   reasoning_context: { consortium_rationale?: string; fit_score_derivation?: string } | null;
   decision: string;
+  forwarded_to: string | null;
   sme_released_at: string | null;
   // The card's OWN send copy -- the live "has this been sent" state. Recall clears it and
   // leaves the grant_alerts row alone, so this is what may gate a re-send, never the
@@ -113,7 +115,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   const { data } = await supabase
     .from("review_cards")
     .select(
-      "id, fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, qa_fit_score, qa_factor_scores, qa_sources, qa_narrative, qa_status, qa_engine_fit_score, reasoning_context, decision, sme_released_at, sent_at, sent_to, grant_id, grants(id, source_url, title, funder, fon, assistance_listings, program_award_summary, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, total_funding, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status, status)",
+      "id, fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, qa_fit_score, qa_factor_scores, qa_sources, qa_narrative, qa_status, qa_engine_fit_score, reasoning_context, decision, forwarded_to, sme_released_at, sent_at, sent_to, grant_id, grants(id, source_url, title, funder, fon, assistance_listings, program_award_summary, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, total_funding, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status, status)",
     )
     .eq("id", params.cardId)
     .eq("client_id", params.id)
@@ -453,7 +455,15 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
           </div>
         }
         decision={
-          client?.account_managed ? (
+          <>
+          {/* Client referral tracking (0093): a staffer opening a forwarded card sees the status. No staff
+              button to SET it — the forward is the client's self-service annotation on their own copy. */}
+          {card.decision === "forwarded" && (
+            <p className="mb-3 border-l-2 border-brand-orange pl-3 text-[12.5px] leading-[1.55] text-white/[0.78]">
+              {forwardedStatusLabel(card.forwarded_to, "staff")}
+            </p>
+          )}
+          {client?.account_managed ? (
             <ReleaseToClientBar
               cardId={params.cardId}
               released={!!card.sme_released_at}
@@ -491,7 +501,8 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
                 This client makes the pursuit call on their own copy of this grant. Nothing to release from here.
               </p>
             </div>
-          )
+          )}
+          </>
         }
         // The IntellEngine box: home for the IntellEngine actions — Generate concept proposal
         // (showConcept) + the grant-match re-run (showIntel). Mounted whenever EITHER applies, so

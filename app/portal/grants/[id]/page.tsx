@@ -18,6 +18,7 @@ import { buildRecommendation, buildVerdict, type HardKill } from "@/lib/report/r
 import { fitNarrativeEnabled } from "@/lib/grants/fit-narrative";
 import { MarkRead } from "@/components/report/mark-read";
 import { awardRangeOrEstimate, compactCostShare, compactTerm } from "@/lib/grants/format";
+import { referralTrackingEnabled } from "@/lib/report/referral";
 import type { ProgramAwardSummary } from "@/lib/grants/program-awards";
 import { BRAND } from "@/lib/brand";
 import { clientAllowableUses } from "@/lib/grants/allowable-uses";
@@ -72,6 +73,7 @@ type CardRow = {
   qa_engine_fit_score: number | null;
   reasoning_context: { consortium_rationale?: string; fit_score_derivation?: string } | null;
   decision: CardDecision;
+  forwarded_to: string | null;
   pursuit_path: PursuitPath | null;
   card_type: string;
   grants: GrantEmbed | GrantEmbed[] | null;
@@ -123,7 +125,7 @@ export default async function PortalGrantDetail({
   let query: any = supabase
     .from("review_cards")
     .select(
-      "fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, qa_fit_score, qa_factor_scores, qa_sources, qa_narrative, qa_status, qa_engine_fit_score, reasoning_context, decision, pursuit_path, card_type, grants(id, source_url, title, funder, fon, assistance_listings, program_award_summary, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, total_funding, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status)",
+      "fit_score, proposed_role, why_this_org, concept_synopsis, factor_scores, qa_fit_score, qa_factor_scores, qa_sources, qa_narrative, qa_status, qa_engine_fit_score, reasoning_context, decision, forwarded_to, pursuit_path, card_type, grants(id, source_url, title, funder, fon, assistance_listings, program_award_summary, focus_areas, submission_deadline, period_of_performance, cost_share, num_awards, total_funding, description, description_brief, allowable_uses, award_range_min, award_range_max, award_range_is_estimate, eligible_entity_types, geographic_eligibility, ineligible_entities, hard_disqualifiers, skip_reason, grant_status)",
     )
     .eq("id", params.id)
     .eq("client_id", org.clientId)
@@ -361,6 +363,8 @@ export default async function PortalGrantDetail({
                 pursuitPath={card.pursuit_path}
                 showPursuitPath={pursuitClientAccessEnabled()}
                 intellEngineComingSoon={intellEngineComingSoon()}
+                referralEnabled={referralTrackingEnabled()}
+                forwardedTo={card.forwarded_to}
               />
             </div>
           </div>

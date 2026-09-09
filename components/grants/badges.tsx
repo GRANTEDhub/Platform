@@ -16,6 +16,9 @@ export function DecisionBadge({ decision }: { decision: CardDecision }) {
     pending: { variant: "secondary", label: "Pending" },
     approved: { variant: "success", label: "Approved" },
     passed: { variant: "destructive", label: "Passed" },
+    // Client referral tracking (0093): forwarded internally, awaiting a colleague's response. The label
+    // carries the state (colour-blind rule); the amber "warning" tone is redundant emphasis.
+    forwarded: { variant: "warning", label: "Forwarded" },
   };
   const d = map[decision] ?? map.pending;
   return <Badge variant={d.variant}>{d.label}</Badge>;

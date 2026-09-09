@@ -68,6 +68,18 @@ describe("toReportItem — award count (numAwards)", () => {
   });
 });
 
+describe("toReportItem — forwarded referral note (0093)", () => {
+  it("carries decision='forwarded' + forwarded_to → forwardedTo for the 4a row label", () => {
+    const item = toReportItem(row({ decision: "forwarded", forwarded_to: "Jane in Finance" }), "staff");
+    expect(item.decision).toBe("forwarded");
+    expect(item.forwardedTo).toBe("Jane in Finance");
+  });
+
+  it("absent forwarded_to → null (byte-identical for a list that doesn't select it)", () => {
+    expect(toReportItem(row(), "staff").forwardedTo).toBeNull();
+  });
+});
+
 describe("toReportItem — award range estimate + double-label guard", () => {
   const grants = (over: Record<string, unknown> = {}): ReportCardRow["grants"] =>
     ({

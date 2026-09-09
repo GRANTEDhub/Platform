@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { pursuitApiDenied } from "@/lib/pursuit/access";
 import { computeGrantSummary } from "@/lib/review/summary";
 import { recordCardFeedback } from "@/lib/feedback/record";
+import { referralTrackingEnabled } from "@/lib/report/referral";
 import type { CardDecision, PursuitPath } from "@/types/database";
 
 // Re-exported so existing importers (DecisionPanel, DecisionConfirmation) keep
@@ -33,6 +34,8 @@ export async function PATCH(
   let body: {
     decision?: CardDecision;
     decision_reason?: string;
+    // The "sent to" note for decision='forwarded' (migration 0093). Free text; only read on a forward.
+    forwarded_to?: string;
     interested?: boolean;
     sme_interested?: boolean;
     sme_release?: boolean;
@@ -152,7 +155,12 @@ export async function PATCH(
     return NextResponse.json({ card: data, grant_summary: null });
   }
 
-  const valid: CardDecision[] = ["pending", "approved", "passed"];
+  // 'forwarded' (client referral tracking, 0093) is accepted ONLY when the flag is on — so flag-off is
+  // byte-identical to today (rejects it as invalid) and a hand-crafted PATCH can't land the state while
+  // the feature is dark.
+  const valid: CardDecision[] = referralTrackingEnabled()
+    ? ["pending", "approved", "passed", "forwarded"]
+    : ["pending", "approved", "passed"];
   if (!body.decision || !valid.includes(body.decision)) {
     return NextResponse.json({ error: "Invalid decision" }, { status: 400 });
   }
@@ -163,6 +171,9 @@ export async function PATCH(
     .update({
       decision: body.decision,
       decision_reason: body.decision === "passed" ? body.decision_reason || null : null,
+      // The "sent to" note rides ONLY a 'forwarded' decision; any other decision clears it (so switching
+      // forwarded → Pursue/Pass/Save doesn't leave a stale recipient). Trimmed; blank collapses to null.
+      forwarded_to: body.decision === "forwarded" ? body.forwarded_to?.trim() || null : null,
       decided_by: isTerminal ? user.id : null,
       decided_at: isTerminal ? new Date().toISOString() : null,
       decided_by_actor: isTerminal ? actor : null,

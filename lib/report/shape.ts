@@ -143,6 +143,8 @@ export interface ReportItem {
   deadlineDaysLeft: number | null;
   deadlineSoon: boolean; // within 30 days (and not past)
   decision: CardDecision;
+  // decision='forwarded' recipient note (0093) — drives the "Forwarded to X · awaiting" row label (4a).
+  forwardedTo: string | null;
   rowFactors: FactorView[];
   // Richer fields for the swipe card (populated only when the query selects them;
   // the list leaves them null). Kept optional so the list row shape is unaffected.
@@ -230,6 +232,9 @@ export type ReportCardRow = Pick<
   concept_synopsis?: string | null;
   sme_released_at?: string | null;
   pursuit_path?: PursuitPath | null;
+  // decision='forwarded' recipient note (migration 0093). Optional — a list that doesn't select it shapes
+  // to null (no forwarded label), byte-identical for surfaces that don't carry the referral feature.
+  forwarded_to?: string | null;
   // The QA override layer (migration 0088). All optional: a list that does not select them resolves to
   // "no override" (the engine score/factors, no badge) via resolveFit — byte-identical to pre-0088.
   qa_fit_score?: number | null;
@@ -291,6 +296,7 @@ export function toReportItem(card: ReportCardRow, side: ReadSide): ReportItem {
     deadlineDaysLeft: days,
     deadlineSoon: days !== null && days >= 0 && days <= 30,
     decision: card.decision,
+    forwardedTo: card.forwarded_to ?? null,
     rowFactors: factorViews(resolved.factorScores, ROW_FACTORS),
     totalAvailable: g?.total_funding ?? null,
     matchRequired: compactCostShare(g?.cost_share),
