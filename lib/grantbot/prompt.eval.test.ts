@@ -181,8 +181,13 @@ describe.skipIf(!RUN)("GrantBot reasoning eval (live model)", () => {
       const flagsDerived = answers.map((a) =>
         /wrong|incorrect|does ?n(?:'|o)?t match|mismatch|conflict|discrepanc|outdated|distilled|derived|profile (?:is|has|says|name|should)|should be (?:corrected|updated)|SAM (?:says|shows|has|matched)/i.test(a),
       );
+      // Per-answer conjunction, matching cases 1-2: the SAME reply must use the verified name AND flag the
+      // derived one — separate majorities could each pass on DIFFERENT runs while no single answer does both
+      // (the same false-green pattern; Claude Code Review). Per-dimension checks stay as diagnostics.
+      const compliant = usesVerified.map((u, i) => u && flagsDerived[i]);
       expect.soft(majority(usesVerified), "must use the SAM-verified legal name, never the derived/distilled one").toBe(true);
       expect.soft(majority(flagsDerived), "must flag that the derived profile name conflicts and needs correcting — never assert an unverified legal name as fact").toBe(true);
+      expect.soft(majority(compliant), "the SAME answer must use the verified name AND flag the derived one, not spread across different runs").toBe(true);
     },
     RUNS * 120_000,
   );
