@@ -16,6 +16,7 @@ import { MatchOutcomes, type OutcomeCard } from "@/components/grants/match-outco
 import { getGrantGateStatus, undecidedClientCount } from "@/lib/grants/gate";
 import { getSentAlertsByCards } from "@/lib/alerts/sent-status";
 import { ProspectButton } from "../prospect-button";
+import { ProspectAlertButton } from "../prospect-alert-button";
 import { CloseProspectingButton } from "../close-prospecting-button";
 import { AddToClientControl } from "@/app/(app)/grants/[id]/add-to-client";
 import type { Grant, ReviewCard, Client, Prospect, IdealApplicantProfile as IAP } from "@/types/database";
@@ -427,7 +428,19 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                               {sentByCard.has(pc.id) ? (
                                 <Badge variant="success">✓ Alerted</Badge>
                               ) : (
-                                <DecisionBadge decision={pc.decision} />
+                                <>
+                                  <DecisionBadge decision={pc.decision} />
+                                  {/* Reuse the existing AlertSend flow (autoOpen modal) right here — draft +
+                                      cold one-pager send without leaving /intel. Only on not-yet-alerted rows;
+                                      a sent row shows the badge above and this unmounts on the post-send
+                                      router.refresh(). */}
+                                  <ProspectAlertButton
+                                    cardId={pc.id}
+                                    sentAt={pc.sent_at}
+                                    sentTo={sentByCard.get(pc.id)?.sentTo}
+                                    contactName={pc.prospects?.name ?? null}
+                                  />
+                                </>
                               )}
                             </div>
                           </li>
