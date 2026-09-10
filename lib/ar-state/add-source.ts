@@ -140,7 +140,13 @@ export async function addSource(db: SupabaseClient, entry: SeedGrant, deps: Seed
   if (existing) {
     if (existing.status !== "error") return { action: "skip_exists", grantId: existing.id };
     // Retry an errored seed on the SAME grant (its monitor row already exists with a null baseline).
-    await db.from("grants").update({ status: "processing", error_detail: null }).eq("id", existing.id);
+    // Refresh processing_started_at: this is an UPDATE (0039's default now() applies only to the fresh
+    // INSERT), so without it the watchdog's stall clock would still read the ORIGINAL failed attempt and
+    // could flip this healthy in-flight retry back to error (Vercel Agent).
+    await db
+      .from("grants")
+      .update({ status: "processing", error_detail: null, processing_started_at: new Date().toISOString() })
+      .eq("id", existing.id);
     return runShredForGrant(db, existing.id, entry, deps);
   }
 

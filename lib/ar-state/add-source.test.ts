@@ -225,6 +225,8 @@ describe("addSource (apply)", () => {
     expect(res.action).toBe("seeded"); // retried, NOT skip_exists
     expect(db.grants).toHaveLength(1); // reused the same grant, no duplicate insert
     expect(db.grants[0].id).toBe("gE");
+    const reactivate = db.writes.find((w) => w.op === "update" && w.table === "grants" && w.row.status === "processing");
+    expect(reactivate?.row.processing_started_at).toBeTruthy(); // watchdog stall clock reset on retry
     expect(db.monitor).toHaveLength(1); // no duplicate monitor row
     expect(pipeline.mock.calls[0][0]).toBe("gE"); // re-shred ran on the existing grant
     expect(db.monitor[0].last_content_hash).toBeTruthy(); // baseline committed on the successful retry
