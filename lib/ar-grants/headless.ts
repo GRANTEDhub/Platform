@@ -61,13 +61,20 @@ export function shouldAbortResource(resourceType: string): boolean {
   return SKIP_RESOURCE_TYPES.has(resourceType);
 }
 
-// Is this request host a private/loopback IP LITERAL (page JS trying to reach an internal / cloud-
-// metadata endpoint)? A hostname (non-literal) is allowed without a per-subrequest DNS resolve — that
-// would be prohibitively slow per subresource, and the registry URL itself is pre-resolved + checked
-// before goto. Literal private IPs (127.0.0.1, 169.254.169.254, 10.x, ::1, …) are the reachable SSRF
-// vector from inside a rendered page, and isBlockedAddress already enumerates every non-public range.
+// URL.hostname keeps IPv6 literals BRACKETED ("[::1]"), but node's isIP()/isBlockedAddress() want the
+// bare form ("::1") — strip the brackets so an IPv6 literal is recognised as a literal (and so a public
+// IPv6 literal resolves correctly) rather than slipping through isIP()===0 (Claude Code Review).
+function bareHost(host: string): string {
+  return host.replace(/^\[|\]$/g, "");
+}
+
+// Is this a private/loopback IP LITERAL (page JS trying to reach an internal / cloud-metadata
+// endpoint)? The literal fast-path — a non-literal hostname returns false here and is DNS-resolved by
+// isRequestAllowed instead. Literal private IPs (127.0.0.1, 169.254.169.254, 10.x, [::1], …) are a
+// direct SSRF vector from inside a rendered page; isBlockedAddress enumerates every non-public range.
 export function isPrivateHostLiteral(host: string): boolean {
-  return isIP(host) !== 0 && isBlockedAddress(host);
+  const h = bareHost(host);
+  return isIP(h) !== 0 && isBlockedAddress(h);
 }
 
 function hostOf(u: string): string {
@@ -94,10 +101,11 @@ export async function isRequestAllowed(
   const host = hostOf(url);
   if (!host) return false; // unparseable target — nothing legitimate to load
   if (isPrivateHostLiteral(host)) return false; // fast path: literal private/loopback IP, no DNS needed
-  const cached = cache?.get(host);
+  const bare = bareHost(host); // strip IPv6 brackets so lookup() gets a resolvable form
+  const cached = cache?.get(bare);
   if (cached !== undefined) return cached;
-  const ok = await hostResolvesPublic(host, lookup);
-  cache?.set(host, ok);
+  const ok = await hostResolvesPublic(bare, lookup);
+  cache?.set(bare, ok);
   return ok;
 }
 
@@ -129,7 +137,7 @@ export async function renderHeadless(url: string, deps: RenderDeps = {}): Promis
     return { ok: false, reason: "bad_url" };
   }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return { ok: false, reason: "bad_scheme" };
-  if (!(await hostResolvesPublic(parsed.hostname, lookup))) return { ok: false, reason: "blocked_host" };
+  if (!(await hostResolvesPublic(bareHost(parsed.hostname), lookup))) return { ok: false, reason: "blocked_host" };
 
   let browser: RenderBrowser;
   try {

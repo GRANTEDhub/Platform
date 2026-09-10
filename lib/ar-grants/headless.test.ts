@@ -73,8 +73,11 @@ describe("headless — pure helpers", () => {
     for (const t of ["image", "media", "font", "stylesheet"]) expect(shouldAbortResource(t)).toBe(true);
     for (const t of ["document", "script", "xhr", "fetch", "other"]) expect(shouldAbortResource(t)).toBe(false);
   });
-  it("isPrivateHostLiteral catches private/loopback IP LITERALS, allows public IPs and hostnames", () => {
-    for (const h of ["127.0.0.1", "169.254.169.254", "10.0.0.1", "192.168.1.1", "::1"]) expect(isPrivateHostLiteral(h)).toBe(true);
+  it("isPrivateHostLiteral catches private/loopback IP LITERALS (incl. bracketed IPv6), allows public IPs and hostnames", () => {
+    // "[::1]" is how URL.hostname yields an IPv6 literal — brackets must be stripped or isIP() misses it.
+    for (const h of ["127.0.0.1", "169.254.169.254", "10.0.0.1", "192.168.1.1", "::1", "[::1]", "[fe80::1]"]) {
+      expect(isPrivateHostLiteral(h)).toBe(true);
+    }
     expect(isPrivateHostLiteral("93.184.216.34")).toBe(false); // public IP
     expect(isPrivateHostLiteral("www.arkansasedc.com")).toBe(false); // hostname, not resolved per-subrequest
     expect(isPrivateHostLiteral("")).toBe(false);
@@ -169,6 +172,7 @@ describe("headless — isRequestAllowed (subresource / redirect SSRF gate, Codex
       return [{ address: "93.184.216.34" }];
     };
     expect(await isRequestAllowed("xhr", "http://169.254.169.254/latest/meta-data/", spy)).toBe(false);
+    expect(await isRequestAllowed("fetch", "http://[::1]/x", spy)).toBe(false); // bracketed IPv6 loopback
     expect(looked).toBe(false); // literal IP → refused before any resolve
   });
   it("aborts a HOSTNAME that resolves to a private address (localhost / DNS-rebinding)", async () => {

@@ -433,6 +433,21 @@ describe("run — the funding-type gate and dry-run safety", () => {
     expect(seen["ADHE"].fetch_mode).toBe("html");
   });
 
+  it("the 0-result diagnostic note is fetch_mode-aware (headless render vs html JS-check)", async () => {
+    const db = new FakeDb();
+    // Every source fetches OK but yields nothing → every source hits the 0-result note branch.
+    const empty = async (): Promise<SourceFetchResult> => ({ ok: true, items: [], contentHash: "h" });
+    const promote: PromoteFn = async () => ({ grantId: "g", action: "inserted" });
+    const report = await runArGrantsScan(asDb(db), { apply: false, promote, fetchSourceImpl: empty });
+    const aedc = report.sources.find((s) => s.agency === "AEDC")!; // headless
+    const adhe = report.sources.find((s) => s.agency === "ADHE")!; // html
+    // Headless: render already ran — point at markup/extraction, NOT "check for JS-rendering".
+    expect(aedc.note).toMatch(/render succeeded|markup|extract/i);
+    expect(aedc.note).not.toMatch(/JavaScript-rendered/i);
+    // html: the JS-rendering theory is still the right hint.
+    expect(adhe.note).toMatch(/JavaScript-rendered/i);
+  });
+
   it("change detection: a moved deadline re-queues an already-promoted opportunity", async () => {
     const db = new FakeDb();
     seedAllSources(db);
