@@ -32,8 +32,16 @@ const GRANT_KEYWORDS = /\b(grant|grants|funding|award|awards|matching grant|cost
 // A REAL application signal — explicit intent to accept applications, not just the word "grant". This
 // is the precision gate (Shannon 2026-09-10): promote ONLY when a hit shows application language, so
 // a program description or a nav link is not mistaken for an open opportunity.
+//
+// The `applications ... (verb)` clause uses TENSE-EXPLICIT stems with a trailing \b (Codex/Claude
+// Code Review, 2026-09-10): a bare `clos`/`accept` matched the PREFIX of "closed"/"accepted", so
+// "applications are now closed" scored as a live signal — the exact CLOSED-program false positive
+// this pass exists to kill. `closes?`/`closing` (deadline approaching = still open) and `accepting`
+// keep the open-tense signals; "closed"/"accepted" no longer match. (A preceding NEGATION —
+// "not currently accepting applications" — still matches via the `accepting applications` clause;
+// that is a separate, pre-existing limitation, not fixed here.)
 const STRONG_APP_KEYWORDS =
-  /\bNOFO\b|\bNOFA\b|\bRFP\b|\bRFA\b|\bRFQ\b|notice of funding|request for (?:proposals|applications|qualifications)|funding opportunit|grant opportunit|call for (?:projects|applications|proposals)|how to apply|apply (?:by|now|online|today|here)\b|\bto apply\b|now accepting|accepting applications|application (?:period|deadline|window|guide|packet|instructions)|applications?\s+(?:\w+\s+){0,2}(?:open|opening|clos|due|accept)|deadline to apply|grant application/i;
+  /\bNOFO\b|\bNOFA\b|\bRFP\b|\bRFA\b|\bRFQ\b|notice of funding|request for (?:proposals|applications|qualifications)|funding opportunit|grant opportunit|call for (?:projects|applications|proposals)|how to apply|apply (?:by|now|online|today|here)\b|\bto apply\b|now accepting|accepting applications|application (?:period|deadline|window|guide|packet|instructions)|applications?\s+(?:\w+\s+){0,2}(?:open|opening|closes?|closing|due|accepting)\b|deadline to apply|grant application/i;
 
 // FORECAST — not yet open. A forecasted hit is shredded but HELD (grant_status='Forecasted' →
 // pipeline skips matching) until it posts; the change-detection pass flips it when the page opens.
@@ -146,7 +154,10 @@ export function extractDeadlineSignal(context: string): string {
 // sentences) rejects those while still catching a real "Grant … Deadline: June 30, 2026".
 const DL_DATE =
   "(?:january|february|march|april|may|june|july|august|september|october|november|december)\\s+\\d{1,2}(?:,?\\s*\\d{4})?|\\d{1,2}\\/\\d{1,2}\\/\\d{2,4}|\\d{4}-\\d{2}-\\d{2}";
-const DL_CUE = "deadline|due|closes?|closing|apply\\s+by|submit(?:ted)?\\s+by|no\\s+later\\s+than";
+// Word-bounded cues (Codex/Claude Code Review, 2026-09-10): `\bdue\b`/`\bcloses?\b`/`\bclosing\b` so
+// "overdue" doesn't read as "due" and — the important one — a PAST-tense "applications closed <date>"
+// doesn't read as a live deadline (`closes?\b` matches close/closes/closing, never "closed").
+const DL_CUE = "deadline|\\bdue\\b|\\bcloses?\\b|\\bclosing\\b|apply\\s+by|submit(?:ted)?\\s+by|no\\s+later\\s+than";
 const CONCRETE_DEADLINE = new RegExp(
   `(?:${DL_CUE})[^.\\n]{0,40}(?:${DL_DATE})|(?:${DL_DATE})[^.\\n]{0,25}(?:${DL_CUE})`,
   "i",

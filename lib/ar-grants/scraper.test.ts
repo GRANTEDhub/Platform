@@ -214,6 +214,11 @@ describe("classify — funding-type gate (decision A) and keys", () => {
     expect(hasConcreteDeadline("books are due back soon")).toBe(false); // cue, no date
     expect(hasConcreteDeadline("© 2024 Agency. Updated 03/01/2026.")).toBe(false); // date, no cue in sentence
     expect(hasConcreteDeadline("Deadline is firm. Board meets January 15, 2026.")).toBe(false); // cue + date, different sentences
+    // Word boundaries: an OPEN "closes <date>" is a deadline; a PAST-tense "closed <date>" is not; no
+    // matching inside "overdue" (Codex/Claude Code Review word-boundary finding).
+    expect(hasConcreteDeadline("application window closes March 1, 2026")).toBe(true);
+    expect(hasConcreteDeadline("FY25 applications closed March 1, 2025")).toBe(false); // "closed" is not "close/closes"
+    expect(hasConcreteDeadline("account is overdue since 01/01/2026")).toBe(false); // "overdue" is not a bare "due"
   });
   it("does NOT promote a bare grant/funding nav link with no application signal (precision fix)", () => {
     // The over-detection fix: a program / nav link carrying "grant"/"funding" but no NOFO/RFP/apply/
@@ -253,6 +258,14 @@ describe("classify — funding-type gate (decision A) and keys", () => {
     expect(soon?.forecasted).toBe(true);
     // A NON-grant 'coming soon' item (no funding word) is still noise — the forecast branch needs a grant word.
     expect(classifyItem(rawItem({ title: "New Website", context: "coming soon" }), s)).toBeNull();
+  });
+  it("does NOT read a CLOSED-program announcement as an application signal (Codex/CCR word-boundary fix)", () => {
+    const s = source();
+    // "applications are now closed" used to match STRONG_APP_KEYWORDS via the bare `clos` stem
+    // (prefix of "closed"), promoting a dead program — the false-positive class this pass removes.
+    expect(classifyItem(rawItem({ title: "Workforce Training Program", context: "FY25 applications are now closed for the season" }), s)).toBeNull();
+    // But an OPEN "applications close <date>" (deadline approaching) is still a real signal.
+    expect(classifyItem(rawItem({ title: "Workforce Training Program", context: "applications close March 15, 2026" }), s)?.docType).toBe("opportunity");
   });
 });
 
