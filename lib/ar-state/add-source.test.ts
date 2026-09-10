@@ -137,7 +137,8 @@ describe("addSource (apply)", () => {
 
     const monitorInsert = db.writes.find((w) => w.op === "insert" && w.table === "grant_monitor_state");
     expect(monitorInsert?.row).toMatchObject({ jurisdiction: "AR", funder_type: "state", monitor_mode: "auto", monitor_url: plainEntry.url });
-    expect(monitorInsert?.row.last_content_hash).toBeTruthy(); // baseline captured (fetch ok)
+    expect(monitorInsert?.row.last_content_hash).toBeNull(); // inserted null...
+    expect(db.monitor[0].last_content_hash).toBeTruthy(); // ...baseline committed AFTER a successful shred
 
     expect(pipeline).toHaveBeenCalledTimes(1);
     const [grantId, url, rawText] = pipeline.mock.calls[0];
@@ -182,7 +183,31 @@ describe("addSource (apply)", () => {
     expect(res).toMatchObject({ action: "seeded", fetchOk: false });
     const monitorInsert = db.writes.find((w) => w.op === "insert" && w.table === "grant_monitor_state");
     expect(monitorInsert?.row.last_content_hash).toBeNull();
+    expect(db.monitor[0].last_content_hash).toBeNull(); // no baseline committed -> monitor will first-derive
     expect(pipeline).toHaveBeenCalledTimes(1);
     expect(pipeline.mock.calls[0][2]).toContain("could not be read");
+  });
+
+  it("reports seed_error (not seeded) and leaves a null baseline when the pipeline throws", async () => {
+    const db = new FakeDb();
+    const pipeline = vi.fn().mockRejectedValue(new Error("shred boom"));
+    const res = await addSource(anyDb(db), plainEntry, {
+      fetchText: fakeFetch({ ok: true, text: "LIVE" }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      runPipelineImpl: pipeline as any,
+    });
+    expect(res.action).toBe("seed_error"); // NOT a false 'seeded' that a re-POST would dedup-skip
+    expect(db.grants[0].status).toBe("error"); // shell parked as error, visible in the ledger
+    expect(db.monitor[0].last_content_hash).toBeNull(); // null baseline -> weekly monitor self-heals
+  });
+
+  it("rolls back the grant shell when the monitor_state insert fails (no unmonitored orphan)", async () => {
+    const db = new FakeDb({ failInsert: ["grant_monitor_state"] });
+    const pipeline = vi.fn();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = await addSource(anyDb(db), plainEntry, { fetchText: fakeFetch({ ok: true, text: "x" }), runPipelineImpl: pipeline as any });
+    expect(res.action).toBe("error");
+    expect(db.grants).toHaveLength(0); // grant shell rolled back -> retry re-seeds cleanly
+    expect(pipeline).not.toHaveBeenCalled(); // never shredded an unmonitored grant
   });
 });

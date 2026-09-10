@@ -77,15 +77,19 @@ export async function runMonitor(db: SupabaseClient, opts: MonitorOptions = {}):
 
     // Re-derive THIS grant. url=undefined so runPipeline shreds our rendered text + preamble (never a
     // plain re-fetch, which would drop headless + the identity). Identity comes from the grant row, so
-    // a shared page still resolves to this specific program.
-    await updateMonitorHash(db, row.id, { hash, changed });
-    if (changed) rep.changed++;
+    // a shared page still resolves to this specific program. Commit the new baseline ONLY after the
+    // re-derive succeeds — a thrown/killed pipeline must leave the OLD hash so next week detects the
+    // change again and retries, rather than reading "unchanged" and abandoning a stale grant (Codex P1).
     const rawText = buildSeedPreamble({ grantor: row.grantor, program: row.program, url: row.monitor_url }, fetched.text);
     try {
       await pipeline(row.grant_id, undefined, rawText, db);
+      await updateMonitorHash(db, row.id, { hash, changed });
+      if (changed) rep.changed++;
       rep.rederived++;
       rep.results.push({ url: row.monitor_url, action: changed ? "re-derived" : "baseline-enriched" });
     } catch (err) {
+      // Advance only the check timestamp — keep the old baseline so the change is re-detected next run.
+      await updateMonitorHash(db, row.id, {});
       await db
         .from("grants")
         .update({ status: "error", error_detail: String(err instanceof Error ? err.message : err).slice(0, 600) })

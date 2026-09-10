@@ -87,4 +87,19 @@ describe("runMonitor — change detection", () => {
     // m3 unreachable -> its hash is left untouched (not blanked)
     expect(db.monitor.find((r) => r.id === "m3")!.last_content_hash).toBe(contentHashOf("X"));
   });
+
+  it("keeps the OLD baseline (retryable) when a changed page's re-derive throws", async () => {
+    const oldHash = contentHashOf("OLD");
+    const db = new FakeDb({
+      grants: [{ id: "g1", funder: "F", title: "P" }],
+      monitor: [{ id: "m1", grant_id: "g1", monitor_url: "https://a.gov", jurisdiction: "AR", monitor_mode: "auto", last_content_hash: oldHash }],
+    });
+    const fetchText = async (): Promise<FetchTextResult> => ({ ok: true, text: "NEW" });
+    const pipeline = vi.fn().mockRejectedValue(new Error("boom"));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rep = await runMonitor(anyDb(db), { fetchText, runPipelineImpl: pipeline as any });
+    expect(rep.rederived).toBe(0);
+    expect(db.monitor[0].last_content_hash).toBe(oldHash); // NOT advanced -> the change is re-detected next run
+    expect(db.grants[0].status).toBe("error");
+  });
 });

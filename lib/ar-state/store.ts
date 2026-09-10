@@ -31,11 +31,14 @@ export interface InsertMonitorArgs {
   monitorMode: MonitorMode;
   monitorUrl: string;
   seedBatch: string;
-  contentHash?: string | null; // baseline hash captured at seed, so the monitor only re-derives on CHANGE
 }
 
-export async function insertMonitorState(db: SupabaseClient, a: InsertMonitorArgs): Promise<void> {
-  const now = new Date().toISOString();
+// Insert the monitor row with a NULL baseline hash — the baseline is committed only AFTER a successful
+// initial shred (commitMonitorBaseline), so a seed whose shred fails leaves a null hash and the weekly
+// monitor re-derives it (first-baseline) rather than treating it as permanently up-to-date. Returns
+// false on a write error so the caller can ROLL BACK the grant shell: a grant that is "seeded" but has
+// no monitor row would be invisible to the monitor forever AND dedup-skipped on every retry (Codex P1).
+export async function insertMonitorState(db: SupabaseClient, a: InsertMonitorArgs): Promise<boolean> {
   const { error } = await db.from("grant_monitor_state").insert({
     grant_id: a.grantId,
     jurisdiction: a.jurisdiction,
@@ -43,10 +46,21 @@ export async function insertMonitorState(db: SupabaseClient, a: InsertMonitorArg
     monitor_mode: a.monitorMode,
     monitor_url: a.monitorUrl,
     seed_batch: a.seedBatch,
-    last_content_hash: a.contentHash ?? null,
-    last_checked_at: a.contentHash != null ? now : null,
+    last_content_hash: null,
+    last_checked_at: new Date().toISOString(),
   });
-  logWrite(`insertMonitorState(${a.monitorUrl})`, error);
+  if (error) logWrite(`insertMonitorState(${a.monitorUrl})`, error);
+  return !error;
+}
+
+// Commit the change-detection baseline AFTER a successful derive, keyed by grant_id (unique per grant).
+export async function commitMonitorBaseline(db: SupabaseClient, grantId: string, hash: string): Promise<void> {
+  const now = new Date().toISOString();
+  const { error } = await db
+    .from("grant_monitor_state")
+    .update({ last_content_hash: hash, last_checked_at: now })
+    .eq("grant_id", grantId);
+  logWrite("commitMonitorBaseline", error);
 }
 
 // A monitored row joined to the fields the weekly re-derive needs from its grant (funder + title carry

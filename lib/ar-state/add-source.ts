@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { runPipeline } from "@/lib/grants/pipeline";
 import { normalizeForHash, sha256hex, stripToText } from "@/lib/ar-grants/parse";
 import { needsHeadless, SEED_BATCH, type SeedGrant } from "@/lib/ar-state/fixture";
-import { findExistingGrantByUrl, insertMonitorState } from "@/lib/ar-state/store";
+import { commitMonitorBaseline, findExistingGrantByUrl, insertMonitorState } from "@/lib/ar-state/store";
 
 // The LLM + headless-browser stacks are pulled in DYNAMICALLY (only when a real fetch/shred runs), so
 // this module — and the seed/monitor that import it — stay light for callers that inject their own
@@ -31,6 +31,10 @@ export interface SeedDeps {
   fetchText?: (url: string, headless: boolean) => Promise<FetchTextResult>;
   runPipelineImpl?: typeof runPipeline;
   now?: () => string;
+  // A shared absolute deadline (ms epoch) threaded into runPipeline so each item's match is bounded by
+  // the same clock as the seed loop — a match truncated at the deadline re-queues and the match drain
+  // finishes it, so the request can't be killed mid-work past its cap (Codex P1).
+  deadlineMs?: number;
 }
 
 // ── page fetch (headless-aware) ───────────────────────────────────────────────────────────────────
@@ -98,7 +102,8 @@ export function seedSourceUrl(entry: SeedGrant): string {
 export type AddResult =
   | { action: "seeded"; grantId: string; fetchOk: boolean }
   | { action: "skip_exists"; grantId: string }
-  | { action: "error"; reason: string };
+  | { action: "seed_error"; grantId: string; reason: string } // shell exists, shred/match threw
+  | { action: "error"; reason: string }; // couldn't even establish the grant + monitor row
 
 // Add ONE monitored program: insert the grant shell + its monitor_state row, then shred+match via
 // runPipeline over the rendered page + preamble. Idempotent — an already-present source_url is skipped,
@@ -123,36 +128,40 @@ export async function addSource(db: SupabaseClient, entry: SeedGrant, deps: Seed
   const fetched = await fetchText(entry.url, headless);
   const pageText = fetched.ok ? fetched.text : "";
 
-  // Baseline hash so the weekly monitor only re-derives on a REAL change (not on its first pass over a
-  // page that hasn't moved since seed). A page we couldn't read seeds a null hash -> the monitor treats
-  // its first successful read as the baseline (no spurious "changed").
-  await insertMonitorState(db, {
+  // Establish the monitor row (null baseline) BEFORE the shred. If it can't be written, roll the grant
+  // shell back so a retry re-seeds cleanly rather than leaving an unmonitored, forever-dedup-skipped
+  // orphan (Codex P1).
+  const monitored = await insertMonitorState(db, {
     grantId,
     jurisdiction: entry.jurisdiction,
     funderType: entry.funder_type,
     monitorMode: entry.monitor_mode,
     monitorUrl: entry.url,
     seedBatch: SEED_BATCH,
-    contentHash: fetched.ok ? contentHashOf(pageText) : null,
   });
+  if (!monitored) {
+    await db.from("grants").delete().eq("id", grantId);
+    return { action: "error", reason: "monitor_state insert failed" };
+  }
 
   const rawText = buildSeedPreamble(
     { grantor: entry.grantor, program: entry.program, seedText: entry.seed_text, url: entry.url },
     pageText,
   );
 
-  // Shred + match, verbatim through the existing pipeline. A thrown failure parks the row at
-  // status='error' (self-healing via the watchdog), exactly like the ingest route.
+  // Shred + match through the existing pipeline, deadline-bounded (a match truncated at the deadline
+  // re-queues; the match drain finishes it). Commit the change-detection baseline ONLY on success: a
+  // failure leaves a null baseline so the weekly monitor re-derives it (self-heal), and the result is
+  // 'seed_error' rather than a false 'seeded' that a re-POST would dedup-skip (Codex P1/P2).
   try {
-    await pipeline(grantId, undefined, rawText, db);
+    await pipeline(grantId, undefined, rawText, db, deps.deadlineMs != null ? { deadlineMs: deps.deadlineMs } : undefined);
+    if (fetched.ok) await commitMonitorBaseline(db, grantId, contentHashOf(pageText));
+    return { action: "seeded", grantId, fetchOk: fetched.ok };
   } catch (err) {
-    await db
-      .from("grants")
-      .update({ status: "error", error_detail: String(err instanceof Error ? err.message : err).slice(0, 600) })
-      .eq("id", grantId);
+    const reason = String(err instanceof Error ? err.message : err).slice(0, 600);
+    await db.from("grants").update({ status: "error", error_detail: reason }).eq("id", grantId);
+    return { action: "seed_error", grantId, reason };
   }
-
-  return { action: "seeded", grantId, fetchOk: fetched.ok };
 }
 
 // ── dry-run planner ───────────────────────────────────────────────────────────────────────────────

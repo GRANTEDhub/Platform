@@ -17,11 +17,13 @@ export class FakeDb {
   grants: Row[] = [];
   monitor: Row[] = [];
   writes: FakeWrite[] = [];
+  failInsertTables: Set<string>;
   private _id = 0;
 
-  constructor(seed?: { grants?: Row[]; monitor?: Row[] }) {
+  constructor(seed?: { grants?: Row[]; monitor?: Row[]; failInsert?: string[] }) {
     if (seed?.grants) this.grants = seed.grants.map((r) => ({ ...r }));
     if (seed?.monitor) this.monitor = seed.monitor.map((r) => ({ ...r }));
+    this.failInsertTables = new Set(seed?.failInsert ?? []);
   }
 
   nextId(): string {
@@ -38,6 +40,7 @@ class FakeQuery {
   private _filters: [string, unknown][] = [];
   private _insert?: Row;
   private _update?: Row;
+  private _delete = false;
   private _single = false;
 
   constructor(private db: FakeDb, private table: string) {}
@@ -51,6 +54,10 @@ class FakeQuery {
   }
   update(row: Row) {
     this._update = row;
+    return this;
+  }
+  delete() {
+    this._delete = true;
     return this;
   }
   eq(col: string, val: unknown) {
@@ -83,21 +90,29 @@ class FakeQuery {
 
   private resolve(): { data: unknown; error: unknown } {
     if (this._insert) {
+      if (this.db.failInsertTables.has(this.table)) {
+        return { data: null, error: { message: `insert failed: ${this.table}` } };
+      }
       if (this.table === "grants") {
         const row = { id: this.db.nextId(), ...this._insert };
         this.db.grants.push(row);
-        this.db.writes.push({ op: "insert", table: this.table, row });
+        this.db.writes.push({ op: "insert", table: this.table, row: { ...row } }); // snapshot (live row is mutable)
         return { data: this._single ? { id: row.id } : [{ id: row.id }], error: null };
       }
       const row = { id: this.db.nextId(), ...this._insert };
       this.db[this.table === "grant_monitor_state" ? "monitor" : "grants"].push(row);
-      this.db.writes.push({ op: "insert", table: this.table, row });
+      this.db.writes.push({ op: "insert", table: this.table, row: { ...row } }); // snapshot (live row is mutable)
       return { data: null, error: null };
     }
     if (this._update) {
       const target = this.table === "grant_monitor_state" ? this.db.monitor : this.db.grants;
       for (const r of target) if (this.match(r)) Object.assign(r, this._update);
       this.db.writes.push({ op: "update", table: this.table, row: this._update, filters: this._filters });
+      return { data: null, error: null };
+    }
+    if (this._delete) {
+      const key = this.table === "grant_monitor_state" ? "monitor" : "grants";
+      this.db[key] = this.db[key].filter((r) => !this.match(r));
       return { data: null, error: null };
     }
     // select

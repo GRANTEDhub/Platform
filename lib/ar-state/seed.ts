@@ -12,7 +12,11 @@ import { findExistingGrantByUrl } from "@/lib/ar-state/store";
 // finished seed reports 0 remaining. DRY-RUN writes nothing: it reports what WOULD seed / skip and, for
 // a verify_url entry (or ?probe=all), whether the URL is reachable.
 
-const DEFAULT_BUDGET_MS = 240_000;
+// Below the route's 300s cap with headroom for the LAST started item's shred (shred is not
+// deadline-bounded; only the match is). Stop claiming new items at 210s, leaving ~90s for a final
+// item's shred + a match that truncates-and-re-queues — so the request is never killed mid-work with a
+// half-built grant a re-POST would dedup-skip (Codex P1).
+const DEFAULT_BUDGET_MS = 210_000;
 
 export interface SeedOptions extends SeedDeps {
   apply: boolean;
@@ -36,6 +40,7 @@ export interface SeedReport {
 export async function runSeed(db: SupabaseClient, opts: SeedOptions): Promise<SeedReport> {
   const budgetMs = opts.budgetMs ?? DEFAULT_BUDGET_MS;
   const startedAt = Date.now();
+  const deadlineMs = startedAt + budgetMs; // shared clock threaded into each item's runPipeline match
   const r: SeedReport = {
     apply: opts.apply,
     total: AR_STATE_SEED.length,
@@ -71,7 +76,7 @@ export async function runSeed(db: SupabaseClient, opts: SeedOptions): Promise<Se
       continue;
     }
 
-    const res = await addSource(db, entry, opts);
+    const res = await addSource(db, entry, { ...opts, deadlineMs });
     if (res.action === "seeded") r.seeded++;
     else if (res.action === "skip_exists") r.skipped++;
     else {
