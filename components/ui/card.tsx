@@ -23,7 +23,17 @@ export function Card({
   elevation = "card",
   ...props
 }: React.HTMLAttributes<HTMLDivElement> & { elevation?: keyof typeof ELEVATION }) {
-  return <div className={cn(ELEVATION[elevation], "text-card-foreground", className)} {...props} />;
+  // Entrance motion (globals.css .card-enter) rides the shared card so it's consistent
+  // app-wide without per-page wiring. Only the top-level `card` surface animates: `flat`
+  // is a nested card (would double-fade under its parent) and `overlay` is a menu/popover
+  // with its own entrance. Fully OFF under prefers-reduced-motion; content is clickable
+  // immediately (only opacity/transform animate).
+  return (
+    <div
+      className={cn(ELEVATION[elevation], elevation === "card" && "card-enter", "text-card-foreground", className)}
+      {...props}
+    />
+  );
 }
 
 export function CardHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
