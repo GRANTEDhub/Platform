@@ -188,11 +188,15 @@ describe("classify — funding-type gate (decision A) and keys", () => {
     expect(noUrl.startsWith("dfa:h:")).toBe(true);
   });
   it("itemHash moves when the deadline moves, not when unrelated text moves", () => {
-    const a = itemHash(rawItem({ title: "Grant A", url: "https://x/g", context: "applications due June 30, 2026" }));
-    const same = itemHash(rawItem({ title: "Grant A", url: "https://x/g", context: "APPLICATIONS due June 30, 2026 — read more here" }));
-    const moved = itemHash(rawItem({ title: "Grant A", url: "https://x/g", context: "applications due July 31, 2026" }));
+    const a = itemHash(rawItem({ title: "Grant A", url: "https://x/g", context: "applications due June 30, 2026" }), false);
+    const same = itemHash(rawItem({ title: "Grant A", url: "https://x/g", context: "APPLICATIONS due June 30, 2026 — read more here" }), false);
+    const moved = itemHash(rawItem({ title: "Grant A", url: "https://x/g", context: "applications due July 31, 2026" }), false);
     expect(a).toBe(same);
     expect(a).not.toBe(moved);
+  });
+  it("itemHash flips when a program moves from forthcoming to open (decision 5)", () => {
+    const it = rawItem({ title: "Water & Sewer Grant", url: "https://x/g", context: "due June 30, 2026" });
+    expect(itemHash(it, true)).not.toBe(itemHash(it, false));
   });
   it("extractDeadlineSignal pulls dates and due-phrases", () => {
     expect(extractDeadlineSignal("Applications due June 30, 2026 for the program").length).toBeGreaterThan(0);
@@ -364,6 +368,42 @@ describe("run — the funding-type gate and dry-run safety", () => {
     const report = await runArGrantsScan(asDb(db), { apply: true, promoteMax: 2, promote, fetchSourceImpl: cannedFetch(many) });
     expect(report.totals.promoted).toBe(2);
     expect(report.totals.deferred).toBe(1);
+  });
+
+  it("retries an opportunity that was deferred/failed earlier (unchanged hash, not yet promoted)", async () => {
+    const db = new FakeDb();
+    seedAllSources(db);
+    const arAg = db.store.tables.ar_grant_sources.find((r) => r.agency === "AR Ag NRD")!;
+    const s = source({ agency: "AR Ag NRD", funding_type: "mixed" });
+    const oppRaw = rawItem({ title: "Water & Sewer Treatment Facility Grant Program", url: "https://ag.gov/wstf", context: "grant applications" });
+    const cls = classifyItem(oppRaw, s)!;
+    // Previously detected but NOT promoted (status 'new'), stored with the CURRENT hash → "unchanged".
+    db.store.tables.ar_source_items.push({ id: "def", source_id: arAg.id, external_ref: externalRef(oppRaw, s), item_hash: itemHash(oppRaw, cls.forecasted), status: "new", doc_type: "opportunity" });
+    const promoteCalls: PromoteContext[] = [];
+    const promote: PromoteFn = async (_db, ctx) => {
+      promoteCalls.push(ctx);
+      return { grantId: "g", action: "inserted" };
+    };
+    await runArGrantsScan(asDb(db), { apply: true, promote, fetchSourceImpl: cannedFetch({ "AR Ag NRD": [oppRaw] }) });
+    expect(promoteCalls).toHaveLength(1); // retried despite an unchanged hash
+    expect(db.store.tables.ar_source_items.find((r) => r.id === "def")?.status).toBe("promoted");
+  });
+
+  it("does NOT re-promote an already-promoted, unchanged opportunity", async () => {
+    const db = new FakeDb();
+    seedAllSources(db);
+    const arAg = db.store.tables.ar_grant_sources.find((r) => r.agency === "AR Ag NRD")!;
+    const s = source({ agency: "AR Ag NRD", funding_type: "mixed" });
+    const oppRaw = rawItem({ title: "Water & Sewer Treatment Facility Grant Program", url: "https://ag.gov/wstf", context: "grant applications" });
+    const cls = classifyItem(oppRaw, s)!;
+    db.store.tables.ar_source_items.push({ id: "done", source_id: arAg.id, external_ref: externalRef(oppRaw, s), item_hash: itemHash(oppRaw, cls.forecasted), status: "promoted", doc_type: "opportunity" });
+    const promoteCalls: PromoteContext[] = [];
+    const promote: PromoteFn = async (_db, ctx) => {
+      promoteCalls.push(ctx);
+      return { grantId: "g", action: "inserted" };
+    };
+    await runArGrantsScan(asDb(db), { apply: true, promote, fetchSourceImpl: cannedFetch({ "AR Ag NRD": [oppRaw] }) });
+    expect(promoteCalls).toHaveLength(0); // no needless re-promote of a stable, already-promoted grant
   });
 });
 

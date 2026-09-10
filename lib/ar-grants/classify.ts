@@ -84,11 +84,13 @@ export function externalRef(item: RawItem, source: SourceSeed): string {
   return `${slug}:h:${sha256hex(`${item.title}|${extractDeadlineSignal(item.context)}`)}`;
 }
 
-// item_hash — the change-detection key. Keyed on title + url + the DEADLINE SIGNAL only (not the full
-// context), so a moved deadline flips it (decision 6) without a cosmetic edit elsewhere on the page
-// producing a false "changed".
-export function itemHash(item: RawItem): string {
-  return sha256hex(`${item.title}|${item.url ?? ""}|${extractDeadlineSignal(item.context)}`);
+// item_hash — the change-detection key. Keyed on title + url + the DEADLINE SIGNAL + the FORECAST
+// state, so (a) a moved deadline flips it (decision 6) without a cosmetic edit producing a false
+// "changed", and (b) a lifecycle flip from forthcoming → open flips it too even when title/url/
+// deadline are unchanged — so the forecasted grant is re-queued and matched when it posts (decision 5,
+// the Water & Sewer program). `forecasted` comes from classifyItem, not the RawItem, so it is passed.
+export function itemHash(item: RawItem, forecasted: boolean): string {
+  return sha256hex(`${item.title}|${item.url ?? ""}|${extractDeadlineSignal(item.context)}|f:${forecasted ? 1 : 0}`);
 }
 
 // A STABLE deadline signal from the context: the date(s) plus a bare marker for any deadline keyword

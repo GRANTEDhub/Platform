@@ -125,23 +125,32 @@ export async function runArGrantsScan(db: SupabaseClient, opts: ScanOptions): Pr
       else r.pdfs++;
 
       const ref = externalRef(raw, source);
-      const ih = itemHash(raw);
+      const ih = itemHash(raw, cls.forecasted);
       const prior = byRef.get(ref);
-      const status = cls.docType === "opportunity" ? "new" : cls.docType === "loan" ? "skipped_loan" : "flagged_pdf";
+      const changed = !!prior && prior.item_hash !== ih;
+      if (!prior) r.new_items++;
+      else if (changed) r.changed++;
 
-      if (!prior) {
-        r.new_items++;
-        if (!opts.apply) {
-          // Dry-run: count only. Would-promote iff opportunity within the cap.
-          if (cls.docType === "opportunity") {
-            if (promotedTotal < promoteMax) {
-              r.promoted++;
-              promotedTotal++;
-            } else r.deferred++;
-          }
-          continue;
+      // An opportunity needs a pipeline hand-off when it is new, its deadline / forecast state changed
+      // (decisions 5 + 6), OR it was detected before but never successfully promoted — deferred past
+      // the cap, or a transient promote failure. That last clause is what RETRIES overflow + failures
+      // on a later run instead of leaving them stuck as 'new'/'changed' forever.
+      const needsPromote = cls.docType === "opportunity" && (!prior || changed || prior.status !== "promoted");
+
+      if (!opts.apply) {
+        if (needsPromote) {
+          if (promotedTotal < promoteMax) {
+            r.promoted++;
+            promotedTotal++;
+          } else r.deferred++;
         }
-        const id = await insertItem(db, {
+        continue;
+      }
+
+      // Persist the item row: insert a new one, mark a changed one, or touch an unchanged one.
+      let itemId: string | null;
+      if (!prior) {
+        itemId = await insertItem(db, {
           source_id: source.id,
           external_ref: ref,
           doc_type: cls.docType,
@@ -151,42 +160,26 @@ export async function runArGrantsScan(db: SupabaseClient, opts: ScanOptions): Pr
           geo_tag: cls.geoTag,
           elig_tag: cls.eligTag,
           item_hash: ih,
-          status,
+          status: cls.docType === "opportunity" ? "new" : cls.docType === "loan" ? "skipped_loan" : "flagged_pdf",
         });
-        if (id && cls.docType === "opportunity") {
-          if (promotedTotal < promoteMax) {
-            const res = await opts.promote(db, { source, item: raw, cls, itemId: id });
-            if (res.grantId) {
-              await setItemStatus(db, id, "promoted");
-              r.promoted++;
-              promotedTotal++;
-            }
-          } else {
-            r.deferred++; // stays 'new'; promoted on a later run
-          }
-        }
       } else {
-        // Seen before. A moved deadline (item_hash change) re-queues an opportunity (decision 6).
-        if (prior.item_hash !== ih) {
-          r.changed++;
-          if (!opts.apply) {
-            if (cls.docType === "opportunity" && promotedTotal < promoteMax) {
-              r.promoted++;
-              promotedTotal++;
-            }
-            continue;
+        itemId = prior.id;
+        if (changed) await markItemChanged(db, prior.id, ih);
+        else await touchItem(db, prior.id);
+      }
+
+      // Promote / re-queue within the cap. A transient failure leaves the item un-promoted (status
+      // stays new/changed), so needsPromote catches it again next run.
+      if (needsPromote && itemId) {
+        if (promotedTotal < promoteMax) {
+          const res = await opts.promote(db, { source, item: raw, cls, itemId });
+          if (res.grantId) {
+            await setItemStatus(db, itemId, "promoted");
+            r.promoted++;
+            promotedTotal++;
           }
-          await markItemChanged(db, prior.id, ih);
-          if (cls.docType === "opportunity" && promotedTotal < promoteMax) {
-            const res = await opts.promote(db, { source, item: raw, cls, itemId: prior.id });
-            if (res.grantId) {
-              await setItemStatus(db, prior.id, "promoted");
-              r.promoted++;
-              promotedTotal++;
-            }
-          }
-        } else if (opts.apply) {
-          await touchItem(db, prior.id);
+        } else {
+          r.deferred++;
         }
       }
     }
