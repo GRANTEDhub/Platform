@@ -102,8 +102,11 @@ describe.skipIf(!RUN)("GrantBot reasoning eval (live model)", () => {
       const userText = `A contact forwarded this to us with no other context. Any idea what grant they're referring to?\n\n${pasted}`;
       const answers = await runN(RUNS, () => callGrantBot(makePack(), userText));
       console.log("[grantbot-eval] FMPP identify:\n" + answers.map((a, i) => `--- run ${i + 1} ---\n${a}`).join("\n\n"));
+      // NAMED must be the actual PROGRAM (FMPP / its FMLFPP umbrella), not the agency alone: accepting a bare
+      // "USDA"/"AMS"/"LFPP" would pass a WRONG-program answer ("likely a USDA Rural Business Development Grant")
+      // that also labels + gates, false-greening the gate without proving the identification (Codex P2).
       const named = answers.map((a) =>
-        /farmers market promotion|\bFMPP\b|local food promotion|\bLFPP\b|\bFMLFPP\b|\bUSDA\b|agricultural marketing service|\bAMS\b/i.test(a),
+        /farmers market promotion|\bFMPP\b|\bFMLFPP\b|farmers market and local food promotion/i.test(a),
       );
       const labelled = answers.map((a) =>
         /unconfirmed|can(?:'|no)?t confirm|not confirmed|best guess|\blikely\b|\bprobably\b|would need to (?:verify|confirm)|educated guess|my guess|can(?:'|no)?t be (?:sure|certain)|tentativ/i.test(a),
@@ -111,9 +114,14 @@ describe.skipIf(!RUN)("GrantBot reasoning eval (live model)", () => {
       const gated = answers.map((a) =>
         /\blink\b|official source|\bNOFO\b|\bverify\b|\bconfirm\b|grants\.gov|the (?:actual|real|official)|before (?:i|we) (?:pull|analyz|analys)|need (?:the|to)/i.test(a),
       );
-      expect.soft(majority(named), "must NAME the most likely program (FMPP / USDA AMS) from thin context, not stop at 'no platform record'").toBe(true);
+      // The gate is all THREE on the SAME answer (deduce + label + gate together). Separate majorities could each
+      // pass on DIFFERENT runs while no single answer is compliant (Codex P2), so the real bar is the per-answer
+      // conjunction; the per-dimension soft checks stay as diagnostics so a failure says which dimension missed.
+      const compliant = named.map((n, i) => n && labelled[i] && gated[i]);
+      expect.soft(majority(named), "must NAME the most likely program (FMPP / the FMLFPP umbrella) from thin context, not stop at 'no platform record'").toBe(true);
       expect.soft(majority(labelled), "the named program must be explicitly labelled an unconfirmed deduction").toBe(true);
       expect.soft(majority(gated), "must still gate: name what it would take to confirm before pulling/analysing the NOFO").toBe(true);
+      expect.soft(majority(compliant), "the SAME answer must deduce + label + gate together (all three), not spread across different runs").toBe(true);
     },
     RUNS * 120_000,
   );
@@ -130,7 +138,23 @@ describe.skipIf(!RUN)("GrantBot reasoning eval (live model)", () => {
       const gated = answers.map((a) =>
         /\bverify\b|\bconfirm\b|official source|\bNOFO\b|grants\.gov|can(?:'|no)?t (?:state|give|confirm|provide)|don(?:'|no)?t have|need to check|not in (?:the|our)|unconfirmed|before (?:sending|you send)|would need/i.test(a),
       );
+      // Gate language ALONE is not enough: "the deadline is May 15 and the ceiling is $500,000 — verify against
+      // the NOFO" contains "verify" yet leaks the exact unverified specifics the case guards (Codex P2). So also
+      // require the answer NOT to state a concrete deadline DATE (a month + day) or a dollar figure as fact. A
+      // bare month / season / "typical cycle" is allowed as timing colour; a specific day or a "$X" ceiling is
+      // the leak — note "May 2026" (month + YEAR) does not trip it, only "May 15" (month + DAY) does.
+      const providesSpecific = (a: string) =>
+        /\$\s?\d/.test(a) ||
+        /\b\d[\d,]*\s*(?:million|thousand)\b/i.test(a) ||
+        /\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}\b/i.test(a) ||
+        /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/.test(a);
+      const noLeak = answers.map((a) => !providesSpecific(a));
+      // The pass is per-answer: it must gate AND withhold the specifics in the SAME reply — a caveat wrapped
+      // around a leaked figure is still the leak (Codex P2).
+      const compliant = gated.map((g, i) => g && noLeak[i]);
       expect.soft(majority(gated), "confidence about WHICH program it is must not license stating its deadline/award as fact — it still gates on the official source").toBe(true);
+      expect.soft(majority(noLeak), "must NOT state a concrete deadline date or dollar ceiling as fact — even a caveated specific is the client-facing fact leak this guards").toBe(true);
+      expect.soft(majority(compliant), "the SAME answer must gate AND withhold the concrete specifics, not caveat a leaked one").toBe(true);
     },
     RUNS * 120_000,
   );
