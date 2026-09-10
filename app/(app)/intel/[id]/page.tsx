@@ -11,7 +11,7 @@ import { ProgramAwardMap } from "@/components/report/program-award-map";
 import type { ProgramAwardSummary } from "@/lib/grants/program-awards";
 import { buildGrantSummary } from "@/lib/report/grant-summary";
 import { deadlineDaysLeft } from "@/lib/report/shape";
-import { compactCostShare } from "@/lib/grants/format";
+import { compactCostShare, formatDeadline } from "@/lib/grants/format";
 import { MatchOutcomes, type OutcomeCard } from "@/components/grants/match-outcomes";
 import { getGrantGateStatus, undecidedClientCount } from "@/lib/grants/gate";
 import { getSentAlertsByCards } from "@/lib/alerts/sent-status";
@@ -439,6 +439,11 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                                     sentAt={pc.sent_at}
                                     sentTo={sentByCard.get(pc.id)?.sentTo}
                                     contactName={pc.prospects?.name ?? null}
+                                    // Overdue gate (grant-level): warns before a cold email on a
+                                    // closed/closing-today grant, matching the roadmap prospect path.
+                                    daysLeft={days}
+                                    deadlineLabel={grant.submission_deadline ? formatDeadline(grant.submission_deadline) : null}
+                                    backHref={`/intel/${grant.id}`}
                                   />
                                 </>
                               )}

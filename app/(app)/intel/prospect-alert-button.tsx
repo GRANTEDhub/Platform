@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { AlertSend } from "@/app/(app)/review/[id]/alert-send";
+import { useOverdueGate } from "@/components/report/overdue-gate";
 
 // Compact per-row "Alert" trigger for a prospect in the /intel IntellEngine Action box.
 //
@@ -13,6 +14,12 @@ import { AlertSend } from "@/app/(app)/review/[id]/alert-send";
 // link) and email body, convert-to-lead, the admin gate, and the gate-first no-deliverable-email
 // refusal — is the unchanged existing machinery.
 //
+// OVERDUE GATE: AlertSend's autoOpen effect opens the modal WITHOUT its internal useOverdueGate
+// (that only wraps the inline trigger), so — exactly like ReleaseToClientBar — the click is gated
+// HERE before the autoOpen mount, and AlertSend is passed no `overdue` prop (already gated). A
+// closed / closing-today grant thus shows the "deadline passed" warning before an irreversible
+// cold email; a live grant opens straight through (guard is a no-op unless isOverdue).
+//
 // Rendered ONLY for a not-yet-alerted prospect; an alerted row shows the "✓ Alerted" badge
 // instead (derived from sentByCard, i.e. a sent grant_alerts row). The flip stays POST-SEND:
 // AlertSend's own router.refresh() on a successful send re-derives sentByCard server-side, so the
@@ -23,6 +30,9 @@ export function ProspectAlertButton({
   sentAt,
   sentTo,
   contactName,
+  daysLeft,
+  deadlineLabel,
+  backHref,
 }: {
   cardId: string;
   sentAt: string | null;
@@ -31,17 +41,24 @@ export function ProspectAlertButton({
   // another tab between render and click; the server send guard is the real backstop.
   sentTo?: string | null;
   contactName: string | null;
+  // Overdue-gate inputs (grant-level; cardId is this prospect card). daysLeft null / > 0 means the
+  // guard is a no-op and the modal opens straight through.
+  daysLeft: number | null;
+  deadlineLabel: string | null;
+  backHref: string;
 }) {
   const [open, setOpen] = useState(false);
+  const { guard, gate } = useOverdueGate({ cardId, daysLeft, deadlineLabel, backHref }, "Send grant alert");
   return (
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => guard(() => setOpen(true))}
         className="shrink-0 rounded-full border border-brand-orange/40 px-2 py-0.5 text-[11px] font-semibold text-brand-orangeDeep transition-colors hover:bg-brand-orange/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/60"
       >
         Alert
       </button>
+      {gate}
       {open && (
         <AlertSend
           autoOpen
