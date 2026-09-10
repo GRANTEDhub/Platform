@@ -409,6 +409,45 @@ describe("run — the funding-type gate and dry-run safety", () => {
     expect(db.store.tables.ar_grant_sources).toHaveLength(0); // still zero writes
   });
 
+  it("DRY-RUN overlays the CODE-seed definition onto a stored row (a stale stored fetch_mode can't shadow it)", async () => {
+    const db = new FakeDb();
+    // AEDC previously seeded with the OLD fetch_mode 'html' (before the headless change) + a runtime hash.
+    db.store.tables.ar_grant_sources.push({
+      id: "aedc", active: true, last_hash: "OLD_HASH", last_checked: null, last_changed: null,
+      url: "https://www.arkansasedc.com/programs-services", agency: "AEDC", cluster: "state_agency",
+      geo_tag: "AR-statewide", elig_tag: "any", funding_type: "mixed", fetch_mode: "html", rss_url: null,
+    });
+    const seen: Record<string, { fetch_mode: string; last_hash: string | null }> = {};
+    const recordingFetch = async (src: ArGrantSource): Promise<SourceFetchResult> => {
+      seen[src.agency] = { fetch_mode: src.fetch_mode, last_hash: src.last_hash };
+      return { ok: true, items: [], contentHash: "h" };
+    };
+    const promote: PromoteFn = async () => ({ grantId: "g", action: "inserted" });
+    await runArGrantsScan(asDb(db), { apply: false, promote, fetchSourceImpl: recordingFetch });
+    // The code seed now marks AEDC headless; the overlay must reflect that despite the stored 'html'…
+    expect(seen["AEDC"].fetch_mode).toBe("headless");
+    // …while PRESERVING the stored runtime state (last_hash drives change detection).
+    expect(seen["AEDC"].last_hash).toBe("OLD_HASH");
+    // An unseeded source still uses its code seed (DFA is also headless; ADHE stays html).
+    expect(seen["DFA"].fetch_mode).toBe("headless");
+    expect(seen["ADHE"].fetch_mode).toBe("html");
+  });
+
+  it("the 0-result diagnostic note is fetch_mode-aware (headless render vs html JS-check)", async () => {
+    const db = new FakeDb();
+    // Every source fetches OK but yields nothing → every source hits the 0-result note branch.
+    const empty = async (): Promise<SourceFetchResult> => ({ ok: true, items: [], contentHash: "h" });
+    const promote: PromoteFn = async () => ({ grantId: "g", action: "inserted" });
+    const report = await runArGrantsScan(asDb(db), { apply: false, promote, fetchSourceImpl: empty });
+    const aedc = report.sources.find((s) => s.agency === "AEDC")!; // headless
+    const adhe = report.sources.find((s) => s.agency === "ADHE")!; // html
+    // Headless: render already ran — point at markup/extraction, NOT "check for JS-rendering".
+    expect(aedc.note).toMatch(/render succeeded|markup|extract/i);
+    expect(aedc.note).not.toMatch(/JavaScript-rendered/i);
+    // html: the JS-rendering theory is still the right hint.
+    expect(adhe.note).toMatch(/JavaScript-rendered/i);
+  });
+
   it("change detection: a moved deadline re-queues an already-promoted opportunity", async () => {
     const db = new FakeDb();
     seedAllSources(db);

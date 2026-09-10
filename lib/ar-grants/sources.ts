@@ -25,7 +25,14 @@
 // no protected edit).
 
 export type FundingType = "grant" | "loan" | "mixed";
-export type FetchMode = "html" | "rss";
+// html  = plain server-HTML GET (the cheap default; fetchWebsite).
+// rss   = parse the source's RSS/Atom feed (rss_url).
+// headless = render the page in headless Chromium first, THEN read the post-JS DOM — for sources
+//   whose opportunity content is injected client-side (an empty server shell otherwise). Only the
+//   sources that need it carry this, so the cheap HTML path stays for everyone else. See fetch.ts +
+//   headless.ts. Stored in ar_grant_sources.fetch_mode (0094, free `text` — no migration for a new
+//   value; ensureSources writes it from this code seed).
+export type FetchMode = "html" | "rss" | "headless";
 
 // A hit's resolved document class. Only `opportunity` (grant-type) is ever promoted into `grants`.
 export type DocType = "opportunity" | "loan" | "pdf";
@@ -88,7 +95,9 @@ export const AR_GRANT_SOURCES: SourceSeed[] = [
     geo_tag: "AR-statewide",
     elig_tag: "any",
     funding_type: "mixed", // AEDC runs grants AND incentives/financing; per-item keywords decide
-    fetch_mode: "html",
+    // JS-rendered: the programs list is injected client-side, so plain HTML returned links but 0
+    // opportunities (dry-run 0/143). Render the DOM first. See headless.ts.
+    fetch_mode: "headless",
   },
   {
     agency: "DFA",
@@ -97,7 +106,8 @@ export const AR_GRANT_SOURCES: SourceSeed[] = [
     geo_tag: "AR-statewide",
     elig_tag: "any",
     funding_type: "mixed",
-    fetch_mode: "html",
+    // JS-rendered: server HTML returned links but 0 opportunities (dry-run 0/109). Render first.
+    fetch_mode: "headless",
   },
   {
     agency: "ADHE",

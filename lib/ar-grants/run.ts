@@ -200,9 +200,15 @@ export async function runArGrantsScan(db: SupabaseClient, opts: ScanOptions): Pr
     }
 
     // An OK fetch that yielded no classified opportunities/loans/pdfs is the signal for a bad URL or a
-    // JS-rendered page (open item #2) — surfaced as text, never a colour, for a human to verify.
+    // JS-rendered page — surfaced as text, never a colour, for a human to verify. The note is
+    // fetch_mode-AWARE: for a headless source the render already ran, so "check for JS-rendering" would
+    // misdirect the exact admin dry-run that gates go-live (Claude Code Review) — point at the markup /
+    // extraction instead.
     if (r.fetch_ok && r.opportunities + r.loans + r.pdfs === 0) {
-      r.note = "no opportunities/loans/PDFs detected — verify the source URL or check whether the page is JavaScript-rendered (v1 reads server HTML only)";
+      r.note =
+        source.fetch_mode === "headless"
+          ? "no opportunities/loans/PDFs detected — the headless render succeeded but anchor extraction found nothing; check the site markup (opportunities may use non-<a> nav / client-side routing) or the extractor, not JS-rendering (already handled for this source)"
+          : "no opportunities/loans/PDFs detected — verify the source URL or check whether the page is JavaScript-rendered (v1 reads server HTML only)";
     }
 
     if (opts.apply && source.id) {
@@ -238,8 +244,20 @@ async function readActiveSources(db: SupabaseClient): Promise<ArGrantSource[]> {
   const stored = new Map((data ?? []).map((r) => [r.url as string, r as ArGrantSource]));
   return AR_GRANT_SOURCES.map((seed) => {
     const row = stored.get(seed.url);
-    if (row) return row;
-    return { ...seed, id: "", active: true, last_hash: null, last_checked: null, last_changed: null };
+    // OVERLAY the code-seed DEFINITION (url, tags, funding_type, fetch_mode, rss_url) onto the
+    // stored RUNTIME state (id + last_*). Definitions live in code and ensureSources rewrites exactly
+    // these on the next apply, so the read-only dry-run must reflect them too — otherwise a source
+    // already seeded with an OLD definition (e.g. stored fetch_mode='html' before this change) would
+    // shadow the current code and the preview would never exercise the new mode. An unseeded source
+    // has no stored row → empty id, null runtime state (byte-identical to the pre-overlay fallback).
+    return {
+      ...seed,
+      id: row?.id ?? "",
+      active: true,
+      last_hash: row?.last_hash ?? null,
+      last_checked: row?.last_checked ?? null,
+      last_changed: row?.last_changed ?? null,
+    };
   });
 }
 
