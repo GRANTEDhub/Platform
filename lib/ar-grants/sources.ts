@@ -110,7 +110,9 @@ export const AR_GRANT_SOURCES: SourceSeed[] = [
   },
   {
     agency: "OSD",
-    url: "https://commerce.arkansas.gov/arkansas-office-of-skills-development/",
+    // The real OSD site is arkansasosd.com (NOT commerce.arkansas.gov, which 404'd). This is the
+    // Training Grants / grant-resources page for AR employers.
+    url: "https://arkansasosd.com/grantresources-2/",
     cluster: "state_agency",
     geo_tag: "AR-statewide",
     elig_tag: "employer",
@@ -119,13 +121,14 @@ export const AR_GRANT_SOURCES: SourceSeed[] = [
   },
   {
     agency: "NWA RPC",
-    url: "https://www.nwarpc.org/",
+    // No RSS feed exists (the old /feed/ returned nothing). Their funding-programs page carries the
+    // STBGP-A / TAP / CRP "Call for Projects" — an HTML listing page, so scrape HTML, not RSS.
+    url: "https://www.nwarpc.org/funding-programs/",
     cluster: "regional_mpo",
     geo_tag: "NWA-region",
     elig_tag: "local_gov",
     funding_type: "grant",
-    fetch_mode: "rss", // NWA RPC publishes an RSS feed (decision 4 — use it)
-    rss_url: "https://www.nwarpc.org/feed/",
+    fetch_mode: "html",
   },
   {
     agency: "Metroplan",
@@ -138,7 +141,8 @@ export const AR_GRANT_SOURCES: SourceSeed[] = [
   },
   {
     agency: "DRA",
-    url: "https://dra.gov/funding/",
+    // Funding-programs listing (SEDAP / CIF / Delta Workforce / WORC …). Old /funding/ 404'd.
+    url: "https://dra.gov/programs/",
     cluster: "federal_regional",
     geo_tag: "delta-region",
     elig_tag: "any",
@@ -147,7 +151,10 @@ export const AR_GRANT_SOURCES: SourceSeed[] = [
   },
   {
     agency: "ADPHT Outdoor Rec",
-    url: "https://www.arkansasstateparks.com/about/grants",
+    // The grants admin lives on adpht.arkansas.gov (a .gov), NOT arkansasstateparks.com (the parks
+    // site, which 404'd on /about/grants). This is the Office of Outdoor Recreation grants hub
+    // (FUN Park / Matching / Great Strides, with application windows + deadlines).
+    url: "https://adpht.arkansas.gov/office-of-outdoor-recreation/arkansas-outdoor-grants/",
     cluster: "state_agency",
     geo_tag: "AR-statewide",
     elig_tag: "local_gov",

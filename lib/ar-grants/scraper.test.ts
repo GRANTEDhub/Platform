@@ -12,10 +12,11 @@ import {
   classifyItem,
   externalRef,
   extractDeadlineSignal,
+  hasConcreteDeadline,
   itemHash,
 } from "./classify";
 import { buildScrapedGrantInsert, promoteOpportunity, type PromoteContext } from "./promote";
-import { runArGrantsScan, type PromoteFn } from "./run";
+import { arGrantsCronEnabled, runArGrantsScan, type PromoteFn } from "./run";
 import { AR_GRANT_SOURCES, type ArGrantSource, type SourceSeed } from "./sources";
 import type { SourceFetchResult } from "./fetch";
 
@@ -202,13 +203,77 @@ describe("classify — funding-type gate (decision A) and keys", () => {
     expect(extractDeadlineSignal("Applications due June 30, 2026 for the program").length).toBeGreaterThan(0);
     expect(extractDeadlineSignal("A general paragraph with no dates")).toBe("");
   });
+  it("hasConcreteDeadline requires a cue ADJACENT to a date, not either alone (the precision date signal)", () => {
+    // Real deadline expressions (cue + date, either order):
+    expect(hasConcreteDeadline("Deadline: June 30, 2026")).toBe(true);
+    expect(hasConcreteDeadline("applications due 6/30/2026")).toBe(true);
+    expect(hasConcreteDeadline("submit by 2026-06-30")).toBe(true);
+    expect(hasConcreteDeadline("March 3, 2026 is the application deadline")).toBe(true); // date-before-cue
+    // NOT deadlines — a stray date, a bare cue, or a cue and date split across sentences:
+    expect(hasConcreteDeadline("our meeting is January 15, 2026")).toBe(false); // date, no cue
+    expect(hasConcreteDeadline("books are due back soon")).toBe(false); // cue, no date
+    expect(hasConcreteDeadline("© 2024 Agency. Updated 03/01/2026.")).toBe(false); // date, no cue in sentence
+    expect(hasConcreteDeadline("Deadline is firm. Board meets January 15, 2026.")).toBe(false); // cue + date, different sentences
+    // Word boundaries: an OPEN "closes <date>" is a deadline; a PAST-tense "closed <date>" is not; no
+    // matching inside "overdue" (Codex/Claude Code Review word-boundary finding).
+    expect(hasConcreteDeadline("application window closes March 1, 2026")).toBe(true);
+    expect(hasConcreteDeadline("FY25 applications closed March 1, 2025")).toBe(false); // "closed" is not "close/closes"
+    expect(hasConcreteDeadline("account is overdue since 01/01/2026")).toBe(false); // "overdue" is not a bare "due"
+  });
+  it("does NOT promote a bare grant/funding nav link with no application signal (precision fix)", () => {
+    // The over-detection fix: a program / nav link carrying "grant"/"funding" but no NOFO/RFP/apply/
+    // deadline signal is noise, not a promotable opportunity (this is what flooded AEDC with 16).
+    expect(classifyItem(rawItem({ title: "Grant Programs", context: "explore our funding programs and services" }), source())).toBeNull();
+    expect(classifyItem(rawItem({ title: "Economic Development Grants", context: "learn about available grants" }), source())).toBeNull();
+    expect(classifyItem(rawItem({ title: "Business Incentives", context: "tax credits and workforce funding" }), source())).toBeNull();
+  });
+  it("DOES promote on a real application signal (NOFO / call for projects / apply-by / deadline)", () => {
+    const s = source();
+    expect(classifyItem(rawItem({ title: "FY26 NOFO", context: "notice of funding opportunity" }), s)?.docType).toBe("opportunity");
+    expect(classifyItem(rawItem({ title: "FFY 2026 Call for Projects", context: "STBGP-A funding; applications due April 3, 2026" }), s)?.docType).toBe("opportunity");
+    expect(classifyItem(rawItem({ title: "Matching Grants", context: "apply by August 28, 2026" }), s)?.docType).toBe("opportunity");
+    // A grant/funding word paired with a concrete deadline also qualifies (no explicit "apply" word).
+    expect(classifyItem(rawItem({ title: "Outdoor Rec Grant", context: "grant program, deadline June 30, 2026" }), s)?.docType).toBe("opportunity");
+  });
+  it("does NOT treat a STRAY date or a bare 'due' in trailing context as a deadline (Codex P1: precision)", () => {
+    // extractAnchors hands ~200 chars of trailing page text as context. A grant/nav link that merely
+    // sits near an unrelated event date, a copyright/updated line, or the word "due" (not a real
+    // application deadline) must NOT promote — the deadline must be a cue ADJACENT to a date.
+    const s = source();
+    expect(classifyItem(rawItem({ title: "Grant Programs", context: "our annual meeting is January 15, 2026 in Little Rock" }), s)).toBeNull();
+    expect(classifyItem(rawItem({ title: "Economic Development Grants", context: "library books are due back next week" }), s)).toBeNull();
+    expect(classifyItem(rawItem({ title: "Funding", context: "© 2024 Agency. Site last updated 03/01/2026." }), s)).toBeNull();
+    // But a real deadline expression tied to the grant still promotes.
+    expect(classifyItem(rawItem({ title: "Water Grant", context: "grant funds available; deadline June 30, 2026" }), s)?.docType).toBe("opportunity");
+  });
+  it("admits a grant FORECAST with no application date as a HELD forecasted opportunity (Codex P1: lifecycle)", () => {
+    // A 'coming soon' / 'check back' grant has neither application language nor a deadline yet, but it
+    // is exactly the hold-and-requeue target (the forthcoming AR Ag Water & Sewer grant). It must be
+    // stored as a forecasted opportunity (held, not matched — grant_status='Forecasted') so change
+    // detection can flip it when the page opens, not dropped as noise. Restores #529 behaviour for
+    // this case while keeping the live-opportunity precision tightening.
+    const s = source({ funding_type: "mixed" });
+    const soon = classifyItem(rawItem({ title: "Water & Sewer Grant Program", context: "coming soon — check back for details" }), s);
+    expect(soon?.docType).toBe("opportunity");
+    expect(soon?.forecasted).toBe(true);
+    // A NON-grant 'coming soon' item (no funding word) is still noise — the forecast branch needs a grant word.
+    expect(classifyItem(rawItem({ title: "New Website", context: "coming soon" }), s)).toBeNull();
+  });
+  it("does NOT read a CLOSED-program announcement as an application signal (Codex/CCR word-boundary fix)", () => {
+    const s = source();
+    // "applications are now closed" used to match STRONG_APP_KEYWORDS via the bare `clos` stem
+    // (prefix of "closed"), promoting a dead program — the false-positive class this pass removes.
+    expect(classifyItem(rawItem({ title: "Workforce Training Program", context: "FY25 applications are now closed for the season" }), s)).toBeNull();
+    // But an OPEN "applications close <date>" (deadline approaching) is still a real signal.
+    expect(classifyItem(rawItem({ title: "Workforce Training Program", context: "applications close March 15, 2026" }), s)?.docType).toBe("opportunity");
+  });
 });
 
 // ── the eligibility preamble (decision B) ────────────────────────────────────────────────────────
 describe("eligibility preamble — seeds geo + applicant type into the shred input (decision B)", () => {
   it("carries the source's geography and applicant-type context and the source document", () => {
     const s = source({ geo_tag: "NWA-region", elig_tag: "local_gov" });
-    const cls = classifyItem(rawItem({ title: "TAP Grant", context: "apply" }), s)!;
+    const cls = classifyItem(rawItem({ title: "TAP Grant", context: "grant applications open; apply by June 30, 2026" }), s)!;
     const pre = buildEligibilityPreamble(s, cls, "OPPORTUNITY BODY TEXT");
     expect(pre).toMatch(/Northwest Arkansas/i);
     expect(pre).toMatch(/units of local government/i);
@@ -216,8 +281,8 @@ describe("eligibility preamble — seeds geo + applicant type into the shred inp
   });
   it("adds a forthcoming note only when forecasted", () => {
     const s = source({ funding_type: "mixed" });
-    const open = classifyItem(rawItem({ title: "Grant", context: "apply now" }), s)!;
-    const soon = classifyItem(rawItem({ title: "Grant", context: "coming soon" }), s)!;
+    const open = classifyItem(rawItem({ title: "Grant", context: "grant applications open; apply now" }), s)!;
+    const soon = classifyItem(rawItem({ title: "Grant", context: "grant program coming soon; applications will open" }), s)!;
     expect(buildEligibilityPreamble(s, open, "x")).not.toMatch(/FORTHCOMING/);
     expect(buildEligibilityPreamble(s, soon, "x")).toMatch(/FORTHCOMING/);
   });
@@ -227,10 +292,10 @@ describe("eligibility preamble — seeds geo + applicant type into the shred inp
 describe("promote — Seam 2 insert shape and the pipeline hand-off", () => {
   it("buildScrapedGrantInsert: real URL when present, synthetic key when list-only; Forecasted flag", () => {
     const s = source();
-    const withUrl = buildScrapedGrantInsert({ source: s, item: rawItem({ url: "https://x/g" }), cls: classifyItem(rawItem({ title: "Grant", context: "apply" }), s)!, itemId: "i1" });
+    const withUrl = buildScrapedGrantInsert({ source: s, item: rawItem({ url: "https://x/g" }), cls: classifyItem(rawItem({ title: "Grant", context: "grant applications open; apply by June 30, 2026" }), s)!, itemId: "i1" });
     expect(withUrl.source_url).toBe("https://x/g");
     expect(withUrl.grant_status).toBeNull();
-    const listOnly = buildScrapedGrantInsert({ source: s, item: rawItem({ url: null }), cls: classifyItem(rawItem({ title: "Grant", context: "coming soon" }), s)!, itemId: "i2" });
+    const listOnly = buildScrapedGrantInsert({ source: s, item: rawItem({ url: null }), cls: classifyItem(rawItem({ title: "Grant", context: "grant program coming soon; applications will open" }), s)!, itemId: "i2" });
     expect(listOnly.source_url).toContain("i2");
     expect(listOnly.grant_status).toBe("Forecasted");
   });
@@ -238,7 +303,7 @@ describe("promote — Seam 2 insert shape and the pipeline hand-off", () => {
   it("hands the pipeline a rawText that contains the eligibility preamble AND the fetched detail", async () => {
     const db = new FakeDb();
     const s = source({ geo_tag: "NWA-region", elig_tag: "local_gov" });
-    const cls = classifyItem(rawItem({ title: "TAP Grant", context: "apply" }), s)!;
+    const cls = classifyItem(rawItem({ title: "TAP Grant", context: "grant applications open; apply by June 30, 2026" }), s)!;
     const ctx: PromoteContext = { source: s, item: rawItem({ title: "TAP Grant", url: "https://nwarpc.org/tap" }), cls, itemId: "item-1" };
     let seenRawText = "";
     let seenUrlArg: string | undefined = "unset";
@@ -384,6 +449,20 @@ describe("run — the funding-type gate and dry-run safety", () => {
     expect(report.totals.deferred).toBe(1);
   });
 
+  it("per-source cap stops one source from eating the global cap (the AEDC-starvation fix)", async () => {
+    const db = new FakeDb();
+    seedAllSources(db);
+    const opp = (n: number) => rawItem({ title: `Grant ${n}`, url: `https://aedc/${n}`, context: "grant applications open; apply by June 30, 2026" });
+    const many: Record<string, RawItem[]> = { AEDC: [opp(1), opp(2), opp(3), opp(4), opp(5)] };
+    const promote: PromoteFn = async () => ({ grantId: "g", action: "inserted" });
+    // Global budget 20 is plenty, but a per-source cap of 2 must hold AEDC to 2 so it can't starve
+    // later sources (the live dry-run's AR Ag + Metroplan starvation).
+    const report = await runArGrantsScan(asDb(db), { apply: true, promoteMax: 20, promoteMaxPerSource: 2, promote, fetchSourceImpl: cannedFetch(many) });
+    const aedc = report.sources.find((s) => s.agency === "AEDC")!;
+    expect(aedc.promoted).toBe(2); // capped per source
+    expect(aedc.deferred).toBe(3); // the rest deferred even though the global budget was untouched
+  });
+
   it("retries an opportunity that was deferred/failed earlier (unchanged hash, not yet promoted)", async () => {
     const db = new FakeDb();
     seedAllSources(db);
@@ -424,5 +503,19 @@ describe("run — the funding-type gate and dry-run safety", () => {
 describe("stripToText", () => {
   it("removes scripts/styles and decodes basic entities", () => {
     expect(stripToText("<p>A&nbsp;&amp;&nbsp;B<script>x</script></p>")).toBe("A & B");
+  });
+});
+
+describe("arGrantsCronEnabled — the automatic cron stays OFF until explicitly enabled", () => {
+  it("is false unless AR_GRANTS_CRON_ENABLED is exactly 'true'", () => {
+    const prev = process.env.AR_GRANTS_CRON_ENABLED;
+    delete process.env.AR_GRANTS_CRON_ENABLED;
+    expect(arGrantsCronEnabled()).toBe(false);
+    process.env.AR_GRANTS_CRON_ENABLED = "1";
+    expect(arGrantsCronEnabled()).toBe(false);
+    process.env.AR_GRANTS_CRON_ENABLED = "true";
+    expect(arGrantsCronEnabled()).toBe(true);
+    if (prev === undefined) delete process.env.AR_GRANTS_CRON_ENABLED;
+    else process.env.AR_GRANTS_CRON_ENABLED = prev;
   });
 });
