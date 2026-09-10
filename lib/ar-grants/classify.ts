@@ -70,16 +70,29 @@ export function classifyItem(item: RawItem, source: SourceSeed): Classified | nu
 
   // PRECISION over recall (Shannon 2026-09-10): a bare "grant"/"funding" word is NOT enough — landing
   // pages are full of program/nav links carrying it, which flooded the pipeline (16 false
-  // opportunities off one AEDC page, eating the whole promote cap). Promote ONLY on a real
-  // application signal: explicit application language OR a grant/funding word paired with a concrete
-  // deadline. Better to miss a couple and loosen from a clean baseline than to bury the real ones.
+  // opportunities off one AEDC page, eating the whole promote cap). Promote ONLY on a real signal:
+  //   (a) explicit application language (STRONG_APP_KEYWORDS), OR
+  //   (b) a grant/funding word paired with a CONCRETE deadline — a deadline cue ADJACENT to a date,
+  //       NOT any stray date or bare "due" reachable in the 200-char trailing context (see
+  //       hasConcreteDeadline; Codex P1, 2026-09-10 — the loose extractDeadlineSignal, kept for
+  //       change detection, would re-promote a nav link that merely sits near an event/copyright
+  //       date), OR
+  //   (c) a grant/funding word with FORECAST language ("coming soon" / "check back") — a not-yet-open
+  //       program that carries no application date yet. It is admitted but rides in HELD (forecasted →
+  //       grant_status='Forecasted' → the pipeline skips matching), so it never surfaces as a live
+  //       card; change detection flips it to open when the page posts (decision 5, the AR Ag Water &
+  //       Sewer grant). Dropping it — as the first cut of this precision pass did — makes the
+  //       documented hold-and-requeue lifecycle unreachable (Codex P1, 2026-09-10).
+  // Better to miss a couple and loosen from a clean baseline than to bury the real ones.
   const applicationSignal = STRONG_APP_KEYWORDS.test(hay);
-  const grantWithDeadline = GRANT_KEYWORDS.test(hay) && extractDeadlineSignal(item.context) !== "";
-  if (applicationSignal || grantWithDeadline) {
+  const grantWord = GRANT_KEYWORDS.test(hay);
+  const grantWithDeadline = grantWord && hasConcreteDeadline(`${item.title} ${item.context}`);
+  const grantForecast = grantWord && forecasted;
+  if (applicationSignal || grantWithDeadline || grantForecast) {
     return { docType: "opportunity", fundingType: "grant", ...base };
   }
 
-  return null; // noise — a program/nav link with no application signal
+  return null; // noise — a program/nav link with no application, deadline, or forecast signal
 }
 
 function loanish(hay: string): boolean {
@@ -120,6 +133,30 @@ export function extractDeadlineSignal(context: string): string {
     if (new RegExp(`\\b${kw}\\b`, "i").test(context)) markers.push(kw);
   }
   return [...new Set([...dates, ...markers])].sort().join("|");
+}
+
+// A CONCRETE application deadline: a deadline CUE ("deadline", "due", "closes", "apply by", …)
+// ADJACENT to a date, in either order. This is the PRECISION gate's date signal (classifyItem), and
+// is deliberately STRICTER than extractDeadlineSignal above — which stays loose for change detection
+// / dedup, where accepting any stray date or a bare marker word is harmless. Reusing that loose
+// signal to PROMOTE re-created the false positives this pass exists to kill: extractAnchors hands up
+// to 200 chars of trailing page text as context, so a copyright line, an event date, or "books due
+// back" would each make a bare nav link an opportunity (Codex P1, 2026-09-10). Requiring the cue and
+// a date within a short, same-sentence span ([^.\n] stops at a period, so it can't bridge two
+// sentences) rejects those while still catching a real "Grant … Deadline: June 30, 2026".
+const DL_DATE =
+  "(?:january|february|march|april|may|june|july|august|september|october|november|december)\\s+\\d{1,2}(?:,?\\s*\\d{4})?|\\d{1,2}\\/\\d{1,2}\\/\\d{2,4}|\\d{4}-\\d{2}-\\d{2}";
+const DL_CUE = "deadline|due|closes?|closing|apply\\s+by|submit(?:ted)?\\s+by|no\\s+later\\s+than";
+const CONCRETE_DEADLINE = new RegExp(
+  `(?:${DL_CUE})[^.\\n]{0,40}(?:${DL_DATE})|(?:${DL_DATE})[^.\\n]{0,25}(?:${DL_CUE})`,
+  "i",
+);
+
+// True when the text carries a real application deadline (a cue adjacent to a date). Used ONLY as the
+// promotion gate's date signal — never for dedup / change detection (that stays on the loose
+// extractDeadlineSignal). Bounded quantifiers only, so it is ReDoS-safe on the ≤~700-char haystack.
+export function hasConcreteDeadline(text: string): boolean {
+  return CONCRETE_DEADLINE.test(text);
 }
 
 // The authoritative eligibility preamble prepended to the shred input at promotion. The shredder

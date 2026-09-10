@@ -12,6 +12,7 @@ import {
   classifyItem,
   externalRef,
   extractDeadlineSignal,
+  hasConcreteDeadline,
   itemHash,
 } from "./classify";
 import { buildScrapedGrantInsert, promoteOpportunity, type PromoteContext } from "./promote";
@@ -202,6 +203,18 @@ describe("classify — funding-type gate (decision A) and keys", () => {
     expect(extractDeadlineSignal("Applications due June 30, 2026 for the program").length).toBeGreaterThan(0);
     expect(extractDeadlineSignal("A general paragraph with no dates")).toBe("");
   });
+  it("hasConcreteDeadline requires a cue ADJACENT to a date, not either alone (the precision date signal)", () => {
+    // Real deadline expressions (cue + date, either order):
+    expect(hasConcreteDeadline("Deadline: June 30, 2026")).toBe(true);
+    expect(hasConcreteDeadline("applications due 6/30/2026")).toBe(true);
+    expect(hasConcreteDeadline("submit by 2026-06-30")).toBe(true);
+    expect(hasConcreteDeadline("March 3, 2026 is the application deadline")).toBe(true); // date-before-cue
+    // NOT deadlines — a stray date, a bare cue, or a cue and date split across sentences:
+    expect(hasConcreteDeadline("our meeting is January 15, 2026")).toBe(false); // date, no cue
+    expect(hasConcreteDeadline("books are due back soon")).toBe(false); // cue, no date
+    expect(hasConcreteDeadline("© 2024 Agency. Updated 03/01/2026.")).toBe(false); // date, no cue in sentence
+    expect(hasConcreteDeadline("Deadline is firm. Board meets January 15, 2026.")).toBe(false); // cue + date, different sentences
+  });
   it("does NOT promote a bare grant/funding nav link with no application signal (precision fix)", () => {
     // The over-detection fix: a program / nav link carrying "grant"/"funding" but no NOFO/RFP/apply/
     // deadline signal is noise, not a promotable opportunity (this is what flooded AEDC with 16).
@@ -216,6 +229,30 @@ describe("classify — funding-type gate (decision A) and keys", () => {
     expect(classifyItem(rawItem({ title: "Matching Grants", context: "apply by August 28, 2026" }), s)?.docType).toBe("opportunity");
     // A grant/funding word paired with a concrete deadline also qualifies (no explicit "apply" word).
     expect(classifyItem(rawItem({ title: "Outdoor Rec Grant", context: "grant program, deadline June 30, 2026" }), s)?.docType).toBe("opportunity");
+  });
+  it("does NOT treat a STRAY date or a bare 'due' in trailing context as a deadline (Codex P1: precision)", () => {
+    // extractAnchors hands ~200 chars of trailing page text as context. A grant/nav link that merely
+    // sits near an unrelated event date, a copyright/updated line, or the word "due" (not a real
+    // application deadline) must NOT promote — the deadline must be a cue ADJACENT to a date.
+    const s = source();
+    expect(classifyItem(rawItem({ title: "Grant Programs", context: "our annual meeting is January 15, 2026 in Little Rock" }), s)).toBeNull();
+    expect(classifyItem(rawItem({ title: "Economic Development Grants", context: "library books are due back next week" }), s)).toBeNull();
+    expect(classifyItem(rawItem({ title: "Funding", context: "© 2024 Agency. Site last updated 03/01/2026." }), s)).toBeNull();
+    // But a real deadline expression tied to the grant still promotes.
+    expect(classifyItem(rawItem({ title: "Water Grant", context: "grant funds available; deadline June 30, 2026" }), s)?.docType).toBe("opportunity");
+  });
+  it("admits a grant FORECAST with no application date as a HELD forecasted opportunity (Codex P1: lifecycle)", () => {
+    // A 'coming soon' / 'check back' grant has neither application language nor a deadline yet, but it
+    // is exactly the hold-and-requeue target (the forthcoming AR Ag Water & Sewer grant). It must be
+    // stored as a forecasted opportunity (held, not matched — grant_status='Forecasted') so change
+    // detection can flip it when the page opens, not dropped as noise. Restores #529 behaviour for
+    // this case while keeping the live-opportunity precision tightening.
+    const s = source({ funding_type: "mixed" });
+    const soon = classifyItem(rawItem({ title: "Water & Sewer Grant Program", context: "coming soon — check back for details" }), s);
+    expect(soon?.docType).toBe("opportunity");
+    expect(soon?.forecasted).toBe(true);
+    // A NON-grant 'coming soon' item (no funding word) is still noise — the forecast branch needs a grant word.
+    expect(classifyItem(rawItem({ title: "New Website", context: "coming soon" }), s)).toBeNull();
   });
 });
 
