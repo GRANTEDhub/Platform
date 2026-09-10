@@ -47,8 +47,10 @@ export async function POST(req: NextRequest) {
   const deny = await requireAdmin();
   if (deny) return deny;
   try {
-    const limitParam = new URL(req.url).searchParams.get("limit");
-    const limit = limitParam ? Math.max(1, Math.min(40, Number(limitParam) || 0)) || undefined : undefined;
+    // A positive integer caps entries seeded this call; anything else (absent, 0, non-numeric) means
+    // "no cap" -> undefined (not 1, which Math.max(1, …) would wrongly force).
+    const n = Number(new URL(req.url).searchParams.get("limit"));
+    const limit = Number.isFinite(n) && n > 0 ? Math.min(40, Math.floor(n)) : undefined;
     const report = await runSeed(createServiceClient(), { apply: true, limit });
     return NextResponse.json(report);
   } catch (err) {

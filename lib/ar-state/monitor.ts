@@ -82,7 +82,10 @@ export async function runMonitor(db: SupabaseClient, opts: MonitorOptions = {}):
     // change again and retries, rather than reading "unchanged" and abandoning a stale grant (Codex P1).
     const rawText = buildSeedPreamble({ grantor: row.grantor, program: row.program, url: row.monitor_url }, fetched.text);
     try {
-      await pipeline(row.grant_id, undefined, rawText, db);
+      // Thread the SHARED absolute deadline (like the seed) so several changed pages in one run stay
+      // under the route cap — without it each row's match would get a fresh ~240s window and a late row
+      // could be killed mid-match, stuck at status='matching' (Claude Code Review; the Move 2 invariant).
+      await pipeline(row.grant_id, undefined, rawText, db, { deadlineMs: startedAt + budgetMs });
       await updateMonitorHash(db, row.id, { hash, changed });
       if (changed) rep.changed++;
       rep.rederived++;

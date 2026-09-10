@@ -71,6 +71,7 @@ describe("runMonitor — change detection", () => {
     for (const call of pipeline.mock.calls) {
       expect(call[1]).toBeUndefined(); // url=undefined
       expect(call[2]).toContain("State of Arkansas");
+      expect(call[4]).toMatchObject({ deadlineMs: expect.any(Number) }); // shared deadline threaded
     }
     // the changed grant's re-derive carries its own identity (shared-page safety)
     const g2call = pipeline.mock.calls.find((c) => c[0] === "g2")!;
