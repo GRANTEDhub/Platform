@@ -330,6 +330,20 @@ describe("run — the funding-type gate and dry-run safety", () => {
     expect(report.apply).toBe(false);
   });
 
+  it("DRY-RUN previews ALL sources even on an empty table (seed fallback — URL check works pre-first-apply)", async () => {
+    const db = new FakeDb(); // deliberately NOT seeded — a fresh deploy, table empty
+    let promoteCalled = false;
+    const promote: PromoteFn = async () => {
+      promoteCalled = true;
+      return { grantId: "g", action: "inserted" };
+    };
+    const report = await runArGrantsScan(asDb(db), { apply: false, promote, fetchSourceImpl: cannedFetch(items) });
+    expect(promoteCalled).toBe(false);
+    expect(report.sources).toHaveLength(AR_GRANT_SOURCES.length); // all 9 previewed, not an empty report
+    expect(report.totals.opportunities).toBe(1); // AR Ag's grant is detected in the preview
+    expect(db.store.tables.ar_grant_sources).toHaveLength(0); // still zero writes
+  });
+
   it("change detection: a moved deadline re-queues an already-promoted opportunity", async () => {
     const db = new FakeDb();
     seedAllSources(db);

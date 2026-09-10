@@ -6,6 +6,14 @@ import type { ItemStatus } from "@/lib/ar-grants/sources";
 // policy, so every write here runs under the service role (the cron / admin route) — the 0080/0086
 // pattern. Nothing in this module is reachable by a client member.
 
+// A failed write must not be silently dropped (which would leave the caller believing state
+// persisted). We LOG rather than throw so one transient per-item error doesn't abort a whole scan;
+// the source-level writes matter most (a dropped last_hash mis-reads change detection next run), and
+// these surface in the cron/admin logs. Best-effort by design — the writes are idempotent-ish.
+function logWrite(op: string, error: unknown): void {
+  if (error) console.error(`ar-grants store: ${op} write failed:`, error instanceof Error ? error.message : error);
+}
+
 // ── SOURCE REGISTRY SYNC ──
 //
 // Source DEFINITIONS live in code (sources.ts); this syncs them into ar_grant_sources while PRESERVING
@@ -33,15 +41,18 @@ export async function ensureSources(db: SupabaseClient): Promise<ArGrantSource[]
     };
     const match = byUrl.get(seed.url);
     if (match) {
-      await db.from("ar_grant_sources").update(def).eq("id", match.id);
+      const { error } = await db.from("ar_grant_sources").update(def).eq("id", match.id);
+      logWrite(`ensureSources.update(${seed.agency})`, error);
     } else {
-      await db.from("ar_grant_sources").insert({ url: seed.url, ...def });
+      const { error } = await db.from("ar_grant_sources").insert({ url: seed.url, ...def });
+      logWrite(`ensureSources.insert(${seed.agency})`, error);
     }
   }
   // Deactivate any stored source no longer in the code seed.
   for (const row of existing) {
     if (!seedUrls.has(row.url as string) && row.active) {
-      await db.from("ar_grant_sources").update({ active: false, updated_at: new Date().toISOString() }).eq("id", row.id);
+      const { error } = await db.from("ar_grant_sources").update({ active: false, updated_at: new Date().toISOString() }).eq("id", row.id);
+      logWrite("ensureSources.deactivate", error);
     }
   }
 
@@ -57,7 +68,8 @@ export async function updateSourceState(
   const now = new Date().toISOString();
   const patch: Record<string, unknown> = { last_hash: opts.lastHash, last_checked: now, updated_at: now };
   if (opts.changed) patch.last_changed = now;
-  await db.from("ar_grant_sources").update(patch).eq("id", sourceId);
+  const { error } = await db.from("ar_grant_sources").update(patch).eq("id", sourceId);
+  logWrite("updateSourceState", error);
 }
 
 // ── ITEMS ──
@@ -92,21 +104,27 @@ export interface NewItemRow {
 
 export async function insertItem(db: SupabaseClient, row: NewItemRow): Promise<string | null> {
   const { data, error } = await db.from("ar_source_items").insert(row).select("id").single();
-  if (error || !data) return null;
+  if (error || !data) {
+    logWrite(`insertItem(${row.external_ref})`, error ?? "no row returned");
+    return null;
+  }
   return data.id as string;
 }
 
 export async function touchItem(db: SupabaseClient, id: string): Promise<void> {
-  await db.from("ar_source_items").update({ last_seen_at: new Date().toISOString() }).eq("id", id);
+  const { error } = await db.from("ar_source_items").update({ last_seen_at: new Date().toISOString() }).eq("id", id);
+  logWrite("touchItem", error);
 }
 
 export async function markItemChanged(db: SupabaseClient, id: string, itemHash: string): Promise<void> {
   const now = new Date().toISOString();
-  await db.from("ar_source_items").update({ item_hash: itemHash, changed_at: now, last_seen_at: now, status: "changed" }).eq("id", id);
+  const { error } = await db.from("ar_source_items").update({ item_hash: itemHash, changed_at: now, last_seen_at: now, status: "changed" }).eq("id", id);
+  logWrite("markItemChanged", error);
 }
 
 export async function setItemStatus(db: SupabaseClient, id: string, status: ItemStatus): Promise<void> {
-  await db.from("ar_source_items").update({ status, last_seen_at: new Date().toISOString() }).eq("id", id);
+  const { error } = await db.from("ar_source_items").update({ status, last_seen_at: new Date().toISOString() }).eq("id", id);
+  logWrite("setItemStatus", error);
 }
 
 // The grants row a promoted item produced (grants.ar_source_item_id back-reference). Null when the

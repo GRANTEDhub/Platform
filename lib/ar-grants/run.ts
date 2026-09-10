@@ -16,7 +16,7 @@ import {
   touchItem,
   updateSourceState,
 } from "@/lib/ar-grants/store";
-import type { ArGrantSource } from "@/lib/ar-grants/sources";
+import { AR_GRANT_SOURCES, type ArGrantSource } from "@/lib/ar-grants/sources";
 import type { PromoteContext } from "@/lib/ar-grants/promote";
 
 // The orchestrator, shared by the weekly cron and the manual admin route. It is the ONLY place the
@@ -213,11 +213,19 @@ export async function runArGrantsScan(db: SupabaseClient, opts: ScanOptions): Pr
   return { apply: opts.apply, ran_at: ranAt, promote_cap: promoteMax, sources: results, totals };
 }
 
-// Dry-run reads the stored active sources (no ensureSources write). Its dedup uses whatever rows are
-// already seeded; an unseeded source simply reports all hits as new, which is the honest preview.
+// Dry-run source list (no ensureSources write). It ALWAYS previews all 9 code-seed sources, overlaying
+// stored runtime state (id + last_hash) where a row already exists — so a fresh deploy's admin GET
+// (the recommended "look before you flip" URL check) actually fetches + classifies every source
+// instead of returning an empty, all-zero report before the first apply run has seeded the table. An
+// unseeded source gets an empty id (no stored items → all hits read as new; no writes in dry-run).
 async function readActiveSources(db: SupabaseClient): Promise<ArGrantSource[]> {
-  const { data } = await db.from("ar_grant_sources").select("*").eq("active", true).order("agency");
-  return (data ?? []) as ArGrantSource[];
+  const { data } = await db.from("ar_grant_sources").select("*").eq("active", true);
+  const stored = new Map((data ?? []).map((r) => [r.url as string, r as ArGrantSource]));
+  return AR_GRANT_SOURCES.map((seed) => {
+    const row = stored.get(seed.url);
+    if (row) return row;
+    return { ...seed, id: "", active: true, last_hash: null, last_checked: null, last_changed: null };
+  });
 }
 
 // Re-exported for the admin surface / tests.
