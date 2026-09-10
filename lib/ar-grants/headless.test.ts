@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { renderHeadless, shouldAbortResource, isPrivateHostLiteral, type RenderDeps } from "./headless";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { renderHeadless, shouldAbortResource, isPrivateHostLiteral, isRequestAllowed, type RenderDeps } from "./headless";
 import { fetchSource, type FetchTextFn } from "./fetch";
 import type { ArGrantSource } from "./sources";
 
@@ -133,21 +135,71 @@ describe("headless — renderHeadless (fake browser, never a real launch)", () =
       reason: "launch_failed",
     });
   });
-  it("request interception aborts heavy subresources and private-IP subrequests, continues the rest", async () => {
+  it("enables request interception and wires the handler to abort/continue", async () => {
     const b = new FakeBrowser({ html: "<html></html>" });
     await renderHeadless("https://www.arkansasedc.com/", { launch: launchOf(b), lookup: publicLookup });
     const handler = b.page.handler!;
     expect(b.page.interception).toBe(true);
 
     const img = new FakeRequest({ resourceType: "image", url: "https://cdn.example/a.png" });
-    const doc = new FakeRequest({ resourceType: "document", url: "https://www.arkansasedc.com/" });
+    const doc = new FakeRequest({ resourceType: "document", url: "https://www.arkansasedc.com/" }); // publicLookup → public
     const ssrf = new FakeRequest({ resourceType: "xhr", url: "http://169.254.169.254/latest/meta-data/" });
     handler(img);
     handler(doc);
     handler(ssrf);
+    await new Promise((r) => setTimeout(r, 10)); // interception is async now — let dispositions settle
     expect(img.aborted).toBe(true); // heavy subresource
     expect(doc.continued).toBe(true); // needed for the DOM
     expect(ssrf.aborted).toBe(true); // metadata-endpoint SSRF via page JS
+  });
+});
+
+describe("headless — isRequestAllowed (subresource / redirect SSRF gate, Codex P1)", () => {
+  const pub = async () => [{ address: "93.184.216.34" }];
+  const priv = async () => [{ address: "10.0.0.5" }];
+  const loopback = async () => [{ address: "127.0.0.1" }];
+  it("aborts heavy subresource types regardless of host", async () => {
+    expect(await isRequestAllowed("image", "https://good.gov/a.png", pub)).toBe(false);
+    expect(await isRequestAllowed("stylesheet", "https://good.gov/s.css", pub)).toBe(false);
+  });
+  it("aborts a literal private IP without a DNS lookup", async () => {
+    let looked = false;
+    const spy = async () => {
+      looked = true;
+      return [{ address: "93.184.216.34" }];
+    };
+    expect(await isRequestAllowed("xhr", "http://169.254.169.254/latest/meta-data/", spy)).toBe(false);
+    expect(looked).toBe(false); // literal IP → refused before any resolve
+  });
+  it("aborts a HOSTNAME that resolves to a private address (localhost / DNS-rebinding)", async () => {
+    expect(await isRequestAllowed("script", "http://localhost/x", loopback)).toBe(false);
+    expect(await isRequestAllowed("fetch", "https://attacker.example/x", priv)).toBe(false);
+  });
+  it("allows a document/script from a public host", async () => {
+    expect(await isRequestAllowed("document", "https://www.arkansasedc.com/", pub)).toBe(true);
+    expect(await isRequestAllowed("script", "https://cdn.example/app.js", pub)).toBe(true);
+  });
+  it("caches the per-host verdict — one lookup per unique host", async () => {
+    let n = 0;
+    const counting = async () => {
+      n++;
+      return [{ address: "93.184.216.34" }];
+    };
+    const cache = new Map<string, boolean>();
+    await isRequestAllowed("script", "https://cdn.example/a.js", counting, cache);
+    await isRequestAllowed("script", "https://cdn.example/b.js", counting, cache);
+    expect(n).toBe(1); // second same-host request served from cache
+  });
+});
+
+// A silent-failure guard: @sparticuz/chromium is externalized, so a headless route renders ONLY if its
+// Chromium binary is traced into the serverless bundle (Codex P1 — else executablePath() 500s /
+// launch_failed in prod despite a green build). Lock that both AR routes carry the trace.
+describe("next.config — headless AR routes trace the Chromium binary", () => {
+  it("both ar-grants routes include @sparticuz/chromium in outputFileTracingIncludes", () => {
+    const cfg = readFileSync(path.join(process.cwd(), "next.config.mjs"), "utf8");
+    expect(cfg).toMatch(/"\/api\/cron\/ar-grants":\s*\[[^\]]*@sparticuz\/chromium/);
+    expect(cfg).toMatch(/"\/api\/admin\/ar-grants":\s*\[[^\]]*@sparticuz\/chromium/);
   });
 });
 

@@ -78,6 +78,29 @@ function hostOf(u: string): string {
   }
 }
 
+// Should this intercepted request proceed? The SSRF gate for SUBRESOURCES + REDIRECTS (Codex P1): the
+// pre-goto check only covers the ENTRY url, so a page script / redirect to a HOSTNAME that resolves to
+// a private address (localhost, an attacker-controlled name pointing at 169.254.169.254, DNS rebinding)
+// would slip past a literal-IP-only check. So every non-aborted request's host is DNS-resolved and must
+// be public — cached per render so it's one lookup per unique host. Heavy subresources are dropped
+// first (perf/egress), and an unparseable / literal-private host is refused without a lookup.
+export async function isRequestAllowed(
+  resourceType: string,
+  url: string,
+  lookup: LookupFn,
+  cache?: Map<string, boolean>,
+): Promise<boolean> {
+  if (shouldAbortResource(resourceType)) return false;
+  const host = hostOf(url);
+  if (!host) return false; // unparseable target — nothing legitimate to load
+  if (isPrivateHostLiteral(host)) return false; // fast path: literal private/loopback IP, no DNS needed
+  const cached = cache?.get(host);
+  if (cached !== undefined) return cached;
+  const ok = await hostResolvesPublic(host, lookup);
+  cache?.set(host, ok);
+  return ok;
+}
+
 function isTimeoutError(err: unknown): boolean {
   return (err as { name?: string })?.name === "TimeoutError";
 }
@@ -117,12 +140,21 @@ export async function renderHeadless(url: string, deps: RenderDeps = {}): Promis
   try {
     const page = await browser.newPage();
     await page.setRequestInterception(true);
+    const hostVerdicts = new Map<string, boolean>(); // per-render cache: one DNS lookup per unique host
     page.on("request", (req) => {
-      if (shouldAbortResource(req.resourceType()) || isPrivateHostLiteral(hostOf(req.url()))) {
-        void req.abort().catch(() => {});
-      } else {
-        void req.continue().catch(() => {});
-      }
+      void (async () => {
+        let allow = false;
+        try {
+          allow = await isRequestAllowed(req.resourceType(), req.url(), lookup, hostVerdicts);
+        } catch {
+          allow = false; // fail closed
+        }
+        try {
+          await (allow ? req.continue() : req.abort());
+        } catch {
+          /* request already handled — ignore */
+        }
+      })();
     });
     try {
       await page.goto(url, { waitUntil: "networkidle2", timeout: timeoutMs });
