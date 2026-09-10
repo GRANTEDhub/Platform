@@ -48,7 +48,12 @@ export function ProspectAlertButton({
   backHref: string;
 }) {
   const [open, setOpen] = useState(false);
-  const { guard, gate } = useOverdueGate({ cardId, daysLeft, deadlineLabel, backHref }, "Send grant alert");
+  // archivable: false — this is a discovery prospect card, which /api/review/archive-closed excludes
+  // (card_type='prospect'), so the gate shows the deadline warning WITHOUT the dead-end Archive button.
+  const { guard, gate } = useOverdueGate(
+    { cardId, daysLeft, deadlineLabel, backHref, archivable: false },
+    "Send grant alert",
+  );
   return (
     <>
       <button
