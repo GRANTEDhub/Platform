@@ -57,6 +57,12 @@ const nextConfig = {
       // doesn't render the branded PDF).
       "/api/cron/ar-grants": ["./node_modules/@sparticuz/chromium/**"],
       "/api/admin/ar-grants": ["./node_modules/@sparticuz/chromium/**"],
+      // The AR STATE repository seed + weekly monitor render headless AEDC/DFA pages via the SAME
+      // launchAlertBrowser() -> @sparticuz/chromium launcher, so both routes need the Chromium binary
+      // traced in or executablePath() 500s (launch_failed), exactly like the AR scraper routes above.
+      // Binary only -- these read the DOM, not the branded PDF.
+      "/api/cron/ar-state-monitor": ["./node_modules/@sparticuz/chromium/**"],
+      "/api/admin/seed-ar-grants": ["./node_modules/@sparticuz/chromium/**"],
     },
   },
   async redirects() {
