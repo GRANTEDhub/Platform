@@ -118,7 +118,7 @@ class FakeQuery {
     // select
     if (this.table === "grants") {
       const rows = this.db.grants.filter((r) => this.match(r));
-      return { data: this._single ? (rows[0] ?? null) : rows.map((r) => ({ id: r.id })), error: null };
+      return { data: this._single ? (rows[0] ?? null) : rows.map((r) => ({ id: r.id, status: r.status ?? null })), error: null };
     }
     if (this.table === "grant_monitor_state") {
       const rows = this.db.monitor.filter((r) => this.match(r)).map((r) => ({ ...r, grants: this.grantOf(r.grant_id) }));

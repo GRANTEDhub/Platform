@@ -53,9 +53,15 @@ export async function runSeed(db: SupabaseClient, opts: SeedOptions): Promise<Se
     results: [],
   };
 
+  let probeTruncated = false;
   for (const entry of AR_STATE_SEED) {
     if (!opts.apply) {
-      const plan = await planSource(db, entry, opts, opts.probeReach);
+      // Budget the dry-run too: past budgetMs stop the all-URL reachability probe (?probe=all can fetch
+      // 40 pages, several headless) so the request always returns a full partial report instead of
+      // being killed at the 300s cap (Claude Code Review). The single verify_url probe is unaffected.
+      const withinBudget = Date.now() - startedAt < budgetMs;
+      if (opts.probeReach && !withinBudget) probeTruncated = true;
+      const plan = await planSource(db, entry, opts, !!opts.probeReach && withinBudget);
       if (plan.action === "skip_exists") r.skipped++;
       else {
         r.would_seed++;
@@ -71,7 +77,8 @@ export async function runSeed(db: SupabaseClient, opts: SeedOptions): Promise<Se
     const overLimit = opts.limit != null && r.seeded >= opts.limit;
     if (overBudget || overLimit) {
       const existing = await findExistingGrantByUrl(db, seedSourceUrl(entry));
-      if (existing) r.skipped++;
+      // A prior ERRORED seed is retryable work, not a completed skip -> count it as remaining.
+      if (existing && existing.status !== "error") r.skipped++;
       else r.remaining++;
       continue;
     }
@@ -86,5 +93,6 @@ export async function runSeed(db: SupabaseClient, opts: SeedOptions): Promise<Se
     r.results.push(res);
   }
 
+  if (probeTruncated) r.flagged.push("probe budget reached — remaining URLs were not reachability-checked (re-run without ?probe=all, or per-URL)");
   return r;
 }

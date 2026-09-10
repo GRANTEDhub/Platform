@@ -105,16 +105,44 @@ export type AddResult =
   | { action: "seed_error"; grantId: string; reason: string } // shell exists, shred/match threw
   | { action: "error"; reason: string }; // couldn't even establish the grant + monitor row
 
-// Add ONE monitored program: insert the grant shell + its monitor_state row, then shred+match via
-// runPipeline over the rendered page + preamble. Idempotent — an already-present source_url is skipped,
-// never duplicated.
-export async function addSource(db: SupabaseClient, entry: SeedGrant, deps: SeedDeps = {}): Promise<AddResult> {
+// Fetch the page (headless where needed), shred + match through the existing pipeline, and commit the
+// change-detection baseline ON SUCCESS. Shared by a fresh seed and the retry of an errored one. Deadline-
+// bounded (a match truncated at the deadline re-queues; the match drain finishes it). A failure leaves a
+// null baseline so the weekly monitor re-derives it (self-heal) and returns 'seed_error' — never a false
+// 'seeded' that a re-POST would dedup-skip (Codex P1/P2).
+async function runShredForGrant(db: SupabaseClient, grantId: string, entry: SeedGrant, deps: SeedDeps): Promise<AddResult> {
   const fetchText = deps.fetchText ?? defaultFetchText;
   const pipeline = deps.runPipelineImpl ?? defaultRunPipeline;
+  const fetched = await fetchText(entry.url, needsHeadless(entry.url));
+  const pageText = fetched.ok ? fetched.text : "";
+  const rawText = buildSeedPreamble(
+    { grantor: entry.grantor, program: entry.program, seedText: entry.seed_text, url: entry.url },
+    pageText,
+  );
+  try {
+    await pipeline(grantId, undefined, rawText, db, deps.deadlineMs != null ? { deadlineMs: deps.deadlineMs } : undefined);
+    if (fetched.ok) await commitMonitorBaseline(db, grantId, contentHashOf(pageText));
+    return { action: "seeded", grantId, fetchOk: fetched.ok };
+  } catch (err) {
+    const reason = String(err instanceof Error ? err.message : err).slice(0, 600);
+    await db.from("grants").update({ status: "error", error_detail: reason }).eq("id", grantId);
+    return { action: "seed_error", grantId, reason };
+  }
+}
 
+// Add ONE monitored program: insert the grant shell + its monitor_state row, then shred+match. A prior
+// SUCCESSFUL (or in-flight) seed for the same source_url is skipped; a prior ERRORED one is RETRIED on
+// the same grant + monitor row, so a re-POST actually completes it rather than dedup-skipping it forever
+// (Claude Code Review) — no duplicate grant is ever created.
+export async function addSource(db: SupabaseClient, entry: SeedGrant, deps: SeedDeps = {}): Promise<AddResult> {
   const sourceUrl = seedSourceUrl(entry);
   const existing = await findExistingGrantByUrl(db, sourceUrl);
-  if (existing) return { action: "skip_exists", grantId: existing };
+  if (existing) {
+    if (existing.status !== "error") return { action: "skip_exists", grantId: existing.id };
+    // Retry an errored seed on the SAME grant (its monitor row already exists with a null baseline).
+    await db.from("grants").update({ status: "processing", error_detail: null }).eq("id", existing.id);
+    return runShredForGrant(db, existing.id, entry, deps);
+  }
 
   const { data, error } = await db
     .from("grants")
@@ -123,10 +151,6 @@ export async function addSource(db: SupabaseClient, entry: SeedGrant, deps: Seed
     .single();
   if (error || !data) return { action: "error", reason: error?.message ?? "grant insert failed" };
   const grantId = data.id as string;
-
-  const headless = needsHeadless(entry.url);
-  const fetched = await fetchText(entry.url, headless);
-  const pageText = fetched.ok ? fetched.text : "";
 
   // Establish the monitor row (null baseline) BEFORE the shred. If it can't be written, roll the grant
   // shell back so a retry re-seeds cleanly rather than leaving an unmonitored, forever-dedup-skipped
@@ -144,24 +168,7 @@ export async function addSource(db: SupabaseClient, entry: SeedGrant, deps: Seed
     return { action: "error", reason: "monitor_state insert failed" };
   }
 
-  const rawText = buildSeedPreamble(
-    { grantor: entry.grantor, program: entry.program, seedText: entry.seed_text, url: entry.url },
-    pageText,
-  );
-
-  // Shred + match through the existing pipeline, deadline-bounded (a match truncated at the deadline
-  // re-queues; the match drain finishes it). Commit the change-detection baseline ONLY on success: a
-  // failure leaves a null baseline so the weekly monitor re-derives it (self-heal), and the result is
-  // 'seed_error' rather than a false 'seeded' that a re-POST would dedup-skip (Codex P1/P2).
-  try {
-    await pipeline(grantId, undefined, rawText, db, deps.deadlineMs != null ? { deadlineMs: deps.deadlineMs } : undefined);
-    if (fetched.ok) await commitMonitorBaseline(db, grantId, contentHashOf(pageText));
-    return { action: "seeded", grantId, fetchOk: fetched.ok };
-  } catch (err) {
-    const reason = String(err instanceof Error ? err.message : err).slice(0, 600);
-    await db.from("grants").update({ status: "error", error_detail: reason }).eq("id", grantId);
-    return { action: "seed_error", grantId, reason };
-  }
+  return runShredForGrant(db, grantId, entry, deps);
 }
 
 // ── dry-run planner ───────────────────────────────────────────────────────────────────────────────
@@ -179,14 +186,19 @@ export async function planSource(
   probeReach = false,
 ): Promise<PlanResult> {
   const existing = await findExistingGrantByUrl(db, seedSourceUrl(entry));
-  if (existing) return { action: "skip_exists", program: entry.program, url: entry.url, grantId: existing };
+  // A prior successful seed is skipped; a prior ERRORED one would be retried on apply, so it is not a
+  // skip — report it as a would-seed with a retry note rather than hiding it as "already seeded".
+  if (existing && existing.status !== "error") {
+    return { action: "skip_exists", program: entry.program, url: entry.url, grantId: existing.id };
+  }
 
   const headless = needsHeadless(entry.url);
-  let note: string | undefined;
+  let note: string | undefined = existing ? "retry: previous seed attempt errored" : undefined;
   if (probeReach || entry.tags?.includes("verify_url")) {
     const fetchText = deps.fetchText ?? defaultFetchText;
     const r = await fetchText(entry.url, headless);
-    note = r.ok ? `reachable (${r.text.length} chars)` : `UNREACHABLE: ${r.reason}`;
+    const reach = r.ok ? `reachable (${r.text.length} chars)` : `UNREACHABLE: ${r.reason}`;
+    note = note ? `${note}; ${reach}` : reach;
   }
   return { action: "would_seed", program: entry.program, url: entry.url, headless, note };
 }

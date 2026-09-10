@@ -14,14 +14,17 @@ function logWrite(op: string, error: unknown): void {
 // ingest route uses (and the grants_source_url_uniq partial index backstops). A seed entry whose URL
 // already produced a grant (a prior manual paste, or an earlier seed run) is SKIPPED, never
 // duplicated, which is what makes the seed idempotent and a re-run a no-op.
-export async function findExistingGrantByUrl(db: SupabaseClient, url: string): Promise<string | null> {
+export async function findExistingGrantByUrl(
+  db: SupabaseClient,
+  url: string,
+): Promise<{ id: string; status: string | null } | null> {
   const { data } = await db
     .from("grants")
-    .select("id")
+    .select("id, status")
     .eq("source_url", url)
     .order("ingested_at", { ascending: false })
     .limit(1);
-  return data && data.length > 0 ? (data[0].id as string) : null;
+  return data && data.length > 0 ? { id: data[0].id as string, status: (data[0].status as string | null) ?? null } : null;
 }
 
 export interface InsertMonitorArgs {

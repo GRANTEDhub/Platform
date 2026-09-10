@@ -210,4 +210,32 @@ describe("addSource (apply)", () => {
     expect(db.grants).toHaveLength(0); // grant shell rolled back -> retry re-seeds cleanly
     expect(pipeline).not.toHaveBeenCalled(); // never shredded an unmonitored grant
   });
+
+  it("retries an errored prior seed on the SAME grant + monitor row (no duplicate, not skipped)", async () => {
+    const db = new FakeDb({
+      grants: [{ id: "gE", source_url: plainEntry.url, status: "error" }],
+      monitor: [{ id: "mE", grant_id: "gE", monitor_url: plainEntry.url, jurisdiction: "AR", monitor_mode: "auto", last_content_hash: null }],
+    });
+    const pipeline = vi.fn().mockResolvedValue(undefined);
+    const res = await addSource(anyDb(db), plainEntry, {
+      fetchText: fakeFetch({ ok: true, text: "LIVE" }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      runPipelineImpl: pipeline as any,
+    });
+    expect(res.action).toBe("seeded"); // retried, NOT skip_exists
+    expect(db.grants).toHaveLength(1); // reused the same grant, no duplicate insert
+    expect(db.grants[0].id).toBe("gE");
+    expect(db.monitor).toHaveLength(1); // no duplicate monitor row
+    expect(pipeline.mock.calls[0][0]).toBe("gE"); // re-shred ran on the existing grant
+    expect(db.monitor[0].last_content_hash).toBeTruthy(); // baseline committed on the successful retry
+  });
+
+  it("still skips a prior SUCCESSFUL seed (non-error status)", async () => {
+    const db = new FakeDb({ grants: [{ id: "gOk", source_url: plainEntry.url, status: "complete" }] });
+    const pipeline = vi.fn();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = await addSource(anyDb(db), plainEntry, { runPipelineImpl: pipeline as any });
+    expect(res).toMatchObject({ action: "skip_exists", grantId: "gOk" });
+    expect(pipeline).not.toHaveBeenCalled();
+  });
 });
