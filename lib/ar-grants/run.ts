@@ -238,8 +238,20 @@ async function readActiveSources(db: SupabaseClient): Promise<ArGrantSource[]> {
   const stored = new Map((data ?? []).map((r) => [r.url as string, r as ArGrantSource]));
   return AR_GRANT_SOURCES.map((seed) => {
     const row = stored.get(seed.url);
-    if (row) return row;
-    return { ...seed, id: "", active: true, last_hash: null, last_checked: null, last_changed: null };
+    // OVERLAY the code-seed DEFINITION (url, tags, funding_type, fetch_mode, rss_url) onto the
+    // stored RUNTIME state (id + last_*). Definitions live in code and ensureSources rewrites exactly
+    // these on the next apply, so the read-only dry-run must reflect them too — otherwise a source
+    // already seeded with an OLD definition (e.g. stored fetch_mode='html' before this change) would
+    // shadow the current code and the preview would never exercise the new mode. An unseeded source
+    // has no stored row → empty id, null runtime state (byte-identical to the pre-overlay fallback).
+    return {
+      ...seed,
+      id: row?.id ?? "",
+      active: true,
+      last_hash: row?.last_hash ?? null,
+      last_checked: row?.last_checked ?? null,
+      last_changed: row?.last_changed ?? null,
+    };
   });
 }
 

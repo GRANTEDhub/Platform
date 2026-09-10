@@ -16,6 +16,9 @@ import { runArGrantsScan, type PromoteFn } from "@/lib/ar-grants/run";
 import { promoteOpportunity } from "@/lib/ar-grants/promote";
 
 export const dynamic = "force-dynamic";
+// Node runtime: a headless source (fetch_mode:'headless') renders via puppeteer-core + @sparticuz/
+// chromium (Node-only). Matches the alert/artifact Chromium routes; Node is already the default.
+export const runtime = "nodejs";
 export const maxDuration = 300;
 
 async function requireAdmin(): Promise<NextResponse | null> {

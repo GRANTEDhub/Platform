@@ -19,6 +19,10 @@ import { arGrantsCronEnabled, runArGrantsScan } from "@/lib/ar-grants/run";
 import { promoteOpportunity } from "@/lib/ar-grants/promote";
 
 export const dynamic = "force-dynamic";
+// Node runtime: a headless source (fetch_mode:'headless') renders via puppeteer-core + @sparticuz/
+// chromium, which are Node-only — explicit here to match the alert/artifact Chromium routes (Node is
+// already the App Router default, so this documents intent rather than changing behaviour).
+export const runtime = "nodejs";
 export const maxDuration = 300;
 
 export async function GET(req: NextRequest) {

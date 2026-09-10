@@ -5,6 +5,7 @@
 // internal IPs). fetchText is injectable so the orchestrator's tests never touch the network.
 
 import { fetchWebsite } from "@/lib/net/fetch-website";
+import { renderHeadless } from "@/lib/ar-grants/headless";
 import { extractAnchors, normalizeForHash, parseRssItems, sha256hex, type RawItem } from "@/lib/ar-grants/parse";
 import type { ArGrantSource } from "@/lib/ar-grants/sources";
 
@@ -16,6 +17,10 @@ const defaultFetchText: FetchTextFn = async (url) => {
   return { ok: true, body: res.html };
 };
 
+// The headless render, shaped as a FetchTextFn so it plugs into the same seam. Injectable so
+// orchestrator/fetch tests never launch a real browser (renderHeadless takes its own deps too).
+const defaultRenderText: FetchTextFn = (url) => renderHeadless(url);
+
 export interface SourceFetchResult {
   ok: boolean;
   items: RawItem[];
@@ -23,7 +28,23 @@ export interface SourceFetchResult {
   reason?: string;
 }
 
-export async function fetchSource(source: ArGrantSource, fetchText: FetchTextFn = defaultFetchText): Promise<SourceFetchResult> {
+export async function fetchSource(
+  source: ArGrantSource,
+  fetchText: FetchTextFn = defaultFetchText,
+  renderText: FetchTextFn = defaultRenderText,
+): Promise<SourceFetchResult> {
+  // HEADLESS: render the JS-executed DOM to HTML, then the SAME anchor extraction as the html path.
+  if (source.fetch_mode === "headless") {
+    const res = await renderText(source.url);
+    if (!res.ok) return { ok: false, items: [], contentHash: "", reason: res.reason };
+    const items = extractAnchors(res.body, source.url);
+    // Hash the STABLE item identity (title|url), NOT the rendered DOM — an SPA re-injects
+    // nonces/timestamps every render, which would churn a raw-DOM hash to a false "changed" each
+    // run (the same reason the rss branch hashes item identity, not the raw feed).
+    const contentHash = sha256hex(items.map((i) => `${i.title}|${i.url ?? ""}`).join("\n"));
+    return { ok: true, items, contentHash };
+  }
+
   const isRss = source.fetch_mode === "rss" && !!source.rss_url;
   const target = isRss ? (source.rss_url as string) : source.url;
   const res = await fetchText(target);
