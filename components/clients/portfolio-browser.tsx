@@ -476,7 +476,9 @@ function ActionCard({ row }: { row: PortfolioRow }) {
   return (
     <Link
       href={`/clients/${row.id}`}
-      className="flex flex-col overflow-hidden rounded-sharp border border-edge bg-white transition-colors duration-[120ms] hover:border-brand-navy/25"
+      // card-enter: shared tile entrance (globals.css) — the action grid's cards land in
+      // sequence on load (flat-card grid, so the class is added here rather than via <Card>).
+      className="card-enter flex flex-col overflow-hidden rounded-sharp border border-edge bg-white transition-colors duration-[120ms] hover:border-brand-navy/25"
       // Teal marks a waiting person, orange marks a waiting queue or clock. With
       // questions unbuilt the teal branch never fires today — it is kept so the card
       // needs no change when they land.

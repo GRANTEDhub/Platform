@@ -75,6 +75,37 @@
     }
   }
 
+  /* Card entrance — subtle "alive" on page open: a card fades + rises ~10px into its
+     final position and settles. Reuses the fade-up keyframe (same soft rise), just a
+     shorter beat. The ONE place to tune distance (the keyframe), duration, and stagger.
+     Applied through the shared <Card> component + the flat-card tile grids, so it is
+     consistent and not hand-placed per page.
+
+     STAGGER is nth-child (siblings ~45ms apart, capped) so a grid/list "lands" in
+     sequence with no per-item wiring; a lone card just fades. Only opacity/transform
+     animate (no layout, no reflow), and the content is rendered + clickable from the
+     first frame — nothing waits on the animation. `both` holds the from-state through
+     the stagger delay so a card is invisible only until its turn, never afterward.
+     Fully OFF under prefers-reduced-motion (the card is simply present — no fade, no
+     move); with animation-name none the leftover nth-child delays are inert. */
+  .card-enter {
+    animation: fade-up 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .card-enter:nth-child(2) { animation-delay: 45ms; }
+  .card-enter:nth-child(3) { animation-delay: 90ms; }
+  .card-enter:nth-child(4) { animation-delay: 135ms; }
+  .card-enter:nth-child(5) { animation-delay: 180ms; }
+  .card-enter:nth-child(6) { animation-delay: 225ms; }
+  .card-enter:nth-child(7) { animation-delay: 270ms; }
+  .card-enter:nth-child(8) { animation-delay: 315ms; }
+  /* Cap the delay so a long list doesn't crawl in — later items land together. */
+  .card-enter:nth-child(n + 9) { animation-delay: 360ms; }
+  @media (prefers-reduced-motion: reduce) {
+    .card-enter {
+      animation: none;
+    }
+  }
+
   /* bg-drift is gone with the page texture it animated. The page background is a
      flat fill now, so there is nothing to drift. */
 
