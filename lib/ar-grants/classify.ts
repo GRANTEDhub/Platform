@@ -24,9 +24,16 @@ import { sha256hex, type RawItem } from "@/lib/ar-grants/parse";
 const LOAN_KEYWORDS =
   /\b(loan|loans|revolving fund|state revolving|srf|cwsrf|dwsrf|water development fund|\bwdf\b|water, sewer|wssw|\bcgo\b|bond financing|bonds?\b|financing program|low-interest|amortiz)/i;
 
-// GRANT / opportunity signals. A hit needs one of these (and no loan signal) to be promotable.
-const GRANT_KEYWORDS =
-  /\b(grant|grants|notice of funding|nofo|\brfp\b|\brfa\b|request for (proposals|applications|qualifications)|funding opportunity|funding available|apply|application|award|matching grant|cost.?share)/i;
+// GRANT / funding words. NOT sufficient alone to promote (see STRONG_APP_KEYWORDS) — a landing page
+// is full of program/nav links carrying these. Used only for the loan-source branch and the
+// grant-word-plus-a-deadline branch.
+const GRANT_KEYWORDS = /\b(grant|grants|funding|award|awards|matching grant|cost.?share|financial assistance)/i;
+
+// A REAL application signal — explicit intent to accept applications, not just the word "grant". This
+// is the precision gate (Shannon 2026-09-10): promote ONLY when a hit shows application language, so
+// a program description or a nav link is not mistaken for an open opportunity.
+const STRONG_APP_KEYWORDS =
+  /\bNOFO\b|\bNOFA\b|\bRFP\b|\bRFA\b|\bRFQ\b|notice of funding|request for (?:proposals|applications|qualifications)|funding opportunit|grant opportunit|call for (?:projects|applications|proposals)|how to apply|apply (?:by|now|online|today|here)\b|\bto apply\b|now accepting|accepting applications|application (?:period|deadline|window|guide|packet|instructions)|applications?\s+(?:\w+\s+){0,2}(?:open|opening|clos|due|accept)|deadline to apply|grant application/i;
 
 // FORECAST — not yet open. A forecasted hit is shredded but HELD (grant_status='Forecasted' →
 // pipeline skips matching) until it posts; the change-detection pass flips it when the page opens.
@@ -56,15 +63,23 @@ export function classifyItem(item: RawItem, source: SourceSeed): Classified | nu
 
   // Loan wins outright — the funding-type gate (decision A).
   if (loanish(hay)) return { docType: "loan", fundingType: "loan", ...base };
-  // A loan-only source with no explicit loan word on a real funding link: still a loan.
+  // A loan-only source with any funding wording: still a loan.
   if (source.funding_type === "loan" && GRANT_KEYWORDS.test(hay)) {
     return { docType: "loan", fundingType: "loan", ...base };
   }
 
-  // Grant signal → a promotable opportunity.
-  if (GRANT_KEYWORDS.test(hay)) return { docType: "opportunity", fundingType: "grant", ...base };
+  // PRECISION over recall (Shannon 2026-09-10): a bare "grant"/"funding" word is NOT enough — landing
+  // pages are full of program/nav links carrying it, which flooded the pipeline (16 false
+  // opportunities off one AEDC page, eating the whole promote cap). Promote ONLY on a real
+  // application signal: explicit application language OR a grant/funding word paired with a concrete
+  // deadline. Better to miss a couple and loosen from a clean baseline than to bury the real ones.
+  const applicationSignal = STRONG_APP_KEYWORDS.test(hay);
+  const grantWithDeadline = GRANT_KEYWORDS.test(hay) && extractDeadlineSignal(item.context) !== "";
+  if (applicationSignal || grantWithDeadline) {
+    return { docType: "opportunity", fundingType: "grant", ...base };
+  }
 
-  return null; // noise
+  return null; // noise — a program/nav link with no application signal
 }
 
 function loanish(hay: string): boolean {

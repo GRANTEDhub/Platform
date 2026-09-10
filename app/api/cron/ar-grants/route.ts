@@ -15,7 +15,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
 import { cronDeny } from "@/lib/cron/auth";
-import { runArGrantsScan } from "@/lib/ar-grants/run";
+import { arGrantsCronEnabled, runArGrantsScan } from "@/lib/ar-grants/run";
 import { promoteOpportunity } from "@/lib/ar-grants/promote";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +24,13 @@ export const maxDuration = 300;
 export async function GET(req: NextRequest) {
   const deny = cronDeny(req);
   if (deny) return deny;
+
+  // Default OFF (AR_GRANTS_CRON_ENABLED). The automatic weekly run stays inert — no fetch, no scan,
+  // no promotion — until a clean admin dry-run is approved and the flag is flipped. The admin route
+  // is unaffected, so verification + manual runs still work while this is off.
+  if (!arGrantsCronEnabled()) {
+    return NextResponse.json({ disabled: true, reason: "AR_GRANTS_CRON_ENABLED not set" });
+  }
 
   try {
     const report = await runArGrantsScan(createServiceClient(), {

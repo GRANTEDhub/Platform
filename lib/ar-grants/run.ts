@@ -38,7 +38,8 @@ export type PromoteFn = (
 
 export interface ScanOptions {
   apply: boolean;
-  promoteMax?: number; // cap on runPipeline hand-offs per run (bounds cron time); default 20
+  promoteMax?: number; // GLOBAL cap on runPipeline hand-offs per run (bounds cron time); default 20
+  promoteMaxPerSource?: number; // per-source cap so one dense source can't eat the global cap; default 8
   fetchText?: FetchTextFn;
   fetchSourceImpl?: (source: ArGrantSource, fetchText?: FetchTextFn) => Promise<SourceFetchResult>;
   promote: PromoteFn;
@@ -70,9 +71,20 @@ export interface ScanReport {
 }
 
 const DEFAULT_PROMOTE_MAX = 20;
+const DEFAULT_PROMOTE_MAX_PER_SOURCE = 8;
+
+// The AUTOMATIC weekly cron is gated OFF by default: it runs NOTHING until AR_GRANTS_CRON_ENABLED is
+// set to "true" (a Vercel env change + redeploy, not a live toggle). This is the "cron stays off
+// until a clean dry-run is approved" switch — flipping it is the deliberate go-live step. The admin
+// route (dry-run + manual apply) is intentionally NOT gated by this, so staff can verify sources and
+// hand-run regardless. Off = the cron reads and writes nothing.
+export function arGrantsCronEnabled(): boolean {
+  return process.env.AR_GRANTS_CRON_ENABLED === "true";
+}
 
 export async function runArGrantsScan(db: SupabaseClient, opts: ScanOptions): Promise<ScanReport> {
   const promoteMax = opts.promoteMax ?? DEFAULT_PROMOTE_MAX;
+  const perSourceMax = opts.promoteMaxPerSource ?? DEFAULT_PROMOTE_MAX_PER_SOURCE;
   const fetchSourceImpl = opts.fetchSourceImpl ?? defaultFetchSource;
   const ranAt = new Date().toISOString();
 
@@ -95,6 +107,7 @@ export async function runArGrantsScan(db: SupabaseClient, opts: ScanOptions): Pr
       deferred: 0,
       content_changed: false,
     };
+    let promotedThisSource = 0;
 
     let fetched: SourceFetchResult;
     try {
@@ -139,9 +152,10 @@ export async function runArGrantsScan(db: SupabaseClient, opts: ScanOptions): Pr
 
       if (!opts.apply) {
         if (needsPromote) {
-          if (promotedTotal < promoteMax) {
+          if (promotedTotal < promoteMax && promotedThisSource < perSourceMax) {
             r.promoted++;
             promotedTotal++;
+            promotedThisSource++;
           } else r.deferred++;
         }
         continue;
@@ -171,12 +185,13 @@ export async function runArGrantsScan(db: SupabaseClient, opts: ScanOptions): Pr
       // Promote / re-queue within the cap. A transient failure leaves the item un-promoted (status
       // stays new/changed), so needsPromote catches it again next run.
       if (needsPromote && itemId) {
-        if (promotedTotal < promoteMax) {
+        if (promotedTotal < promoteMax && promotedThisSource < perSourceMax) {
           const res = await opts.promote(db, { source, item: raw, cls, itemId });
           if (res.grantId) {
             await setItemStatus(db, itemId, "promoted");
             r.promoted++;
             promotedTotal++;
+            promotedThisSource++;
           }
         } else {
           r.deferred++;
