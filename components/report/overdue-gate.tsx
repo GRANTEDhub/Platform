@@ -34,6 +34,11 @@ export interface OverdueGateConfig {
   daysLeft: number | null;
   deadlineLabel: string | null;
   backHref: string;
+  // Whether the "Archive instead" affordance applies to this card. Defaults true (every client/
+  // lead caller, where /api/review/archive-closed archives the card). A DISCOVERY PROSPECT card
+  // (card_type='prospect') is excluded by that route, so archiving one dead-ends — the prospect
+  // caller passes false to show the deadline warning WITHOUT the broken Archive button.
+  archivable?: boolean;
 }
 
 // The call-site half. Wrap an action in `guard(...)` and render `gate` — two lines per
@@ -79,6 +84,7 @@ export function OverdueGate({
   deadlineLabel,
   actionLabel,
   backHref,
+  archivable = true,
   onAcknowledge,
   onCancel,
 }: {
@@ -93,6 +99,8 @@ export function OverdueGate({
   // Where Archive returns to (the Grant Report). Archiving removes the card from the
   // queue, so staying on its detail page would leave you looking at a decided card.
   backHref: string;
+  // Default true; a prospect caller passes false so the (client-only) Archive path is hidden.
+  archivable?: boolean;
   onAcknowledge: () => void;
   onCancel: () => void;
 }) {
@@ -204,8 +212,9 @@ export function OverdueGate({
           >
             Acknowledge and continue
           </button>
-          {/* Archive only once the day is gone — see the two-threshold note above. */}
-          {past && (
+          {/* Archive only once the day is gone — see the two-threshold note above — and only when the
+              card is archivable (a prospect card is excluded by the archive route, so it hides this). */}
+          {past && archivable && (
             <button
               type="button"
               disabled={busy}
@@ -227,7 +236,7 @@ export function OverdueGate({
           </button>
         </div>
 
-        {past && (
+        {past && archivable && (
           <p className="mt-2.5 text-[11px] leading-[1.45] text-ink-muted">
             Archiving records it as passed with the reason noted. It does not train the scorer —
             a missed deadline is a fact about our capacity, not about the match.
