@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { framePastedContent, PASTED_OPEN, PASTED_CLOSE } from "./prompt";
+import { GRANTBOT_INSTRUCTIONS, INSTRUCTIONS_VERSION } from "./instructions";
+import { GRANTBOT_METHODOLOGY, METHODOLOGY_VERSION } from "./methodology";
 
 // The pasted-content frame is the load-bearing prompt-injection defence: untrusted text lives
 // between PASTED_OPEN / PASTED_CLOSE, and the model is told to treat everything inside as evidence,
@@ -49,4 +51,74 @@ describe("framePastedContent — label cannot add lines to the frame", () => {
     expect(openLine).not.toMatch(/[\u2028\u2029\u0085]/);
   });
 
+});
+
+// \u2500\u2500 The deduce+label+gate carve-out AND the guards it must NOT loosen \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+//
+// These are DETERMINISTIC text invariants over the two prompt constants \u2014 they run in the normal
+// suite (no model, no key), unlike the behavioural proof in prompt.eval.test.ts. Their job is the
+// regression Shannon named: the thin-context carve-out is present, AND the anti-hallucination discipline
+// it rides inside (the MSET failure mode: source precedence + never-invent facts + the gaps rule) is
+// still intact. A future reword of either file that quietly drops a guard fails HERE, in CI, before it
+// ever reaches a client \u2014 and forces a conscious re-verification when the phrase is updated.
+describe("GrantBot prompt \u2014 thin-context carve-out is present", () => {
+  it("methodology adds the IDENTIFYING heading with all three of deduce, label, gate", () => {
+    expect(GRANTBOT_METHODOLOGY).toContain("IDENTIFYING A GRANT FROM THIN CONTEXT");
+    expect(GRANTBOT_METHODOLOGY).toContain("Deduce, label, gate");
+    // The heading is NEW, not a rename of an existing one (headings are a stable interface): the
+    // originals must all still be there beside it.
+    for (const heading of [
+      "ELIGIBILITY \u2014 HARD GATES VS. SOFT CRITERIA, NEVER FLATTENED",
+      "THE ROLE STACK",
+      "GO / NO-GO",
+    ]) {
+      expect(GRANTBOT_METHODOLOGY).toContain(heading);
+    }
+  });
+
+  it("instructions permit a labelled unconfirmed deduction, one direction only", () => {
+    expect(GRANTBOT_INSTRUCTIONS).toContain("Naming a likely program is the one narrow exception");
+    expect(GRANTBOT_INSTRUCTIONS).toContain("unconfirmed deduction");
+  });
+
+  it("both load-bearing safety points are stated, not implied", () => {
+    // 1. The hedge cannot silently drop when the deduction is reused downstream.
+    expect(GRANTBOT_METHODOLOGY).toContain("THE LABEL SURVIVES DOWNSTREAM");
+    // 2. Naming is unlocked; ACTING on the guess is not.
+    expect(GRANTBOT_METHODOLOGY).toContain("THE DELIVERABLE GATE IS UNCHANGED AND HARD");
+    // The gate verbs are spelled out so "confident enough to just analyse it" can't creep in.
+    expect(GRANTBOT_METHODOLOGY).toMatch(/do not pull, quote, analyse/);
+    // And the client-facing-fact ban is restated on the deduced-grant path.
+    expect(GRANTBOT_METHODOLOGY).toContain("Never assert an unverified program as fact in client-facing output");
+  });
+});
+
+describe("GrantBot prompt \u2014 the carve-out did NOT loosen the anti-hallucination guards (MSET regression)", () => {
+  it('"program names" is no longer in the blanket never-invent list, but every other invented fact still is', () => {
+    // The one word that caused the refusal is gone from the banned-as-invented list...
+    expect(GRANTBOT_INSTRUCTIONS).not.toContain("statutes, program names or eligibility determinations");
+    expect(GRANTBOT_INSTRUCTIONS).toContain("statutes or eligibility determinations");
+    // ...and nothing else in that list was relaxed: award numbers, deadlines, dollar figures, contacts,
+    // statutes, and eligibility determinations remain forbidden as invented facts.
+    for (const banned of ["award numbers", "deadlines", "dollar figures", "contacts", "statutes", "eligibility determinations"]) {
+      expect(GRANTBOT_INSTRUCTIONS).toContain(banned);
+    }
+  });
+
+  it("source precedence still ranks derived narrative below verified facts (the MSET wrong-legal-name defence)", () => {
+    // A legal name from SAM outranks the machine-derived profile; the derived one can be wrong.
+    expect(GRANTBOT_INSTRUCTIONS).toContain("A legal name from SAM outranks every other name");
+    expect(GRANTBOT_INSTRUCTIONS).toMatch(/derived one is wrong/);
+    expect(GRANTBOT_INSTRUCTIONS).toContain("MACHINE-PRODUCED FROM SOMETHING ELSE");
+  });
+
+  it("the gaps rule is untouched \u2014 a gap is never filled from general knowledge", () => {
+    expect(GRANTBOT_INSTRUCTIONS).toContain("Never fill a gap from general knowledge");
+  });
+
+  it("both prompt versions were bumped for this revision", () => {
+    // Stamped onto every assistant message, so a bad answer traces to this instruction/methodology set.
+    expect(INSTRUCTIONS_VERSION).toBe("2026-09-10.1");
+    expect(METHODOLOGY_VERSION).toBe("2026-09-10.1");
+  });
 });

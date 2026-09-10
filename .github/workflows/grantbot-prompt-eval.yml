@@ -1,0 +1,71 @@
+name: GrantBot Prompt Eval
+
+# Manual-only. This runs the model-in-the-loop GrantBot reasoning eval
+# (lib/grantbot/prompt.eval.test.ts) — the behavioural trust gate for the
+# thin-context deduce+label+gate change. It is NOT part of CI: it makes real
+# (paid) model calls, so it only runs when a human clicks "Run workflow".
+#
+# The button appears under Actions → "GrantBot Prompt Eval" only once this file
+# is on the default branch (main).
+#
+# WHAT IT PROVES. Both outcomes at once: (a) the FIX — from thin context GrantBot
+# names the most likely program as an UNCONFIRMED deduction and still gates the
+# NOFO; and (b) the GUARDS — the carve-out did not loosen the anti-hallucination
+# discipline (it still refuses to state a deduced grant's deadline/award as fact,
+# and still uses the SAM-verified legal name over a wrong machine-derived one).
+#
+# SECRETS. Synthetic fixtures + the real model, no production DB — so it needs
+# ONLY ANTHROPIC_API_KEY. It declares the SAME protected GitHub Environment as the
+# other evals ("subseat-eval", Settings → Environments, restricted to `main`),
+# which already holds ANTHROPIC_API_KEY; nothing new to add. No tools/web are
+# exercised (the fix is prompt-only; GrantBot's fetch/artifact/vision flags stay
+# off), so there is no .gov / web dependency.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Runs per case (stability sampling; GRANTBOT_EVAL_RUNS). Serial, so raising this grows both cost and wall-clock roughly linearly."
+        required: false
+        default: "3"
+
+# Never let two eval runs race on the same paid job.
+concurrency:
+  group: grantbot-prompt-eval
+  cancel-in-progress: false
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    # Environment-scoped secret: GitHub injects this environment's secrets only into a job that declares
+    # it, and enforces the environment's branch policy — so the key can't be read by an arbitrary dispatch
+    # ref. We reuse subseat-eval only for its ANTHROPIC_API_KEY.
+    environment: subseat-eval
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Fail LOUD if the key is unset/misnamed. Without this an empty ANTHROPIC_API_KEY trips the eval's own
+      # RUN gate (skipIf), every case is skipped, and vitest still exits 0 — a green check that verified
+      # nothing. The whole point of this job is to be a trustworthy gate, so a silent skip must be a hard
+      # failure instead.
+      - name: Verify ANTHROPIC_API_KEY is present
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY is empty or unset — add it to the 'subseat-eval' GitHub Environment (Settings → Environments). The eval would otherwise silently skip and report a false green."
+            exit 1
+          fi
+      - name: Run GrantBot prompt eval
+        env:
+          RUN_GRANTBOT_EVAL: "1"
+          GRANTBOT_EVAL_RUNS: ${{ inputs.runs }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        # The per-case answers the eval console.logs (and the soft-assertion messages) are captured in this
+        # step's log, so the named/labelled/gated reads are readable in the browser with pass/fail.
+        run: npx vitest run lib/grantbot/prompt.eval.test.ts
