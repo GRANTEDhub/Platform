@@ -2,8 +2,6 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { renderHeadless, shouldAbortResource, isPrivateHostLiteral, isRequestAllowed, type RenderDeps } from "./headless";
-import { fetchSource, type FetchTextFn } from "./fetch";
-import type { ArGrantSource } from "./sources";
 
 // ── A fake puppeteer surface — these tests NEVER launch a real browser (the injectable-deps contract) ──
 interface ReqCfg {
@@ -198,65 +196,11 @@ describe("headless — isRequestAllowed (subresource / redirect SSRF gate, Codex
 
 // A silent-failure guard: @sparticuz/chromium is externalized, so a headless route renders ONLY if its
 // Chromium binary is traced into the serverless bundle (Codex P1 — else executablePath() 500s /
-// launch_failed in prod despite a green build). Lock that both AR routes carry the trace.
-describe("next.config — headless AR routes trace the Chromium binary", () => {
-  it("both ar-grants routes include @sparticuz/chromium in outputFileTracingIncludes", () => {
+// launch_failed in prod despite a green build). Lock that both AR STATE headless routes carry the trace.
+describe("next.config — headless AR state routes trace the Chromium binary", () => {
+  it("both AR state routes include @sparticuz/chromium in outputFileTracingIncludes", () => {
     const cfg = readFileSync(path.join(process.cwd(), "next.config.mjs"), "utf8");
-    expect(cfg).toMatch(/"\/api\/cron\/ar-grants":\s*\[[^\]]*@sparticuz\/chromium/);
-    expect(cfg).toMatch(/"\/api\/admin\/ar-grants":\s*\[[^\]]*@sparticuz\/chromium/);
-  });
-});
-
-// ── fetchSource headless branch ──
-const source = (over: Partial<ArGrantSource> = {}): ArGrantSource => ({
-  id: "s1",
-  agency: "AEDC",
-  url: "https://www.arkansasedc.com/programs-services",
-  cluster: "state_agency",
-  geo_tag: "AR-statewide",
-  elig_tag: "any",
-  funding_type: "mixed",
-  fetch_mode: "headless",
-  active: true,
-  last_hash: null,
-  last_checked: null,
-  last_changed: null,
-  ...over,
-});
-
-describe("fetchSource — headless mode routes through the renderer, html/rss do not", () => {
-  it("headless: renders, extracts anchors, and hashes item identity (not the raw DOM)", async () => {
-    const htmlFetchThatMustNotRun: FetchTextFn = async () => {
-      throw new Error("html fetch must not run for a headless source");
-    };
-    const render: FetchTextFn = async () => ({
-      ok: true,
-      body: "<a href='/apply'>Water Grant application</a><a href='/nofo.pdf'>FY26 NOFO</a>",
-    });
-    const res = await fetchSource(source(), htmlFetchThatMustNotRun, render);
-    expect(res.ok).toBe(true);
-    expect(res.items.map((i) => i.url)).toContain("https://www.arkansasedc.com/apply");
-    expect(res.contentHash.length).toBeGreaterThan(0);
-  });
-  it("headless: item-identity hash is stable across DOM churn (SPA nonces don't flip 'changed')", async () => {
-    const items = "<a href='/apply'>Water Grant application</a>";
-    const a = await fetchSource(source(), undefined, async () => ({ ok: true, body: `<div id="nonce-abc">${items}</div>` }));
-    const b = await fetchSource(source(), undefined, async () => ({ ok: true, body: `<section data-ts="9999">  ${items}  </section>` }));
-    expect(a.ok && b.ok).toBe(true);
-    expect(a.contentHash).toBe(b.contentHash); // same anchors → same hash, despite different wrappers
-  });
-  it("headless: a render failure surfaces as a typed fetch failure", async () => {
-    const res = await fetchSource(source(), undefined, async () => ({ ok: false, reason: "blocked_host" }));
-    expect(res.ok).toBe(false);
-    expect(res.reason).toBe("blocked_host");
-  });
-  it("html mode uses the html fetcher, never the renderer", async () => {
-    const renderThatMustNotRun: FetchTextFn = async () => {
-      throw new Error("renderer must not run for an html source");
-    };
-    const html: FetchTextFn = async () => ({ ok: true, body: "<a href='/g'>Grant applications open; apply by June 30, 2026</a>" });
-    const res = await fetchSource(source({ fetch_mode: "html" }), html, renderThatMustNotRun);
-    expect(res.ok).toBe(true);
-    expect(res.items.length).toBeGreaterThan(0);
+    expect(cfg).toMatch(/"\/api\/cron\/ar-state-monitor":\s*\[[^\]]*@sparticuz\/chromium/);
+    expect(cfg).toMatch(/"\/api\/admin\/seed-ar-grants":\s*\[[^\]]*@sparticuz\/chromium/);
   });
 });

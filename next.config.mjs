@@ -50,16 +50,9 @@ const nextConfig = {
         "./lib/contracts/fonts/**",
         "./node_modules/@sparticuz/chromium/**",
       ],
-      // The AR scraper's headless sources (fetch_mode:'headless', e.g. AEDC/DFA) render via the SAME
-      // launchAlertBrowser() -> @sparticuz/chromium launcher, so both AR routes need the Chromium
-      // binary traced in or executablePath() 500s (launch_failed) exactly like the render routes
-      // above. They need ONLY the binary -- no alert template/assets/fonts (this reads the DOM, it
-      // doesn't render the branded PDF).
-      "/api/cron/ar-grants": ["./node_modules/@sparticuz/chromium/**"],
-      "/api/admin/ar-grants": ["./node_modules/@sparticuz/chromium/**"],
       // The AR STATE repository seed + weekly monitor render headless AEDC/DFA pages via the SAME
       // launchAlertBrowser() -> @sparticuz/chromium launcher, so both routes need the Chromium binary
-      // traced in or executablePath() 500s (launch_failed), exactly like the AR scraper routes above.
+      // traced in or executablePath() 500s (launch_failed), exactly like the alert render routes above.
       // Binary only -- these read the DOM, not the branded PDF.
       "/api/cron/ar-state-monitor": ["./node_modules/@sparticuz/chromium/**"],
       "/api/admin/seed-ar-grants": ["./node_modules/@sparticuz/chromium/**"],
