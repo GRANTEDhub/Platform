@@ -21,7 +21,7 @@ import { buildCommunityView } from "@/lib/clients/community";
 import { deriveEnrichmentSteps } from "@/lib/clients/enrichment-status";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import { deadlineDaysLeft } from "@/lib/report/shape";
-import { formatAwardRange } from "@/lib/grants/format";
+import { formatAwardRange, formatDeadlineCompact } from "@/lib/grants/format";
 import { rollUpClient, type PricedCard } from "@/lib/clients/dashboard-summary";
 import { deriveAmbientNote } from "@/lib/clients/ambient-note";
 import { deriveActivity } from "@/lib/clients/activity";
@@ -512,7 +512,7 @@ export default async function ClientDashboardPage({
       .map((c) => c.grant?.submission_deadline)
       .filter((d): d is string => Boolean(d) && (deadlineDaysLeft(d) ?? -1) >= 0)
       .sort()[0] ?? null;
-  const nextDeadlineLabel = nextDeadline ? format(parseISO(nextDeadline), "MMM d") : null;
+  const nextDeadlineLabel = formatDeadlineCompact(nextDeadline);
   const nextDeadlineDays = deadlineDaysLeft(nextDeadline);
 
   // The upcoming-deadlines rail card is GONE -- the design drops it, and every deadline
@@ -659,9 +659,7 @@ export default async function ClientDashboardPage({
       title: c.grant?.title || "Untitled opportunity",
       funder: c.grant?.funder ?? null,
       fitScore: c.fit_score,
-      deadline: c.grant?.submission_deadline
-        ? format(parseISO(c.grant.submission_deadline), "MMM d")
-        : null,
+      deadline: formatDeadlineCompact(c.grant?.submission_deadline),
       href: `${base}/${c.id}`,
       // Console row extras.
       amount: awardLabel(c.grant),

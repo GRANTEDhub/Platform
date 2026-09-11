@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { awardRangeOrEstimate, formatAwardRange, compactTerm, parseAwardCount } from "./format";
+import { awardRangeOrEstimate, formatAwardRange, compactTerm, parseAwardCount, formatDeadlineCompact } from "./format";
 
 // Deterministic — no model, no network. Locks the two PR-A grant-report fixes:
 //   ① Award range never renders a bare blank when the size is deducible (pool ÷ awards, labeled "est.").
@@ -99,5 +99,32 @@ describe("compactTerm", () => {
     expect(compactTerm(null)).toBe("Not stated");
     expect(compactTerm("  ")).toBe("Not stated");
     expect(compactTerm("2 yrs")).toBe("2 yrs");
+  });
+});
+
+describe("formatDeadlineCompact", () => {
+  it("returns null (never throws) for empty / non-date free text", () => {
+    for (const v of [null, undefined, "", "   ", "Rolling", "Ongoing", "TBD", "See NOFO"]) {
+      expect(formatDeadlineCompact(v)).toBeNull();
+    }
+  });
+
+  it("returns null (never throws) on a garbled date — the exact crash the AR shred triggered", () => {
+    // The old code did `format(parseISO(x))`; parseISO on an invalid date returns an
+    // Invalid Date and `format` throws RangeError: Invalid time value, 500-ing the page.
+    // The new-Date() path returns null instead.
+    expect(formatDeadlineCompact("2026-99-99")).toBeNull();
+    expect(() => formatDeadlineCompact("2026-99-99")).not.toThrow();
+  });
+
+  it("formats a non-ISO but Date-parseable deadline instead of throwing (parseISO rejected these)", () => {
+    // These pass deadlineDaysLeft's lenient new Date() gate, so the compact label MUST
+    // format them too rather than throw — the parser mismatch that caused the incident.
+    expect(formatDeadlineCompact("9/15/2026")).toMatch(/^[A-Za-z]{3} \d{1,2}$/);
+    expect(formatDeadlineCompact("Sep 15, 2026")).toMatch(/^[A-Za-z]{3} \d{1,2}$/);
+  });
+
+  it("formats a clean ISO date to a compact 'MMM d' label", () => {
+    expect(formatDeadlineCompact("2026-09-15T12:00:00Z")).toMatch(/^[A-Za-z]{3} \d{1,2}$/);
   });
 });

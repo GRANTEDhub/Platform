@@ -168,6 +168,24 @@ export function formatDeadlineShort(raw: string | null | undefined): string {
   return s;
 }
 
+// Month + day only ("Sep 15") for compact LIST rows (dashboards, portal, portfolio),
+// returning null — not the verbatim string — when the value is not a real date, so the
+// row simply omits the deadline rather than printing "Rolling" mid-table.
+//
+// It uses the SAME lenient `new Date()` parser as deadlineDaysLeft (lib/report/shape.ts),
+// which is the load-bearing choice: those rows gate on deadlineDaysLeft, so a value that
+// passes that gate MUST format here too. The old code called date-fns `parseISO`, which
+// accepts ONLY ISO-8601 — so a non-ISO-but-Date-parseable deadline from a free-text shred
+// ("9/15/2026", "Sep 15, 2026") passed the days-left gate and then threw
+// "RangeError: Invalid time value" out of `format(parseISO(...))`, 500-ing the whole page.
+// Never throws: a bad/garbled/undated value returns null.
+export function formatDeadlineCompact(raw: string | null | undefined): string | null {
+  const s = (raw ?? "").trim();
+  if (!s) return null;
+  const d = new Date(s);
+  return !isNaN(d.getTime()) && /\d{4}/.test(s) ? format(d, "MMM d") : null;
+}
+
 // Budget one-liner for the Ideal Applicant Profile: award range, plus a match
 // note when a real cost share is on file.
 export function idealBudget(

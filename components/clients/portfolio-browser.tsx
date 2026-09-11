@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { format, parseISO } from "date-fns";
+import { formatDeadlineCompact } from "@/lib/grants/format";
 import { ArrowRight, Clock, CornerUpLeft, Layers, MessageSquare, Plus } from "lucide-react";
 import { INK, STAGE, STAGE_ON_INK } from "@/lib/brand";
 import { ALERTS_THRESHOLD, DEADLINE_DAYS, type ActionReason, type BookPipeline } from "@/lib/clients/portfolio";
@@ -447,7 +448,7 @@ function reasonText(r: PortfolioRow): string {
     return `${r.questions} ${r.questions === 1 ? "question" : "questions"} waiting`;
   }
   if (r.reason === "deadline") {
-    const when = r.deadlineDate ? format(parseISO(r.deadlineDate), "MMM d") : "Deadline";
+    const when = formatDeadlineCompact(r.deadlineDate) ?? "Deadline";
     if (r.deadlineDays !== null && r.deadlineDays < 0) return `${when} · overdue`;
     // The drawn line pairs the date with the state of the work: "no draft started" or
     // "draft 40% captured". The percentage is now content — the share of assessable steps
@@ -554,7 +555,7 @@ function DeadlineLine({ row }: { row: PortfolioRow }) {
       </span>
     );
   }
-  const when = format(parseISO(row.deadlineDate), "MMM d");
+  const when = formatDeadlineCompact(row.deadlineDate) ?? "Deadline";
   return (
     <span className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold" style={{ color: STAGE.client.text }}>
       <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: STAGE.client.color }} />
@@ -620,7 +621,7 @@ function IndexRow({ row }: { row: PortfolioRow }) {
         className="w-11 shrink-0 text-right text-[11px] tabular-nums"
         style={{ color: row.deadlineDate ? STAGE.client.deep : INK.muted }}
       >
-        {row.deadlineDate ? format(parseISO(row.deadlineDate), "MMM d") : "—"}
+        {formatDeadlineCompact(row.deadlineDate) ?? "—"}
       </span>
     </Link>
   );
