@@ -91,16 +91,12 @@ describe("updateConversationTitle", () => {
 });
 
 // A minimal fake of getConversation's read chain:
-//   db.from(t).select(cols).eq("id",…).eq("scope",…).maybeSingle() -> { data }
-// Captures the eq filters (to assert the scope='client' guard) and returns a configurable row.
-function fakeSelectDb(row: Record<string, unknown> | null, eqs: [string, unknown][]): SupabaseClient {
+//   db.from(t).select(cols).eq("id",…).maybeSingle() -> { data }
+function fakeSelectDb(row: Record<string, unknown> | null): SupabaseClient {
   const from = () => {
     const chain: Record<string, unknown> = {
       select: () => chain,
-      eq: (col: string, val: unknown) => {
-        eqs.push([col, val]);
-        return chain;
-      },
+      eq: () => chain,
       maybeSingle: async () => ({ data: row, error: null }),
     };
     return chain;
@@ -108,25 +104,14 @@ function fakeSelectDb(row: Record<string, unknown> | null, eqs: [string, unknown
   return { from } as unknown as SupabaseClient;
 }
 
-// Locks the 0097 security boundary: getConversation is the PER-CLIENT lookup, so it must never
-// return a firm thread (scope='firm', client_id NULL) — otherwise the per-client context route
-// (staff, not admin-gated) would leak the admin-only firm transcript.
+// Locks the 0097 security boundary: a firm thread (client_id NULL) reached through the PER-CLIENT
+// getConversation must map to clientId "" — NEVER the string "null" — so it can never equal a
+// caller-supplied clientId and slip past the per-client routes' `existing.clientId !== clientId`
+// guard (which would leak the admin-only firm transcript through the non-admin per-client route).
 describe("getConversation — firm-row isolation (0097 security boundary)", () => {
-  it("filters the read to scope='client', so a firm thread is never returned here", async () => {
-    const eqs: [string, unknown][] = [];
-    await getConversation(fakeSelectDb(null, eqs), "some-id");
-    expect(eqs).toContainEqual(["scope", "client"]);
-  });
-
   it("NEVER coerces a NULL client_id to the string \"null\" (defeats the route's !== guard)", async () => {
-    const eqs: [string, unknown][] = [];
-    // A defensive check on the mapping itself: even handed a null-client_id row, clientId is "",
-    // which the per-client routes reject (their `!clientId` 400) and which never equals a real id.
     const convo = await getConversation(
-      fakeSelectDb(
-        { id: "x", client_id: null, title: "t", started_by_email: null, created_at: "d", last_message_at: "d" },
-        eqs,
-      ),
+      fakeSelectDb({ id: "x", client_id: null, title: "t", started_by_email: null, created_at: "d", last_message_at: "d" }),
       "x",
     );
     expect(convo?.clientId).toBe("");
@@ -134,12 +119,8 @@ describe("getConversation — firm-row isolation (0097 security boundary)", () =
   });
 
   it("maps a real client_id through unchanged", async () => {
-    const eqs: [string, unknown][] = [];
     const convo = await getConversation(
-      fakeSelectDb(
-        { id: "x", client_id: "client-1", title: "t", started_by_email: null, created_at: "d", last_message_at: "d" },
-        eqs,
-      ),
+      fakeSelectDb({ id: "x", client_id: "client-1", title: "t", started_by_email: null, created_at: "d", last_message_at: "d" }),
       "x",
     );
     expect(convo?.clientId).toBe("client-1");

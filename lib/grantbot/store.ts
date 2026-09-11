@@ -92,13 +92,6 @@ export async function getConversation(
     .from("grantbot_conversations")
     .select("id, client_id, title, started_by_email, created_at, last_message_at")
     .eq("id", id)
-    // scope='client' ONLY. This is the per-client lookup; a firm thread (0097, scope='firm',
-    // client_id NULL) must NEVER be returned here, or the per-client context route (staff, not
-    // admin-gated) would serve the admin-only firm transcript to a non-admin: its guard is a JS
-    // `existing.clientId !== clientId`, and a NULL client_id coerced to the string "null" (see
-    // rowToConversation) matched a caller-supplied clientId="null". The firm path uses
-    // getFirmConversation (scope='firm'); this structurally splits the two.
-    .eq("scope", "client")
     .maybeSingle();
   return data ? rowToConversation(data) : null;
 }
@@ -285,10 +278,12 @@ function rowToConversation(r: Record<string, unknown>): Conversation {
   return {
     id: String(r.id),
     // NEVER String(null): 0097 made client_id nullable (firm threads), and String(null) is the
-    // string "null", which a caller could match with clientId="null" to defeat a `!==` guard.
-    // A null client_id becomes "" — the empty string, which the per-client routes already reject
-    // (their `!clientId` 400) and which can never equal a real client id. Defence in depth behind
-    // getConversation's scope='client' filter.
+    // string "null", which a caller could match with clientId="null" to defeat the per-client
+    // routes' `existing.clientId !== clientId` guard and pull a firm thread through the (staff, not
+    // admin-gated) per-client context route. A null client_id becomes "" — which those routes
+    // already reject (their `!clientId` 400) and which can never equal a real client id. This
+    // coercion is the boundary; it needs no column added, so the live per-client path stays
+    // decoupled from whether 0097 is applied yet.
     clientId: r.client_id == null ? "" : String(r.client_id),
     title: (r.title as string | null) ?? null,
     startedByEmail: (r.started_by_email as string | null) ?? null,
