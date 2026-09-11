@@ -127,4 +127,10 @@ describe("formatDeadlineCompact", () => {
   it("formats a clean ISO date to a compact 'MMM d' label", () => {
     expect(formatDeadlineCompact("2026-09-15T12:00:00Z")).toMatch(/^[A-Za-z]{3} \d{1,2}$/);
   });
+
+  it("reads a bare YYYY-MM-DD as a LOCAL calendar date — no UTC off-by-one (Codex P1)", () => {
+    // Must be the same day in every runner timezone: new Date("2026-09-15") is UTC midnight,
+    // which renders as the previous day west of UTC on a client-rendered surface.
+    expect(formatDeadlineCompact("2026-09-15")).toBe("Sep 15");
+  });
 });

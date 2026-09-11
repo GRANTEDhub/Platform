@@ -182,7 +182,13 @@ export function formatDeadlineShort(raw: string | null | undefined): string {
 export function formatDeadlineCompact(raw: string | null | undefined): string | null {
   const s = (raw ?? "").trim();
   if (!s) return null;
-  const d = new Date(s);
+  // A bare YYYY-MM-DD is a CALENDAR date, not an instant: `new Date("2026-09-15")` is UTC
+  // midnight, which `format` then renders in the viewer's local timezone — so a client-
+  // rendered row (portfolio-browser) shows the PREVIOUS day west of UTC (e.g. "Sep 14" in
+  // Central). Append a local midnight time so it reads as the local calendar date, exactly
+  // as the old parseISO path did. Other formats ("9/15/2026", "Sep 15, 2026") already parse
+  // as local via new Date().
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(`${s}T00:00:00`) : new Date(s);
   return !isNaN(d.getTime()) && /\d{4}/.test(s) ? format(d, "MMM d") : null;
 }
 

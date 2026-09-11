@@ -511,7 +511,9 @@ export default async function ClientDashboardPage({
     liveCards
       .map((c) => c.grant?.submission_deadline)
       .filter((d): d is string => Boolean(d) && (deadlineDaysLeft(d) ?? -1) >= 0)
-      .sort()[0] ?? null;
+      // By days-left, not lexicographically: a bare .sort() ranks non-ISO deadlines by raw
+      // text, so "10/1/2026" would sort before "9/30/2026" and mislabel the soonest.
+      .sort((a, b) => (deadlineDaysLeft(a) ?? Number.POSITIVE_INFINITY) - (deadlineDaysLeft(b) ?? Number.POSITIVE_INFINITY))[0] ?? null;
   const nextDeadlineLabel = formatDeadlineCompact(nextDeadline);
   const nextDeadlineDays = deadlineDaysLeft(nextDeadline);
 
