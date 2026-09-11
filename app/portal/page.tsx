@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { format, parseISO } from "date-fns";
 import { Bell, ClipboardCheck } from "lucide-react";
 import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -13,6 +12,7 @@ import { type DashReportRow } from "@/components/clients/client-grant-report-car
 import { type DashDraft } from "@/components/clients/client-draft-progress";
 import { buildCommunityView } from "@/lib/clients/community";
 import { deadlineDaysLeft } from "@/lib/report/shape";
+import { formatDeadlineCompact } from "@/lib/grants/format";
 import { deriveClientNotifications } from "@/lib/portal/notifications";
 import { deriveActivity } from "@/lib/clients/activity";
 import type { Client, CardDecision, Grant, IntellEngineDraft } from "@/types/database";
@@ -115,7 +115,7 @@ export default async function PortalHome() {
     .map((c) => ({ c, days: deadlineDaysLeft(c.grant?.submission_deadline), date: c.grant?.submission_deadline ?? null }))
     .filter((x): x is { c: (typeof nonPassed)[number]; days: number; date: string } => x.days !== null && x.days >= 0)
     .sort((a, b) => a.days - b.days);
-  const nextDeadline = upcoming[0] ? format(parseISO(upcoming[0].date), "MMM d") : "—";
+  const nextDeadline = formatDeadlineCompact(upcoming[0]?.date) ?? "—";
 
   // The client's own funnel, in their language — four stages, starting at the alerts we
   // have sent them rather than at our own unassessed queue. See rollUpPortal.
@@ -246,9 +246,7 @@ export default async function PortalHome() {
       title: c.grant?.title || "Untitled opportunity",
       funder: c.grant?.funder ?? null,
       fitScore: c.fit_score,
-      deadline: c.grant?.submission_deadline
-        ? format(parseISO(c.grant.submission_deadline), "MMM d")
-        : null,
+      deadline: formatDeadlineCompact(c.grant?.submission_deadline),
       href: `${base}/${c.id}`,
     }));
 

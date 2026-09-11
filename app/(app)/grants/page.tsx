@@ -2,6 +2,7 @@ import Link from "next/link";
 import { format, parseISO } from "date-fns";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { formatDeadlineShort } from "@/lib/grants/format";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { IngestForm } from "./ingest-form";
@@ -258,7 +259,7 @@ export default async function LedgerPage({
                       )}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">
-                      {g.deadline ? format(parseISO(g.deadline), "MMM d, yyyy") : g.submission_deadline || "—"}
+                      {g.deadline ? formatDeadlineShort(g.deadline) : g.submission_deadline || "—"}
                     </td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">
                       {g.ingested_at ? format(parseISO(g.ingested_at), "MMM d, yyyy") : "—"}

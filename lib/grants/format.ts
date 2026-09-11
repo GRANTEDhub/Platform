@@ -168,6 +168,30 @@ export function formatDeadlineShort(raw: string | null | undefined): string {
   return s;
 }
 
+// Month + day only ("Sep 15") for compact LIST rows (dashboards, portal, portfolio),
+// returning null — not the verbatim string — when the value is not a real date, so the
+// row simply omits the deadline rather than printing "Rolling" mid-table.
+//
+// It uses the SAME lenient `new Date()` parser as deadlineDaysLeft (lib/report/shape.ts),
+// which is the load-bearing choice: those rows gate on deadlineDaysLeft, so a value that
+// passes that gate MUST format here too. The old code called date-fns `parseISO`, which
+// accepts ONLY ISO-8601 — so a non-ISO-but-Date-parseable deadline from a free-text shred
+// ("9/15/2026", "Sep 15, 2026") passed the days-left gate and then threw
+// "RangeError: Invalid time value" out of `format(parseISO(...))`, 500-ing the whole page.
+// Never throws: a bad/garbled/undated value returns null.
+export function formatDeadlineCompact(raw: string | null | undefined): string | null {
+  const s = (raw ?? "").trim();
+  if (!s) return null;
+  // A bare YYYY-MM-DD is a CALENDAR date, not an instant: `new Date("2026-09-15")` is UTC
+  // midnight, which `format` then renders in the viewer's local timezone — so a client-
+  // rendered row (portfolio-browser) shows the PREVIOUS day west of UTC (e.g. "Sep 14" in
+  // Central). Append a local midnight time so it reads as the local calendar date, exactly
+  // as the old parseISO path did. Other formats ("9/15/2026", "Sep 15, 2026") already parse
+  // as local via new Date().
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(`${s}T00:00:00`) : new Date(s);
+  return !isNaN(d.getTime()) && /\d{4}/.test(s) ? format(d, "MMM d") : null;
+}
+
 // Budget one-liner for the Ideal Applicant Profile: award range, plus a match
 // note when a real cost share is on file.
 export function idealBudget(
