@@ -1,7 +1,7 @@
 import "server-only";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getAnthropicClient, MODEL } from "@/lib/anthropic";
+import { getAnthropicClient, OPUS_MODEL } from "@/lib/anthropic";
 import { gatherContextPack } from "@/lib/grantbot/gather";
 import {
   assembleSystem,
@@ -88,6 +88,20 @@ import {
 const MAX_MESSAGE_CHARS = 20_000;
 const MAX_OUTPUT_TOKENS = 4000;
 const CALL_TIMEOUT_MS = 120_000;
+
+// The per-client GrantBot's model. Opus 5 (Shannon, 2026-09-11) — the per-client bot is a
+// low-volume, staff-only, high-judgment surface where reasoning quality matters more than the
+// ~1.67x per-token cost over Sonnet; the MATCHER stays on the cheaper MODEL (Sonnet 4.6), which
+// scores the full roster on every ingest. Named constant so the model choice is a one-line lever.
+const CLIENT_BOT_MODEL = OPUS_MODEL;
+
+// Thinking is DISABLED for this interactive chat (Shannon, 2026-09-11): Opus 5 runs adaptive
+// thinking by default (omitting `thinking` = on), which adds latency + thinking-token cost on a
+// surface staff use conversationally. Disabling keeps it snappy AND keeps the response shape
+// (text + tool_use, no thinking blocks) identical to what the tool loop already handles — the
+// safer choice than letting Opus inject thinking blocks the loop does not process. Available at
+// effort <= high; this call sets no effort (default), so it never trips the xhigh/max 400.
+const THINKING_DISABLED = { type: "disabled" as const };
 
 export type TurnOutcome =
   | { ok: true; text: string; usage: TurnUsage | null; seq: number }
@@ -237,7 +251,9 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
       const timeout = Math.min(CALL_TIMEOUT_MS, Math.max(remainingMs, 5_000));
       const res = await anthropic.messages.create(
         {
-          model: MODEL,
+          model: CLIENT_BOT_MODEL,
+          // Off — see THINKING_DISABLED. No `temperature` either (claude-opus-5 rejects it, 400).
+          thinking: THINKING_DISABLED,
           max_tokens: MAX_OUTPUT_TOKENS,
           system,
           messages: msgs as Anthropic.MessageParam[],
@@ -328,7 +344,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
     contextBlocks: blockManifest,
     instructionsVersion: prompt.instructionsVersion,
     methodologyVersion: prompt.methodologyVersion,
-    model: MODEL,
+    model: CLIENT_BOT_MODEL,
     usage,
     stopReason,
     error: failure,

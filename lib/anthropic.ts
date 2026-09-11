@@ -18,10 +18,10 @@ export const MODEL = "claude-sonnet-4-6";
 export const CHEAP_MODEL = "claude-haiku-4-5-20251001";
 
 // Most-capable model, for LOW-VOLUME, HIGH-JUDGMENT conversational reasoning where
-// depth matters more than per-call cost -- the firm GrantBot's roster-wide strategy
-// read (lib/grantbot/firm-turn.ts). Deliberately SEPARATE from MODEL: the matcher
-// scores the full roster on every ingest and must stay on the cheaper Sonnet, so
-// this is opt-in per surface, never a blanket swap. (A later PR may point the
-// per-client GrantBot here too -- that is a per-surface choice, not this constant's
-// job to force.)
+// depth matters more than per-call cost -- the GrantBot chat surfaces: the firm
+// roster-strategy bot (lib/grantbot/firm-turn.ts) and the per-client bot
+// (lib/grantbot/turn.ts). Deliberately SEPARATE from MODEL: the matcher scores the
+// full roster on every ingest and must stay on the cheaper Sonnet, so this is opt-in
+// per surface, never a blanket swap. (Same string as intel-review.ts's INTEL_MODEL,
+// which already runs the QA pass on Opus 5 in production.)
 export const OPUS_MODEL = "claude-opus-5";
