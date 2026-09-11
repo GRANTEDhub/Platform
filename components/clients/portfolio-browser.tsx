@@ -619,7 +619,7 @@ function IndexRow({ row }: { row: PortfolioRow }) {
       </span>
       <span
         className="w-11 shrink-0 text-right text-[11px] tabular-nums"
-        style={{ color: row.deadlineDate ? STAGE.client.deep : INK.muted }}
+        style={{ color: formatDeadlineCompact(row.deadlineDate) ? STAGE.client.deep : INK.muted }}
       >
         {formatDeadlineCompact(row.deadlineDate) ?? "—"}
       </span>
