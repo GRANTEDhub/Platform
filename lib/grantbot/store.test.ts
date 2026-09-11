@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { updateConversationTitle } from "./store";
+import { getConversation, updateConversationTitle } from "./store";
 
 // A minimal fake of the update chain updateConversationTitle uses:
 //   db.from(t).update(row).eq("id", …).eq("client_id", …)  -> awaited -> { error }
@@ -87,5 +87,42 @@ describe("updateConversationTitle", () => {
       title: "a real title",
     });
     expect(ok).toBe(false);
+  });
+});
+
+// A minimal fake of getConversation's read chain:
+//   db.from(t).select(cols).eq("id",…).maybeSingle() -> { data }
+function fakeSelectDb(row: Record<string, unknown> | null): SupabaseClient {
+  const from = () => {
+    const chain: Record<string, unknown> = {
+      select: () => chain,
+      eq: () => chain,
+      maybeSingle: async () => ({ data: row, error: null }),
+    };
+    return chain;
+  };
+  return { from } as unknown as SupabaseClient;
+}
+
+// Locks the 0097 security boundary: a firm thread (client_id NULL) reached through the PER-CLIENT
+// getConversation must map to clientId "" — NEVER the string "null" — so it can never equal a
+// caller-supplied clientId and slip past the per-client routes' `existing.clientId !== clientId`
+// guard (which would leak the admin-only firm transcript through the non-admin per-client route).
+describe("getConversation — firm-row isolation (0097 security boundary)", () => {
+  it("NEVER coerces a NULL client_id to the string \"null\" (defeats the route's !== guard)", async () => {
+    const convo = await getConversation(
+      fakeSelectDb({ id: "x", client_id: null, title: "t", started_by_email: null, created_at: "d", last_message_at: "d" }),
+      "x",
+    );
+    expect(convo?.clientId).toBe("");
+    expect(convo?.clientId).not.toBe("null");
+  });
+
+  it("maps a real client_id through unchanged", async () => {
+    const convo = await getConversation(
+      fakeSelectDb({ id: "x", client_id: "client-1", title: "t", started_by_email: null, created_at: "d", last_message_at: "d" }),
+      "x",
+    );
+    expect(convo?.clientId).toBe("client-1");
   });
 });
