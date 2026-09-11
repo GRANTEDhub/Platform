@@ -207,9 +207,15 @@ export function formatDeadlineListLabel(raw: string | null | undefined): string 
   if (!isNaN(d.getTime()) && /\d{4}/.test(s)) return format(d, "MMM d, yyyy");
   const CAP = 22;
   if (s.length <= CAP) return s;
-  const cut = s.slice(0, CAP);
+  let cut = s.slice(0, CAP);
+  // slice() cuts on UTF-16 units, so an astral char straddling the boundary leaves a lone high
+  // surrogate that renders as mojibake — drop it (Claude Code Review).
+  const lastUnit = cut.charCodeAt(cut.length - 1);
+  if (lastUnit >= 0xd800 && lastUnit <= 0xdbff) cut = cut.slice(0, -1);
   const sp = cut.lastIndexOf(" ");
-  return (sp > 10 ? cut.slice(0, sp) : cut).replace(/[\s,;:.–-]+$/, "") + "…";
+  // Strip any trailing whitespace / punctuation / dash — INCLUDING the em dash (U+2014), which is
+  // common in the shred prose — so nothing dangles before the ellipsis.
+  return (sp > 10 ? cut.slice(0, sp) : cut).replace(/[\s,;:.–—-]+$/, "") + "…";
 }
 
 // Budget one-liner for the Ideal Applicant Profile: award range, plus a match

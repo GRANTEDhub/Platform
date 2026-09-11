@@ -157,6 +157,17 @@ describe("formatDeadlineListLabel", () => {
     expect(formatDeadlineListLabel("Not extracted — full program page not available at source").endsWith("…")).toBe(true);
   });
 
+  it("never dangles a trailing dash (incl. em dash) or splits a surrogate pair", () => {
+    // Em dash right at the word-boundary cut must be stripped, not glued to the ellipsis.
+    const em = formatDeadlineListLabel("Deadline notice — waitwhatever more text");
+    expect(em.endsWith("…")).toBe(true);
+    expect(em).not.toMatch(/[—–-]…$/);
+    // An astral char straddling the 22-unit cap must not leave a lone surrogate (mojibake).
+    const astral = formatDeadlineListLabel("x".repeat(21) + "\u{1F600}" + " more text here");
+    expect(astral).not.toContain("�");
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(astral)).toBe(false);
+  });
+
   it("returns an em dash for empty / missing", () => {
     expect(formatDeadlineListLabel(null)).toBe("—");
     expect(formatDeadlineListLabel("   ")).toBe("—");
