@@ -1,5 +1,8 @@
 import { requireUser } from "@/lib/auth";
 import { TopNav, type NavItem } from "@/components/layout/top-nav";
+import { switcherEnabled } from "@/lib/grantbot/switcher";
+import { firmGrantbotEnabled } from "@/lib/grantbot/firm-turn";
+import { GrantBotSwitcher } from "@/components/grantbot/grantbot-switcher";
 
 // The nav is the console's frame. It holds the modules the firm runs on, but it is
 // now split by HOW OFTEN a destination is used rather than listing all eleven at
@@ -69,6 +72,12 @@ export default async function AppLayout({
 
   const band = isAdmin ? ADMIN_BAND : CONTRACTOR_BAND;
 
+  // The universal GrantBot Switcher. S1 hosts the FIRM bot only, so it needs BOTH the Switcher flag
+  // and the firm flag on (a firm-off environment must not show a dead firm bubble). Byte-identical
+  // OFF: false ⟹ the component is not in the tree at all. The component itself hides on client record
+  // pages (where the launcher owns the corner) and for non-admins — see firmSwitcherVisible.
+  const showSwitcher = switcherEnabled() && firmGrantbotEnabled();
+
   return (
     // COLUMN, not row: the band spans the full width edge-to-edge, so the shell's old
     // p-3/gap-3 inset (which framed the floating sidebar) is gone. Pages carry their
@@ -97,6 +106,9 @@ export default async function AppLayout({
           (and tab toggles) don't shift a few px when content height crosses the
           overflow threshold on one view but not the other. */}
       <main className="flex-1 overflow-y-auto [scrollbar-gutter:stable]">{children}</main>
+      {/* A fixed-overlay sibling of <main>, positioned to the viewport — the shell's overflow-hidden
+          does not clip it (fixed elements are not clipped by ancestor overflow). */}
+      {showSwitcher && <GrantBotSwitcher isAdmin={isAdmin} />}
     </div>
   );
 }

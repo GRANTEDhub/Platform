@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Sparkles, Plus, Pencil } from "lucide-react";
+import { Loader2, Sparkles, Plus, Pencil, MessagesSquare } from "lucide-react";
 import { BRAND } from "@/lib/brand";
 import type { GrantBotThread, GrantBotMsg } from "@/lib/grantbot/wire";
 
@@ -24,7 +24,15 @@ interface Turn {
 const toTurns = (msgs: GrantBotMsg[] | undefined): Turn[] =>
   (msgs ?? []).map((m) => ({ role: m.role, text: m.text, error: m.error }));
 
-export function FirmGrantBotChat() {
+// `full` is the standalone /grantbot page: a thread rail beside the transcript, with its own header
+// band. `corner` is the Switcher panel on every internal page: the Switcher supplies the navy header,
+// so the corner body is headerless and the rail collapses behind a toggle — three fixed bands with
+// one scroll, mirroring the per-client GrantBotChat corner so the two panels can't drift. Same store,
+// same routes, same conversation; the variants differ in CHROME ONLY.
+export function FirmGrantBotChat({ variant = "full" }: { variant?: "corner" | "full" }) {
+  const isCorner = variant === "corner";
+  // Corner-only: the rail slides over the transcript rather than sitting beside it.
+  const [showThreads, setShowThreads] = useState(false);
   const [threads, setThreads] = useState<GrantBotThread[]>([]);
   const [messages, setMessages] = useState<Turn[]>([]);
   // null = a blank, unsent thread (no server id yet). A real id names a persisted thread.
@@ -180,6 +188,11 @@ export function FirmGrantBotChat() {
   async function send() {
     const message = input.trim();
     if (!message || busy || loadingThread) return;
+    // Corner-only: collapse the rail so the send lands in a VISIBLE transcript. The composer band is
+    // always rendered, so a send is reachable while the Conversations rail is up — without this the
+    // optimistic bubble and the reply would appear behind the thread list with no feedback (Codex
+    // #544). No-op on the full page (showThreads is never set there).
+    setShowThreads(false);
     // Bump the epoch so an in-flight INITIAL load (which does not set busy) can't resolve later and
     // overwrite this send's optimistic state (Codex). busy then blocks loadThread/newConversation
     // for the rest of the request, so the active thread cannot change under the send after this.
@@ -245,6 +258,215 @@ export function FirmGrantBotChat() {
 
   const empty = messages.length === 0 && !busy && !loadingThread;
 
+  // Shared inline rename field — the full rail and the corner rail commit through the same
+  // epoch-guarded commitRename/cancelRename, so the editing affordance is written once.
+  const renameField = (t: GrantBotThread) => (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        void commitRename(t);
+      }}
+      className="px-0.5 py-0.5"
+    >
+      <input
+        autoFocus
+        value={renameDraft}
+        onChange={(e) => setRenameDraft(e.target.value)}
+        onFocus={(e) => e.currentTarget.select()}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            // Stop the native keydown before it bubbles to the Switcher's window-level Escape
+            // listener, which would otherwise close the whole corner panel on a rename-cancel
+            // (Codex #544). React's stopPropagation halts the native event at the root container,
+            // below window. Harmless on the full page (no such listener there).
+            e.stopPropagation();
+            // Neutralise the blur that unmounting the input would otherwise fire as a commit.
+            skipBlurCommit.current = true;
+            cancelRename();
+          }
+        }}
+        onBlur={() => {
+          if (skipBlurCommit.current) {
+            skipBlurCommit.current = false;
+            return;
+          }
+          void commitRename(t);
+        }}
+        maxLength={80}
+        aria-label="Conversation title"
+        className="w-full rounded-lg border border-black/10 bg-white px-2.5 py-2 text-[13px] text-brand-navy outline-none focus:border-brand-navy/30"
+      />
+    </form>
+  );
+
+  // Shared bubble list — one source of truth for the transcript on both surfaces.
+  const bubbles = (
+    <div className="flex flex-col gap-4">
+      {messages.map((m, i) => {
+        // A persisted failed assistant turn (empty text + error) renders its reason in an error
+        // bubble, so a reloaded transcript preserves the explanation. A real answer never carries
+        // error, so `m.error` present ⟺ a failed turn.
+        const isErr = m.role === "assistant" && !!m.error;
+        return (
+          <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
+            <div
+              className={
+                m.role === "user"
+                  ? "max-w-[85%] whitespace-pre-wrap rounded-2xl bg-brand-navy px-4 py-2.5 text-[13.5px] leading-relaxed text-white"
+                  : isErr
+                    ? "max-w-[92%] whitespace-pre-wrap rounded-2xl bg-red-50 px-4 py-3 text-[12.5px] leading-relaxed text-red-700"
+                    : "max-w-[92%] whitespace-pre-wrap rounded-2xl bg-white px-4 py-3 text-[13.5px] leading-relaxed text-brand-navy shadow-overlay"
+              }
+            >
+              {isErr ? m.error : m.text}
+            </div>
+          </div>
+        );
+      })}
+      {busy && (
+        <div className="flex justify-start">
+          <div className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-[13px] text-muted-foreground shadow-overlay">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Thinking…
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  // Shared composer — same textarea + Send on both surfaces (taRef is only ever in one tree at a
+  // time, since exactly one variant renders).
+  const composerNode = (
+    <div className="flex items-end gap-2 rounded-2xl border border-black/10 bg-white p-2 shadow-overlay">
+      <textarea
+        ref={taRef}
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        onKeyDown={onKeyDown}
+        rows={1}
+        placeholder="Ask GrantBot…"
+        className="max-h-40 min-h-[38px] flex-1 resize-none bg-transparent px-2 py-2 text-[14px] text-brand-navy outline-none placeholder:text-muted-foreground"
+      />
+      <button
+        type="button"
+        onClick={() => void send()}
+        disabled={busy || loadingThread || !input.trim()}
+        className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-pill px-4 text-[13px] font-medium text-white transition-colors disabled:opacity-40"
+        style={{ background: BRAND.orangeFill }}
+      >
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Send"}
+      </button>
+    </div>
+  );
+
+  // ── CORNER ──
+  // The Switcher panel supplies the navy header, so this is headerless: a toolbar (Conversations
+  // toggle + New), the scrolling transcript-or-rail, and the composer.
+  if (isCorner) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex flex-shrink-0 items-center gap-2 border-b border-hairline-strong bg-surface-sunken px-[18px] py-3">
+          <button
+            type="button"
+            onClick={() => setShowThreads((s) => !s)}
+            aria-pressed={showThreads}
+            className="inline-flex h-7 items-center gap-1.5 rounded-lg bg-brand-navy px-2.5 text-[12px] font-semibold text-white transition-colors hover:bg-brand-navyHover"
+          >
+            <MessagesSquare className="h-3 w-3" /> Conversations
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setShowThreads(false);
+              newConversation();
+            }}
+            className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-edge px-2.5 text-[12px] font-semibold text-brand-navy transition-colors hover:bg-white"
+          >
+            <Plus className="h-3 w-3" /> New
+          </button>
+        </div>
+
+        <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-[18px] py-4">
+          {showThreads ? (
+            <div className="space-y-2">
+              {threads.length === 0 ? (
+                <p className="px-1 text-[12px] text-muted-foreground">No saved conversations yet.</p>
+              ) : (
+                threads.map((t) => {
+                  const active = t.id === conversationId;
+                  return (
+                    <div
+                      key={t.id}
+                      className={`group relative rounded-xl transition-colors ${
+                        active
+                          ? "bg-brand-navy text-white"
+                          : "bg-surface-sunken text-brand-navy/80 hover:bg-white hover:text-brand-navy"
+                      }`}
+                    >
+                      {renamingId === t.id ? (
+                        renameField(t)
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowThreads(false);
+                              void loadThread(t.id);
+                            }}
+                            className="block w-full px-3 py-2 pr-8 text-left text-[12.5px] leading-snug"
+                          >
+                            <span className="line-clamp-2">{t.title ?? "Untitled"}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => startRename(t)}
+                            aria-label="Rename conversation"
+                            title="Rename"
+                            className={`absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-lg opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 ${
+                              active
+                                ? "text-white/70 hover:bg-white/15"
+                                : "text-muted-foreground hover:bg-black/5 hover:text-brand-navy"
+                            }`}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          ) : (
+            <>
+              {loadingThread && (
+                <div className="mt-8 flex justify-center text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                </div>
+              )}
+              {empty && (
+                <div className="mt-2 text-[12.5px] leading-relaxed text-muted-foreground">
+                  <p className="mb-1 font-medium text-brand-navy">Your GRANTED copilot.</p>
+                  <p>
+                    Grants and triage, but also BD, pricing, drafting and strategy. When a task is about
+                    client fit it reads every active client&apos;s live profile. Read-only, saved across
+                    sessions.
+                  </p>
+                </div>
+              )}
+              {bubbles}
+            </>
+          )}
+        </div>
+
+        <div className="flex-shrink-0 space-y-2 border-t border-hairline-strong bg-white px-4 pb-3.5 pt-3">
+          {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-[12.5px] text-red-700">{error}</p>}
+          {composerNode}
+        </div>
+      </div>
+    );
+  }
+
   return (
     // h-full works because the (app) layout gives <main> a definite height. min-h-0 on every flex
     // ancestor is load-bearing: without it a flex child refuses to shrink below its content and hands
@@ -276,38 +498,7 @@ export function FirmGrantBotChat() {
                   // nested in a button is invalid HTML), or the inline rename input while editing.
                   <li key={t.id} className="group relative">
                     {editing ? (
-                      <form
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          void commitRename(t);
-                        }}
-                        className="px-0.5 py-0.5"
-                      >
-                        <input
-                          autoFocus
-                          value={renameDraft}
-                          onChange={(e) => setRenameDraft(e.target.value)}
-                          onFocus={(e) => e.currentTarget.select()}
-                          onKeyDown={(e) => {
-                            if (e.key === "Escape") {
-                              e.preventDefault();
-                              // Neutralise the blur that unmounting the input would otherwise fire as a commit.
-                              skipBlurCommit.current = true;
-                              cancelRename();
-                            }
-                          }}
-                          onBlur={() => {
-                            if (skipBlurCommit.current) {
-                              skipBlurCommit.current = false;
-                              return;
-                            }
-                            void commitRename(t);
-                          }}
-                          maxLength={80}
-                          aria-label="Conversation title"
-                          className="w-full rounded-lg border border-black/10 bg-white px-2.5 py-2 text-[13px] text-brand-navy outline-none focus:border-brand-navy/30"
-                        />
-                      </form>
+                      renameField(t)
                     ) : (
                       <>
                         <button
@@ -373,61 +564,13 @@ export function FirmGrantBotChat() {
               </p>
             </div>
           )}
-          <div className="flex flex-col gap-4">
-            {messages.map((m, i) => {
-              // A persisted failed assistant turn (empty text + error) renders its reason in an
-              // error bubble, so a reloaded transcript preserves the explanation. A real answer
-              // never carries error, so `m.error` present ⟺ a failed turn.
-              const isErr = m.role === "assistant" && !!m.error;
-              return (
-                <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
-                  <div
-                    className={
-                      m.role === "user"
-                        ? "max-w-[85%] whitespace-pre-wrap rounded-2xl bg-brand-navy px-4 py-2.5 text-[13.5px] leading-relaxed text-white"
-                        : isErr
-                          ? "max-w-[92%] whitespace-pre-wrap rounded-2xl bg-red-50 px-4 py-3 text-[12.5px] leading-relaxed text-red-700"
-                          : "max-w-[92%] whitespace-pre-wrap rounded-2xl bg-white px-4 py-3 text-[13.5px] leading-relaxed text-brand-navy shadow-overlay"
-                    }
-                  >
-                    {isErr ? m.error : m.text}
-                  </div>
-                </div>
-              );
-            })}
-            {busy && (
-              <div className="flex justify-start">
-                <div className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-[13px] text-muted-foreground shadow-overlay">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Thinking…
-                </div>
-              </div>
-            )}
-          </div>
+          {bubbles}
         </div>
 
         {/* Composer */}
         <div className="shrink-0 pb-4">
           {error && <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-[12.5px] text-red-700">{error}</p>}
-          <div className="flex items-end gap-2 rounded-2xl border border-black/10 bg-white p-2 shadow-overlay">
-            <textarea
-              ref={taRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={onKeyDown}
-              rows={1}
-              placeholder="Ask GrantBot…"
-              className="max-h-40 min-h-[38px] flex-1 resize-none bg-transparent px-2 py-2 text-[14px] text-brand-navy outline-none placeholder:text-muted-foreground"
-            />
-            <button
-              type="button"
-              onClick={() => void send()}
-              disabled={busy || loadingThread || !input.trim()}
-              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-pill px-4 text-[13px] font-medium text-white transition-colors disabled:opacity-40"
-              style={{ background: BRAND.orangeFill }}
-            >
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Send"}
-            </button>
-          </div>
+          {composerNode}
         </div>
       </div>
     </div>
