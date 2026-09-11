@@ -1,13 +1,13 @@
 import { describe, it, expect } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
-import { getAnthropicClient, MODEL } from "@/lib/anthropic";
+import { getAnthropicClient, OPUS_MODEL } from "@/lib/anthropic";
 import { assembleSystem, buildSystemPrompt, framePastedContent } from "./prompt";
 import type { ContextPack } from "./context-pack";
 
 // ── GrantBot reasoning eval — the deduce+label+gate carve-out ──────────────────────────────────────
 //
 // MODEL-IN-THE-LOOP. NOT a unit test; MUST NOT run in the normal suite or the sandbox — it makes real
-// (paid) calls to MODEL. Skipped unless RUN_GRANTBOT_EVAL=1 AND ANTHROPIC_API_KEY is present. Run it in
+// (paid) calls to the deployed per-client model (Opus 5). Skipped unless RUN_GRANTBOT_EVAL=1 AND ANTHROPIC_API_KEY is present. Run it in
 // CI (the "GrantBot Prompt Eval" workflow) or a shell with both:
 //
 //   RUN_GRANTBOT_EVAL=1 GRANTBOT_EVAL_RUNS=3 ANTHROPIC_API_KEY=... \
@@ -26,7 +26,7 @@ import type { ContextPack } from "./context-pack";
 //       anti-hallucination discipline the identify-unlock must not loosen.
 //
 // NO DB, NO TOOLS. The eval builds the REAL assembled system prompt (buildSystemPrompt + assembleSystem)
-// over a minimal synthetic ContextPack and calls MODEL directly with one user turn — no Supabase, no
+// over a minimal synthetic ContextPack and calls the deployed model directly with one user turn — no Supabase, no
 // conversation store. It exercises the FLAG-OFF, single-shot GrantBot turn (web-fetch / artifacts / vision
 // all default OFF), which is exactly the path the prompt fix targets: the change is prompt-only and needs
 // no tool. So the only external dependency is the Anthropic API; the fixtures are constructed here.
@@ -75,7 +75,11 @@ async function callGrantBot(pack: ContextPack, userText: string): Promise<string
   const system = assembleSystem(prompt);
   const anthropic = getAnthropicClient();
   const res = await anthropic.messages.create({
-    model: MODEL,
+    // The DEPLOYED per-client config (turn.ts): Opus 5 with thinking disabled. The eval must exercise
+    // what production actually runs — a green eval on a different model/config could miss a real
+    // reasoning regression. No temperature (claude-opus-5 rejects it).
+    model: OPUS_MODEL,
+    thinking: { type: "disabled" as const },
     max_tokens: 1500,
     system,
     messages: [{ role: "user", content: userText }] as Anthropic.MessageParam[],
