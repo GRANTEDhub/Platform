@@ -3,6 +3,7 @@ import { buildFirmSystemPrompt } from "./firm-prompt";
 import { buildFirmContextPack, type FirmPackClient } from "./firm-context-pack";
 import { FIRM_GRANTBOT_INSTRUCTIONS } from "./firm-instructions";
 import { GRANTED_ONBOARDING_BRIEF, GRANTED_REVIEW_CARD_SPEC } from "./firm-knowledge";
+import type { PromptBlock } from "./prompt";
 
 // Deterministic — no model. Locks the firm prompt's structural invariants:
 //   ① the guardrails ARE Shannon's ported IntellEngine instructions, roster-wide + profiles-only.
@@ -91,8 +92,11 @@ describe("buildFirmSystemPrompt", () => {
     expect(closing).toContain("Read-only");
     expect(closing).toContain("MATCH THE RESPONSE TO THE ASK");
     expect(closing).toContain("2 active client");
-    // Honest about the tool-free surface (no fabricated NOFO fetch / send).
-    expect(closing).toContain("no tools in this surface");
+    // Honest about the surface: the two read-only look-back tools are its ONLY tools, and it still
+    // can't fetch a NOFO or send email (no fabricated fetch / send).
+    expect(closing).toContain("list_firm_conversations");
+    expect(closing).toContain("read_firm_conversation");
+    expect(closing).toMatch(/still cannot fetch|cannot fetch a page/i);
   });
 
   it("assembles exactly two cache breakpoints, and the last (closing) block is uncached", () => {
@@ -110,5 +114,34 @@ describe("buildFirmSystemPrompt", () => {
     expect(kinds).toContain("staff");
     expect(kinds).not.toContain("methodology");
     expect(prompt.prefixChars).toBeGreaterThan(0);
+  });
+});
+
+// The cross-thread tool how-to rides as a TURN BLOCK (firm-turn passes FIRM_CROSS_THREAD_INSTRUCTION_BLOCK).
+// A distinct marker stands in for it so this pure test needs no import from the server-only tool module.
+describe("buildFirmSystemPrompt — turn blocks (the cross-thread tool instruction)", () => {
+  const marker = "ZZ_FIRM_TURN_BLOCK_MARKER";
+  const crossThread: PromptBlock = { kind: "cross-thread", source: "test", version: "t", cacheable: false, text: marker };
+
+  it("places a turn block after both breakpoints and before the (last) closing block, adding no breakpoint", () => {
+    const prompt = buildFirmSystemPrompt({ pack, turnBlocks: [crossThread] });
+    // Turn blocks never add a breakpoint — still exactly two.
+    expect(prompt.system.filter((b) => b.cache_control).length).toBe(2);
+    const markerIdx = prompt.system.findIndex((b) => b.text.includes(marker));
+    expect(markerIdx).toBeGreaterThan(-1);
+    // The closing restatement stays LAST; the turn block sits before it.
+    expect(markerIdx).toBeLessThan(prompt.system.length - 1);
+    expect(prompt.system[prompt.system.length - 1].text).not.toContain(marker);
+    expect(prompt.manifest.map((m) => m.kind)).toContain("cross-thread");
+  });
+
+  it("rejects a turn block that claims cacheable (would silently make every turn a cache write)", () => {
+    expect(() => buildFirmSystemPrompt({ pack, turnBlocks: [{ ...crossThread, cacheable: true }] })).toThrow();
+  });
+
+  it("omitting turn blocks is unchanged — no cross-thread block in system or manifest", () => {
+    const prompt = buildFirmSystemPrompt({ pack });
+    expect(prompt.manifest.map((m) => m.kind)).not.toContain("cross-thread");
+    expect(prompt.system.some((b) => b.text.includes(marker))).toBe(false);
   });
 });

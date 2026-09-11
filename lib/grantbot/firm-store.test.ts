@@ -1,11 +1,18 @@
 import { describe, it, expect } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createFirmConversation, getFirmConversation, listFirmConversations } from "./firm-store";
+import {
+  createFirmConversation,
+  getFirmConversation,
+  listFirmConversations,
+  updateFirmConversationTitle,
+} from "./firm-store";
 
 // Deterministic — no DB. Locks the firm-store invariants that matter:
 //   ① createFirmConversation writes scope='firm' AND client_id=null (the 0097 CHECK pairing).
 //   ② getFirmConversation and listFirmConversations filter scope='firm', so a CLIENT thread is
 //      INVISIBLE to the firm surface — the code-side boundary on a service-role path (RLS is bypassed).
+//   ③ updateFirmConversationTitle scopes the write to id AND scope='firm' (never a client thread),
+//      normalises + caps the title, and refuses an empty one without writing.
 
 interface Row {
   id: string;
@@ -121,5 +128,80 @@ describe("listFirmConversations — scope boundary", () => {
     const { db } = fakeDb({ conversations: [firmRow, clientRow] });
     const list = await listFirmConversations(db);
     expect(list.map((c) => c.id)).toEqual(["f-thread"]);
+  });
+});
+
+// A minimal fake of the update chain updateFirmConversationTitle uses:
+//   db.from(t).update(row).eq("id",…).eq("scope","firm") -> awaited -> { error }
+// Captures the written row and the eq filters so a test can assert the title was normalised and the
+// write was scoped to id AND scope='firm' (never a client thread).
+interface UpdateCapture {
+  update?: Record<string, unknown>;
+  eqs: [string, unknown][];
+  error?: string;
+}
+function fakeUpdateDb(capture: UpdateCapture): SupabaseClient {
+  const from = () => ({
+    update: (row: Record<string, unknown>) => {
+      capture.update = row;
+      const chain = {
+        eq: (col: string, val: unknown) => {
+          capture.eqs.push([col, val]);
+          return chain;
+        },
+        then: (resolve: (v: { error: { message: string } | null }) => void) =>
+          resolve({ error: capture.error ? { message: capture.error } : null }),
+      };
+      return chain;
+    },
+  });
+  return { from } as unknown as SupabaseClient;
+}
+
+describe("updateFirmConversationTitle", () => {
+  it("normalises whitespace, trims, and scopes the write to id AND scope='firm'", async () => {
+    const capture: UpdateCapture = { eqs: [] };
+    const ok = await updateFirmConversationTitle(fakeUpdateDb(capture), {
+      conversationId: "f-thread",
+      title: "  Pricing   +\n Build  ",
+    });
+    expect(ok).toBe(true);
+    expect(capture.update).toEqual({ title: "Pricing + Build" });
+    // The boundary: id AND scope='firm', so a client-thread id updates zero rows.
+    expect(capture.eqs).toEqual([
+      ["id", "f-thread"],
+      ["scope", "firm"],
+    ]);
+  });
+
+  it("caps the title at the column budget (80 chars), surrogate-safe", async () => {
+    const capture: UpdateCapture = { eqs: [] };
+    // 79 chars then an astral emoji: a plain slice(0, 80) would cut the surrogate pair in half.
+    await updateFirmConversationTitle(fakeUpdateDb(capture), {
+      conversationId: "f-thread",
+      title: "y".repeat(79) + "📄" + "z".repeat(20),
+    });
+    const title = capture.update?.title as string;
+    expect(title.length).toBeLessThanOrEqual(80);
+    expect(title).toBe(title.toWellFormed()); // no dangling lone surrogate
+  });
+
+  it("refuses an empty / whitespace-only title WITHOUT writing (never blanks a row)", async () => {
+    const capture: UpdateCapture = { eqs: [] };
+    const ok = await updateFirmConversationTitle(fakeUpdateDb(capture), {
+      conversationId: "f-thread",
+      title: "   \n  ",
+    });
+    expect(ok).toBe(false);
+    expect(capture.update).toBeUndefined(); // .from().update() was never reached
+  });
+
+  it("returns false when the write errors", async () => {
+    const capture: UpdateCapture = { eqs: [], error: "boom" };
+    const ok = await updateFirmConversationTitle(fakeUpdateDb(capture), {
+      conversationId: "f-thread",
+      title: "A real title",
+    });
+    expect(ok).toBe(false);
   });
 });

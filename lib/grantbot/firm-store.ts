@@ -1,27 +1,27 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { truncateSafely } from "@/lib/grantbot/label";
 
 // The FIRM conversation store — the client-less sibling of store.ts. Memory (Brick 2).
 //
 // ── WHAT THIS ADDS, AND WHAT IT REUSES ──
 //
 // A firm thread is a grantbot_conversations row with scope='firm' and client_id=null (migration
-// 0097). Only the CLIENT-SCOPED store.ts functions need firm variants — create / list / get all key
-// on client_id, which a firm thread does not have. Everything else in store.ts is conversation_id-
-// scoped and CLIENT-AGNOSTIC (appendUser, appendAssistant, loadMessages, nextSeq, touchConversation,
-// conversationTitle), so the firm turn imports those DIRECTLY from store.ts and this module is only
-// the create / list / get trio. store.ts is not touched — byte-identical. (Rename is deliberately
-// out of v1, exactly as the per-client bot shipped without it in 0080 — auto-title now, a rename
-// route rides the cross-thread fast-follow.)
+// 0097). Only the CLIENT-SCOPED store.ts functions need firm variants — create / list / get / rename
+// all key on client_id, which a firm thread does not have. Everything else in store.ts is
+// conversation_id-scoped and CLIENT-AGNOSTIC (appendUser, appendAssistant, loadMessages, nextSeq,
+// touchConversation, conversationTitle), so the firm turn imports those DIRECTLY from store.ts and this
+// module is only the create / list / get / rename set. store.ts is not touched — byte-identical.
+// (Rename rides the cross-thread fast-follow, the same brick that adds the firm bot's read tools.)
 //
 // ── scope='firm' IS THE BOUNDARY, ON A SERVICE-ROLE PATH ──
 //
 // The firm routes run service-role (RLS bypassed, like every GrantBot write), so scope is the code-
 // side boundary the way client_id is for the per-client store: getFirmConversation and
 // updateFirmConversationTitle both filter `scope='firm'`, so a CLIENT conversation id handed to a
-// firm route resolves to nothing (never appended to, never renamed) — the same discipline that keeps
-// the per-client store from touching another client's rows. rowToFirmConversation carries no
-// clientId field (it is always null for a firm thread), so there is no `String(null)` → "null" trap.
+// firm route resolves to nothing (never read, never renamed) — the same discipline that keeps the
+// per-client store from touching another client's rows. rowToFirmConversation carries no clientId
+// field (it is always null for a firm thread), so there is no `String(null)` → "null" trap.
 //
 // ── APPEND-ONLY, VIA THE ABSENCE OF A POLICY ──
 //
@@ -39,6 +39,10 @@ export interface FirmConversation {
 }
 
 const FIRM_COLS = "id, title, started_by_email, created_at, last_message_at";
+
+// The title column budget, same 80 as store.ts's TITLE_CHARS — a hand-typed rename is normalised and
+// hard-capped so it cannot blank or overrun the column.
+const FIRM_TITLE_CHARS = 80;
 
 export async function createFirmConversation(
   db: SupabaseClient,
@@ -91,6 +95,34 @@ export async function listFirmConversations(
     .order("last_message_at", { ascending: false })
     .limit(limit);
   return (data ?? []).map(rowToFirmConversation);
+}
+
+// Rename a firm thread, but ONLY if it is a firm thread. The scope='firm' filter is the boundary —
+// exactly like getFirmConversation — so a client conversation id updates ZERO rows (never renamed
+// through the firm surface), mirroring store.ts's updateConversationTitle scoping the write by
+// client_id. It edits only the conversation TITLE (metadata); it never touches grantbot_messages, so
+// the append-only-transcript invariant is intact (0080). Service-role, like touchConversation — 0080
+// gives these tables no UPDATE policy, so the write bypasses RLS and the staff-gated route is the
+// authorization boundary. The title is whitespace-collapsed and hard-capped through truncateSafely
+// (the module's ONE surrogate-safe char-cap), so a hand-typed name cannot blank the column, overrun
+// it, or be cut mid-surrogate-pair; an empty title is refused WITHOUT a write.
+export async function updateFirmConversationTitle(
+  db: SupabaseClient,
+  opts: { conversationId: string; title: string },
+): Promise<boolean> {
+  const normalized = opts.title.replace(/\s+/g, " ").trim();
+  const title = truncateSafely(normalized, FIRM_TITLE_CHARS).text;
+  if (!title) return false;
+  const { error } = await db
+    .from("grantbot_conversations")
+    .update({ title })
+    .eq("id", opts.conversationId)
+    .eq("scope", "firm");
+  if (error) {
+    console.error("Firm GrantBot conversation rename failed", error.message);
+    return false;
+  }
+  return true;
 }
 
 function rowToFirmConversation(r: Record<string, unknown>): FirmConversation {
