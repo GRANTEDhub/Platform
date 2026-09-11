@@ -1,15 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Sparkles, Plus } from "lucide-react";
+import { Loader2, Sparkles, Plus, Pencil } from "lucide-react";
 import { BRAND } from "@/lib/brand";
 import type { GrantBotThread, GrantBotMsg } from "@/lib/grantbot/wire";
 
-// The FIRM GrantBot chat. Memory (Brick 2): firm threads now PERSIST — a thread rail on the left, the
-// active transcript on the right, and a refresh reloads the thread instead of a clean slate. Still
-// its own component (not the client GrantBotChat, which is welded to a clientId, paste, image and
-// cross-thread); the shared-shell extraction waits for the Switcher brick. No rename in v1 (auto-title
-// only, matching how the per-client bot shipped in 0080) and no tools yet.
+// The FIRM GrantBot chat. Memory (Brick 2): firm threads PERSIST — a thread rail on the left, the
+// active transcript on the right, and a refresh reloads the thread instead of a clean slate. The
+// cross-thread + rename brick adds: an inline thread RENAME (a hover/focus pencil → an inline input,
+// committing to /api/grantbot/firm-rename), and — server-side, invisible here — the bot's two
+// read-only cross-thread tools. Still its own component (not the client GrantBotChat, which is welded
+// to a clientId, paste, image and per-client cross-thread); the shared-shell extraction waits for the
+// Switcher brick. A rename edits only the conversation TITLE, so the append-only transcript is intact.
 
 interface Turn {
   role: "user" | "assistant";
@@ -37,6 +39,18 @@ export function FirmGrantBotChat() {
   // the async result is applied only if the epoch still matches, so a slow load can't overwrite the
   // thread the reader clicked next. (send never races it — busy blocks every thread switch.)
   const epochRef = useRef(0);
+  // Inline thread rename. renamingId is the thread whose title is being edited (null = none);
+  // renameDraft is the in-progress text. A rename edits only the conversation title (metadata) — never
+  // a stored message — so it does not break the append-only transcript. Same epoch-guarded shape as the
+  // per-client bot's rename: renameEpoch bumps every time an edit opens or ends, so a commit tells
+  // "this attempt" from a later one on the same row (Escape-and-reopen, or a row switch); renameInFlight
+  // blocks the Enter-then-blur double-write of the SAME attempt while never blocking a fresh one; and
+  // skipBlurCommit lets Escape cancel without a trailing blur re-saving the abandoned draft.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const renameEpoch = useRef(0);
+  const renameInFlight = useRef<number | null>(null);
+  const skipBlurCommit = useRef(false);
 
   // Initial load: most-recent thread + its transcript + the rail. A failure leaves the composer
   // working — the first send just starts a new thread. EPOCH-GUARDED: the composer is live
@@ -113,6 +127,54 @@ export function FirmGrantBotChat() {
     setInput("");
     setLoadingThread(false);
     taRef.current?.focus();
+  }
+
+  function startRename(t: GrantBotThread) {
+    skipBlurCommit.current = false;
+    renameEpoch.current += 1; // a fresh edit attempt — any in-flight commit is now for an old epoch
+    setRenamingId(t.id);
+    setRenameDraft(t.title ?? "");
+  }
+  function cancelRename() {
+    renameEpoch.current += 1; // ends this attempt: a commit still in flight can no longer touch state
+    setRenamingId(null);
+    setRenameDraft("");
+  }
+  async function commitRename(t: GrantBotThread) {
+    const epoch = renameEpoch.current;
+    // Re-entrancy guard for THIS attempt (Enter + a trailing blur), keyed to the epoch so a fresh
+    // attempt on the same row (Escape then reopen) is never blocked by the stale in-flight one.
+    if (renameInFlight.current === epoch) return;
+    const title = renameDraft.replace(/\s+/g, " ").trim();
+    // No change (or emptied) is a cancel, not a write — an empty title would blank the row.
+    if (!title || title === (t.title ?? "")) {
+      cancelRename();
+      return;
+    }
+    renameInFlight.current = epoch;
+    try {
+      const res = await fetch("/api/grantbot/firm-rename", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId: t.id, title }),
+      });
+      if (res.ok) {
+        // The server owns the title now; refetch the rail (not a transcript reload) to pick it up.
+        await refetchThreads();
+      } else {
+        setError("Could not rename the conversation.");
+      }
+    } catch {
+      setError("Could not reach the server.");
+    } finally {
+      // Only clear tracking + close the editor if we are STILL on this attempt: a request that finishes
+      // after the user Escaped or switched rows (a newer epoch) must clobber neither the newer editor
+      // nor the newer in-flight marker (epochs are monotonic, so the stale marker never re-matches).
+      if (renameEpoch.current === epoch) {
+        renameInFlight.current = null;
+        cancelRename();
+      }
+    }
   }
 
   async function send() {
@@ -207,19 +269,69 @@ export function FirmGrantBotChat() {
             <ul className="flex flex-col gap-0.5">
               {threads.map((t) => {
                 const active = t.id === conversationId;
+                const editing = renamingId === t.id;
                 return (
-                  <li key={t.id}>
-                    <button
-                      type="button"
-                      onClick={() => void loadThread(t.id)}
-                      disabled={busy}
-                      className={`w-full truncate rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors disabled:cursor-not-allowed ${
-                        active ? "bg-brand-navy/5 font-medium text-brand-navy" : "text-muted-foreground hover:bg-black/5"
-                      }`}
-                      title={t.title ?? "Untitled"}
-                    >
-                      {t.title ?? "Untitled"}
-                    </button>
+                  // group + relative so the hover/focus pencil can absolutely position over the row.
+                  // A row is a wrapper holding a load button + a rename pencil (SIBLINGS — a button
+                  // nested in a button is invalid HTML), or the inline rename input while editing.
+                  <li key={t.id} className="group relative">
+                    {editing ? (
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          void commitRename(t);
+                        }}
+                        className="px-0.5 py-0.5"
+                      >
+                        <input
+                          autoFocus
+                          value={renameDraft}
+                          onChange={(e) => setRenameDraft(e.target.value)}
+                          onFocus={(e) => e.currentTarget.select()}
+                          onKeyDown={(e) => {
+                            if (e.key === "Escape") {
+                              e.preventDefault();
+                              // Neutralise the blur that unmounting the input would otherwise fire as a commit.
+                              skipBlurCommit.current = true;
+                              cancelRename();
+                            }
+                          }}
+                          onBlur={() => {
+                            if (skipBlurCommit.current) {
+                              skipBlurCommit.current = false;
+                              return;
+                            }
+                            void commitRename(t);
+                          }}
+                          maxLength={80}
+                          aria-label="Conversation title"
+                          className="w-full rounded-lg border border-black/10 bg-white px-2.5 py-2 text-[13px] text-brand-navy outline-none focus:border-brand-navy/30"
+                        />
+                      </form>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => void loadThread(t.id)}
+                          disabled={busy}
+                          className={`w-full truncate rounded-lg py-2 pl-2.5 pr-8 text-left text-[13px] transition-colors disabled:cursor-not-allowed ${
+                            active ? "bg-brand-navy/5 font-medium text-brand-navy" : "text-muted-foreground hover:bg-black/5"
+                          }`}
+                          title={t.title ?? "Untitled"}
+                        >
+                          {t.title ?? "Untitled"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => startRename(t)}
+                          aria-label="Rename conversation"
+                          title="Rename"
+                          className="absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-lg text-muted-foreground opacity-0 transition-opacity hover:bg-black/5 hover:text-brand-navy group-hover:opacity-100 group-focus-within:opacity-100"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      </>
+                    )}
                   </li>
                 );
               })}
