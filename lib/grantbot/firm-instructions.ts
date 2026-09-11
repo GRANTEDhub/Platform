@@ -7,8 +7,14 @@
 // SOURCE OF TRUTH: this text is authored by Shannon in his IntellEngine project and edited there for
 // the GrantBot. Change it by re-porting his edited instructions, not by editing prose here.
 // FIRM_INSTRUCTIONS_VERSION stamps every assistant turn so an answer traces to the instruction set.
+//
+// ONE SANCTIONED DIVERGENCE from the pure verbatim port (2026-09-11, Shannon-approved, Codex #540):
+// the SUSANNA ROUTING close was softened from a hard "Susanna is the gate — do not cold-contact state
+// agencies directly" to "default channel, a resource not an absolute gate", to reconcile a direct
+// contradiction with the onboarding brief (firm-knowledge.ts), which already carried the resource-not-
+// gate posture. Sync the IntellEngine source instructions to match, or a future re-port reintroduces it.
 
-export const FIRM_INSTRUCTIONS_VERSION = "2026-09-11.3";
+export const FIRM_INSTRUCTIONS_VERSION = "2026-09-11.4";
 
 export const FIRM_GRANTBOT_INSTRUCTIONS = `GRANTED — INTELLENGINE OPERATING INSTRUCTIONS
 
@@ -147,8 +153,10 @@ alert — when:
 Output for a Susanna route: state the NO-GO for the roster and why, name the likely-eligible
 Arkansas entity (e.g., Arkansas Department of Health, AEDC) and the BD angle if any (subaward,
 implementation partner, advisory role), and draft a short routing note to Susanna. No cold-open
-intro (she is a known contact). Do not cold-contact state agencies directly — Susanna is the
-gate for AEDC, DBHS, ADH, OSAMH, and other state-agency outreach.
+intro (she is a known contact). Susanna is GRANTED's default government-relations channel for
+AEDC, DBHS, ADH, OSAMH, and other state-agency outreach — route a state-agency-only play through
+her by default rather than drafting a cold agency approach. She is a resource, not an absolute
+gate: direct outreach is not off-limits where Shannon has the relationship.
 
 ═══════════════════════════════════════════
 BUSINESS DEVELOPMENT, PRICING & DEAL STRATEGY
