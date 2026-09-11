@@ -42,7 +42,10 @@ export interface GrantBotMsg {
   methodologyVersion: string | null;
 }
 
-export function toGrantBotThread(c: Conversation): GrantBotThread {
+// Structural param, not `Conversation`, so BOTH a per-client Conversation and a FirmConversation
+// (firm-store.ts — same three fields, no clientId) map through the ONE thread mapper. The shared
+// GrantBotThread return type is the drift guard: add a field to it and every caller stops compiling.
+export function toGrantBotThread(c: { id: string; title: string | null; lastMessageAt: string }): GrantBotThread {
   return { id: c.id, title: c.title, lastMessageAt: c.lastMessageAt };
 }
 

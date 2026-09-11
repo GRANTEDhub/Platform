@@ -1,34 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getProfile } from "@/lib/auth";
-import { firmGrantbotEnabled, runFirmTurn, type FirmTurnMessage } from "@/lib/grantbot/firm-turn";
+import { createServiceClient } from "@/lib/supabase/server";
+import { conversationTitle } from "@/lib/grantbot/store";
+import { createFirmConversation, getFirmConversation } from "@/lib/grantbot/firm-store";
+import { firmGrantbotEnabled, runFirmTurn } from "@/lib/grantbot/firm-turn";
 
-// One FIRM GrantBot turn. STAFF (admin-only in Brick 1), read-only, roster-wide, EPHEMERAL.
+// One FIRM GrantBot turn. STAFF (admin-only), read-only, roster-wide, PERSISTED (Memory / Brick 2).
 //
-// maxDuration: one model call bounded at CALL_TIMEOUT_MS (120s) plus the single roster query. 300
-// leaves ample headroom.
+// maxDuration: one model call bounded at CALL_TIMEOUT_MS (120s), plus the roster query and the store
+// writes. 300 leaves ample headroom.
 export const maxDuration = 300;
 
-// ── THE BODY IS message AND history. NOTHING ELSE REACHES THE PROMPT. ──
+// ── THE BODY IS message AND conversationId. NOTHING ELSE REACHES THE PROMPT. ──
 //
-// history is the running transcript the page holds (ephemeral — nothing is stored server-side, so
-// there is nothing to read back). It contains only prior turns of THIS conversation; the system
-// prompt, guardrails and roster are all assembled server-side from firm-prompt.ts, never from the
-// body. A browser cannot inject a system instruction here.
+// The transcript now lives in the STORE, keyed by conversationId — it is NOT posted from the browser
+// anymore (that would let a client forge prior turns). The system prompt, guardrails and roster are
+// assembled server-side from firm-prompt.ts. conversationId names which firm thread to continue;
+// omit it to start a new one.
 export async function POST(req: NextRequest) {
-  // Flag-gated: 404 when off, so the surface is not even discoverable until GRANTBOT_FIRM_ENABLED is
-  // flipped + redeployed.
+  // Flag-gated: 404 when off, so the surface is undiscoverable until GRANTBOT_FIRM_ENABLED is flipped.
   if (!firmGrantbotEnabled()) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
   // getProfile, not requireAdmin: requireAdmin REDIRECTS, which on a fetch turns an auth failure into
-  // an opaque HTML response the page cannot report. Admin-only in Brick 1 — the roster aggregates
-  // every client's internal profile, a broader exposure than a contractor's per-client access.
+  // opaque HTML the page cannot report. Admin-only — the roster aggregates every client's profile.
   const profile = await getProfile();
   if (!profile) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   if (profile.role !== "admin") return NextResponse.json({ error: "Admin only" }, { status: 403 });
 
-  let body: { message?: unknown; history?: unknown };
+  let body: { message?: unknown; conversationId?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -40,31 +41,39 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "message is required" }, { status: 400 });
   }
 
-  // Sanitise the supplied transcript into {role, text} turns; drop anything malformed rather than
-  // trusting the shape. Only two roles exist; anything else is coerced to "user" (harmless — it is
-  // just prior context, not an instruction channel).
-  const history: FirmTurnMessage[] = Array.isArray(body.history)
-    ? body.history
-        .map((m): FirmTurnMessage | null => {
-          const o = m as { role?: unknown; text?: unknown } | null;
-          const text = typeof o?.text === "string" ? o.text : "";
-          if (!text.trim()) return null;
-          return { role: o?.role === "assistant" ? "assistant" : "user", text };
-        })
-        .filter((m): m is FirmTurnMessage => m !== null)
-    : [];
+  const db = createServiceClient();
+
+  // Create on the first turn, reuse after. getFirmConversation filters scope='firm', so a client
+  // conversation id (or a stale/deleted one) resolves to nothing and 404s rather than appending a
+  // firm turn onto a client's thread. Everything past this line is PERSISTED, so a subsequent model
+  // failure returns 200 + { conversationId, error } (not a 4xx) — the page keeps its bubble and
+  // continues the same thread, matching the recorded turn.
+  let conversationId = typeof body.conversationId === "string" ? body.conversationId : "";
+  if (conversationId) {
+    const existing = await getFirmConversation(db, conversationId);
+    if (!existing) return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+  } else {
+    const created = await createFirmConversation(db, {
+      title: conversationTitle(message),
+      startedBy: profile.id,
+      startedByEmail: profile.email ?? null,
+    });
+    if (!created) return NextResponse.json({ error: "Could not start a conversation" }, { status: 500 });
+    conversationId = created.id;
+  }
 
   const outcome = await runFirmTurn({
-    history,
+    db,
+    conversationId,
     message,
     generatedBy: profile.email ?? "unknown",
     actorRole: "admin",
   });
 
   if (!outcome.ok) {
-    // 200 with an error field, not a 5xx: the page keeps the transcript it already holds and shows
-    // the reason inline, rather than treating a model hiccup as a lost conversation.
-    return NextResponse.json({ error: outcome.message }, { status: 200 });
+    // 200 with an error field, not a 5xx: the turn was recorded either way (a failed turn is still a
+    // turn), and the page needs the conversation id back so the next message continues this thread.
+    return NextResponse.json({ conversationId, error: outcome.message }, { status: 200 });
   }
-  return NextResponse.json({ text: outcome.text, usage: outcome.usage });
+  return NextResponse.json({ conversationId, text: outcome.text, usage: outcome.usage });
 }
