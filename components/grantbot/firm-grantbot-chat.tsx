@@ -87,13 +87,18 @@ export function FirmGrantBotChat() {
     setError(null);
     try {
       const res = await fetch(`/api/grantbot/firm-context?conversationId=${encodeURIComponent(id)}`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        // Surface the failure — a swallowed load just stops the spinner with no feedback (Vercel).
+        if (epochRef.current === epoch) setError(`Could not load that conversation (${res.status}).`);
+        return;
+      }
       const data = (await res.json()) as { conversationId?: string | null; messages?: GrantBotMsg[] };
       if (epochRef.current !== epoch) return;
       setConversationId(data.conversationId ?? id);
       setMessages(toTurns(data.messages));
     } catch {
-      /* keep the current thread on a failed load */
+      // Keep the current thread on a failed load, but tell the reader it didn't switch.
+      if (epochRef.current === epoch) setError("Network error. Could not load that conversation.");
     } finally {
       if (epochRef.current === epoch) setLoadingThread(false);
     }
