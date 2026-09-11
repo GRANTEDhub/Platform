@@ -36,6 +36,16 @@ export function FirmGrantBotChat() {
     setInput("");
     setError(null);
     setBusy(true);
+    // EPHEMERAL → EVERY failure restores. Nothing is persisted server-side (runFirmTurn writes no
+    // row), so ANY failure — an HTTP error (401 session expiry / 403 / 400), a runFirmTurn 200+error,
+    // no-text, or a network throw — rolls the optimistic bubble back and puts the draft back for a
+    // clean retry. There is no stored turn a resend could duplicate, so unlike the persisted
+    // per-client bot there is no keep-on-200+error case. Leaving the bubble would also strand a
+    // user-role turn in `history`, sending two consecutive user messages on the next turn.
+    const restoreForRetry = () => {
+      setMessages((m) => m.slice(0, -1));
+      setInput(message);
+    };
     try {
       const res = await fetch("/api/grantbot/firm-turn", {
         method: "POST",
@@ -44,17 +54,17 @@ export function FirmGrantBotChat() {
       });
       const data = (await res.json()) as { text?: string; error?: string };
       if (!res.ok || data.error) {
-        setError(data.error ?? `Request failed (${res.status}).`);
+        setError(data.error ?? `Request failed (${res.status}). Your question is back in the box below.`);
+        restoreForRetry();
       } else if (data.text) {
         setMessages((m) => [...m, { role: "assistant", text: data.text as string }]);
       } else {
-        setError("The model returned no text.");
+        setError("The model returned no text. Your question is back in the box below; try again.");
+        restoreForRetry();
       }
     } catch {
-      // Nothing was persisted, so the transcript the page holds is the whole truth — just report it.
-      setError("Network error. Your question is still in the box below the transcript; try again.");
-      setInput(message);
-      setMessages((m) => m.slice(0, -1));
+      setError("Network error. Your question is back in the box below; try again.");
+      restoreForRetry();
     } finally {
       setBusy(false);
       taRef.current?.focus();
