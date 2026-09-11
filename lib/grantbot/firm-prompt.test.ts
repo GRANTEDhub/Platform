@@ -92,11 +92,16 @@ describe("buildFirmSystemPrompt", () => {
     expect(closing).toContain("Read-only");
     expect(closing).toContain("MATCH THE RESPONSE TO THE ASK");
     expect(closing).toContain("2 active client");
-    // Honest about the surface: the two read-only look-back tools are its ONLY tools, and it still
-    // can't fetch a NOFO or send email (no fabricated fetch / send).
-    expect(closing).toContain("list_firm_conversations");
-    expect(closing).toContain("read_firm_conversation");
-    expect(closing).toMatch(/still cannot fetch|cannot fetch a page/i);
+    // TOOL-SET-AGNOSTIC: the general read-only + can't-act posture WITHOUT enumerating the tools or
+    // claiming "you cannot fetch" — so the closing (the last word) never contradicts a tool that is
+    // enabled, e.g. web fetch. The specific tools are named in their own instruction blocks
+    // (firm-cross-thread / firm-web-fetch), asserted there.
+    expect(closing).toMatch(/only reads?/i);
+    expect(closing).toMatch(/cannot run matching|save anything|send email/i);
+    expect(closing).toContain("NAME what would have to be");
+    // It must NOT hard-name a tool or hard-deny fetch (either would contradict an enabled fetch tool).
+    expect(closing).not.toContain("list_firm_conversations");
+    expect(closing).not.toMatch(/cannot fetch/i);
   });
 
   it("assembles exactly two cache breakpoints, and the last (closing) block is uncached", () => {
