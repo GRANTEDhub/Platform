@@ -29,7 +29,12 @@ import { budgetHistory, type HistoryTurn } from "@/lib/grantbot/history";
 const FIRM_MODEL = OPUS_MODEL;
 
 const MAX_MESSAGE_CHARS = 20_000;
-const MAX_OUTPUT_TOKENS = 4000;
+// Generous on purpose: Opus 5 runs ADAPTIVE THINKING (on by default for the firm strategy bot, per
+// Shannon), and thinking tokens count against max_tokens. At 4000, a hard roster-strategy question
+// spent the whole budget THINKING and emitted NO answer text -> "The model returned no text." 16000
+// leaves ample room for the thinking PLUS a full strategy read. It is a CAP, not a charge (a short
+// answer still bills short), and is well within Opus 5's 128k output and the 120s call timeout.
+const MAX_OUTPUT_TOKENS = 16000;
 const CALL_TIMEOUT_MS = 120_000;
 
 // Off unless exactly "true". Read SERVER-SIDE, never NEXT_PUBLIC_. Default-off means the firm bot's
@@ -113,7 +118,16 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
       .filter(Boolean)
       .join("\n")
       .trim();
-    if (!answer) return { ok: false, message: "The model returned no text." };
+    if (!answer) {
+      // Empty text is almost always the thinking budget swallowing max_tokens before any answer text
+      // (see MAX_OUTPUT_TOKENS). Surface the real reason so a truncation is legible, not a bare
+      // "no text" that hides the cause.
+      const why =
+        res.stop_reason === "max_tokens"
+          ? "The answer hit the output-token limit before any text was produced (the model's thinking used the whole budget). Try a more focused question."
+          : "The model returned no text.";
+      return { ok: false, message: why };
+    }
     return { ok: true, text: answer, usage: res.usage ?? null };
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : "Unknown error calling the model." };
