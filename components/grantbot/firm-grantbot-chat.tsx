@@ -102,7 +102,7 @@ export function FirmGrantBotChat() {
         <div className="min-w-0 flex-1">
           <p className="font-serif text-[17px] font-bold text-brand-navy">GrantBot — Firm</p>
           <p className="truncate text-[12px] text-muted-foreground">
-            Roster-wide · profiles only · read-only · ephemeral (nothing is saved)
+            Firm copilot · read-only · ephemeral (nothing is saved)
           </p>
         </div>
         <button
@@ -120,11 +120,11 @@ export function FirmGrantBotChat() {
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto py-4">
         {messages.length === 0 && !busy && (
           <div className="mx-auto mt-10 max-w-md text-center text-[13px] leading-relaxed text-muted-foreground">
-            <p className="mb-2 font-medium text-brand-navy">Ask about the whole roster.</p>
+            <p className="mb-2 font-medium text-brand-navy">Your GRANTED copilot.</p>
             <p>
-              Which clients fit a theme, who could prime vs. partner, where the portfolio is
-              concentrated, where to spend limited pursuit effort. Reasons from every active client&apos;s
-              profile — not their live grant activity, which stays in each client&apos;s own record.
+              Grants and triage, but also BD and pricing, drafting, meeting prep, and strategy — the
+              same work you do in your IntellEngine project. When a task is about client fit, it reads
+              every active client&apos;s live profile from the platform. Read-only, and nothing is saved yet.
             </p>
           </div>
         )}
@@ -145,7 +145,7 @@ export function FirmGrantBotChat() {
           {busy && (
             <div className="flex justify-start">
               <div className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-[13px] text-muted-foreground shadow-overlay">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Thinking across the roster…
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Thinking…
               </div>
             </div>
           )}
@@ -164,7 +164,7 @@ export function FirmGrantBotChat() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKeyDown}
             rows={1}
-            placeholder="Ask about the client roster…"
+            placeholder="Ask GrantBot…"
             className="max-h-40 min-h-[38px] flex-1 resize-none bg-transparent px-2 py-2 text-[14px] text-brand-navy outline-none placeholder:text-muted-foreground"
           />
           <button
