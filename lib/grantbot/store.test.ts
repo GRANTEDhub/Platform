@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { updateConversationTitle } from "./store";
+import { getConversation, updateConversationTitle } from "./store";
 
 // A minimal fake of the update chain updateConversationTitle uses:
 //   db.from(t).update(row).eq("id", …).eq("client_id", …)  -> awaited -> { error }
@@ -87,5 +87,61 @@ describe("updateConversationTitle", () => {
       title: "a real title",
     });
     expect(ok).toBe(false);
+  });
+});
+
+// A minimal fake of getConversation's read chain:
+//   db.from(t).select(cols).eq("id",…).eq("scope",…).maybeSingle() -> { data }
+// Captures the eq filters (to assert the scope='client' guard) and returns a configurable row.
+function fakeSelectDb(row: Record<string, unknown> | null, eqs: [string, unknown][]): SupabaseClient {
+  const from = () => {
+    const chain: Record<string, unknown> = {
+      select: () => chain,
+      eq: (col: string, val: unknown) => {
+        eqs.push([col, val]);
+        return chain;
+      },
+      maybeSingle: async () => ({ data: row, error: null }),
+    };
+    return chain;
+  };
+  return { from } as unknown as SupabaseClient;
+}
+
+// Locks the 0097 security boundary: getConversation is the PER-CLIENT lookup, so it must never
+// return a firm thread (scope='firm', client_id NULL) — otherwise the per-client context route
+// (staff, not admin-gated) would leak the admin-only firm transcript.
+describe("getConversation — firm-row isolation (0097 security boundary)", () => {
+  it("filters the read to scope='client', so a firm thread is never returned here", async () => {
+    const eqs: [string, unknown][] = [];
+    await getConversation(fakeSelectDb(null, eqs), "some-id");
+    expect(eqs).toContainEqual(["scope", "client"]);
+  });
+
+  it("NEVER coerces a NULL client_id to the string \"null\" (defeats the route's !== guard)", async () => {
+    const eqs: [string, unknown][] = [];
+    // A defensive check on the mapping itself: even handed a null-client_id row, clientId is "",
+    // which the per-client routes reject (their `!clientId` 400) and which never equals a real id.
+    const convo = await getConversation(
+      fakeSelectDb(
+        { id: "x", client_id: null, title: "t", started_by_email: null, created_at: "d", last_message_at: "d" },
+        eqs,
+      ),
+      "x",
+    );
+    expect(convo?.clientId).toBe("");
+    expect(convo?.clientId).not.toBe("null");
+  });
+
+  it("maps a real client_id through unchanged", async () => {
+    const eqs: [string, unknown][] = [];
+    const convo = await getConversation(
+      fakeSelectDb(
+        { id: "x", client_id: "client-1", title: "t", started_by_email: null, created_at: "d", last_message_at: "d" },
+        eqs,
+      ),
+      "x",
+    );
+    expect(convo?.clientId).toBe("client-1");
   });
 });
