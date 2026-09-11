@@ -23,20 +23,24 @@ const FirmGrantBotChat = dynamic(() => import("./firm-grantbot-chat").then((m) =
 // opens. S1 hosts the FIRM bot only (admin-only, roster-wide). Mounted once in (app)/layout.tsx
 // (gated by GRANTBOT_SWITCHER_ENABLED + GRANTBOT_FIRM_ENABLED), so it persists across SPA navigation.
 //
-// ── WHY IT STANDS DOWN ON A CLIENT RECORD PAGE ──
+// ── WHY IT STANDS DOWN ON THE CLIENT DASHBOARD ──
 //
-// The per-client launcher already owns the corner there, and that bot needs the client's NAME, which
-// only the record page has (the layout knows the path, not the name). So on /clients/<id>/* the
-// Switcher renders nothing and the launcher shows that client's bot — never a double bubble.
-// firmSwitcherVisible(pathname, isAdmin) is re-evaluated on every navigation. S2 gives the Switcher a
-// roster picker (and every client's identity with it), at which point it hosts any client bot from
-// anywhere and subsumes the launcher.
+// The per-client launcher owns the corner on EXACTLY the client dashboard (/clients/<id>) — the only
+// page it mounts on — and that bot needs the client's NAME, which only the record page has (the
+// layout knows the path, not the name). So there the Switcher hides and the launcher shows that
+// client's bot — never a double bubble. On the client's SUB-routes (/clients/<id>/roadmap, …/grantbot)
+// and the /clients/new/invite forms there is NO launcher, so the firm bubble DOES show there (else
+// those pages would have no bot at all — Codex #544). It also hides on the firm full page /grantbot,
+// which already IS the full firm chat. firmSwitcherVisible(pathname, isAdmin) is re-evaluated on every
+// navigation. S2 gives the Switcher a roster picker (and every client's identity with it), at which
+// point it hosts any client bot from anywhere and subsumes the launcher.
 //
 // ── OPENING IS FREE, AND STAYS FREE ──
 //
 // Nothing is fetched until the bubble is clicked; after that the panel stays MOUNTED but invisible,
-// so closing keeps the draft and the place in the thread. The transcript is server-side, so it also
-// survives the tab closing entirely.
+// so closing — AND navigating onto a page where the Switcher stands down — keeps the unsent draft and
+// the place in the thread (an early `return null` would unmount the chat and lose the draft — Codex
+// #544). The transcript is server-side, so it also survives the tab closing entirely.
 export function GrantBotSwitcher({ isAdmin }: { isAdmin: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -66,30 +70,32 @@ export function GrantBotSwitcher({ isAdmin }: { isAdmin: boolean }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
-  // Navigating onto a client record page hides the Switcher (the launcher owns that corner). Close
-  // the panel too, so returning to a firm page reopens it from the bubble rather than snapping a
-  // stale panel back. The transcript is server-side, so nothing is lost.
+  // Navigating onto a page where the Switcher stands down CLOSES the panel (so returning shows the
+  // bubble, not a snapped-back panel) but does NOT unmount it — the panel subtree stays mounted while
+  // `everOpened`, only hidden, so the unsent draft survives (Codex #544). The visible-gates below keep
+  // it invisible and non-interactive while hidden.
   useEffect(() => {
     if (!visible) setOpen(false);
   }, [visible]);
-
-  if (!visible) return null;
 
   function openPanel() {
     setEverOpened(true);
     setOpen(true);
   }
 
-  // Expand = the standalone /grantbot page. It loads the most-recent thread, which after a send is
-  // the one open in the corner. (Carrying the exact conversation id into the full page is an S2
-  // polish item — the firm page does not read a ?c= param yet.)
+  // Expand = the standalone /grantbot page. Close the corner panel first: /grantbot renders the full
+  // firm chat, and an open corner panel would overlay a second chat instance on it (Codex #544).
+  // (/grantbot is also excluded from firmSwitcherVisible, so the bubble does not return there; the
+  // full page loads the most-recent thread — carrying the exact conversation id in is an S2 polish
+  // item, the firm page reads no ?c= param yet.)
   function expand() {
+    setOpen(false);
     router.push("/grantbot");
   }
 
   return (
     <>
-      {!open && (
+      {visible && !open && (
         <button
           type="button"
           onClick={openPanel}
@@ -104,9 +110,12 @@ export function GrantBotSwitcher({ isAdmin }: { isAdmin: boolean }) {
         <div
           role="dialog"
           aria-label="GrantBot — Firm"
-          aria-hidden={!open}
+          // Hidden (not unmounted) while closed OR while the Switcher stands down on this page, so the
+          // draft survives; `invisible` is visibility:hidden, so it is also out of the a11y tree and
+          // hit-testing and never sits over the per-client launcher.
+          aria-hidden={!(open && visible)}
           className={`fixed bottom-7 right-7 z-40 flex h-[min(588px,calc(100vh-3.5rem))] w-[min(404px,calc(100vw-3.5rem))] flex-col overflow-hidden rounded-2xl bg-white shadow-floating transition-all duration-[280ms] ease-entrance ${
-            open && shown
+            open && shown && visible
               ? "visible translate-y-0 scale-100 opacity-100"
               : "invisible translate-y-4 scale-[0.98] opacity-0"
           }`}
