@@ -3,7 +3,7 @@ import { getProfile } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import { conversationTitle } from "@/lib/grantbot/store";
 import { createFirmConversation, getFirmConversation } from "@/lib/grantbot/firm-store";
-import { firmGrantbotEnabled, runFirmTurn } from "@/lib/grantbot/firm-turn";
+import { firmGrantbotEnabled, runFirmTurn, MAX_MESSAGE_CHARS } from "@/lib/grantbot/firm-turn";
 
 // One FIRM GrantBot turn. STAFF (admin-only), read-only, roster-wide, PERSISTED (Memory / Brick 2).
 //
@@ -39,6 +39,16 @@ export async function POST(req: NextRequest) {
   const message = typeof body.message === "string" ? body.message : "";
   if (!message.trim()) {
     return NextResponse.json({ error: "message is required" }, { status: 400 });
+  }
+  // Length is validated HERE, before any conversation is created — a 4xx with no conversationId, so
+  // nothing is stored and the page restores the draft. Deferring this to runFirmTurn (which also
+  // guards it) would first create an empty thread and then return 200 + { conversationId }, which the
+  // page mistakes for a persisted turn (Codex): it would keep the bubble over an empty stored thread.
+  if (message.length > MAX_MESSAGE_CHARS) {
+    return NextResponse.json(
+      { error: `Message is too long (${message.length} characters, max ${MAX_MESSAGE_CHARS}).` },
+      { status: 400 },
+    );
   }
 
   const db = createServiceClient();

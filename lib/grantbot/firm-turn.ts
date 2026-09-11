@@ -38,7 +38,10 @@ import { appendAssistant, appendUser, loadMessages, nextSeq, touchConversation }
 // choice stays a one-line, per-surface lever; the matcher stays on the cheaper MODEL.
 const FIRM_MODEL = OPUS_MODEL;
 
-const MAX_MESSAGE_CHARS = 20_000;
+// Exported so the ROUTE can reject an oversized message BEFORE it creates a conversation — a
+// length check that returned mid-runFirmTurn (after the route made the row) would leave an empty
+// thread and a 200 the page mistakes for a persisted turn.
+export const MAX_MESSAGE_CHARS = 20_000;
 // Generous on purpose: Opus 5 runs ADAPTIVE THINKING (on by default for the firm strategy bot), and
 // thinking tokens count against max_tokens. At 4000, a hard roster-strategy question spent the whole
 // budget THINKING and emitted NO answer text. 16000 leaves ample room for the thinking PLUS a full

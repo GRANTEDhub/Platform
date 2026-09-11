@@ -14,10 +14,13 @@ import type { GrantBotThread, GrantBotMsg } from "@/lib/grantbot/wire";
 interface Turn {
   role: "user" | "assistant";
   text: string;
+  // A persisted FAILED assistant turn has empty text + this reason (0080: "a failed turn is still a
+  // turn"). Carried through so a reload/thread-switch renders the explanation, not a blank bubble.
+  error?: string | null;
 }
 
 const toTurns = (msgs: GrantBotMsg[] | undefined): Turn[] =>
-  (msgs ?? []).map((m) => ({ role: m.role, text: m.text }));
+  (msgs ?? []).map((m) => ({ role: m.role, text: m.text, error: m.error }));
 
 export function FirmGrantBotChat() {
   const [threads, setThreads] = useState<GrantBotThread[]>([]);
@@ -36,15 +39,19 @@ export function FirmGrantBotChat() {
   const epochRef = useRef(0);
 
   // Initial load: most-recent thread + its transcript + the rail. A failure leaves the composer
-  // working — the first send just starts a new thread.
+  // working — the first send just starts a new thread. EPOCH-GUARDED: the composer is live
+  // immediately, so a New / send / thread-click can land before this slow fetch returns; those bump
+  // the epoch, and a stale initial load must NOT clobber the selected/optimistic state with the
+  // most-recent thread (Codex). alive guards unmount; the epoch guards a local action.
   useEffect(() => {
+    const epoch = epochRef.current;
     let alive = true;
     (async () => {
       try {
         const res = await fetch("/api/grantbot/firm-context");
         if (!res.ok) return;
         const data = (await res.json()) as { conversationId?: string | null; conversations?: GrantBotThread[]; messages?: GrantBotMsg[] };
-        if (!alive) return;
+        if (!alive || epochRef.current !== epoch) return;
         setThreads(data.conversations ?? []);
         setConversationId(data.conversationId ?? null);
         setMessages(toTurns(data.messages));
@@ -105,9 +112,11 @@ export function FirmGrantBotChat() {
 
   async function send() {
     const message = input.trim();
-    if (!message || busy) return;
-    // busy is now true for the whole request, and loadThread/newConversation both bail while busy —
-    // so the active thread cannot change under this send and no epoch guard is needed here.
+    if (!message || busy || loadingThread) return;
+    // Bump the epoch so an in-flight INITIAL load (which does not set busy) can't resolve later and
+    // overwrite this send's optimistic state (Codex). busy then blocks loadThread/newConversation
+    // for the rest of the request, so the active thread cannot change under the send after this.
+    epochRef.current++;
     const convoAtSend = conversationId;
     setMessages((m) => [...m, { role: "user", text: message }]);
     setInput("");
@@ -248,19 +257,27 @@ export function FirmGrantBotChat() {
             </div>
           )}
           <div className="flex flex-col gap-4">
-            {messages.map((m, i) => (
-              <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
-                <div
-                  className={
-                    m.role === "user"
-                      ? "max-w-[85%] whitespace-pre-wrap rounded-2xl bg-brand-navy px-4 py-2.5 text-[13.5px] leading-relaxed text-white"
-                      : "max-w-[92%] whitespace-pre-wrap rounded-2xl bg-white px-4 py-3 text-[13.5px] leading-relaxed text-brand-navy shadow-overlay"
-                  }
-                >
-                  {m.text}
+            {messages.map((m, i) => {
+              // A persisted failed assistant turn (empty text + error) renders its reason in an
+              // error bubble, so a reloaded transcript preserves the explanation. A real answer
+              // never carries error, so `m.error` present ⟺ a failed turn.
+              const isErr = m.role === "assistant" && !!m.error;
+              return (
+                <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
+                  <div
+                    className={
+                      m.role === "user"
+                        ? "max-w-[85%] whitespace-pre-wrap rounded-2xl bg-brand-navy px-4 py-2.5 text-[13.5px] leading-relaxed text-white"
+                        : isErr
+                          ? "max-w-[92%] whitespace-pre-wrap rounded-2xl bg-red-50 px-4 py-3 text-[12.5px] leading-relaxed text-red-700"
+                          : "max-w-[92%] whitespace-pre-wrap rounded-2xl bg-white px-4 py-3 text-[13.5px] leading-relaxed text-brand-navy shadow-overlay"
+                    }
+                  >
+                    {isErr ? m.error : m.text}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {busy && (
               <div className="flex justify-start">
                 <div className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-[13px] text-muted-foreground shadow-overlay">
@@ -287,7 +304,7 @@ export function FirmGrantBotChat() {
             <button
               type="button"
               onClick={() => void send()}
-              disabled={busy || !input.trim()}
+              disabled={busy || loadingThread || !input.trim()}
               className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-pill px-4 text-[13px] font-medium text-white transition-colors disabled:opacity-40"
               style={{ background: BRAND.orangeFill }}
             >
