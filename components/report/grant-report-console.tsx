@@ -8,6 +8,7 @@ import { BRAND, INK, RATING, SURFACE } from "@/lib/brand";
 import { rollUpQueue, sortQueue, type QueueRow, type QueueSort } from "@/lib/report/report-queue";
 import { forwardedStatusLabel } from "@/lib/report/referral";
 import type { StaffBucket } from "@/lib/report/shape";
+import { formatDeadlineListLabel } from "@/lib/grants/format";
 import { cn } from "@/lib/utils";
 
 // The client's Grant Report — the queue of matched grants awaiting review, and the entry
@@ -579,7 +580,10 @@ function QueueCard({
           style={{ color: urgent ? BRAND.orangeDeep : INK.DEFAULT }}
           title={item.deadlineLabel}
         >
-          {item.deadlineLabel}
+          {/* Compact only HERE, the fixed-width cell — the shared shape keeps the full
+              deadline for decision surfaces (Codex #535). title + truncate keep the full
+              text one hover/click away. */}
+          {formatDeadlineListLabel(item.deadlineLabel)}
         </p>
         <p className="mt-[5px] text-[10.5px] text-ink-muted">
           {days === null
