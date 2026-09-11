@@ -93,6 +93,15 @@ export const MAX_MESSAGE_CHARS = 20_000;
 const MAX_OUTPUT_TOKENS = 16_000;
 const CALL_TIMEOUT_MS = 120_000;
 
+// The firm bot has THREE tool types (list + read cross-thread, plus fetch_grant_source). A combined
+// workflow — "compare this dropped NOFO with what we concluded in the <title> thread" — is three
+// SEQUENTIAL calls (list_firm_conversations → read_firm_conversation → fetch_grant_source), and
+// disable_parallel_tool_use means one tool per round. The shared default (MAX_TOOL_ROUNDS=2) would
+// force the final answer before the third call and truncate that workflow, so the firm loop allows 3
+// rounds (Codex #543). Still bounded by TURN_DEADLINE_MS; a higher count buys little for a low-volume
+// admin surface. Firm-specific — the shared default and the per-client/intel loops are unchanged.
+const FIRM_MAX_TOOL_ROUNDS = 3;
+
 // Off unless exactly "true". Read SERVER-SIDE, never NEXT_PUBLIC_. Default-off means the firm bot's
 // routes 404 and its page is unreachable in prod until the env var is flipped + redeployed.
 export function firmGrantbotEnabled(): boolean {
@@ -301,6 +310,8 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
       dispatch,
       now: () => Date.now(),
       deadlineMs: TURN_DEADLINE_MS,
+      // 3 rounds so the list → read → fetch combined workflow completes (Codex #543); still deadline-bounded.
+      maxToolRounds: FIRM_MAX_TOOL_ROUNDS,
     });
 
     answer = loop.text;
