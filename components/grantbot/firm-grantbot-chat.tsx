@@ -188,6 +188,11 @@ export function FirmGrantBotChat({ variant = "full" }: { variant?: "corner" | "f
   async function send() {
     const message = input.trim();
     if (!message || busy || loadingThread) return;
+    // Corner-only: collapse the rail so the send lands in a VISIBLE transcript. The composer band is
+    // always rendered, so a send is reachable while the Conversations rail is up — without this the
+    // optimistic bubble and the reply would appear behind the thread list with no feedback (Codex
+    // #544). No-op on the full page (showThreads is never set there).
+    setShowThreads(false);
     // Bump the epoch so an in-flight INITIAL load (which does not set busy) can't resolve later and
     // overwrite this send's optimistic state (Codex). busy then blocks loadThread/newConversation
     // for the rest of the request, so the active thread cannot change under the send after this.
@@ -271,6 +276,11 @@ export function FirmGrantBotChat({ variant = "full" }: { variant?: "corner" | "f
         onKeyDown={(e) => {
           if (e.key === "Escape") {
             e.preventDefault();
+            // Stop the native keydown before it bubbles to the Switcher's window-level Escape
+            // listener, which would otherwise close the whole corner panel on a rename-cancel
+            // (Codex #544). React's stopPropagation halts the native event at the root container,
+            // below window. Harmless on the full page (no such listener there).
+            e.stopPropagation();
             // Neutralise the blur that unmounting the input would otherwise fire as a commit.
             skipBlurCommit.current = true;
             cancelRename();
