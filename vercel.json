@@ -9,7 +9,6 @@
     { "path": "/api/cron/allowable-uses", "schedule": "52 * * * *" },
     { "path": "/api/cron/closed-sweep", "schedule": "17 * * * *" },
     { "path": "/api/cron/usaspending-refresh", "schedule": "23 9 1 * *" },
-    { "path": "/api/cron/ar-grants", "schedule": "30 12 * * 1" },
     { "path": "/api/cron/ar-state-monitor", "schedule": "45 12 * * 1" }
   ]
 }
