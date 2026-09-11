@@ -66,34 +66,37 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
   }
   const now = input.now ?? (() => new Date());
 
-  const { pack } = await gatherFirmPack({
-    generatedBy: input.generatedBy,
-    actorRole: input.actorRole,
-    generatedAt: now().toISOString(),
-  });
-  const prompt = buildFirmSystemPrompt({ pack });
-
-  // Reuse the per-client history budgeter (pure): failed/empty assistant turns are dropped, a
-  // leading assistant turn is trimmed (the API requires a user first), newest-first survives a
-  // squeeze. The caller's transcript carries no error field, so every turn maps error:null.
-  const history: HistoryTurn[] = input.history.map((m) => ({
-    role: m.role,
-    content: [{ type: "text" as const, text: m.text }],
-    error: null,
-  }));
-  const { messages, dropped } = budgetHistory(history, text);
-
-  const modelMessages: { role: "user" | "assistant"; content: string }[] = dropped
-    ? [
-        {
-          role: "user" as const,
-          content: `[${dropped} earlier message(s) in this conversation were dropped to fit the context budget. If an answer depends on something said earlier that you cannot see, say so.]`,
-        },
-        ...messages,
-      ]
-    : messages;
-
   try {
+    // Inside the try so a roster-load failure (gatherFirmPack THROWS on a query error rather than
+    // returning a fake-empty roster) becomes a clean failed turn, not an unhandled 500. The model is
+    // never called on a roster that failed to load.
+    const { pack } = await gatherFirmPack({
+      generatedBy: input.generatedBy,
+      actorRole: input.actorRole,
+      generatedAt: now().toISOString(),
+    });
+    const prompt = buildFirmSystemPrompt({ pack });
+
+    // Reuse the per-client history budgeter (pure): failed/empty assistant turns are dropped, a
+    // leading assistant turn is trimmed (the API requires a user first), newest-first survives a
+    // squeeze. The caller's transcript carries no error field, so every turn maps error:null.
+    const history: HistoryTurn[] = input.history.map((m) => ({
+      role: m.role,
+      content: [{ type: "text" as const, text: m.text }],
+      error: null,
+    }));
+    const { messages, dropped } = budgetHistory(history, text);
+
+    const modelMessages: { role: "user" | "assistant"; content: string }[] = dropped
+      ? [
+          {
+            role: "user" as const,
+            content: `[${dropped} earlier message(s) in this conversation were dropped to fit the context budget. If an answer depends on something said earlier that you cannot see, say so.]`,
+          },
+          ...messages,
+        ]
+      : messages;
+
     const anthropic = getAnthropicClient();
     const res = await anthropic.messages.create(
       {

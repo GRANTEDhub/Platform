@@ -110,6 +110,23 @@ describe("renderFirmRoster — provenance + profiles-only boundary", () => {
     expect(roster.toLowerCase()).toContain("no scored matches");
   });
 
+  it("renders can_prime THREE-WAY — null is UNKNOWN, never coerced to 'no' (Codex P1)", () => {
+    const render = (canPrime: boolean | null) =>
+      renderFirmRoster(
+        buildFirmContextPack({
+          generatedAt: "2026-09-11T00:00:00Z",
+          generatedBy: "x",
+          actorRole: "admin",
+          clients: [mk({ client_profile: { ...baseProfile, prime_capacity: { can_prime: canPrime as boolean, rationale: "r" } } })],
+        }),
+      );
+    expect(render(true)).toContain("can prime: yes");
+    expect(render(false)).toContain("can prime: no");
+    const unknown = render(null);
+    expect(unknown).toContain("can prime: UNKNOWN");
+    expect(unknown).not.toContain("can prime: no");
+  });
+
   it("shows NEVER for an unconfirmed profile and NO DATE for an undated distilled profile", () => {
     const p2 = buildFirmContextPack({
       generatedAt: "2026-09-11T00:00:00Z",

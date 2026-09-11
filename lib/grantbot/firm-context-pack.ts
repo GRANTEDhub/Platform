@@ -142,9 +142,17 @@ function distilledFields(p: ClientProfile | null): Partial<FirmClientCard> {
         .join("; ") || null
     : null;
   const prime = p.prime_capacity;
+  // THREE-WAY, never a truthiness coerce: the DB can carry can_prime = null despite the boolean type
+  // (an undistilled or genuinely-conditional profile — NWA Council's real profile stores null), and
+  // null must NOT read as "no". Coercing null→no tells the firm bot the org can NEVER prime, kneecapping
+  // a conditional-prime convener in the roster ranking — a core firm-bot decision (Codex P1). Mirrors
+  // formatClientProfileForScorer in lib/clients/profile.ts.
+  const cp = prime ? (prime.can_prime as boolean | null | undefined) : undefined;
+  const canPrimeLabel =
+    cp === true ? "yes" : cp === false ? "no" : "UNKNOWN (not recorded — assess from the confirmed facts, do not assume it cannot prime)";
   const primeStr = prime
     ? [
-        `can prime: ${prime.can_prime ? "yes" : "no"}`,
+        `can prime: ${canPrimeLabel}`,
         clean(prime.rationale),
         clean(prime.conditional_on) ? `conditional on: ${clean(prime.conditional_on)}` : null,
       ]

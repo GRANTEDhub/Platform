@@ -36,20 +36,26 @@ export interface FirmGatherResult {
   pack: FirmContextPack;
 }
 
-// Returns the roster pack (never null — an empty roster is a valid, if unusual, result the gaps list
-// reports). Authorisation for the SURFACE is the route's job (admin-only in Brick 1).
+// Returns the roster pack. THROWS on a query error — a DB failure must NOT masquerade as an empty
+// roster: `data` is null on error, and a silent empty roster would have the model answer "you have no
+// active clients" and give confidently-wrong portfolio advice when context loading actually failed
+// (Codex P1). A GENUINE empty roster (no error, empty array) is still a valid result the gaps list
+// reports. runFirmTurn calls this inside its try, so a throw becomes a clean failed turn, not a 500.
+// Authorisation for the SURFACE is the route's job (admin-only in Brick 1).
 export async function gatherFirmPack(opts: {
   generatedBy: string;
   actorRole: string;
   generatedAt: string;
 }): Promise<FirmGatherResult> {
   const svc = createServiceClient();
-  const { data } = await svc
+  const { data, error } = await svc
     .from("clients")
     .select(FIRM_COLUMNS)
     .or(NON_LEAD_OR_FILTER)
     .eq("match_active", true)
     .order("name", { ascending: true });
+
+  if (error) throw new Error(`Could not load the client roster: ${error.message}`);
 
   // Cast through unknown: a string-list select sends the Supabase generic into a GenericStringError
   // union, the same reason gather.ts narrows on the result rather than the builder.
