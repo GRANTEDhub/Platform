@@ -4,6 +4,7 @@ import {
   createFirmConversation,
   getFirmConversation,
   listFirmConversations,
+  listFirmConversationsResult,
   updateFirmConversationTitle,
 } from "./firm-store";
 
@@ -28,7 +29,7 @@ interface Row {
 //   create: from().insert(payload).select().maybeSingle()
 //   get:    from().select().eq("id").eq("scope","firm").maybeSingle()
 //   list:   from().select().eq("scope","firm").order().limit()   (awaited)
-function fakeDb(fixture: { conversations: Row[] }) {
+function fakeDb(fixture: { conversations: Row[]; listError?: string }) {
   const inserted: Record<string, unknown>[] = [];
   const from = () => {
     const filters: Record<string, unknown> = {};
@@ -65,7 +66,11 @@ function fakeDb(fixture: { conversations: Row[] }) {
         );
         return { data: c ?? null, error: null };
       },
-      then: (resolve: (v: { data: unknown; error: null }) => void) => {
+      then: (resolve: (v: { data: unknown; error: { message: string } | null }) => void) => {
+        if (fixture.listError) {
+          resolve({ data: null, error: { message: fixture.listError } });
+          return;
+        }
         const rows = fixture.conversations
           .filter((r) => filters.scope === undefined || r.scope === filters.scope)
           .sort((a, b) => (a.last_message_at < b.last_message_at ? 1 : -1));
@@ -128,6 +133,22 @@ describe("listFirmConversations — scope boundary", () => {
     const { db } = fakeDb({ conversations: [firmRow, clientRow] });
     const list = await listFirmConversations(db);
     expect(list.map((c) => c.id)).toEqual(["f-thread"]);
+  });
+});
+
+describe("listFirmConversationsResult — surfaces query errors (Codex #542)", () => {
+  it("returns the error string, NOT a swallowed empty list, when the query fails", async () => {
+    const { db } = fakeDb({ conversations: [firmRow], listError: "connection reset" });
+    const res = await listFirmConversationsResult(db);
+    expect(res.error).toBe("connection reset");
+    expect(res.conversations).toEqual([]);
+  });
+
+  it("returns firm conversations and a null error on success", async () => {
+    const { db } = fakeDb({ conversations: [firmRow, clientRow] });
+    const res = await listFirmConversationsResult(db);
+    expect(res.error).toBeNull();
+    expect(res.conversations.map((c) => c.id)).toEqual(["f-thread"]);
   });
 });
 

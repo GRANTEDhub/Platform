@@ -81,8 +81,16 @@ export async function POST(req: NextRequest) {
   });
 
   if (!outcome.ok) {
-    // 200 with an error field, not a 5xx: the turn was recorded either way (a failed turn is still a
-    // turn), and the page needs the conversation id back so the next message continues this thread.
+    if (!outcome.persisted) {
+      // Nothing was stored (the user-row insert failed — a transient fault or a concurrent same-thread
+      // seq collision). Return WITHOUT a conversationId so the page RESTORES the draft for a clean retry
+      // rather than keeping an optimistic bubble over an empty thread: the page treats a 200 + error +
+      // conversationId as a persisted turn (Codex #542).
+      return NextResponse.json({ error: outcome.message }, { status: 200 });
+    }
+    // 200 with an error field AND the conversation id: the turn WAS recorded (a failed turn is still a
+    // turn — the user row plus an assistant-error row), so the page keeps the optimistic bubble (it
+    // matches the store) and continues this thread.
     return NextResponse.json({ conversationId, error: outcome.message }, { status: 200 });
   }
   return NextResponse.json({ conversationId, text: outcome.text, usage: outcome.usage });

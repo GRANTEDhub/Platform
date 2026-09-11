@@ -37,7 +37,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadMessages, type StoredMessage } from "@/lib/grantbot/store";
-import { getFirmConversation, listFirmConversations } from "@/lib/grantbot/firm-store";
+import { getFirmConversation, listFirmConversationsResult } from "@/lib/grantbot/firm-store";
 import { truncateSafely } from "@/lib/grantbot/label";
 import type { PromptBlock } from "@/lib/grantbot/prompt";
 
@@ -148,10 +148,20 @@ export async function executeFirmCrossThreadTool(
   ctx: { db: SupabaseClient; currentConversationId: string },
 ): Promise<{ resultText: string; audit: FirmCrossThreadAuditRecord }> {
   if (toolUse.name === LIST_FIRM_CONVERSATIONS_TOOL_NAME) {
-    const convos = await listFirmConversations(ctx.db);
+    const { conversations, error } = await listFirmConversationsResult(ctx.db);
+    if (error) {
+      // A query FAILURE is not an empty list. Report it as a TYPED failure so the model says the lookup
+      // failed rather than authoritatively "there are none" during a transient DB/schema fault — the
+      // "typed result the model relays, never invents" discipline (Codex #542).
+      return {
+        resultText:
+          "Could not look up your other firm conversations right now — the lookup failed. Tell the staffer you couldn't check rather than assuming there are none.",
+        audit: { action: "list", ok: false, reason: "list_failed" },
+      };
+    }
     // Exclude the CURRENT thread: the model already has it in full, and listing it invites a pointless
     // self-read.
-    const others = convos.filter((c) => c.id !== ctx.currentConversationId);
+    const others = conversations.filter((c) => c.id !== ctx.currentConversationId);
     if (others.length === 0) {
       return {
         resultText:

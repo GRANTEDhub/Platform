@@ -88,13 +88,26 @@ export async function listFirmConversations(
   db: SupabaseClient,
   limit = 30,
 ): Promise<FirmConversation[]> {
-  const { data } = await db
+  return (await listFirmConversationsResult(db, limit)).conversations;
+}
+
+// Result-returning sibling that SURFACES a PostgREST error instead of swallowing it. The cross-thread
+// `list` tool needs to tell a genuine empty list from a query FAILURE: a swallowed error reported to the
+// model as "no other firm conversations" would let it give an authoritative wrong answer during a
+// transient DB/schema fault (Codex #542). The rail read route keeps the []-on-error listFirmConversations
+// above (an empty rail is a display glitch, not a model-facing claim). ONE query, so the two can't drift.
+export async function listFirmConversationsResult(
+  db: SupabaseClient,
+  limit = 30,
+): Promise<{ conversations: FirmConversation[]; error: string | null }> {
+  const { data, error } = await db
     .from("grantbot_conversations")
     .select(FIRM_COLS)
     .eq("scope", "firm")
     .order("last_message_at", { ascending: false })
     .limit(limit);
-  return (data ?? []).map(rowToFirmConversation);
+  if (error) return { conversations: [], error: error.message };
+  return { conversations: (data ?? []).map(rowToFirmConversation), error: null };
 }
 
 // Rename a firm thread, but ONLY if it is a firm thread. The scope='firm' filter is the boundary —

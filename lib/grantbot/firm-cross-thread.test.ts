@@ -30,6 +30,9 @@ interface Row {
 function fakeDb(fixture: {
   conversations: Row[];
   messages: Record<string, { role: string; content: unknown; seq: number }[]>;
+  // Inject a PostgREST error on the list query, to prove the tool reports a typed FAILURE rather than
+  // a swallowed empty list (Codex #542).
+  listError?: string;
 }): SupabaseClient {
   const from = (table: string) => {
     const filters: Record<string, unknown> = {};
@@ -49,9 +52,13 @@ function fakeDb(fixture: {
           ) ?? null;
         return { data: c, error: null };
       },
-      // Awaited terminal for listFirmConversations (scope filter) and loadMessages (conversation_id).
-      then: (resolve: (v: { data: unknown; error: null }) => void) => {
+      // Awaited terminal for listFirmConversationsResult (scope filter) and loadMessages (conversation_id).
+      then: (resolve: (v: { data: unknown; error: { message: string } | null }) => void) => {
         if (table === "grantbot_conversations") {
+          if (fixture.listError) {
+            resolve({ data: null, error: { message: fixture.listError } });
+            return;
+          }
           const rows = fixture.conversations
             .filter((r) => filters.scope === undefined || r.scope === filters.scope)
             .sort((a, b) => (a.last_message_at < b.last_message_at ? 1 : -1));
@@ -113,6 +120,15 @@ describe("executeFirmCrossThreadTool — list", () => {
     const { resultText, audit } = await executeFirmCrossThreadTool({ name: LIST_FIRM_CONVERSATIONS_TOOL_NAME, input: {} }, ctx);
     expect(audit).toEqual({ action: "list", ok: true, count: 0 });
     expect(resultText).toMatch(/no other firm conversations/i);
+  });
+
+  it("reports a query FAILURE as a typed failure, NOT an authoritative empty list (Codex #542)", async () => {
+    const ctx = { db: fakeDb({ conversations: FIXTURE.conversations, messages: {}, listError: "connection reset" }), currentConversationId: "firm-current" };
+    const { resultText, audit } = await executeFirmCrossThreadTool({ name: LIST_FIRM_CONVERSATIONS_TOOL_NAME, input: {} }, ctx);
+    expect(audit).toEqual({ action: "list", ok: false, reason: "list_failed" });
+    expect(resultText).toMatch(/lookup failed|couldn't check/i);
+    // The critical property: a failed lookup must NOT masquerade as "there are none".
+    expect(resultText).not.toMatch(/no other firm conversations/i);
   });
 });
 

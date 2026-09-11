@@ -97,14 +97,25 @@ export interface FirmTurnInput {
 
 export type FirmTurnOutcome =
   | { ok: true; text: string; usage: TurnUsage | null }
-  | { ok: false; message: string };
+  // `persisted` tells the route whether ANYTHING was stored for this turn. false = the failure landed
+  // BEFORE the user row was written (an early guard, or the appendUser insert itself failed), so the
+  // route must NOT return a conversationId — the page then restores the draft for a clean retry rather
+  // than keeping an optimistic bubble over an empty thread. true = the user row (and an assistant-error
+  // row) are on disk, so the optimistic bubble matches the store and the page keeps it (Codex #542).
+  | { ok: false; message: string; persisted: boolean };
 
 export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome> {
   const { db, conversationId } = input;
   const text = input.message.trim();
-  if (!text) return { ok: false, message: "Empty message." };
+  // These two guard the belt-and-suspenders case (the route already validates both before creating the
+  // conversation); nothing is stored, so persisted:false.
+  if (!text) return { ok: false, message: "Empty message.", persisted: false };
   if (text.length > MAX_MESSAGE_CHARS) {
-    return { ok: false, message: `Message is too long (${text.length} characters, max ${MAX_MESSAGE_CHARS}).` };
+    return {
+      ok: false,
+      message: `Message is too long (${text.length} characters, max ${MAX_MESSAGE_CHARS}).`,
+      persisted: false,
+    };
   }
   const now = input.now ?? (() => new Date());
 
@@ -116,10 +127,11 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
 
   // The user turn is recorded first: the staffer asked, whatever the model does next. seq is one per
   // conversation (0080's unique index), so a concurrent same-thread double-submit is a constraint
-  // violation, not two rows at the same position — CAUGHT here and returned as a clean error the route
-  // relays (200 + { conversationId, error }; the conversation already exists), so the page keeps the
-  // bubble and the staffer retries, rather than the bare 500 an uncaught insert throw would produce
-  // (the deferred review nit).
+  // violation, not two rows at the same position — CAUGHT here (the deferred review nit) so it never
+  // becomes a bare uncaught 500. persisted:false: NOTHING was stored, so the route omits the
+  // conversationId and the page RESTORES the draft for a clean retry rather than keeping an optimistic
+  // bubble over an empty thread (Codex #542 — the failed-before-persist case must be distinguishable
+  // from a failure after the user row was written).
   const userSeq = await nextSeq(db, conversationId);
   try {
     await appendUser(db, { conversationId, seq: userSeq, text });
@@ -129,6 +141,7 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
       ok: false,
       message:
         "Could not save your message — the conversation may have just received another message at the same moment. Try again.",
+      persisted: false,
     };
   }
   const assistantSeq = userSeq + 1;
@@ -288,6 +301,9 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
   }).catch((e) => console.error("Firm GrantBot assistant-row append failed", e instanceof Error ? e.message : e));
   await touchConversation(db, conversationId);
 
-  if (failure) return { ok: false, message: failure };
+  // persisted:true here: appendUser succeeded above, so the user row (and, just now, an assistant-error
+  // row) are on disk. The page's optimistic bubble matches the store, so it keeps the bubble and
+  // continues this thread rather than restoring the draft.
+  if (failure) return { ok: false, message: failure, persisted: true };
   return { ok: true, text: answer, usage };
 }
