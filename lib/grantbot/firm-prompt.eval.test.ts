@@ -13,9 +13,10 @@ import type { ClientProfile } from "@/types/database";
 //
 //   RUN_FIRM_EVAL=1 FIRM_EVAL_RUNS=3 ANTHROPIC_API_KEY=... npx vitest run lib/grantbot/firm-prompt.eval.test.ts
 //
-// WHY IT EXISTS. This is the Layer-1 automated pass/fail gate on whether the roster-wide firm bot
-// strategizes correctly over PROFILES ONLY before we commit to persistence (Brick 2). It builds the REAL
-// firm system prompt over a fixed synthetic roster and asserts the six properties that must hold:
+// WHY IT EXISTS. This is the Layer-1 automated pass/fail gate on whether the firm bot — Shannon's
+// IntellEngine project, in the platform — reasons correctly over his ported instructions + knowledge +
+// the live PROFILES-ONLY roster before we commit to persistence (Brick 2). It builds the REAL firm
+// system prompt over a fixed synthetic roster and asserts the six properties that must hold:
 //   1. Roster awareness + prime/sub differentiation + scope — names ACTUAL roster clients and separates
 //      prime-capable from partner/support, reasoning ACROSS the roster (not one client).
 //   2. No-force-fit — a deliberately poor-fit theme gets an honest "none are a real fit", never a
@@ -26,6 +27,9 @@ import type { ClientProfile } from "@/types/database";
 //   4. No-invent + source precedence — a planted wrong machine-derived summary does not override the
 //      typed/stated identity; the bot uses the verified identity and flags the derived conflict.
 //   5. Domestic-only — an international program is flagged / "not a fit", never treated as an option.
+//   6. MATCH THE RESPONSE TO THE ASK — a non-roster ask (a pricing/BD question) gets a DIRECT answer,
+//      NOT a reflexive roster scan or a grant assessment. This is the first rule of his instructions and
+//      the fix for the over-indexing Shannon flagged (the bot was a roster strategist, not his project).
 //
 // Majority-of-runs assertions (expect.soft), because a single run varies. The bar is behavioural — read
 // the console.log'd answers when interpreting a soft miss.
@@ -310,6 +314,32 @@ describe.skipIf(!RUN)("Firm GrantBot reasoning eval (live model)", () => {
         /domestic|international|not a fit|none|outside|United States|\bU\.?S\.?\b/i.test(a),
       );
       expect.soft(majority(flags), "must flag international as out of scope (GRANTED is domestic-only), not put a client forward").toBe(true);
+    },
+    RUNS * 120_000,
+  );
+
+  it(
+    "6. MATCH THE RESPONSE TO THE ASK — a pricing/BD question gets a direct answer, not a roster scan",
+    async () => {
+      // A pure BD/pricing question, no client named, nothing about fitting a grant to the roster. The
+      // first rule of his instructions governs: answer THAT. Reflexively scanning the roster or turning
+      // this into a grant assessment is the over-indexing failure mode this build fixes.
+      const userText =
+        "A prospect wants a flat monthly retainer but keeps trying to tie our fee to grant dollars won. How should I frame the pricing conversation?";
+      const answers = await runN(RUNS, () => callFirmBot(userText));
+      console.log("[firm-eval] match-the-ask:\n" + answers.map((a, i) => `--- run ${i + 1} ---\n${a}`).join("\n\n"));
+      const rosterOrgs = ["NWA Community College", "Ozark", "Delta Arts", "Benton County", "Riverside"];
+      // Did NOT reflexively enumerate the roster: naming one org incidentally is fine, listing several
+      // unprompted is the over-index.
+      const didNotScanRoster = answers.map((a) => rosterOrgs.filter((n) => a.includes(n)).length < 2);
+      // Actually engaged the pricing/BD ask.
+      const engagedAsk = answers.map((a) =>
+        /retainer|flat|fee|pric|scope|contingen|value|win-win|anchor|predictable|per(?:cent|centage)|% of/i.test(a),
+      );
+      const compliant = didNotScanRoster.map((d, i) => d && engagedAsk[i]);
+      expect.soft(majority(didNotScanRoster), "must NOT reflexively scan/enumerate the roster on a non-roster ask").toBe(true);
+      expect.soft(majority(engagedAsk), "must actually answer the pricing/BD question").toBe(true);
+      expect.soft(majority(compliant), "the SAME answer must answer the ask AND not over-index on the roster").toBe(true);
     },
     RUNS * 120_000,
   );

@@ -344,9 +344,12 @@ function renderCard(c: FirmClientCard, n: number): string {
 export function renderFirmRoster(pack: FirmContextPack): string {
   const parts: string[] = [];
   parts.push("=".repeat(78));
-  parts.push(`CLIENT ROSTER — GRANTED's ${pack.clientCount} active client(s)`);
+  parts.push(`CLIENT ROSTER (REFERENCE) — GRANTED's ${pack.clientCount} active client(s)`);
   parts.push(
-    `Assembled from the GRANTED platform on ${isoDate(pack.generatedAt) ?? "date unknown"}. Each entry is a PROFILE: who the org is, what it does, and what it is seeking. Every item carries its provenance; dates are absolute.`,
+    `Assembled from the GRANTED platform on ${isoDate(pack.generatedAt) ?? "date unknown"}. This is the live replacement for the client profile documents the IntellEngine project keeps uploaded — each entry is a PROFILE: who the org is, what it does, and what it is seeking. Every item carries its provenance; dates are absolute.`,
+  );
+  parts.push(
+    "USE IT ON DEMAND, NOT BY DEFAULT: consult this roster when the task is about fitting an opportunity to clients (or the staffer asks about a client). Most requests are not about the roster — do not scan it or run a match when the ask is a pricing question, an email, a strategy read, or anything else. Matching the response to the ask governs here too.",
   );
   const breakdown = Object.entries(pack.orgTypeBreakdown)
     .sort((a, b) => b[1] - a[1])
