@@ -26,6 +26,14 @@ import {
   READ_FIRM_CONVERSATION_TOOL_NAME,
   type FirmCrossThreadAuditRecord,
 } from "@/lib/grantbot/firm-cross-thread";
+import {
+  firmWebFetchEnabled,
+  executeWebFetch,
+  FIRM_FETCH_INSTRUCTION_BLOCK,
+  WEB_FETCH_TOOL,
+  WEB_FETCH_TOOL_NAME,
+  type FetchAuditRecord,
+} from "@/lib/grantbot/firm-web-fetch";
 
 // One firm-bot turn: gather the roster, build the prompt, call the model, PERSIST the exchange.
 // The roster-wide sibling of turn.ts.
@@ -53,16 +61,22 @@ import {
 // matches what the page optimistically showed (the route returns the conversationId on a failure so
 // the page keeps the bubble and continues the same thread).
 //
-// ── READ-ONLY TOOLS: CROSS-THREAD (this brick) ──
+// ── READ-ONLY TOOLS ──
 //
-// A bounded tool loop (runToolLoop, the same one turn.ts / intel use) with EXACTLY TWO read-only
-// tools: list_firm_conversations / read_firm_conversation (firm-cross-thread.ts), so the firm bot can
-// look back at its OTHER firm threads on demand. No write path, no external reach — the append-only
-// transcript is untouched. There is NO separate flag: the whole firm surface is gated behind
-// GRANTBOT_FIRM_ENABLED (routes 404 when off), so the tools are always present when the bot runs. The
-// firm bot keeps ADAPTIVE THINKING on (its 16k budget depends on it); the loop preserves thinking
-// blocks by pushing raw assistant content back verbatim, and Opus 5 + this loop (thinking on,
-// tool_choice "none" on the forced-final round) is proven safe by the green intel-review eval.
+// A bounded tool loop (runToolLoop, the same one turn.ts / intel use) with read-only tools:
+//   · list_firm_conversations / read_firm_conversation (firm-cross-thread.ts) — ALWAYS on when the bot
+//     runs (no separate flag; the whole firm surface is gated by GRANTBOT_FIRM_ENABLED). No external
+//     reach: they only SELECT from our own Postgres.
+//   · fetch_grant_source (firm-web-fetch.ts, reusing the per-client `.gov`-allowlisted guarded fetcher)
+//     — behind its OWN flag GRANTBOT_FIRM_WEB_FETCH_ENABLED, default OFF. When OFF the fetch tool and
+//     its instruction block are absent, so the request/prompt/stored row are byte-identical to the
+//     cross-thread-only firm bot; when ON the bot can pull and read a live NOFO the staffer drops. This
+//     is the one outward-reaching tool (a read-only HTTPS GET against the `.gov` allowlist with the
+//     SSRF/IP guards) — no write, no internal reach.
+// No write path either way — the append-only transcript is untouched. The firm bot keeps ADAPTIVE
+// THINKING on (its 16k budget depends on it); the loop preserves thinking blocks by pushing raw
+// assistant content back verbatim, and Opus 5 + this loop (thinking on, tool_choice "none" on the
+// forced-final round) is proven safe by the green intel-review eval.
 
 // Opus 5 for the firm bot's strategy reasoning (Shannon, 2026-09-11). Named constant so the model
 // choice stays a one-line, per-surface lever; the matcher stays on the cheaper MODEL.
@@ -78,6 +92,15 @@ export const MAX_MESSAGE_CHARS = 20_000;
 // strategy read. It is a CAP, not a charge (a short answer still bills short).
 const MAX_OUTPUT_TOKENS = 16_000;
 const CALL_TIMEOUT_MS = 120_000;
+
+// The firm bot has THREE tool types (list + read cross-thread, plus fetch_grant_source). A combined
+// workflow — "compare this dropped NOFO with what we concluded in the <title> thread" — is three
+// SEQUENTIAL calls (list_firm_conversations → read_firm_conversation → fetch_grant_source), and
+// disable_parallel_tool_use means one tool per round. The shared default (MAX_TOOL_ROUNDS=2) would
+// force the final answer before the third call and truncate that workflow, so the firm loop allows 3
+// rounds (Codex #543). Still bounded by TURN_DEADLINE_MS; a higher count buys little for a low-volume
+// admin surface. Firm-specific — the shared default and the per-client/intel loops are unchanged.
+const FIRM_MAX_TOOL_ROUNDS = 3;
 
 // Off unless exactly "true". Read SERVER-SIDE, never NEXT_PUBLIC_. Default-off means the firm bot's
 // routes 404 and its page is unreachable in prod until the env var is flipped + redeployed.
@@ -153,13 +176,18 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
   let instructionsVersion = FIRM_INSTRUCTIONS_VERSION;
   let knowledgeVersion = FIRM_KNOWLEDGE_VERSION;
 
+  // Read the fetch flag ONCE. OFF (default) → the fetch tool + its instruction block are never added,
+  // so the request/prompt/stored row are byte-identical to the cross-thread-only firm bot.
+  const webFetchEnabled = firmWebFetchEnabled();
+
   let answer = "";
   let usage: TurnUsage | null = null;
   let stopReason: string | null = null;
   let failure: string | null = null;
-  // Stable audit sink: dispatch pushes into it AS IT RUNS, so a later-round throw still leaves the
+  // Stable audit sinks: dispatch pushes into these AS IT RUNS, so a later-round throw still leaves the
   // audit of tools already executed on the (failed) turn's row.
   const crossThreadReads: FirmCrossThreadAuditRecord[] = [];
+  const fetches: FetchAuditRecord[] = [];
 
   try {
     // gatherFirmPack THROWS on a query error (never a fake-empty roster), so a roster-load failure
@@ -173,7 +201,14 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
     // The cross-thread tool how-to rides as a turn block: appended after the cache breakpoint, before
     // the closing restatement (assembleSystem's order), so the stable prefix is unchanged.
     // buildFirmSystemPrompt takes it as data, staying pure.
-    const prompt = buildFirmSystemPrompt({ pack, turnBlocks: [FIRM_CROSS_THREAD_INSTRUCTION_BLOCK] });
+    const prompt = buildFirmSystemPrompt({
+      pack,
+      turnBlocks: [
+        FIRM_CROSS_THREAD_INSTRUCTION_BLOCK,
+        // Only when the fetch flag is on — cacheable:false, so the flag-off prompt is byte-identical.
+        ...(webFetchEnabled ? [FIRM_FETCH_INSTRUCTION_BLOCK] : []),
+      ],
+    });
     manifestBlocks = prompt.manifest;
     instructionsVersion = prompt.instructionsVersion;
     knowledgeVersion = prompt.knowledgeVersion;
@@ -192,13 +227,17 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
     const anthropic = getAnthropicClient();
 
     // The tool set is a SERVER-SIDE constant (never from the request body, the turnBlocks rule): the two
-    // read-only cross-thread tools. On "auto"/"none" `tools` stays PRESENT (a tool_use history without
-    // `tools` 400s); only "none" adds tool_choice to force the final text answer. THINKING stays ON
-    // (the firm bot omits `thinking`, so Opus 5's adaptive thinking runs — the 16k budget is for
-    // thinking + the answer); the loop preserves the thinking blocks by pushing raw assistant content
-    // back verbatim, and Opus 5 + this loop (thinking on, tool_choice "none" on the forced-final round)
-    // is proven safe by the green intel-review eval.
-    const toolSet = [LIST_FIRM_CONVERSATIONS_TOOL, READ_FIRM_CONVERSATION_TOOL] as unknown as Anthropic.Tool[];
+    // read-only cross-thread tools, plus fetch_grant_source when the fetch flag is on. On "auto"/"none"
+    // `tools` stays PRESENT (a tool_use history without `tools` 400s); only "none" adds tool_choice to
+    // force the final text answer. THINKING stays ON (the firm bot omits `thinking`, so Opus 5's
+    // adaptive thinking runs — the 16k budget is for thinking + the answer); the loop preserves the
+    // thinking blocks by pushing raw assistant content back verbatim, and Opus 5 + this loop (thinking
+    // on, tool_choice "none" on the forced-final round) is proven safe by the green intel-review eval.
+    const toolSet = [
+      LIST_FIRM_CONVERSATIONS_TOOL,
+      READ_FIRM_CONVERSATION_TOOL,
+      ...(webFetchEnabled ? [WEB_FETCH_TOOL] : []),
+    ] as unknown as Anthropic.Tool[];
 
     const callModel: CallModel = async ({ messages: msgs, tools, remainingMs }) => {
       const timeout = Math.min(CALL_TIMEOUT_MS, Math.max(remainingMs, 5_000));
@@ -251,6 +290,13 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
         crossThreadReads.push(audit);
         return { resultText };
       }
+      if (tu.name === WEB_FETCH_TOOL_NAME) {
+        // The exact per-client executor: the guarded `.gov` fetch, framed as untrusted evidence, with
+        // the typed could-not-retrieve fallback. Only reachable when the flag added the tool above.
+        const { resultText, audit } = await executeWebFetch((tu.input as { url?: unknown } | undefined)?.url);
+        fetches.push(audit);
+        return { resultText };
+      }
       return { resultText: `Unknown tool "${tu.name}". Nothing was done.` };
     };
 
@@ -264,6 +310,8 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
       dispatch,
       now: () => Date.now(),
       deadlineMs: TURN_DEADLINE_MS,
+      // 3 rounds so the list → read → fetch combined workflow completes (Codex #543); still deadline-bounded.
+      maxToolRounds: FIRM_MAX_TOOL_ROUNDS,
     });
 
     answer = loop.text;
@@ -298,6 +346,9 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
     // Empty unless the model actually read another firm thread; appendAssistant omits the block then,
     // so a no-tool turn's stored row is byte-identical to before this brick.
     crossThreadReads,
+    // Empty unless the model fetched a .gov source (flag on); omitted when empty, so a no-fetch turn's
+    // stored row is byte-identical.
+    fetches,
   }).catch((e) => console.error("Firm GrantBot assistant-row append failed", e instanceof Error ? e.message : e));
   await touchConversation(db, conversationId);
 
