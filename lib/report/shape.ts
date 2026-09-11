@@ -292,6 +292,9 @@ export function toReportItem(card: ReportCardRow, side: ReadSide): ReportItem {
     // flagged estimate (no "est." in the string) still gets its single suffix.
     awardIsEstimate: !!g?.award_range_is_estimate && !awardRange.includes("est."),
     numAwards: g?.num_awards?.trim() || null,
+    // The FULL deadline (a real date, or the verbatim free-text). Kept full in the shared
+    // shape so decision surfaces (the swipe-deck "Closes" value) see the actual dates; the
+    // fixed-width Grant Report cell compacts it at render (formatDeadlineListLabel) — Codex #535.
     deadlineLabel: formatDeadlineShort(g?.submission_deadline),
     deadlineDaysLeft: days,
     deadlineSoon: days !== null && days >= 0 && days <= 30,

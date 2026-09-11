@@ -192,6 +192,32 @@ export function formatDeadlineCompact(raw: string | null | undefined): string | 
   return !isNaN(d.getTime()) && /\d{4}/.test(s) ? format(d, "MMM d") : null;
 }
 
+// Deadline for a FIXED-WIDTH LIST cell (the Grant Report / roadmap rows): a real date when
+// the value parses ("Oct 9, 2026"), else a SHORT soft-truncated form of the free-text — so
+// "Rolling" shows whole but a paragraph deadline (the AR shred sometimes dumps a whole
+// "February/March Intent to Apply …" sentence, or even a "couldn't read the page" note, into
+// submission_deadline) becomes "February/March…" instead of wrapping across rows and
+// overlapping them. NEVER returns a long string, so the narrow cell can't overflow; the full
+// text stays on the grant detail page. Runs server-side (toReportItem), so the date path uses
+// the plain new Date() the sibling formatDeadlineShort does — same output on the UTC runtime.
+export function formatDeadlineListLabel(raw: string | null | undefined): string {
+  const s = (raw ?? "").trim();
+  if (!s) return "—";
+  const d = new Date(s);
+  if (!isNaN(d.getTime()) && /\d{4}/.test(s)) return format(d, "MMM d, yyyy");
+  const CAP = 22;
+  if (s.length <= CAP) return s;
+  let cut = s.slice(0, CAP);
+  // slice() cuts on UTF-16 units, so an astral char straddling the boundary leaves a lone high
+  // surrogate that renders as mojibake — drop it (Claude Code Review).
+  const lastUnit = cut.charCodeAt(cut.length - 1);
+  if (lastUnit >= 0xd800 && lastUnit <= 0xdbff) cut = cut.slice(0, -1);
+  const sp = cut.lastIndexOf(" ");
+  // Strip any trailing whitespace / punctuation / dash — INCLUDING the em dash (U+2014), which is
+  // common in the shred prose — so nothing dangles before the ellipsis.
+  return (sp > 10 ? cut.slice(0, sp) : cut).replace(/[\s,;:.–—-]+$/, "") + "…";
+}
+
 // Budget one-liner for the Ideal Applicant Profile: award range, plus a match
 // note when a real cost share is on file.
 export function idealBudget(
