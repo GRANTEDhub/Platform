@@ -154,7 +154,7 @@ Return a JSON object matching this exact schema:
   "award_range_max": string,
   "award_range_is_estimate": boolean,
   "num_awards": string,
-  "submission_deadline": string,
+  "submission_deadline": string (the SOONEST deadline a NEW applicant must meet -- if a letter of intent or pre-application is REQUIRED, use ITS date (missing it closes the grant to new applicants), otherwise the full-application due date; a date ("2026-09-30", "March 15, 2026") or a short phrase ("Rolling", "Varies"); NEVER a sentence, an explanation, or a note about why it is missing -- use "" if the text states no deadline),
   "period_of_performance": string,
   "cost_share": string,
   "eligible_entity_types": string[],
