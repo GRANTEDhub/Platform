@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
-import { getAnthropicClient, MODEL } from "@/lib/anthropic";
+import { getAnthropicClient, OPUS_MODEL } from "@/lib/anthropic";
 import { buildFirmSystemPrompt } from "./firm-prompt";
 import { buildFirmContextPack, type FirmPackClient } from "./firm-context-pack";
 import type { ClientProfile } from "@/types/database";
@@ -205,7 +205,8 @@ async function callFirmBot(userText: string, clients: FirmPackClient[] = ROSTER)
   const prompt = makeFirmPrompt(clients);
   const anthropic = getAnthropicClient();
   const res = await anthropic.messages.create({
-    model: MODEL,
+    // OPUS_MODEL — the firm bot's real model (firm-turn.ts), so this gate tests what production runs.
+    model: OPUS_MODEL,
     max_tokens: 1800,
     system: prompt.system,
     messages: [{ role: "user", content: userText }] as Anthropic.MessageParam[],

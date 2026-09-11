@@ -1,6 +1,6 @@
 import "server-only";
 import type Anthropic from "@anthropic-ai/sdk";
-import { getAnthropicClient, MODEL } from "@/lib/anthropic";
+import { getAnthropicClient, OPUS_MODEL } from "@/lib/anthropic";
 import { gatherFirmPack } from "@/lib/grantbot/firm-gather";
 import { buildFirmSystemPrompt } from "@/lib/grantbot/firm-prompt";
 import { budgetHistory, type HistoryTurn } from "@/lib/grantbot/history";
@@ -21,11 +21,12 @@ import { budgetHistory, type HistoryTurn } from "@/lib/grantbot/history";
 // A single model call, no tool loop. The firm bot is a pure reasoning surface here; "add a grant" and
 // any other action is Brick 4. So there is no tool set, no dispatch, no request-body-derived anything.
 
-// The model. Mirrors the per-client GrantBot (MODEL = Sonnet 4.6) so Brick 1 is a faithful copy of
-// the live bot. It is a NAMED CONSTANT precisely so the head-to-head has a one-line lever: if the
-// roster-wide strategy read wants more depth than Sonnet gives, bump this to "claude-opus-5" (and,
-// if still wanted, add adaptive thinking) — the architecture does not change, only this line.
-const FIRM_MODEL = MODEL;
+// Opus 5 for the firm bot's roster-wide strategy reasoning (Shannon, 2026-09-11): the head-to-head
+// judges it on the real model, not Sonnet. Roster-wide portfolio strategy over the whole client set
+// is harder reasoning than one-client Q&A, so this is deliberately ABOVE the per-client bot's model
+// (MODEL = Sonnet 4.6). Named constant so the model choice stays a one-line, per-surface lever; the
+// matcher stays on the cheaper MODEL (this only moves the low-volume firm chat).
+const FIRM_MODEL = OPUS_MODEL;
 
 const MAX_MESSAGE_CHARS = 20_000;
 const MAX_OUTPUT_TOKENS = 4000;

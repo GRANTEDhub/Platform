@@ -16,3 +16,12 @@ export const MODEL = "claude-sonnet-4-6";
 // fit score). Kept distinct from MODEL so a relevance pass never silently runs
 // on the expensive matcher model.
 export const CHEAP_MODEL = "claude-haiku-4-5-20251001";
+
+// Most-capable model, for LOW-VOLUME, HIGH-JUDGMENT conversational reasoning where
+// depth matters more than per-call cost -- the firm GrantBot's roster-wide strategy
+// read (lib/grantbot/firm-turn.ts). Deliberately SEPARATE from MODEL: the matcher
+// scores the full roster on every ingest and must stay on the cheaper Sonnet, so
+// this is opt-in per surface, never a blanket swap. (A later PR may point the
+// per-client GrantBot here too -- that is a per-surface choice, not this constant's
+// job to force.)
+export const OPUS_MODEL = "claude-opus-5";
