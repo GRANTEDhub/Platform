@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { awardRangeOrEstimate, formatAwardRange, compactTerm, parseAwardCount, formatDeadlineCompact } from "./format";
+import { awardRangeOrEstimate, formatAwardRange, compactTerm, parseAwardCount, formatDeadlineCompact, formatDeadlineListLabel } from "./format";
 
 // Deterministic — no model, no network. Locks the two PR-A grant-report fixes:
 //   ① Award range never renders a bare blank when the size is deducible (pool ÷ awards, labeled "est.").
@@ -132,5 +132,33 @@ describe("formatDeadlineCompact", () => {
     // Must be the same day in every runner timezone: new Date("2026-09-15") is UTC midnight,
     // which renders as the previous day west of UTC on a client-rendered surface.
     expect(formatDeadlineCompact("2026-09-15")).toBe("Sep 15");
+  });
+});
+
+describe("formatDeadlineListLabel", () => {
+  it("formats a real date (ISO or common formats) as a compact date", () => {
+    expect(formatDeadlineListLabel("10/9/2026")).toBe("Oct 9, 2026"); // local parse, deterministic
+    expect(formatDeadlineListLabel("2026-10-09")).toMatch(/^[A-Za-z]{3} \d{1,2}, 202\d$/);
+  });
+
+  it("keeps a SHORT free-text deadline whole", () => {
+    expect(formatDeadlineListLabel("Rolling")).toBe("Rolling");
+    expect(formatDeadlineListLabel("Varies")).toBe("Varies");
+  });
+
+  it("soft-truncates a verbose free-text deadline so a list cell can't overflow", () => {
+    // The AR-shred failure mode: a whole sentence (or an error note) in submission_deadline.
+    const para = "February/March Intent to Apply (cycle year TBD): September 30, 2026; Full Application: November 6";
+    const out = formatDeadlineListLabel(para);
+    expect(out.length).toBeLessThanOrEqual(23); // CAP 22 + the ellipsis
+    expect(out.endsWith("…")).toBe(true);
+    expect(out).not.toMatch(/\s…$/); // no dangling space before the ellipsis
+    expect(out.startsWith("February")).toBe(true);
+    expect(formatDeadlineListLabel("Not extracted — full program page not available at source").endsWith("…")).toBe(true);
+  });
+
+  it("returns an em dash for empty / missing", () => {
+    expect(formatDeadlineListLabel(null)).toBe("—");
+    expect(formatDeadlineListLabel("   ")).toBe("—");
   });
 });

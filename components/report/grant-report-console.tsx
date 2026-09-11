@@ -575,8 +575,9 @@ function QueueCard({
 
       <div className="w-[124px] shrink-0 text-right">
         <p
-          className="font-serif text-[15px] font-bold tabular-nums"
+          className="truncate font-serif text-[15px] font-bold tabular-nums"
           style={{ color: urgent ? BRAND.orangeDeep : INK.DEFAULT }}
+          title={item.deadlineLabel}
         >
           {item.deadlineLabel}
         </p>
