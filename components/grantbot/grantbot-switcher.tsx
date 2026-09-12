@@ -166,7 +166,12 @@ export function GrantBotSwitcher({
   // dashboard reset and the open-time default.
   const computeDefaultTarget = useCallback((): InternalTarget | null => {
     const stored = readStoredTarget();
-    if (stored?.kind === "client") return stored;
+    // Strip the persisted name (name: null) so the resolve-name effect re-validates the id against the
+    // LIVE roster before the target is treated as resolved: a client that was renamed shows its current
+    // name, and one that was deleted / is no longer accessible falls back (firm, else first client, else
+    // nothing) instead of mounting a chat against a dead id or showing a stale name (Claude Code Review
+    // #545). Same discipline as the dashboard path, which also sets name: null on purpose.
+    if (stored?.kind === "client") return { kind: "client", id: stored.id, name: null };
     if (showFirm) return { kind: "firm" };
     return null;
   }, [showFirm]);
@@ -210,7 +215,9 @@ export function GrantBotSwitcher({
     if (!open || target !== null) return;
     const stored = readStoredTarget();
     if (stored?.kind === "client") {
-      setTarget(stored);
+      // name: null → the resolve-name effect validates the id against the live roster (see
+      // computeDefaultTarget); never trust the persisted name (Claude Code Review #545).
+      setTarget({ kind: "client", id: stored.id, name: null });
       return;
     }
     if (stored?.kind === "firm" && showFirm) {
@@ -371,6 +378,18 @@ export function GrantBotSwitcher({
                 >
                   Retry
                 </button>
+              </div>
+            ) : roster !== null && roster.length === 0 && !showFirm ? (
+              // Nothing to host: the roster loaded EMPTY and this actor has no Firm access (a contractor
+              // with no client assignments yet, or a fresh env with no clients). Without this branch the
+              // target stays null forever and the panel hangs on the spinner with no error and no retry
+              // — worse than the base branch, where such a user never saw the bubble (Claude Code Review
+              // #545).
+              <div className="flex flex-1 flex-col items-center justify-center gap-1.5 p-6 text-center">
+                <p className="text-[13px] font-medium text-foreground">No clients available</p>
+                <p className="text-[12px] text-muted-foreground">
+                  GrantBot opens once a client is assigned to you.
+                </p>
               </div>
             ) : (
               spinner
