@@ -85,6 +85,16 @@ export function GrantBotSwitcher({
   const [roster, setRoster] = useState<RosterClient[] | null>(null);
   const [rosterLoading, setRosterLoading] = useState(false);
   const [rosterError, setRosterError] = useState<string | null>(null);
+  // Bumped by retryRoster to re-run the fetch effect. The effect must NOT depend on roster/
+  // rosterLoading/rosterError (state it sets itself): `setRosterLoading(true)` would then change the
+  // deps, tearing down the running effect (its cleanup sets alive=false) before the fetch resolves —
+  // so the result never commits and the roster is stuck loading forever (Claude Code Review #545). An
+  // explicit attempt counter is the only dep that re-runs it.
+  const [rosterAttempt, setRosterAttempt] = useState(0);
+  // Whether the current target was a MANUAL pick (vs auto-assigned from the dashboard). A manual pick
+  // persists off-dashboard; an auto target is dropped when you leave the dashboard. A ref, so the
+  // dashboard effect (keyed on dashId) reads it without a stale closure or an extra dep.
+  const manualPickRef = useRef(false);
 
   const openPanel = useCallback(() => {
     setEverOpened(true);
@@ -117,12 +127,12 @@ export function GrantBotSwitcher({
     if (!visible) setOpen(false);
   }, [visible]);
 
-  // Fetch the roster once, on first open — needed to resolve a client target's name AND to feed the
-  // picker (one source, no double fetch). `rosterError` is a TERMINAL term in the guard: without it a
-  // failed fetch (roster stays null, rosterLoading flips back to false) would re-satisfy the guard and
-  // refetch forever. Retry is explicit — `retryRoster` clears the error, which re-runs this effect.
+  // Fetch the roster once on first open, and again on each explicit retry. Deps are ONLY
+  // [everOpened, rosterAttempt] — never the state this effect sets — so `setRosterLoading(true)` does
+  // not re-fire it and cancel its own in-flight fetch (see rosterAttempt above). The guard reads the
+  // current roster/rosterLoading from the render closure to avoid a duplicate fetch.
   useEffect(() => {
-    if (!everOpened || roster || rosterLoading || rosterError) return;
+    if (!everOpened || roster || rosterLoading) return;
     let alive = true;
     setRosterLoading(true);
     setRosterError(null);
@@ -141,31 +151,56 @@ export function GrantBotSwitcher({
     return () => {
       alive = false;
     };
-  }, [everOpened, roster, rosterLoading, rosterError]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [everOpened, rosterAttempt]);
 
-  // Explicit retry after a roster-fetch failure: clearing the error re-runs the fetch effect.
-  const retryRoster = useCallback(() => setRosterError(null), []);
+  // Explicit retry after a roster-fetch failure: clear the error and bump the attempt so the fetch
+  // effect re-runs (its deps do not include rosterError, so clearing alone would not re-run it).
+  const retryRoster = useCallback(() => {
+    setRosterError(null);
+    setRosterAttempt((n) => n + 1);
+  }, []);
 
-  // Dashboard follow + deep-link. Fires on navigation (pathname). On a client dashboard, point the
-  // target at that client (keeping a resolved same-client target so the name is not re-cleared); a
-  // "?grantbot=" param additionally auto-opens on that conversation and is cleared so a refresh or a
-  // shared URL does not reopen it.
+  // The off-dashboard default target: the last manual pick (localStorage), else Firm, else null (the
+  // open-time effect fills the first accessible client once the roster loads). Shared by the leave-a-
+  // dashboard reset and the open-time default.
+  const computeDefaultTarget = useCallback((): InternalTarget | null => {
+    const stored = readStoredTarget();
+    if (stored?.kind === "client") return stored;
+    if (showFirm) return { kind: "firm" };
+    return null;
+  }, [showFirm]);
+
+  // Dashboard follow + deep-link, keyed on navigation (dashId).
+  //   • On a client dashboard: point the target at that client (auto, keeping a resolved same-client
+  //     target so the name is not re-cleared). A "?grantbot=" param additionally auto-opens on that
+  //     conversation and is cleared so a refresh / shared URL does not reopen it; WITHOUT the param,
+  //     any stale deep-link from an earlier visit is cleared so it can't re-force an old thread.
+  //   • Leaving a dashboard (dashId → null): an AUTO target does not persist off-dashboard — fall back
+  //     to the off-dashboard default (last manual pick / Firm). A MANUAL pick stays.
   useEffect(() => {
-    if (!dashId) return;
-    const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
-    const gb = params?.get("grantbot") ?? null;
-    if (gb !== null) {
-      const blank = gb === BLANK_CONVERSATION || gb === "1";
-      setPendingInitial({ clientId: dashId, convId: blank ? null : gb, blank });
-      openPanel();
-      if (typeof window !== "undefined") {
-        const url = new URL(window.location.href);
-        url.searchParams.delete("grantbot");
-        window.history.replaceState(window.history.state, "", url.toString());
+    if (dashId) {
+      const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+      const gb = params?.get("grantbot") ?? null;
+      if (gb !== null) {
+        const blank = gb === BLANK_CONVERSATION || gb === "1";
+        setPendingInitial({ clientId: dashId, convId: blank ? null : gb, blank });
+        openPanel();
+        if (typeof window !== "undefined") {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("grantbot");
+          window.history.replaceState(window.history.state, "", url.toString());
+        }
+      } else {
+        setPendingInitial(null);
       }
+      manualPickRef.current = false;
+      setTarget((prev) => (prev?.kind === "client" && prev.id === dashId ? prev : { kind: "client", id: dashId, name: null }));
+      setConvId(null);
+    } else if (!manualPickRef.current) {
+      setTarget(computeDefaultTarget());
+      setConvId(null);
     }
-    setTarget((prev) => (prev?.kind === "client" && prev.id === dashId ? prev : { kind: "client", id: dashId, name: null }));
-    setConvId(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dashId]);
 
@@ -209,6 +244,7 @@ export function GrantBotSwitcher({
   const onConversationChange = useCallback((id: string | null) => setConvId(id), []);
 
   function pick(t: SwitcherTarget) {
+    manualPickRef.current = true; // a manual pick persists off-dashboard (vs an auto dashboard target)
     setTarget(t);
     setConvId(null);
     setPendingInitial(null); // a manual switch is not the deep-linked thread

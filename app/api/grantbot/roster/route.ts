@@ -18,16 +18,23 @@ export async function GET() {
   if (!profile) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
   const supabase = createClient();
-  const { data, error } = await supabase.from("client_overview").select("id, name").order("name");
+  const { data, error } = await supabase
+    .from("client_overview")
+    .select("id, name, pipeline_stage")
+    .order("name");
   if (error) {
     return NextResponse.json({ error: "Could not load the client roster." }, { status: 500 });
   }
 
   const clients = (data ?? [])
     .filter(
-      (c): c is { id: string; name: string } =>
+      (c): c is { id: string; name: string; pipeline_stage: string | null } =>
         !!c && typeof c.id === "string" && typeof c.name === "string" && c.name.length > 0,
     )
+    // Match the Portfolio list's visibility exactly (app/(app)/clients/page.tsx): drop archived /
+    // rejected clients (dead relationships) so the picker doesn't offer a target that is excluded
+    // everywhere else. Null stage passes, mirroring Portfolio's `!== archived && !== rejected`.
+    .filter((c) => c.pipeline_stage !== "archived" && c.pipeline_stage !== "rejected")
     .map((c) => ({ id: c.id, name: c.name }));
 
   return NextResponse.json({ clients });
