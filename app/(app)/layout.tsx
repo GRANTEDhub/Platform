@@ -2,6 +2,7 @@ import { requireUser } from "@/lib/auth";
 import { TopNav, type NavItem } from "@/components/layout/top-nav";
 import { switcherEnabled } from "@/lib/grantbot/switcher";
 import { firmGrantbotEnabled } from "@/lib/grantbot/firm-turn";
+import { grantbotVisionEnabled } from "@/lib/grantbot/vision";
 import { GrantBotSwitcher } from "@/components/grantbot/grantbot-switcher";
 
 // The nav is the console's frame. It holds the modules the firm runs on, but it is
@@ -72,11 +73,13 @@ export default async function AppLayout({
 
   const band = isAdmin ? ADMIN_BAND : CONTRACTOR_BAND;
 
-  // The universal GrantBot Switcher. S1 hosts the FIRM bot only, so it needs BOTH the Switcher flag
-  // and the firm flag on (a firm-off environment must not show a dead firm bubble). Byte-identical
-  // OFF: false ⟹ the component is not in the tree at all. The component itself hides on client record
-  // pages (where the launcher owns the corner) and for non-admins — see firmSwitcherVisible.
-  const showSwitcher = switcherEnabled() && firmGrantbotEnabled();
+  // The universal GrantBot Switcher (S2). It now hosts client bots too, so it mounts on the Switcher
+  // flag ALONE — a firm-off environment still gets the client bots; firmGrantbotEnabled only decides
+  // whether the picker offers Firm. Byte-identical OFF: false ⟹ the component is not in the tree at
+  // all, and the client dashboard keeps mounting the per-client launcher (gated on the same flag),
+  // so flipping the flag is a clean revert. visionEnabled matches what the launcher passed the corner
+  // chat.
+  const showSwitcher = switcherEnabled();
 
   return (
     // COLUMN, not row: the band spans the full width edge-to-edge, so the shell's old
@@ -108,7 +111,13 @@ export default async function AppLayout({
       <main className="flex-1 overflow-y-auto [scrollbar-gutter:stable]">{children}</main>
       {/* A fixed-overlay sibling of <main>, positioned to the viewport — the shell's overflow-hidden
           does not clip it (fixed elements are not clipped by ancestor overflow). */}
-      {showSwitcher && <GrantBotSwitcher isAdmin={isAdmin} />}
+      {showSwitcher && (
+        <GrantBotSwitcher
+          isAdmin={isAdmin}
+          firmEnabled={firmGrantbotEnabled()}
+          visionEnabled={grantbotVisionEnabled()}
+        />
+      )}
     </div>
   );
 }

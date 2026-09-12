@@ -1,12 +1,19 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { switcherEnabled, isClientDashboardPath, isFirmFullPagePath, firmSwitcherVisible } from "./switcher";
+import {
+  switcherEnabled,
+  clientDashboardId,
+  isClientDashboardPath,
+  isFullGrantbotPage,
+  switcherVisible,
+} from "./switcher";
 
-// Deterministic — no model, no network. Locks the Switcher's two gates:
+// Deterministic — no model, no network. Locks the Switcher's gates:
 //   ① GRANTBOT_SWITCHER_ENABLED, default off, only the literal "true" (byte-identical OFF).
-//   ② the visibility rule: the firm Switcher shows for admins everywhere EXCEPT the client dashboard
-//      route (where the per-client launcher owns the corner — so no double bubble) and the firm full
-//      page /grantbot (already the full firm chat). It must SHOW on client SUB-routes and the
-//      new/invite forms, which mount no launcher (Codex #544).
+//   ② clientDashboardId: the /clients/<id> the Switcher defaults its target to (and the launcher
+//      mounts on) — sub-routes and the new/invite forms are NOT dashboards.
+//   ③ isFullGrantbotPage: hide on the firm OR a client full-chat page (each owns its own surface).
+//   ④ switcherVisible: S2 shows on every internal page except a full GrantBot page (contractors get
+//      it too now — the picker, not visibility, gates Firm to admins).
 
 describe("switcherEnabled", () => {
   const prev = process.env.GRANTBOT_SWITCHER_ENABLED;
@@ -27,72 +34,59 @@ describe("switcherEnabled", () => {
   });
 });
 
-describe("isClientDashboardPath", () => {
-  it("is true for exactly the client dashboard route (where the launcher mounts)", () => {
+describe("clientDashboardId", () => {
+  it("returns the id for exactly /clients/<id> (optional trailing slash)", () => {
+    expect(clientDashboardId("/clients/abc123")).toBe("abc123");
+    expect(clientDashboardId("/clients/abc123/")).toBe("abc123");
+  });
+
+  it("is null for sub-routes, the forms, the list, and non-client paths", () => {
+    expect(clientDashboardId("/clients/abc123/grantbot")).toBeNull();
+    expect(clientDashboardId("/clients/abc123/roadmap")).toBeNull();
+    expect(clientDashboardId("/clients/new")).toBeNull();
+    expect(clientDashboardId("/clients/invite")).toBeNull();
+    expect(clientDashboardId("/clients")).toBeNull();
+    expect(clientDashboardId("/grants")).toBeNull();
+    expect(clientDashboardId("/clientships/123")).toBeNull();
+    expect(clientDashboardId(null)).toBeNull();
+    expect(clientDashboardId("")).toBeNull();
+  });
+
+  it("isClientDashboardPath mirrors clientDashboardId", () => {
     expect(isClientDashboardPath("/clients/abc123")).toBe(true);
-    expect(isClientDashboardPath("/clients/abc123/")).toBe(true); // trailing slash
-  });
-
-  it("is FALSE for a client's sub-routes — no launcher there, so the Switcher shows", () => {
-    expect(isClientDashboardPath("/clients/abc123/grantbot")).toBe(false);
     expect(isClientDashboardPath("/clients/abc123/roadmap")).toBe(false);
-    expect(isClientDashboardPath("/clients/abc123/roadmap/xyz")).toBe(false);
-    expect(isClientDashboardPath("/clients/abc123/edit")).toBe(false);
-  });
-
-  it("is FALSE for the /clients/new and /clients/invite forms (real routes, no launcher)", () => {
     expect(isClientDashboardPath("/clients/new")).toBe(false);
-    expect(isClientDashboardPath("/clients/invite")).toBe(false);
-  });
-
-  it("is false for the portfolio LIST and non-client paths", () => {
-    expect(isClientDashboardPath("/clients")).toBe(false);
-    expect(isClientDashboardPath("/clients/")).toBe(false);
-    expect(isClientDashboardPath("/grants")).toBe(false);
-    expect(isClientDashboardPath("/")).toBe(false);
-  });
-
-  it("is false for null/undefined/empty and a lookalike route", () => {
-    expect(isClientDashboardPath(null)).toBe(false);
-    expect(isClientDashboardPath(undefined)).toBe(false);
-    expect(isClientDashboardPath("")).toBe(false);
-    // A sibling route like /clientships must not read as a client dashboard.
-    expect(isClientDashboardPath("/clientships/123")).toBe(false);
   });
 });
 
-describe("isFirmFullPagePath", () => {
-  it("is true for /grantbot and any subpath, false elsewhere", () => {
-    expect(isFirmFullPagePath("/grantbot")).toBe(true);
-    expect(isFirmFullPagePath("/grantbot/anything")).toBe(true);
-    expect(isFirmFullPagePath("/grants")).toBe(false);
-    expect(isFirmFullPagePath("/clients/abc123/grantbot")).toBe(false); // the client's grantbot, not the firm one
-    expect(isFirmFullPagePath(null)).toBe(false);
+describe("isFullGrantbotPage", () => {
+  it("is true for the firm full page and a client full-chat page", () => {
+    expect(isFullGrantbotPage("/grantbot")).toBe(true);
+    expect(isFullGrantbotPage("/grantbot/anything")).toBe(true);
+    expect(isFullGrantbotPage("/clients/abc123/grantbot")).toBe(true);
+    expect(isFullGrantbotPage("/clients/abc123/grantbot/x")).toBe(true);
+  });
+
+  it("is false for a client dashboard, sub-routes, and other pages", () => {
+    expect(isFullGrantbotPage("/clients/abc123")).toBe(false);
+    expect(isFullGrantbotPage("/clients/abc123/roadmap")).toBe(false);
+    expect(isFullGrantbotPage("/grants")).toBe(false);
+    expect(isFullGrantbotPage(null)).toBe(false);
   });
 });
 
-describe("firmSwitcherVisible", () => {
-  it("shows for an admin off the dashboard/firm-page — INCLUDING client sub-routes and the forms", () => {
-    expect(firmSwitcherVisible("/grants", true)).toBe(true);
-    expect(firmSwitcherVisible("/clients", true)).toBe(true); // the LIST, not a dashboard
-    expect(firmSwitcherVisible("/", true)).toBe(true);
-    expect(firmSwitcherVisible("/clients/abc123/roadmap", true)).toBe(true); // sub-route, no launcher
-    expect(firmSwitcherVisible("/clients/abc123/grantbot", true)).toBe(true);
-    expect(firmSwitcherVisible("/clients/new", true)).toBe(true);
-    expect(firmSwitcherVisible("/clients/invite", true)).toBe(true);
+describe("switcherVisible", () => {
+  it("shows on every internal page — dashboards, sub-routes, forms, the list", () => {
+    expect(switcherVisible("/grants")).toBe(true);
+    expect(switcherVisible("/clients")).toBe(true);
+    expect(switcherVisible("/clients/abc123")).toBe(true); // S2: owns the dashboard now
+    expect(switcherVisible("/clients/abc123/roadmap")).toBe(true);
+    expect(switcherVisible("/clients/new")).toBe(true);
+    expect(switcherVisible("/")).toBe(true);
   });
 
-  it("hides for an admin ON the client dashboard (the launcher owns that corner)", () => {
-    expect(firmSwitcherVisible("/clients/abc123", true)).toBe(false);
-  });
-
-  it("hides for an admin on the firm full page /grantbot (redundant there)", () => {
-    expect(firmSwitcherVisible("/grantbot", true)).toBe(false);
-  });
-
-  it("hides for a non-admin everywhere (firm is admin-only in S1)", () => {
-    expect(firmSwitcherVisible("/grants", false)).toBe(false);
-    expect(firmSwitcherVisible("/clients", false)).toBe(false);
-    expect(firmSwitcherVisible("/clients/abc123/roadmap", false)).toBe(false);
+  it("hides on a full GrantBot page (firm or client)", () => {
+    expect(switcherVisible("/grantbot")).toBe(false);
+    expect(switcherVisible("/clients/abc123/grantbot")).toBe(false);
   });
 });

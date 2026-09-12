@@ -1,57 +1,98 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { usePathname, useRouter } from "next/navigation";
 import { Loader2, Maximize2, Sparkles, X } from "lucide-react";
 import { BRAND } from "@/lib/brand";
-import { firmSwitcherVisible } from "@/lib/grantbot/switcher";
+import {
+  switcherVisible,
+  clientDashboardId,
+  SWITCHER_TARGET_KEY,
+  type RosterClient,
+  type SwitcherTarget,
+} from "@/lib/grantbot/switcher";
+import { BLANK_CONVERSATION } from "@/lib/grantbot/wire";
+import { TargetPicker } from "./target-picker";
 
-// The firm chat arrives on first open, not with the layout — the panel mounts on EVERY internal
-// page, and most page views never ask GrantBot anything, so opening is what pays for the transcript
-// fetch and the chat code. Mirrors the per-client GrantBotLauncher's lazy import.
+// Both chat bodies arrive on first open, not with the layout — the Switcher mounts on EVERY internal
+// page and most views never ask GrantBot anything, so opening is what pays for the chat code + the
+// transcript fetch. Lazy, like the launcher this subsumes.
+const spinner = (
+  <p className="flex flex-1 items-center gap-2 p-4 text-[13px] text-muted-foreground">
+    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Opening…
+  </p>
+);
 const FirmGrantBotChat = dynamic(() => import("./firm-grantbot-chat").then((m) => m.FirmGrantBotChat), {
   ssr: false,
-  loading: () => (
-    <p className="flex flex-1 items-center gap-2 p-4 text-[13px] text-muted-foreground">
-      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Opening…
-    </p>
-  ),
+  loading: () => spinner,
+});
+const GrantBotChat = dynamic(() => import("./grantbot-chat").then((m) => m.GrantBotChat), {
+  ssr: false,
+  loading: () => spinner,
 });
 
+// Internal target: like SwitcherTarget, but a client's name may be UNRESOLVED (null) until the roster
+// loads. The context-aware default and the deep-link set the id first; the resolution effect fills
+// the name. The hosted GrantBotChat requires a real name, so it only mounts once name is resolved.
+type InternalTarget = { kind: "firm" } | { kind: "client"; id: string; name: string | null };
+
 // The GrantBot Switcher — a bubble in the bottom-right of every internal page, and the panel it
-// opens. S1 hosts the FIRM bot only (admin-only, roster-wide). Mounted once in (app)/layout.tsx
-// (gated by GRANTBOT_SWITCHER_ENABLED + GRANTBOT_FIRM_ENABLED), so it persists across SPA navigation.
+// opens. S2 hosts the FIRM bot AND any CLIENT bot, chosen from the roster picker in the header. It
+// OWNS the corner everywhere (the client dashboard mounts the launcher only while this flag is OFF).
 //
-// ── WHY IT STANDS DOWN ON THE CLIENT DASHBOARD ──
+// ── ONE HOST, TWO BODIES ──
+// The picker's target decides which existing chat renders under the shared navy header:
+// FirmGrantBotChat (firm) or the per-client GrantBotChat corner (a client) — the SAME components the
+// /grantbot page and the launcher use, carrying paste/vision/cross-thread/rename already. Nothing
+// about a turn is new; this is a host + a picker over two backends that both exist.
 //
-// The per-client launcher owns the corner on EXACTLY the client dashboard (/clients/<id>) — the only
-// page it mounts on — and that bot needs the client's NAME, which only the record page has (the
-// layout knows the path, not the name). So there the Switcher hides and the launcher shows that
-// client's bot — never a double bubble. On the client's SUB-routes (/clients/<id>/roadmap, …/grantbot)
-// and the /clients/new/invite forms there is NO launcher, so the firm bubble DOES show there (else
-// those pages would have no bot at all — Codex #544). It also hides on the firm full page /grantbot,
-// which already IS the full firm chat. firmSwitcherVisible(pathname, isAdmin) is re-evaluated on every
-// navigation. S2 gives the Switcher a roster picker (and every client's identity with it), at which
-// point it hosts any client bot from anywhere and subsumes the launcher.
+// ── WHICH TARGET, BY DEFAULT ──
+// Landing on a client dashboard (/clients/<id>) points the target at THAT client (matching the
+// launcher it replaces) — re-asserted whenever the dashboard id changes, so a manual pick sticks
+// while you stay on one dashboard but the next dashboard shows its own client. Off dashboards, the
+// last manual pick (localStorage) or Firm. A "?grantbot=" deep-link (the full page's Collapse to
+// corner) auto-opens on that client's conversation.
 //
-// ── OPENING IS FREE, AND STAYS FREE ──
-//
-// Nothing is fetched until the bubble is clicked; after that the panel stays MOUNTED but invisible,
-// so closing — AND navigating onto a page where the Switcher stands down — keeps the unsent draft and
-// the place in the thread (an early `return null` would unmount the chat and lose the draft — Codex
-// #544). The transcript is server-side, so it also survives the tab closing entirely.
-export function GrantBotSwitcher({ isAdmin }: { isAdmin: boolean }) {
+// ── OPENING IS FREE ──
+// Nothing is fetched until first open; then the panel stays MOUNTED but hidden, so closing — and
+// navigating onto a full-chat page where the Switcher stands down — keeps the draft and place.
+export function GrantBotSwitcher({
+  isAdmin,
+  firmEnabled,
+  visionEnabled,
+}: {
+  isAdmin: boolean;
+  firmEnabled: boolean;
+  visionEnabled: boolean;
+}) {
   const router = useRouter();
   const pathname = usePathname();
-  const visible = firmSwitcherVisible(pathname, isAdmin);
+  const visible = switcherVisible(pathname);
+  const dashId = clientDashboardId(pathname);
+  const showFirm = isAdmin && firmEnabled;
 
   const [everOpened, setEverOpened] = useState(false);
   const [open, setOpen] = useState(false);
   const [shown, setShown] = useState(false);
+  const [openSignal, setOpenSignal] = useState(0);
 
-  // Separate from `open` so the panel transitions in rather than appearing: it has to be in the tree
-  // at its start position for one frame before the end position can animate.
+  const [target, setTarget] = useState<InternalTarget | null>(null);
+  const [convId, setConvId] = useState<string | null>(null);
+  // A deep-link's conversation to hand the client body on its first mount (Collapse to corner).
+  const [pendingInitial, setPendingInitial] = useState<{ clientId: string; convId: string | null; blank: boolean } | null>(null);
+
+  const [roster, setRoster] = useState<RosterClient[] | null>(null);
+  const [rosterLoading, setRosterLoading] = useState(false);
+  const [rosterError, setRosterError] = useState<string | null>(null);
+
+  const openPanel = useCallback(() => {
+    setEverOpened(true);
+    setOpen(true);
+    setOpenSignal((n) => n + 1);
+  }, []);
+
+  // Transition-in: the panel has to be in the tree at its start position for a frame before animating.
   useEffect(() => {
     if (!open) {
       setShown(false);
@@ -61,6 +102,7 @@ export function GrantBotSwitcher({ isAdmin }: { isAdmin: boolean }) {
     return () => cancelAnimationFrame(id);
   }, [open]);
 
+  // Escape closes the panel (the picker's own Escape stops propagation so it closes only the menu).
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -70,28 +112,131 @@ export function GrantBotSwitcher({ isAdmin }: { isAdmin: boolean }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
-  // Navigating onto a page where the Switcher stands down CLOSES the panel (so returning shows the
-  // bubble, not a snapped-back panel) but does NOT unmount it — the panel subtree stays mounted while
-  // `everOpened`, only hidden, so the unsent draft survives (Codex #544). The visible-gates below keep
-  // it invisible and non-interactive while hidden.
+  // Standing down on a full-chat page closes (but does not unmount) the panel, so the draft survives.
   useEffect(() => {
     if (!visible) setOpen(false);
   }, [visible]);
 
-  function openPanel() {
-    setEverOpened(true);
-    setOpen(true);
+  // Fetch the roster once, on first open — needed to resolve a client target's name AND to feed the
+  // picker (one source, no double fetch).
+  useEffect(() => {
+    if (!everOpened || roster || rosterLoading) return;
+    let alive = true;
+    setRosterLoading(true);
+    setRosterError(null);
+    (async () => {
+      try {
+        const res = await fetch("/api/grantbot/roster");
+        if (!res.ok) throw new Error(String(res.status));
+        const data = (await res.json()) as { clients?: RosterClient[] };
+        if (alive) setRoster(data.clients ?? []);
+      } catch {
+        if (alive) setRosterError("Couldn't load the client list.");
+      } finally {
+        if (alive) setRosterLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [everOpened, roster, rosterLoading]);
+
+  // Dashboard follow + deep-link. Fires on navigation (pathname). On a client dashboard, point the
+  // target at that client (keeping a resolved same-client target so the name is not re-cleared); a
+  // "?grantbot=" param additionally auto-opens on that conversation and is cleared so a refresh or a
+  // shared URL does not reopen it.
+  useEffect(() => {
+    if (!dashId) return;
+    const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+    const gb = params?.get("grantbot") ?? null;
+    if (gb !== null) {
+      const blank = gb === BLANK_CONVERSATION || gb === "1";
+      setPendingInitial({ clientId: dashId, convId: blank ? null : gb, blank });
+      openPanel();
+      if (typeof window !== "undefined") {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("grantbot");
+        window.history.replaceState(window.history.state, "", url.toString());
+      }
+    }
+    setTarget((prev) => (prev?.kind === "client" && prev.id === dashId ? prev : { kind: "client", id: dashId, name: null }));
+    setConvId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dashId]);
+
+  // Open-time default when NOT on a client dashboard (the effect above already set a dashboard
+  // target). Last manual pick (localStorage), else Firm, else the first accessible client.
+  useEffect(() => {
+    if (!open || target !== null) return;
+    const stored = readStoredTarget();
+    if (stored?.kind === "client") {
+      setTarget(stored);
+      return;
+    }
+    if (stored?.kind === "firm" && showFirm) {
+      setTarget({ kind: "firm" });
+      return;
+    }
+    if (showFirm) {
+      setTarget({ kind: "firm" });
+      return;
+    }
+    if (roster && roster[0]) setTarget({ kind: "client", id: roster[0].id, name: roster[0].name });
+    // else: no firm, roster still loading or empty → wait / stay null (nothing to host).
+  }, [open, target, roster, showFirm]);
+
+  // Resolve a client target's name from the roster; if the id is not in the accessible roster, fall
+  // back (firm, else first client, else nothing).
+  useEffect(() => {
+    if (!roster || target?.kind !== "client" || target.name !== null) return;
+    const name = roster.find((c) => c.id === target.id)?.name ?? null;
+    if (name) {
+      setTarget({ kind: "client", id: target.id, name });
+    } else if (showFirm) {
+      setTarget({ kind: "firm" });
+    } else if (roster[0]) {
+      setTarget({ kind: "client", id: roster[0].id, name: roster[0].name });
+    } else {
+      setTarget(null);
+    }
+  }, [roster, target, showFirm]);
+
+  const onConversationChange = useCallback((id: string | null) => setConvId(id), []);
+
+  function pick(t: SwitcherTarget) {
+    setTarget(t);
+    setConvId(null);
+    setPendingInitial(null); // a manual switch is not the deep-linked thread
+    persistTarget(t);
   }
 
-  // Expand = the standalone /grantbot page. Close the corner panel first: /grantbot renders the full
-  // firm chat, and an open corner panel would overlay a second chat instance on it (Codex #544).
-  // (/grantbot is also excluded from firmSwitcherVisible, so the bubble does not return there; the
-  // full page loads the most-recent thread — carrying the exact conversation id in is an S2 polish
-  // item, the firm page reads no ?c= param yet.)
+  // Expand = the full page for the current target, carrying the client conversation (the firm page
+  // reads no ?c= yet, so firm just opens /grantbot).
   function expand() {
+    if (!target) return;
     setOpen(false);
-    router.push("/grantbot");
+    if (target.kind === "firm") {
+      router.push("/grantbot");
+    } else {
+      router.push(`/clients/${target.id}/grantbot?c=${convId ?? BLANK_CONVERSATION}`);
+    }
   }
+
+  // A fully-resolved target for the header + body (client name known). Null while resolving.
+  const resolved: SwitcherTarget | null =
+    target === null
+      ? null
+      : target.kind === "firm"
+        ? { kind: "firm" }
+        : target.name
+          ? { kind: "client", id: target.id, name: target.name }
+          : null;
+
+  const ariaTarget = resolved
+    ? resolved.kind === "firm"
+      ? "Firm"
+      : resolved.name
+    : "";
 
   return (
     <>
@@ -109,10 +254,7 @@ export function GrantBotSwitcher({ isAdmin }: { isAdmin: boolean }) {
       {everOpened && (
         <div
           role="dialog"
-          aria-label="GrantBot — Firm"
-          // Hidden (not unmounted) while closed OR while the Switcher stands down on this page, so the
-          // draft survives; `invisible` is visibility:hidden, so it is also out of the a11y tree and
-          // hit-testing and never sits over the per-client launcher.
+          aria-label={ariaTarget ? `GrantBot — ${ariaTarget}` : "GrantBot"}
           aria-hidden={!(open && visible)}
           className={`fixed bottom-7 right-7 z-40 flex h-[min(588px,calc(100vh-3.5rem))] w-[min(404px,calc(100vw-3.5rem))] flex-col overflow-hidden rounded-2xl bg-white shadow-floating transition-all duration-[280ms] ease-entrance ${
             open && shown && visible
@@ -121,8 +263,6 @@ export function GrantBotSwitcher({ isAdmin }: { isAdmin: boolean }) {
           }`}
         >
           <div className="relative flex-shrink-0 overflow-hidden bg-brand-navy px-[18px] pb-3.5 pt-4">
-            {/* The accent bloom, bled off the top-right corner — BRAND.orangeGlow, so there is still
-                exactly one orange in the product. */}
             <div
               aria-hidden="true"
               className="pointer-events-none absolute -right-[30px] -top-[46px] h-[140px] w-[140px] rounded-full"
@@ -137,9 +277,19 @@ export function GrantBotSwitcher({ isAdmin }: { isAdmin: boolean }) {
               </div>
               <div className="min-w-0 flex-1">
                 <p className="truncate font-serif text-[16px] font-bold text-white">GrantBot</p>
-                <p className="truncate text-[11.5px] text-white/55">
-                  Firm <span className="text-white/30">·</span> read-only
-                </p>
+                {resolved ? (
+                  <TargetPicker
+                    target={resolved}
+                    isAdmin={isAdmin}
+                    firmEnabled={firmEnabled}
+                    roster={roster}
+                    loading={rosterLoading}
+                    error={rosterError}
+                    onPick={pick}
+                  />
+                ) : (
+                  <p className="truncate text-[11.5px] text-white/40">…</p>
+                )}
               </div>
               <div className="flex flex-shrink-0 items-center gap-0.5 pt-px">
                 <button
@@ -147,7 +297,8 @@ export function GrantBotSwitcher({ isAdmin }: { isAdmin: boolean }) {
                   onClick={expand}
                   title="Open full page"
                   aria-label="Open full page"
-                  className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-lg text-white/55 transition-colors hover:bg-white/10 hover:text-white"
+                  disabled={!resolved}
+                  className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-lg text-white/55 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-40"
                 >
                   <Maximize2 className="h-3.5 w-3.5" />
                 </button>
@@ -163,12 +314,54 @@ export function GrantBotSwitcher({ isAdmin }: { isAdmin: boolean }) {
               </div>
             </div>
           </div>
-          {/* The accent rule. Carries no type, so it is `orange` and not `orangeFill`. */}
           <div className="h-0.5 flex-shrink-0 bg-brand-orange" />
 
-          <FirmGrantBotChat variant="corner" />
+          {!resolved ? (
+            spinner
+          ) : resolved.kind === "firm" ? (
+            <FirmGrantBotChat variant="corner" />
+          ) : (
+            <GrantBotChat
+              key={resolved.id}
+              clientId={resolved.id}
+              clientName={resolved.name}
+              variant="corner"
+              initialConversationId={
+                pendingInitial && pendingInitial.clientId === resolved.id ? pendingInitial.convId : undefined
+              }
+              initialBlank={
+                pendingInitial && pendingInitial.clientId === resolved.id ? pendingInitial.blank : undefined
+              }
+              onConversationChange={onConversationChange}
+              visionEnabled={visionEnabled}
+              openSignal={openSignal}
+            />
+          )}
         </div>
       )}
     </>
   );
+}
+
+function readStoredTarget(): InternalTarget | null {
+  try {
+    const raw = localStorage.getItem(SWITCHER_TARGET_KEY);
+    if (!raw) return null;
+    const t = JSON.parse(raw) as { kind?: string; id?: unknown; name?: unknown };
+    if (t?.kind === "firm") return { kind: "firm" };
+    if (t?.kind === "client" && typeof t.id === "string" && typeof t.name === "string") {
+      return { kind: "client", id: t.id, name: t.name };
+    }
+  } catch {
+    /* private mode / cleared storage — no preference */
+  }
+  return null;
+}
+
+function persistTarget(t: SwitcherTarget) {
+  try {
+    localStorage.setItem(SWITCHER_TARGET_KEY, JSON.stringify(t));
+  } catch {
+    /* non-fatal — the pick still applies this session */
+  }
 }
