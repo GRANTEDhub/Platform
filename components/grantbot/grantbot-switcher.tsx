@@ -118,9 +118,11 @@ export function GrantBotSwitcher({
   }, [visible]);
 
   // Fetch the roster once, on first open — needed to resolve a client target's name AND to feed the
-  // picker (one source, no double fetch).
+  // picker (one source, no double fetch). `rosterError` is a TERMINAL term in the guard: without it a
+  // failed fetch (roster stays null, rosterLoading flips back to false) would re-satisfy the guard and
+  // refetch forever. Retry is explicit — `retryRoster` clears the error, which re-runs this effect.
   useEffect(() => {
-    if (!everOpened || roster || rosterLoading) return;
+    if (!everOpened || roster || rosterLoading || rosterError) return;
     let alive = true;
     setRosterLoading(true);
     setRosterError(null);
@@ -139,7 +141,10 @@ export function GrantBotSwitcher({
     return () => {
       alive = false;
     };
-  }, [everOpened, roster, rosterLoading]);
+  }, [everOpened, roster, rosterLoading, rosterError]);
+
+  // Explicit retry after a roster-fetch failure: clearing the error re-runs the fetch effect.
+  const retryRoster = useCallback(() => setRosterError(null), []);
 
   // Dashboard follow + deep-link. Fires on navigation (pathname). On a client dashboard, point the
   // target at that client (keeping a resolved same-client target so the name is not re-cleared); a
@@ -317,7 +322,23 @@ export function GrantBotSwitcher({
           <div className="h-0.5 flex-shrink-0 bg-brand-orange" />
 
           {!resolved ? (
-            spinner
+            // Unresolved: normally a brief roster load (spinner). But if the roster FETCH failed while
+            // resolving a client target, the picker (which renders the error) is unmounted — so surface
+            // the error + a retry HERE, or the user is stranded on a permanent spinner (Vercel #545).
+            rosterError ? (
+              <div className="flex flex-1 flex-col items-center justify-center gap-2.5 p-6 text-center">
+                <p className="text-[13px] text-muted-foreground">{rosterError}</p>
+                <button
+                  type="button"
+                  onClick={retryRoster}
+                  className="inline-flex h-8 items-center rounded-lg bg-brand-navy px-3 text-[12.5px] font-semibold text-white transition-colors hover:bg-brand-navyHover"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : (
+              spinner
+            )
           ) : resolved.kind === "firm" ? (
             <FirmGrantBotChat variant="corner" />
           ) : (
