@@ -141,6 +141,13 @@ export function GrantBotSwitcher({
     setEverOpened(true);
     setOpen(true);
     setOpenSignal((n) => n + 1);
+    // Start every open on the chat view, never a stale Recent list. The panel never unmounts
+    // (everOpened stays true), and the Recent fetch fires only on the recentOpen false→true
+    // transition — so without this, closing with History open and reopening later would re-render the
+    // cached `recent` from the earlier open (stale titles/order/times) with no refetch. Resetting
+    // recentOpen here lands every reopen on chat and makes the next History click a fresh false→true
+    // fetch, honoring the "fresh each time" invariant (Claude Code Review #547).
+    setRecentOpen(false);
   }, []);
 
   // Transition-in: the panel has to be in the tree at its start position for a frame before animating.
