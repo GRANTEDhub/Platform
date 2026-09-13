@@ -99,6 +99,10 @@ export function GrantBotSwitcher({
   // the loaded roster (a just-created client not yet in the cached list). Prevents an endless refetch
   // loop for a client that is genuinely absent (archived/rejected, filtered out of the roster).
   const refetchedForRef = useRef<string | null>(null);
+  // Request generation for the roster fetch: each fetch run takes the next value and only the LATEST run
+  // commits its result, so a superseded in-flight fetch can never leave rosterLoading stuck (see the
+  // fetch effect for the wedge this prevents).
+  const fetchGenRef = useRef(0);
   // The latest target, mirrored to a ref so the dashId-keyed dashboard effect (whose closure is stale —
   // its only dep is dashId) can read the CURRENT target when deciding whether leaving a dashboard would
   // merely re-derive the same already-resolved client (a no-op) rather than a real target change.
@@ -140,14 +144,17 @@ export function GrantBotSwitcher({
 
   // Fetch the roster on first open, on each explicit retry, and on a stale-cache refetch (a dashboard
   // client missing from the loaded roster — see the resolve-name effect). Deps are ONLY
-  // [everOpened, rosterAttempt] — never the state this effect sets — so `setRosterLoading(true)` does
-  // not re-fire it and cancel its own in-flight fetch (see rosterAttempt above). The guard intentionally
-  // does NOT include `roster`: a rosterAttempt bump must be able to REFETCH an already-loaded roster
-  // (the old roster stays in place until the new one arrives, so there is no flicker); rosterLoading
-  // still blocks an overlapping fetch, and everOpened/rosterAttempt are the only things that re-run it.
+  // [everOpened, rosterAttempt] — never the state this effect sets. Supersession is handled by a
+  // REQUEST-GENERATION ref, NOT a rosterLoading guard: each run takes the next gen and only the LATEST
+  // run commits (roster / error / clearing rosterLoading). This is why a second rosterAttempt bump while
+  // a fetch is still in flight is safe — the older fetch's commits are dropped by the gen check and the
+  // newer fetch resets rosterLoading. A rosterLoading guard here instead wedged the panel: it skipped
+  // the new fetch, and the superseded fetch's own cancellation then meant nothing ever reset
+  // rosterLoading, so it stuck true forever (Claude Code Review #545). The old roster stays in place
+  // until the new one arrives, so a refetch causes no flicker.
   useEffect(() => {
-    if (!everOpened || rosterLoading) return;
-    let alive = true;
+    if (!everOpened) return;
+    const gen = ++fetchGenRef.current;
     setRosterLoading(true);
     setRosterError(null);
     (async () => {
@@ -155,15 +162,17 @@ export function GrantBotSwitcher({
         const res = await fetch("/api/grantbot/roster");
         if (!res.ok) throw new Error(String(res.status));
         const data = (await res.json()) as { clients?: RosterClient[] };
-        if (alive) setRoster(data.clients ?? []);
+        if (fetchGenRef.current === gen) setRoster(data.clients ?? []);
       } catch {
-        if (alive) setRosterError("Couldn't load the client list.");
+        if (fetchGenRef.current === gen) setRosterError("Couldn't load the client list.");
       } finally {
-        if (alive) setRosterLoading(false);
+        if (fetchGenRef.current === gen) setRosterLoading(false);
       }
     })();
     return () => {
-      alive = false;
+      // Supersede a still-in-flight fetch on re-run/unmount by advancing the gen, so its commits are
+      // dropped by the gen check above — no alive flag whose cancellation could strand rosterLoading.
+      fetchGenRef.current++;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [everOpened, rosterAttempt]);
