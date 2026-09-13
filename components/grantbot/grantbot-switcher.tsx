@@ -95,6 +95,10 @@ export function GrantBotSwitcher({
   // persists off-dashboard; an auto target is dropped when you leave the dashboard. A ref, so the
   // dashboard effect (keyed on dashId) reads it without a stale closure or an extra dep.
   const manualPickRef = useRef(false);
+  // One-shot guard: the client id we last force-refetched the roster for because it was missing from
+  // the loaded roster (a just-created client not yet in the cached list). Prevents an endless refetch
+  // loop for a client that is genuinely absent (archived/rejected, filtered out of the roster).
+  const refetchedForRef = useRef<string | null>(null);
 
   const openPanel = useCallback(() => {
     setEverOpened(true);
@@ -127,12 +131,15 @@ export function GrantBotSwitcher({
     if (!visible) setOpen(false);
   }, [visible]);
 
-  // Fetch the roster once on first open, and again on each explicit retry. Deps are ONLY
+  // Fetch the roster on first open, on each explicit retry, and on a stale-cache refetch (a dashboard
+  // client missing from the loaded roster — see the resolve-name effect). Deps are ONLY
   // [everOpened, rosterAttempt] — never the state this effect sets — so `setRosterLoading(true)` does
-  // not re-fire it and cancel its own in-flight fetch (see rosterAttempt above). The guard reads the
-  // current roster/rosterLoading from the render closure to avoid a duplicate fetch.
+  // not re-fire it and cancel its own in-flight fetch (see rosterAttempt above). The guard intentionally
+  // does NOT include `roster`: a rosterAttempt bump must be able to REFETCH an already-loaded roster
+  // (the old roster stays in place until the new one arrives, so there is no flicker); rosterLoading
+  // still blocks an overlapping fetch, and everOpened/rosterAttempt are the only things that re-run it.
   useEffect(() => {
-    if (!everOpened || roster || rosterLoading) return;
+    if (!everOpened || rosterLoading) return;
     let alive = true;
     setRosterLoading(true);
     setRosterError(null);
@@ -238,15 +245,29 @@ export function GrantBotSwitcher({
     if (!roster || target?.kind !== "client" || target.name !== null) return;
     const name = roster.find((c) => c.id === target.id)?.name ?? null;
     if (name) {
+      refetchedForRef.current = null; // resolved — clear the one-shot so a later missing id can refetch
       setTarget({ kind: "client", id: target.id, name });
-    } else if (showFirm) {
+      return;
+    }
+    // The id is not in the loaded roster. If it is the client whose dashboard we are ON, the roster is
+    // STALE, not wrong: the client exists (we are on its RLS-gated page) and was simply created after
+    // the session's first roster fetch. Refetch ONCE (the ref one-shots it per id) and re-resolve,
+    // rather than silently repointing the bubble at Firm / another client (Claude Code Review #545). A
+    // genuinely-absent client — archived/rejected, kept out of the roster by the pipeline_stage filter —
+    // is still missing after the refetch, so it falls through to the fallback below instead of looping.
+    if (target.id === dashId && refetchedForRef.current !== target.id) {
+      refetchedForRef.current = target.id;
+      setRosterAttempt((n) => n + 1);
+      return;
+    }
+    if (showFirm) {
       setTarget({ kind: "firm" });
     } else if (roster[0]) {
       setTarget({ kind: "client", id: roster[0].id, name: roster[0].name });
     } else {
       setTarget(null);
     }
-  }, [roster, target, showFirm]);
+  }, [roster, target, showFirm, dashId]);
 
   const onConversationChange = useCallback((id: string | null) => setConvId(id), []);
 
@@ -266,7 +287,13 @@ export function GrantBotSwitcher({
     if (target.kind === "firm") {
       router.push("/grantbot");
     } else {
-      router.push(`/clients/${target.id}/grantbot?c=${convId ?? BLANK_CONVERSATION}`);
+      // Prefer the switcher's live convId, but right after a "?grantbot=" collapse-to-corner the corner
+      // chat may not have reported its conversation yet (convId still null); fall back to the deep-link's
+      // own conversation before BLANK, or Expand would open a fresh blank thread instead of the one just
+      // collapsed (Claude Code Review #545).
+      const conv =
+        convId ?? (pendingInitial && pendingInitial.clientId === target.id ? pendingInitial.convId : null);
+      router.push(`/clients/${target.id}/grantbot?c=${conv ?? BLANK_CONVERSATION}`);
     }
   }
 
