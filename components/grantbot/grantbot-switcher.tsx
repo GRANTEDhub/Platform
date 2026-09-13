@@ -1,57 +1,123 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { usePathname, useRouter } from "next/navigation";
 import { Loader2, Maximize2, Sparkles, X } from "lucide-react";
 import { BRAND } from "@/lib/brand";
-import { firmSwitcherVisible } from "@/lib/grantbot/switcher";
+import {
+  switcherVisible,
+  clientDashboardId,
+  SWITCHER_TARGET_KEY,
+  type RosterClient,
+  type SwitcherTarget,
+} from "@/lib/grantbot/switcher";
+import { BLANK_CONVERSATION } from "@/lib/grantbot/wire";
+import { TargetPicker } from "./target-picker";
 
-// The firm chat arrives on first open, not with the layout — the panel mounts on EVERY internal
-// page, and most page views never ask GrantBot anything, so opening is what pays for the transcript
-// fetch and the chat code. Mirrors the per-client GrantBotLauncher's lazy import.
+// Both chat bodies arrive on first open, not with the layout — the Switcher mounts on EVERY internal
+// page and most views never ask GrantBot anything, so opening is what pays for the chat code + the
+// transcript fetch. Lazy, like the launcher this subsumes.
+const spinner = (
+  <p className="flex flex-1 items-center gap-2 p-4 text-[13px] text-muted-foreground">
+    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Opening…
+  </p>
+);
 const FirmGrantBotChat = dynamic(() => import("./firm-grantbot-chat").then((m) => m.FirmGrantBotChat), {
   ssr: false,
-  loading: () => (
-    <p className="flex flex-1 items-center gap-2 p-4 text-[13px] text-muted-foreground">
-      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Opening…
-    </p>
-  ),
+  loading: () => spinner,
+});
+const GrantBotChat = dynamic(() => import("./grantbot-chat").then((m) => m.GrantBotChat), {
+  ssr: false,
+  loading: () => spinner,
 });
 
+// Internal target: like SwitcherTarget, but a client's name may be UNRESOLVED (null) until the roster
+// loads. The context-aware default and the deep-link set the id first; the resolution effect fills
+// the name. The hosted GrantBotChat requires a real name, so it only mounts once name is resolved.
+type InternalTarget = { kind: "firm" } | { kind: "client"; id: string; name: string | null };
+
 // The GrantBot Switcher — a bubble in the bottom-right of every internal page, and the panel it
-// opens. S1 hosts the FIRM bot only (admin-only, roster-wide). Mounted once in (app)/layout.tsx
-// (gated by GRANTBOT_SWITCHER_ENABLED + GRANTBOT_FIRM_ENABLED), so it persists across SPA navigation.
+// opens. S2 hosts the FIRM bot AND any CLIENT bot, chosen from the roster picker in the header. It
+// OWNS the corner everywhere (the client dashboard mounts the launcher only while this flag is OFF).
 //
-// ── WHY IT STANDS DOWN ON THE CLIENT DASHBOARD ──
+// ── ONE HOST, TWO BODIES ──
+// The picker's target decides which existing chat renders under the shared navy header:
+// FirmGrantBotChat (firm) or the per-client GrantBotChat corner (a client) — the SAME components the
+// /grantbot page and the launcher use, carrying paste/vision/cross-thread/rename already. Nothing
+// about a turn is new; this is a host + a picker over two backends that both exist.
 //
-// The per-client launcher owns the corner on EXACTLY the client dashboard (/clients/<id>) — the only
-// page it mounts on — and that bot needs the client's NAME, which only the record page has (the
-// layout knows the path, not the name). So there the Switcher hides and the launcher shows that
-// client's bot — never a double bubble. On the client's SUB-routes (/clients/<id>/roadmap, …/grantbot)
-// and the /clients/new/invite forms there is NO launcher, so the firm bubble DOES show there (else
-// those pages would have no bot at all — Codex #544). It also hides on the firm full page /grantbot,
-// which already IS the full firm chat. firmSwitcherVisible(pathname, isAdmin) is re-evaluated on every
-// navigation. S2 gives the Switcher a roster picker (and every client's identity with it), at which
-// point it hosts any client bot from anywhere and subsumes the launcher.
+// ── WHICH TARGET, BY DEFAULT ──
+// Landing on a client dashboard (/clients/<id>) points the target at THAT client (matching the
+// launcher it replaces) — re-asserted whenever the dashboard id changes, so a manual pick sticks
+// while you stay on one dashboard but the next dashboard shows its own client. Off dashboards, the
+// last manual pick (localStorage) or Firm. A "?grantbot=" deep-link (the full page's Collapse to
+// corner) auto-opens on that client's conversation.
 //
-// ── OPENING IS FREE, AND STAYS FREE ──
-//
-// Nothing is fetched until the bubble is clicked; after that the panel stays MOUNTED but invisible,
-// so closing — AND navigating onto a page where the Switcher stands down — keeps the unsent draft and
-// the place in the thread (an early `return null` would unmount the chat and lose the draft — Codex
-// #544). The transcript is server-side, so it also survives the tab closing entirely.
-export function GrantBotSwitcher({ isAdmin }: { isAdmin: boolean }) {
+// ── OPENING IS FREE ──
+// Nothing is fetched until first open; then the panel stays MOUNTED but hidden, so closing — and
+// navigating onto a full-chat page where the Switcher stands down — keeps the draft and place.
+export function GrantBotSwitcher({
+  isAdmin,
+  firmEnabled,
+  visionEnabled,
+}: {
+  isAdmin: boolean;
+  firmEnabled: boolean;
+  visionEnabled: boolean;
+}) {
   const router = useRouter();
   const pathname = usePathname();
-  const visible = firmSwitcherVisible(pathname, isAdmin);
+  const visible = switcherVisible(pathname);
+  const dashId = clientDashboardId(pathname);
+  const showFirm = isAdmin && firmEnabled;
 
   const [everOpened, setEverOpened] = useState(false);
   const [open, setOpen] = useState(false);
   const [shown, setShown] = useState(false);
+  const [openSignal, setOpenSignal] = useState(0);
 
-  // Separate from `open` so the panel transitions in rather than appearing: it has to be in the tree
-  // at its start position for one frame before the end position can animate.
+  const [target, setTarget] = useState<InternalTarget | null>(null);
+  const [convId, setConvId] = useState<string | null>(null);
+  // A deep-link's conversation to hand the client body on its first mount (Collapse to corner).
+  const [pendingInitial, setPendingInitial] = useState<{ clientId: string; convId: string | null; blank: boolean } | null>(null);
+
+  const [roster, setRoster] = useState<RosterClient[] | null>(null);
+  const [rosterLoading, setRosterLoading] = useState(false);
+  const [rosterError, setRosterError] = useState<string | null>(null);
+  // Bumped by retryRoster to re-run the fetch effect. The effect must NOT depend on roster/
+  // rosterLoading/rosterError (state it sets itself): `setRosterLoading(true)` would then change the
+  // deps, tearing down the running effect (its cleanup sets alive=false) before the fetch resolves —
+  // so the result never commits and the roster is stuck loading forever (Claude Code Review #545). An
+  // explicit attempt counter is the only dep that re-runs it.
+  const [rosterAttempt, setRosterAttempt] = useState(0);
+  // Whether the current target was a MANUAL pick (vs auto-assigned from the dashboard). A manual pick
+  // persists off-dashboard; an auto target is dropped when you leave the dashboard. A ref, so the
+  // dashboard effect (keyed on dashId) reads it without a stale closure or an extra dep.
+  const manualPickRef = useRef(false);
+  // One-shot guard: the client id we last force-refetched the roster for because it was missing from
+  // the loaded roster (a just-created client not yet in the cached list). Prevents an endless refetch
+  // loop for a client that is genuinely absent (archived/rejected, filtered out of the roster).
+  const refetchedForRef = useRef<string | null>(null);
+  // Request generation for the roster fetch: each fetch run takes the next value and only the LATEST run
+  // commits its result, so a superseded in-flight fetch can never leave rosterLoading stuck (see the
+  // fetch effect for the wedge this prevents).
+  const fetchGenRef = useRef(0);
+  // The latest target, mirrored to a ref so the dashId-keyed dashboard effect (whose closure is stale —
+  // its only dep is dashId) can read the CURRENT target when deciding whether leaving a dashboard would
+  // merely re-derive the same already-resolved client (a no-op) rather than a real target change.
+  const targetRef = useRef(target);
+  useEffect(() => {
+    targetRef.current = target;
+  });
+
+  const openPanel = useCallback(() => {
+    setEverOpened(true);
+    setOpen(true);
+    setOpenSignal((n) => n + 1);
+  }, []);
+
+  // Transition-in: the panel has to be in the tree at its start position for a frame before animating.
   useEffect(() => {
     if (!open) {
       setShown(false);
@@ -61,6 +127,7 @@ export function GrantBotSwitcher({ isAdmin }: { isAdmin: boolean }) {
     return () => cancelAnimationFrame(id);
   }, [open]);
 
+  // Escape closes the panel (the picker's own Escape stops propagation so it closes only the menu).
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -70,28 +137,216 @@ export function GrantBotSwitcher({ isAdmin }: { isAdmin: boolean }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
-  // Navigating onto a page where the Switcher stands down CLOSES the panel (so returning shows the
-  // bubble, not a snapped-back panel) but does NOT unmount it — the panel subtree stays mounted while
-  // `everOpened`, only hidden, so the unsent draft survives (Codex #544). The visible-gates below keep
-  // it invisible and non-interactive while hidden.
+  // Standing down on a full-chat page closes (but does not unmount) the panel, so the draft survives.
   useEffect(() => {
     if (!visible) setOpen(false);
   }, [visible]);
 
-  function openPanel() {
-    setEverOpened(true);
-    setOpen(true);
+  // Fetch the roster on first open, on each explicit retry, and on a stale-cache refetch (a dashboard
+  // client missing from the loaded roster — see the resolve-name effect). Deps are ONLY
+  // [everOpened, rosterAttempt] — never the state this effect sets. Supersession is handled by a
+  // REQUEST-GENERATION ref, NOT a rosterLoading guard: each run takes the next gen and only the LATEST
+  // run commits (roster / error / clearing rosterLoading). This is why a second rosterAttempt bump while
+  // a fetch is still in flight is safe — the older fetch's commits are dropped by the gen check and the
+  // newer fetch resets rosterLoading. A rosterLoading guard here instead wedged the panel: it skipped
+  // the new fetch, and the superseded fetch's own cancellation then meant nothing ever reset
+  // rosterLoading, so it stuck true forever (Claude Code Review #545). The old roster stays in place
+  // until the new one arrives, so a refetch causes no flicker.
+  useEffect(() => {
+    if (!everOpened) return;
+    const gen = ++fetchGenRef.current;
+    setRosterLoading(true);
+    setRosterError(null);
+    (async () => {
+      try {
+        const res = await fetch("/api/grantbot/roster");
+        if (!res.ok) throw new Error(String(res.status));
+        const data = (await res.json()) as { clients?: RosterClient[] };
+        if (fetchGenRef.current === gen) setRoster(data.clients ?? []);
+      } catch {
+        if (fetchGenRef.current === gen) setRosterError("Couldn't load the client list.");
+      } finally {
+        if (fetchGenRef.current === gen) setRosterLoading(false);
+      }
+    })();
+    return () => {
+      // Supersede a still-in-flight fetch on re-run/unmount by advancing the gen, so its commits are
+      // dropped by the gen check above — no alive flag whose cancellation could strand rosterLoading.
+      fetchGenRef.current++;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [everOpened, rosterAttempt]);
+
+  // Explicit retry after a roster-fetch failure: clear the error and bump the attempt so the fetch
+  // effect re-runs (its deps do not include rosterError, so clearing alone would not re-run it).
+  const retryRoster = useCallback(() => {
+    setRosterError(null);
+    setRosterAttempt((n) => n + 1);
+  }, []);
+
+  // The off-dashboard default target: the last manual pick (localStorage), else Firm, else null (the
+  // open-time effect fills the first accessible client once the roster loads). Shared by the leave-a-
+  // dashboard reset and the open-time default.
+  const computeDefaultTarget = useCallback((): InternalTarget | null => {
+    const stored = readStoredTarget();
+    // Strip the persisted name (name: null) so the resolve-name effect re-validates the id against the
+    // LIVE roster before the target is treated as resolved: a client that was renamed shows its current
+    // name, and one that was deleted / is no longer accessible falls back (firm, else first client, else
+    // nothing) instead of mounting a chat against a dead id or showing a stale name (Claude Code Review
+    // #545). Same discipline as the dashboard path, which also sets name: null on purpose.
+    if (stored?.kind === "client") return { kind: "client", id: stored.id, name: null };
+    if (showFirm) return { kind: "firm" };
+    return null;
+  }, [showFirm]);
+
+  // Dashboard follow + deep-link, keyed on navigation (dashId).
+  //   • On a client dashboard: point the target at that client (auto, keeping a resolved same-client
+  //     target so the name is not re-cleared). A "?grantbot=" param additionally auto-opens on that
+  //     conversation and is cleared so a refresh / shared URL does not reopen it; WITHOUT the param,
+  //     any stale deep-link from an earlier visit is cleared so it can't re-force an old thread.
+  //   • Leaving a dashboard (dashId → null): an AUTO target does not persist off-dashboard — fall back
+  //     to the off-dashboard default (last manual pick / Firm). A MANUAL pick stays.
+  useEffect(() => {
+    if (dashId) {
+      const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+      const gb = params?.get("grantbot") ?? null;
+      if (gb !== null) {
+        const blank = gb === BLANK_CONVERSATION || gb === "1";
+        setPendingInitial({ clientId: dashId, convId: blank ? null : gb, blank });
+        openPanel();
+        if (typeof window !== "undefined") {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("grantbot");
+          window.history.replaceState(window.history.state, "", url.toString());
+        }
+      } else {
+        setPendingInitial(null);
+      }
+      manualPickRef.current = false;
+      setTarget((prev) => (prev?.kind === "client" && prev.id === dashId ? prev : { kind: "client", id: dashId, name: null }));
+      setConvId(null);
+    } else if (!manualPickRef.current) {
+      const next = computeDefaultTarget();
+      const prev = targetRef.current;
+      const sameResolvedClient =
+        next?.kind === "client" && prev?.kind === "client" && prev.id === next.id && prev.name !== null;
+      // Keep an already-resolved same-client target mounted rather than re-deriving it as a fresh
+      // {name:null} object (which would unmount/remount the id-keyed GrantBotChat — a spinner flash + a
+      // wasted transcript refetch when nothing changed). Only a real change resets convId (Claude Code
+      // Review #545).
+      if (!sameResolvedClient) {
+        setTarget(next);
+        setConvId(null);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dashId]);
+
+  // Open-time default when NOT on a client dashboard (the effect above already set a dashboard
+  // target). Last manual pick (localStorage), else Firm, else the first accessible client.
+  useEffect(() => {
+    if (!open || target !== null) return;
+    const stored = readStoredTarget();
+    if (stored?.kind === "client") {
+      // name: null → the resolve-name effect validates the id against the live roster (see
+      // computeDefaultTarget); never trust the persisted name (Claude Code Review #545).
+      setTarget({ kind: "client", id: stored.id, name: null });
+      return;
+    }
+    if (stored?.kind === "firm" && showFirm) {
+      setTarget({ kind: "firm" });
+      return;
+    }
+    if (showFirm) {
+      setTarget({ kind: "firm" });
+      return;
+    }
+    if (roster && roster[0]) setTarget({ kind: "client", id: roster[0].id, name: roster[0].name });
+    // else: no firm, roster still loading or empty → wait / stay null (nothing to host).
+  }, [open, target, roster, showFirm]);
+
+  // Resolve a client target's name from the roster; if the id is not in the accessible roster, fall
+  // back (firm, else first client, else nothing).
+  useEffect(() => {
+    if (!roster || target?.kind !== "client" || target.name !== null) return;
+    const name = roster.find((c) => c.id === target.id)?.name ?? null;
+    if (name) {
+      refetchedForRef.current = null; // resolved — clear the one-shot so a later missing id can refetch
+      setTarget({ kind: "client", id: target.id, name });
+      return;
+    }
+    // The id is not in the loaded roster. If it is the client whose dashboard we are ON, the roster is
+    // STALE, not wrong: the client exists (we are on its RLS-gated page) and was simply created after
+    // the session's first roster fetch. Refetch ONCE (the ref one-shots it per id) and re-resolve,
+    // rather than silently repointing the bubble at Firm / another client (Claude Code Review #545). A
+    // genuinely-absent client — archived/rejected, kept out of the roster by the pipeline_stage filter —
+    // is still missing after the refetch, so it falls through to the fallback below instead of looping.
+    if (target.id === dashId && refetchedForRef.current !== target.id) {
+      refetchedForRef.current = target.id;
+      setRosterAttempt((n) => n + 1);
+      return;
+    }
+    // The id resolves against neither the loaded roster nor a refetch — it is genuinely inaccessible
+    // (deleted, or archived/rejected and filtered out of the roster). Forget the stored preference if it
+    // points at this id, so the open-time-default effect does not re-derive this same dead pick from
+    // localStorage on the next null-target render: without this, open-time-default (re-reads storage →
+    // {id, name:null}) and this effect (nulls the unresolvable target) ping-pong forever and freeze the
+    // tab — the failure mode of the round-3 name-strip revalidation on a stale pick (Claude Code Review
+    // #545).
+    const stored = readStoredTarget();
+    if (stored?.kind === "client" && stored.id === target.id) clearStoredTarget();
+    if (showFirm) {
+      setTarget({ kind: "firm" });
+    } else if (roster[0]) {
+      setTarget({ kind: "client", id: roster[0].id, name: roster[0].name });
+    } else {
+      setTarget(null);
+    }
+  }, [roster, target, showFirm, dashId]);
+
+  const onConversationChange = useCallback((id: string | null) => setConvId(id), []);
+
+  function pick(t: SwitcherTarget) {
+    manualPickRef.current = true; // a manual pick persists off-dashboard (vs an auto dashboard target)
+    setTarget(t);
+    setConvId(null);
+    setPendingInitial(null); // a manual switch is not the deep-linked thread
+    persistTarget(t);
   }
 
-  // Expand = the standalone /grantbot page. Close the corner panel first: /grantbot renders the full
-  // firm chat, and an open corner panel would overlay a second chat instance on it (Codex #544).
-  // (/grantbot is also excluded from firmSwitcherVisible, so the bubble does not return there; the
-  // full page loads the most-recent thread — carrying the exact conversation id in is an S2 polish
-  // item, the firm page reads no ?c= param yet.)
+  // Expand = the full page for the current target, carrying the client conversation (the firm page
+  // reads no ?c= yet, so firm just opens /grantbot).
   function expand() {
+    if (!target) return;
     setOpen(false);
-    router.push("/grantbot");
+    if (target.kind === "firm") {
+      router.push("/grantbot");
+    } else {
+      // Prefer the switcher's live convId, but right after a "?grantbot=" collapse-to-corner the corner
+      // chat may not have reported its conversation yet (convId still null); fall back to the deep-link's
+      // own conversation before BLANK, or Expand would open a fresh blank thread instead of the one just
+      // collapsed (Claude Code Review #545).
+      const conv =
+        convId ?? (pendingInitial && pendingInitial.clientId === target.id ? pendingInitial.convId : null);
+      router.push(`/clients/${target.id}/grantbot?c=${conv ?? BLANK_CONVERSATION}`);
+    }
   }
+
+  // A fully-resolved target for the header + body (client name known). Null while resolving.
+  const resolved: SwitcherTarget | null =
+    target === null
+      ? null
+      : target.kind === "firm"
+        ? { kind: "firm" }
+        : target.name
+          ? { kind: "client", id: target.id, name: target.name }
+          : null;
+
+  const ariaTarget = resolved
+    ? resolved.kind === "firm"
+      ? "Firm"
+      : resolved.name
+    : "";
 
   return (
     <>
@@ -109,10 +364,7 @@ export function GrantBotSwitcher({ isAdmin }: { isAdmin: boolean }) {
       {everOpened && (
         <div
           role="dialog"
-          aria-label="GrantBot — Firm"
-          // Hidden (not unmounted) while closed OR while the Switcher stands down on this page, so the
-          // draft survives; `invisible` is visibility:hidden, so it is also out of the a11y tree and
-          // hit-testing and never sits over the per-client launcher.
+          aria-label={ariaTarget ? `GrantBot — ${ariaTarget}` : "GrantBot"}
           aria-hidden={!(open && visible)}
           className={`fixed bottom-7 right-7 z-40 flex h-[min(588px,calc(100vh-3.5rem))] w-[min(404px,calc(100vw-3.5rem))] flex-col overflow-hidden rounded-2xl bg-white shadow-floating transition-all duration-[280ms] ease-entrance ${
             open && shown && visible
@@ -121,8 +373,6 @@ export function GrantBotSwitcher({ isAdmin }: { isAdmin: boolean }) {
           }`}
         >
           <div className="relative flex-shrink-0 overflow-hidden bg-brand-navy px-[18px] pb-3.5 pt-4">
-            {/* The accent bloom, bled off the top-right corner — BRAND.orangeGlow, so there is still
-                exactly one orange in the product. */}
             <div
               aria-hidden="true"
               className="pointer-events-none absolute -right-[30px] -top-[46px] h-[140px] w-[140px] rounded-full"
@@ -137,9 +387,19 @@ export function GrantBotSwitcher({ isAdmin }: { isAdmin: boolean }) {
               </div>
               <div className="min-w-0 flex-1">
                 <p className="truncate font-serif text-[16px] font-bold text-white">GrantBot</p>
-                <p className="truncate text-[11.5px] text-white/55">
-                  Firm <span className="text-white/30">·</span> read-only
-                </p>
+                {resolved ? (
+                  <TargetPicker
+                    target={resolved}
+                    isAdmin={isAdmin}
+                    firmEnabled={firmEnabled}
+                    roster={roster}
+                    loading={rosterLoading}
+                    error={rosterError}
+                    onPick={pick}
+                  />
+                ) : (
+                  <p className="truncate text-[11.5px] text-white/40">…</p>
+                )}
               </div>
               <div className="flex flex-shrink-0 items-center gap-0.5 pt-px">
                 <button
@@ -147,7 +407,8 @@ export function GrantBotSwitcher({ isAdmin }: { isAdmin: boolean }) {
                   onClick={expand}
                   title="Open full page"
                   aria-label="Open full page"
-                  className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-lg text-white/55 transition-colors hover:bg-white/10 hover:text-white"
+                  disabled={!resolved}
+                  className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-lg text-white/55 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-40"
                 >
                   <Maximize2 className="h-3.5 w-3.5" />
                 </button>
@@ -163,12 +424,90 @@ export function GrantBotSwitcher({ isAdmin }: { isAdmin: boolean }) {
               </div>
             </div>
           </div>
-          {/* The accent rule. Carries no type, so it is `orange` and not `orangeFill`. */}
           <div className="h-0.5 flex-shrink-0 bg-brand-orange" />
 
-          <FirmGrantBotChat variant="corner" />
+          {!resolved ? (
+            // Unresolved: normally a brief roster load (spinner). But if the roster FETCH failed while
+            // resolving a client target, the picker (which renders the error) is unmounted — so surface
+            // the error + a retry HERE, or the user is stranded on a permanent spinner (Vercel #545).
+            rosterError ? (
+              <div className="flex flex-1 flex-col items-center justify-center gap-2.5 p-6 text-center">
+                <p className="text-[13px] text-muted-foreground">{rosterError}</p>
+                <button
+                  type="button"
+                  onClick={retryRoster}
+                  className="inline-flex h-8 items-center rounded-lg bg-brand-navy px-3 text-[12.5px] font-semibold text-white transition-colors hover:bg-brand-navyHover"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : roster !== null && roster.length === 0 && !showFirm ? (
+              // Nothing to host: the roster loaded EMPTY and this actor has no Firm access (a contractor
+              // with no client assignments yet, or a fresh env with no clients). Without this branch the
+              // target stays null forever and the panel hangs on the spinner with no error and no retry
+              // — worse than the base branch, where such a user never saw the bubble (Claude Code Review
+              // #545).
+              <div className="flex flex-1 flex-col items-center justify-center gap-1.5 p-6 text-center">
+                <p className="text-[13px] font-medium text-foreground">No clients available</p>
+                <p className="text-[12px] text-muted-foreground">
+                  GrantBot opens once a client is assigned to you.
+                </p>
+              </div>
+            ) : (
+              spinner
+            )
+          ) : resolved.kind === "firm" ? (
+            <FirmGrantBotChat variant="corner" />
+          ) : (
+            <GrantBotChat
+              key={resolved.id}
+              clientId={resolved.id}
+              clientName={resolved.name}
+              variant="corner"
+              initialConversationId={
+                pendingInitial && pendingInitial.clientId === resolved.id ? pendingInitial.convId : undefined
+              }
+              initialBlank={
+                pendingInitial && pendingInitial.clientId === resolved.id ? pendingInitial.blank : undefined
+              }
+              onConversationChange={onConversationChange}
+              visionEnabled={visionEnabled}
+              openSignal={openSignal}
+            />
+          )}
         </div>
       )}
     </>
   );
+}
+
+function readStoredTarget(): InternalTarget | null {
+  try {
+    const raw = localStorage.getItem(SWITCHER_TARGET_KEY);
+    if (!raw) return null;
+    const t = JSON.parse(raw) as { kind?: string; id?: unknown; name?: unknown };
+    if (t?.kind === "firm") return { kind: "firm" };
+    if (t?.kind === "client" && typeof t.id === "string" && typeof t.name === "string") {
+      return { kind: "client", id: t.id, name: t.name };
+    }
+  } catch {
+    /* private mode / cleared storage — no preference */
+  }
+  return null;
+}
+
+function persistTarget(t: SwitcherTarget) {
+  try {
+    localStorage.setItem(SWITCHER_TARGET_KEY, JSON.stringify(t));
+  } catch {
+    /* non-fatal — the pick still applies this session */
+  }
+}
+
+function clearStoredTarget() {
+  try {
+    localStorage.removeItem(SWITCHER_TARGET_KEY);
+  } catch {
+    /* private mode / cleared storage — nothing to forget */
+  }
 }

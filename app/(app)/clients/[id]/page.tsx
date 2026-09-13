@@ -5,6 +5,7 @@ import { Clock, Layers, Loader2, Mail, MessageSquareText, Plug, Play, type Lucid
 import { requireUser } from "@/lib/auth";
 import { GrantBotLauncher } from "@/components/grantbot/grantbot-launcher";
 import { grantbotVisionEnabled } from "@/lib/grantbot/vision";
+import { switcherEnabled } from "@/lib/grantbot/switcher";
 import { BLANK_CONVERSATION } from "@/lib/grantbot/wire";
 import { createClient } from "@/lib/supabase/server";
 import { AutoRefresh } from "@/components/ui/auto-refresh";
@@ -814,15 +815,22 @@ export default async function ClientDashboardPage({
         client portal will mount too (Phase 2), and GrantBot's context pack carries internal staff
         notes -- so the launcher hangs off this staff-only route instead, where the portal cannot
         inherit it by rendering the same component. Fixed-position, so it needs no place in the
-        layout. Nothing is fetched until it is opened. */}
-    <GrantBotLauncher
-      clientId={client.id}
-      clientName={client.name}
-      startOpen={grantbotParam !== undefined}
-      startConversationId={grantbotConversationId}
-      startBlank={grantbotBlank}
-      visionEnabled={grantbotVisionEnabled()}
-    />
+        layout. Nothing is fetched until it is opened.
+
+        Gated on !switcherEnabled(): once the universal Switcher (S2) is on it OWNS this corner too
+        (defaulting to this client), so the launcher would double the bubble. With the flag OFF the
+        launcher renders exactly as before — the byte-identical revert path — and the Switcher's
+        ?grantbot= deep-link (Collapse to corner) still lands here either way. */}
+    {!switcherEnabled() && (
+      <GrantBotLauncher
+        clientId={client.id}
+        clientName={client.name}
+        startOpen={grantbotParam !== undefined}
+        startConversationId={grantbotConversationId}
+        startBlank={grantbotBlank}
+        visionEnabled={grantbotVisionEnabled()}
+      />
+    )}
     </>
   );
 }
