@@ -280,6 +280,10 @@ export function GrantBotSwitcher({
         setPendingInitial(null);
       }
       manualPickRef.current = false;
+      // A Recent firm-thread pick is a one-off jump, not a sticky pin: clear the firm "open this thread"
+      // hint on entering a dashboard (mirrors the pendingInitial null above) so a later return to Firm
+      // remounts on the true most-recent thread, not the stale picked id (Claude Code Review #547).
+      setFirmPending(null);
       // Keep an already-resolved same-client target mounted, and reset convId ONLY on a real client
       // change (or a deep-link, which targets a specific conversation): re-entering the dashboard of the
       // client the corner is already showing shouldn't drop its tracked conversation and open a blank

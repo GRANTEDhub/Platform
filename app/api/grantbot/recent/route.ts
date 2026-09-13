@@ -28,7 +28,11 @@ export async function GET() {
   const supabase = createClient();
 
   // The clients this actor can see (RLS) → id→name, and the id set to scope client threads to.
-  const { data: clientRows } = await supabase.from("client_overview").select("id, name");
+  // Surface a DB failure as a 500 (not a swallowed empty result) so the client's error+Retry UI fires
+  // instead of masking the failure as an honest-looking "No recent conversations yet." (Vercel Agent
+  // Review #547) — a swallowed error here would also under-scope client threads.
+  const { data: clientRows, error: clientErr } = await supabase.from("client_overview").select("id, name");
+  if (clientErr) return NextResponse.json({ error: "Failed to load clients" }, { status: 500 });
   const nameById = new Map<string, string>();
   for (const c of clientRows ?? []) {
     if (c && typeof c.id === "string" && typeof c.name === "string" && c.name.length > 0) {
@@ -44,13 +48,14 @@ export async function GET() {
   // the .in()).
   let clientThreads: RecentThread[] = [];
   if (visibleIds.length > 0) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("grantbot_conversations")
       .select("id, title, client_id, last_message_at")
       .eq("scope", "client")
       .in("client_id", visibleIds)
       .order("last_message_at", { ascending: false })
       .limit(LIMIT);
+    if (error) return NextResponse.json({ error: "Failed to load conversations" }, { status: 500 });
     clientThreads = (data ?? []).flatMap((r) => {
       const clientId = typeof r.client_id === "string" ? r.client_id : null;
       const clientName = clientId ? nameById.get(clientId) ?? null : null;
@@ -73,12 +78,13 @@ export async function GET() {
   // flag-gated firm routes would 404 on.
   let firmThreads: RecentThread[] = [];
   if (isAdmin && firmGrantbotEnabled()) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("grantbot_conversations")
       .select("id, title, last_message_at")
       .eq("scope", "firm")
       .order("last_message_at", { ascending: false })
       .limit(LIMIT);
+    if (error) return NextResponse.json({ error: "Failed to load firm conversations" }, { status: 500 });
     firmThreads = (data ?? []).map((r) => ({
       id: String(r.id),
       scope: "firm" as const,
