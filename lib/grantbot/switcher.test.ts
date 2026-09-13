@@ -7,7 +7,9 @@ import {
   switcherVisible,
   rosterUrl,
   pickRosterClients,
+  mergeRecentThreads,
   type RosterRow,
+  type RecentThread,
 } from "./switcher";
 
 // Deterministic — no model, no network. Locks the Switcher's gates:
@@ -142,5 +144,33 @@ describe("pickRosterClients", () => {
       { id: "a", name: "Acme" },
       { id: "b", name: "Beacon" },
     ]);
+  });
+});
+
+describe("mergeRecentThreads", () => {
+  const firm: RecentThread[] = [
+    { id: "f1", scope: "firm", clientId: null, clientName: null, title: "Firm A", lastMessageAt: "2026-09-13T10:00:00Z" },
+    { id: "f2", scope: "firm", clientId: null, clientName: null, title: "Firm B", lastMessageAt: "2026-09-13T08:00:00Z" },
+  ];
+  const client: RecentThread[] = [
+    { id: "c1", scope: "client", clientId: "x", clientName: "Acme", title: "Acme A", lastMessageAt: "2026-09-13T09:00:00Z" },
+    { id: "c2", scope: "client", clientId: "y", clientName: "Beacon", title: "Beacon A", lastMessageAt: "2026-09-13T11:00:00Z" },
+  ];
+
+  it("interleaves firm + client by lastMessageAt, most recent first", () => {
+    expect(mergeRecentThreads(firm, client, 10).map((t) => t.id)).toEqual(["c2", "f1", "c1", "f2"]);
+  });
+
+  it("caps to the limit", () => {
+    expect(mergeRecentThreads(firm, client, 2).map((t) => t.id)).toEqual(["c2", "f1"]);
+    expect(mergeRecentThreads(firm, client, 0)).toEqual([]);
+  });
+
+  it("handles empty inputs and sorts an empty/missing timestamp last", () => {
+    expect(mergeRecentThreads([], [], 5)).toEqual([]);
+    const withBlank: RecentThread[] = [
+      { id: "n", scope: "client", clientId: "z", clientName: "NoTime", title: null, lastMessageAt: "" },
+    ];
+    expect(mergeRecentThreads(firm, withBlank, 10).map((t) => t.id)).toEqual(["f1", "f2", "n"]);
   });
 });

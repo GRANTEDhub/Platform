@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { usePathname, useRouter } from "next/navigation";
-import { Loader2, Maximize2, Sparkles, X } from "lucide-react";
+import { History, Loader2, Maximize2, Sparkles, X } from "lucide-react";
 import { BRAND } from "@/lib/brand";
 import {
   switcherVisible,
@@ -11,6 +11,7 @@ import {
   rosterUrl,
   SWITCHER_TARGET_KEY,
   type RosterClient,
+  type RecentThread,
   type SwitcherTarget,
 } from "@/lib/grantbot/switcher";
 import { BLANK_CONVERSATION } from "@/lib/grantbot/wire";
@@ -119,6 +120,23 @@ export function GrantBotSwitcher({
     dashIdRef.current = dashId;
   });
 
+  // ── S3: the unified "Recent" view ──
+  // A cross-scope list of the actor's recent threads (firm + client). Additive — the picker still
+  // starts new threads; Recent is for jumping back into an existing one.
+  const [recentOpen, setRecentOpen] = useState(false);
+  const [recent, setRecent] = useState<RecentThread[] | null>(null);
+  const [recentLoading, setRecentLoading] = useState(false);
+  const [recentError, setRecentError] = useState<string | null>(null);
+  const [recentAttempt, setRecentAttempt] = useState(0);
+  const recentGenRef = useRef(0);
+  // A specific FIRM thread to open on the firm chat's next mount (a Recent pick); paired with a
+  // bodyNonce bump that forces the remount which consumes it. (Client threads ride pendingInitial.)
+  const [firmPending, setFirmPending] = useState<string | null>(null);
+  // Bumped on a Recent pick to force the chat body to remount, so a picked thread opens even when it
+  // belongs to the target already showing — the corner chats' initial-load is mount-only (like the
+  // full page), so a changed key is how a different thread is opened.
+  const [bodyNonce, setBodyNonce] = useState(0);
+
   const openPanel = useCallback(() => {
     setEverOpened(true);
     setOpen(true);
@@ -192,6 +210,37 @@ export function GrantBotSwitcher({
     setRosterAttempt((n) => n + 1);
   }, []);
 
+  // Fetch the Recent list whenever the view opens (fresh each time) and on an explicit retry. Same
+  // request-generation discipline as the roster fetch: only the latest run commits, and the cleanup
+  // advances the gen, so re-opening the view while a fetch is in flight can't wedge recentLoading.
+  useEffect(() => {
+    if (!recentOpen) return;
+    const gen = ++recentGenRef.current;
+    setRecentLoading(true);
+    setRecentError(null);
+    (async () => {
+      try {
+        const res = await fetch("/api/grantbot/recent");
+        if (!res.ok) throw new Error(String(res.status));
+        const data = (await res.json()) as { threads?: RecentThread[] };
+        if (recentGenRef.current === gen) setRecent(data.threads ?? []);
+      } catch {
+        if (recentGenRef.current === gen) setRecentError("Couldn't load recent conversations.");
+      } finally {
+        if (recentGenRef.current === gen) setRecentLoading(false);
+      }
+    })();
+    return () => {
+      recentGenRef.current++;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recentOpen, recentAttempt]);
+
+  const retryRecent = useCallback(() => {
+    setRecentError(null);
+    setRecentAttempt((n) => n + 1);
+  }, []);
+
   // The off-dashboard default target: the last manual pick (localStorage), else Firm, else null (the
   // open-time effect fills the first accessible client once the roster loads). Shared by the leave-a-
   // dashboard reset and the open-time default.
@@ -231,6 +280,10 @@ export function GrantBotSwitcher({
         setPendingInitial(null);
       }
       manualPickRef.current = false;
+      // A Recent firm-thread pick is a one-off jump, not a sticky pin: clear the firm "open this thread"
+      // hint on entering a dashboard (mirrors the pendingInitial null above) so a later return to Firm
+      // remounts on the true most-recent thread, not the stale picked id (Claude Code Review #547).
+      setFirmPending(null);
       // Keep an already-resolved same-client target mounted, and reset convId ONLY on a real client
       // change (or a deep-link, which targets a specific conversation): re-entering the dashboard of the
       // client the corner is already showing shouldn't drop its tracked conversation and open a blank
@@ -325,7 +378,34 @@ export function GrantBotSwitcher({
     setTarget(t);
     setConvId(null);
     setPendingInitial(null); // a manual switch is not the deep-linked thread
+    setFirmPending(null); // nor a Recent firm-thread open
+    setRecentOpen(false); // picking a target from the header lands you in its chat, not the Recent list
     persistTarget(t);
+  }
+
+  // A Recent-view pick: jump straight into that past conversation. Set the target and the matching
+  // "open this thread" hint (pendingInitial for a client, firmPending for firm), then bump bodyNonce so
+  // the chat body remounts and opens it even when it belongs to the target already showing. Persists
+  // like a manual pick so it stays the off-dashboard default.
+  function pickRecent(t: RecentThread) {
+    manualPickRef.current = true;
+    if (t.scope === "firm") {
+      setFirmPending(t.id);
+      setPendingInitial(null);
+      setConvId(t.id);
+      setTarget({ kind: "firm" });
+      persistTarget({ kind: "firm" });
+    } else if (t.clientId && t.clientName) {
+      setFirmPending(null);
+      setPendingInitial({ clientId: t.clientId, convId: t.id, blank: false });
+      setConvId(t.id);
+      setTarget({ kind: "client", id: t.clientId, name: t.clientName });
+      persistTarget({ kind: "client", id: t.clientId, name: t.clientName });
+    } else {
+      return; // malformed row — leave state as-is
+    }
+    setBodyNonce((n) => n + 1);
+    setRecentOpen(false);
   }
 
   // Expand = the full page for the current target, carrying the client conversation (the firm page
@@ -418,10 +498,22 @@ export function GrantBotSwitcher({
               <div className="flex flex-shrink-0 items-center gap-0.5 pt-px">
                 <button
                   type="button"
+                  onClick={() => setRecentOpen((v) => !v)}
+                  title={recentOpen ? "Back to chat" : "Recent conversations"}
+                  aria-label={recentOpen ? "Back to chat" : "Recent conversations"}
+                  aria-pressed={recentOpen}
+                  className={`inline-flex h-[26px] w-[26px] items-center justify-center rounded-lg transition-colors hover:bg-white/10 hover:text-white ${
+                    recentOpen ? "bg-white/15 text-white" : "text-white/55"
+                  }`}
+                >
+                  <History className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
                   onClick={expand}
                   title="Open full page"
                   aria-label="Open full page"
-                  disabled={!resolved}
+                  disabled={!resolved || recentOpen}
                   className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-lg text-white/55 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-40"
                 >
                   <Maximize2 className="h-3.5 w-3.5" />
@@ -440,7 +532,60 @@ export function GrantBotSwitcher({
           </div>
           <div className="h-0.5 flex-shrink-0 bg-brand-orange" />
 
-          {!resolved ? (
+          {recentOpen ? (
+            <div className="flex flex-1 flex-col overflow-y-auto p-2">
+              {recentLoading && recent === null ? (
+                <p className="flex items-center gap-2 p-4 text-[13px] text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…
+                </p>
+              ) : recentError ? (
+                <div className="flex flex-1 flex-col items-center justify-center gap-2.5 p-6 text-center">
+                  <p className="text-[13px] text-muted-foreground">{recentError}</p>
+                  <button
+                    type="button"
+                    onClick={retryRecent}
+                    className="inline-flex h-8 items-center rounded-lg bg-brand-navy px-3 text-[12.5px] font-semibold text-white transition-colors hover:bg-brand-navyHover"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : recent && recent.length === 0 ? (
+                <p className="p-6 text-center text-[12.5px] text-muted-foreground">
+                  No recent conversations yet.
+                </p>
+              ) : (
+                (recent ?? []).map((t) => (
+                  <button
+                    key={`${t.scope}:${t.id}`}
+                    type="button"
+                    onClick={() => pickRecent(t)}
+                    className="flex w-full flex-col gap-0.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-surface-sunken"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      {t.scope === "firm" ? (
+                        <span
+                          className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-orange"
+                          style={{ background: BRAND.orangeWash }}
+                        >
+                          Firm
+                        </span>
+                      ) : (
+                        <span className="min-w-0 truncate text-[12px] font-semibold text-brand-navy">
+                          {t.clientName}
+                        </span>
+                      )}
+                      <span className="ml-auto shrink-0 text-[10.5px] text-ink-subtle">
+                        {relativeTime(t.lastMessageAt)}
+                      </span>
+                    </span>
+                    <span className="truncate text-[12.5px] text-muted-foreground">
+                      {t.title || "Untitled conversation"}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          ) : !resolved ? (
             // Unresolved: normally a brief roster load (spinner). But if the roster FETCH failed while
             // resolving a client target, the picker (which renders the error) is unmounted — so surface
             // the error + a retry HERE, or the user is stranded on a permanent spinner (Vercel #545).
@@ -471,10 +616,10 @@ export function GrantBotSwitcher({
               spinner
             )
           ) : resolved.kind === "firm" ? (
-            <FirmGrantBotChat variant="corner" />
+            <FirmGrantBotChat key={`firm:${bodyNonce}`} variant="corner" initialConversationId={firmPending} />
           ) : (
             <GrantBotChat
-              key={resolved.id}
+              key={`${resolved.id}:${bodyNonce}`}
               clientId={resolved.id}
               clientName={resolved.name}
               variant="corner"
@@ -524,4 +669,21 @@ function clearStoredTarget() {
   } catch {
     /* private mode / cleared storage — nothing to forget */
   }
+}
+
+// Compact "time since" for a Recent row's last activity. An unparseable/empty timestamp → "" (the row
+// still renders; it just carries no time).
+function relativeTime(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "";
+  const mins = Math.round((Date.now() - t) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  const wks = Math.round(days / 7);
+  if (wks < 5) return `${wks}w ago`;
+  return new Date(t).toLocaleDateString();
 }
