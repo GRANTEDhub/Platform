@@ -8,6 +8,7 @@ import { BRAND } from "@/lib/brand";
 import {
   switcherVisible,
   clientDashboardId,
+  rosterUrl,
   SWITCHER_TARGET_KEY,
   type RosterClient,
   type SwitcherTarget,
@@ -107,8 +108,15 @@ export function GrantBotSwitcher({
   // its only dep is dashId) can read the CURRENT target when deciding whether leaving a dashboard would
   // merely re-derive the same already-resolved client (a no-op) rather than a real target change.
   const targetRef = useRef(target);
+  // The latest dashId, mirrored to a ref so the roster fetch effect (deps [everOpened, rosterAttempt]
+  // only — never dashId, so it can't tear itself down) can read the CURRENT dashboard id and pass it as
+  // the `?include=` param. That way a refetch fired while on an archived/rejected client's dashboard
+  // pulls that client into the roster so its name resolves and its bot hosts (the S2 archived-dashboard
+  // fix); off a dashboard the param is absent and the roster is the plain filtered list.
+  const dashIdRef = useRef(dashId);
   useEffect(() => {
     targetRef.current = target;
+    dashIdRef.current = dashId;
   });
 
   const openPanel = useCallback(() => {
@@ -159,7 +167,7 @@ export function GrantBotSwitcher({
     setRosterError(null);
     (async () => {
       try {
-        const res = await fetch("/api/grantbot/roster");
+        const res = await fetch(rosterUrl(dashIdRef.current));
         if (!res.ok) throw new Error(String(res.status));
         const data = (await res.json()) as { clients?: RosterClient[] };
         if (fetchGenRef.current === gen) setRoster(data.clients ?? []);
@@ -223,8 +231,14 @@ export function GrantBotSwitcher({
         setPendingInitial(null);
       }
       manualPickRef.current = false;
-      setTarget((prev) => (prev?.kind === "client" && prev.id === dashId ? prev : { kind: "client", id: dashId, name: null }));
-      setConvId(null);
+      // Keep an already-resolved same-client target mounted, and reset convId ONLY on a real client
+      // change (or a deep-link, which targets a specific conversation): re-entering the dashboard of the
+      // client the corner is already showing shouldn't drop its tracked conversation and open a blank
+      // one on Expand (Claude Code Review #545). Mirrors the leaving-branch sameResolvedClient guard.
+      const prevT = targetRef.current;
+      const keepSame = prevT?.kind === "client" && prevT.id === dashId;
+      setTarget(keepSame ? prevT : { kind: "client", id: dashId, name: null });
+      if (gb !== null || !keepSame) setConvId(null);
     } else if (!manualPickRef.current) {
       const next = computeDefaultTarget();
       const prev = targetRef.current;

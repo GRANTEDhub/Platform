@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getProfile } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { pickRosterClients } from "@/lib/grantbot/switcher";
 
 // The roster the Switcher's target picker lists: {id, name} for every client the acting staffer can
 // see, ordered by name. Lightweight (two columns), fetched ONCE when the picker first opens.
@@ -13,9 +14,17 @@ import { createClient } from "@/lib/supabase/server";
 //     clients, the SAME visibility as their Portfolio list, by construction. (The per-client turn/
 //     context routes still run service-role and gate the client boundary in code; the picker is a
 //     discovery surface, so it wants the RLS view of "which clients are mine".)
-export async function GET() {
+//
+// `?include=<clientId>` keeps that ONE client in the roster even if it is archived/rejected — the
+// Switcher passes the id of the dashboard it is currently on, so it can resolve that client's name
+// and host its bot on its own dashboard even though the dead-relationship filter would otherwise drop
+// it. Still RLS-scoped: `include` can only ever re-admit a client this actor may already see
+// (pickRosterClients only re-admits an id that survived the RLS read).
+export async function GET(req: Request) {
   const profile = await getProfile();
   if (!profile) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+
+  const include = new URL(req.url).searchParams.get("include");
 
   const supabase = createClient();
   const { data, error } = await supabase
@@ -26,16 +35,5 @@ export async function GET() {
     return NextResponse.json({ error: "Could not load the client roster." }, { status: 500 });
   }
 
-  const clients = (data ?? [])
-    .filter(
-      (c): c is { id: string; name: string; pipeline_stage: string | null } =>
-        !!c && typeof c.id === "string" && typeof c.name === "string" && c.name.length > 0,
-    )
-    // Match the Portfolio list's visibility exactly (app/(app)/clients/page.tsx): drop archived /
-    // rejected clients (dead relationships) so the picker doesn't offer a target that is excluded
-    // everywhere else. Null stage passes, mirroring Portfolio's `!== archived && !== rejected`.
-    .filter((c) => c.pipeline_stage !== "archived" && c.pipeline_stage !== "rejected")
-    .map((c) => ({ id: c.id, name: c.name }));
-
-  return NextResponse.json({ clients });
+  return NextResponse.json({ clients: pickRosterClients(data ?? [], include) });
 }

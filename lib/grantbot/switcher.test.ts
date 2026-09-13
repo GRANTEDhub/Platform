@@ -5,6 +5,9 @@ import {
   isClientDashboardPath,
   isFullGrantbotPage,
   switcherVisible,
+  rosterUrl,
+  pickRosterClients,
+  type RosterRow,
 } from "./switcher";
 
 // Deterministic — no model, no network. Locks the Switcher's gates:
@@ -88,5 +91,56 @@ describe("switcherVisible", () => {
   it("hides on a full GrantBot page (firm or client)", () => {
     expect(switcherVisible("/grantbot")).toBe(false);
     expect(switcherVisible("/clients/abc123/grantbot")).toBe(false);
+  });
+});
+
+describe("rosterUrl", () => {
+  it("is the plain roster off a dashboard, and adds ?include=<id> on one", () => {
+    expect(rosterUrl(null)).toBe("/api/grantbot/roster");
+    expect(rosterUrl(undefined)).toBe("/api/grantbot/roster");
+    expect(rosterUrl("abc123")).toBe("/api/grantbot/roster?include=abc123");
+  });
+
+  it("URL-encodes the include id", () => {
+    expect(rosterUrl("a b/c")).toBe("/api/grantbot/roster?include=a%20b%2Fc");
+  });
+});
+
+describe("pickRosterClients", () => {
+  const rows: RosterRow[] = [
+    { id: "a", name: "Acme", pipeline_stage: "active" },
+    { id: "b", name: "Beacon", pipeline_stage: null },
+    { id: "c", name: "Closed Co", pipeline_stage: "archived" },
+    { id: "d", name: "Dropped", pipeline_stage: "rejected" },
+    { id: "e", name: "", pipeline_stage: "active" }, // empty name — invalid
+    { id: null, name: "No Id", pipeline_stage: "active" }, // no id — invalid
+  ];
+
+  it("keeps valid rows and drops archived/rejected and malformed ones", () => {
+    expect(pickRosterClients(rows)).toEqual([
+      { id: "a", name: "Acme" },
+      { id: "b", name: "Beacon" },
+    ]);
+  });
+
+  it("re-admits ONLY the included id even when it is archived/rejected", () => {
+    expect(pickRosterClients(rows, "c")).toEqual([
+      { id: "a", name: "Acme" },
+      { id: "b", name: "Beacon" },
+      { id: "c", name: "Closed Co" },
+    ]);
+    // a different archived client (d) stays dropped — include re-admits exactly one id
+    expect(pickRosterClients(rows, "c").some((r) => r.id === "d")).toBe(false);
+  });
+
+  it("never fabricates a client the RLS read didn't return (include an absent id)", () => {
+    expect(pickRosterClients(rows, "zzz").map((r) => r.id)).toEqual(["a", "b"]);
+  });
+
+  it("does not duplicate an included id that already passes the filter", () => {
+    expect(pickRosterClients(rows, "a")).toEqual([
+      { id: "a", name: "Acme" },
+      { id: "b", name: "Beacon" },
+    ]);
   });
 });
