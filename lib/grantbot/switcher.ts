@@ -92,3 +92,29 @@ export type SwitcherTarget = { kind: "firm" } | { kind: "client"; id: string; na
 
 // localStorage key for the last manually-picked target, so the Switcher reopens on it off-dashboard.
 export const SWITCHER_TARGET_KEY = "grantbot:switcher-target";
+
+// ── S3: the unified "Recent" thread rail ──
+// One row in the Switcher's Recent view: a past GrantBot conversation across ANY scope the staffer can
+// see (a firm thread, or a client thread for a client in their RLS-scoped roster). Clicking one jumps
+// straight into that conversation. `GET /api/grantbot/recent` returns these, most-recent first.
+export type RecentThread = {
+  id: string;
+  scope: "firm" | "client";
+  clientId: string | null; // set for a client thread, null for firm
+  clientName: string | null; // resolved name for a client thread, null for firm
+  title: string | null;
+  lastMessageAt: string; // ISO — sortable as a plain string
+};
+
+// Merge the firm + client thread lists into one recency-ordered list, capped. Pure so the recent route
+// (and its test) share one definition of "most recent across scopes". lastMessageAt is an ISO string,
+// so a lexical compare is a chronological compare; a missing/empty value sorts last.
+export function mergeRecentThreads(
+  firm: RecentThread[],
+  client: RecentThread[],
+  limit: number,
+): RecentThread[] {
+  return [...firm, ...client]
+    .sort((a, b) => (a.lastMessageAt < b.lastMessageAt ? 1 : a.lastMessageAt > b.lastMessageAt ? -1 : 0))
+    .slice(0, Math.max(0, limit));
+}

@@ -29,7 +29,16 @@ const toTurns = (msgs: GrantBotMsg[] | undefined): Turn[] =>
 // so the corner body is headerless and the rail collapses behind a toggle — three fixed bands with
 // one scroll, mirroring the per-client GrantBotChat corner so the two panels can't drift. Same store,
 // same routes, same conversation; the variants differ in CHROME ONLY.
-export function FirmGrantBotChat({ variant = "full" }: { variant?: "corner" | "full" }) {
+export function FirmGrantBotChat({
+  variant = "full",
+  initialConversationId,
+}: {
+  variant?: "corner" | "full";
+  // Corner only (S3): open ON this firm thread on mount — a Recent-view pick from the Switcher —
+  // instead of the most-recent one. The Switcher remounts (a changed key) to open a different thread,
+  // mirroring the per-client chat's initialConversationId.
+  initialConversationId?: string | null;
+}) {
   const isCorner = variant === "corner";
   // Corner-only: the rail slides over the transcript rather than sitting beside it.
   const [showThreads, setShowThreads] = useState(false);
@@ -70,7 +79,14 @@ export function FirmGrantBotChat({ variant = "full" }: { variant?: "corner" | "f
     let alive = true;
     (async () => {
       try {
-        const res = await fetch("/api/grantbot/firm-context");
+        // Open the requested firm thread (an S3 Recent-view pick) if given, else the most-recent one.
+        // firm-context returns the rail + that thread's transcript in one shot; on a stale/deleted id
+        // (404) fall back to the default so the rail + composer still load rather than blanking.
+        const initialUrl = initialConversationId
+          ? `/api/grantbot/firm-context?conversationId=${encodeURIComponent(initialConversationId)}`
+          : "/api/grantbot/firm-context";
+        let res = await fetch(initialUrl);
+        if (!res.ok && initialConversationId) res = await fetch("/api/grantbot/firm-context");
         if (!res.ok) return;
         const data = (await res.json()) as { conversationId?: string | null; conversations?: GrantBotThread[]; messages?: GrantBotMsg[] };
         if (!alive || epochRef.current !== epoch) return;
@@ -84,6 +100,10 @@ export function FirmGrantBotChat({ variant = "full" }: { variant?: "corner" | "f
     return () => {
       alive = false;
     };
+    // Mount-only: the Switcher remounts (a changed key) to open a different initialConversationId,
+    // mirroring the per-client chat — re-running here on a prop change would yank the thread out from
+    // under an in-progress read/send.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
