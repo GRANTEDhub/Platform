@@ -55,6 +55,36 @@ export function switcherVisible(pathname: string | null | undefined): boolean {
 // A roster row for the picker (what GET /api/grantbot/roster returns per client).
 export type RosterClient = { id: string; name: string };
 
+// A raw client_overview row as the roster route selects it (before filtering to the picker shape).
+export type RosterRow = { id: string | null; name: string | null; pipeline_stage: string | null };
+
+// The roster fetch URL. When the Switcher is ON a client dashboard, it passes that client's id as
+// `include` so the endpoint keeps it in the roster EVEN IF it is archived/rejected — otherwise the
+// layout-mounted Switcher has no name source for a filtered client and would mis-host its dashboard
+// bubble (the S2 archived-dashboard regression). Off a dashboard, the plain roster.
+export function rosterUrl(dashId: string | null | undefined): string {
+  return dashId ? `/api/grantbot/roster?include=${encodeURIComponent(dashId)}` : "/api/grantbot/roster";
+}
+
+// Pure filter from raw client_overview rows to the picker roster: keep rows with a real id + name,
+// drop archived/rejected (dead relationships, matching the Portfolio list) — EXCEPT always keep
+// `includeId` when present (the client whose dashboard the staffer is currently on, so the Switcher
+// can resolve its name and host its bot even when it is archived/rejected). `rows` is already
+// RLS-scoped by the caller, so `includeId` can only ever re-admit a client the staffer may see.
+export function pickRosterClients(rows: RosterRow[], includeId?: string | null): RosterClient[] {
+  return rows
+    .filter(
+      (c): c is { id: string; name: string; pipeline_stage: string | null } =>
+        !!c && typeof c.id === "string" && typeof c.name === "string" && c.name.length > 0,
+    )
+    .filter(
+      (c) =>
+        (c.pipeline_stage !== "archived" && c.pipeline_stage !== "rejected") ||
+        (includeId != null && c.id === includeId),
+    )
+    .map((c) => ({ id: c.id, name: c.name }));
+}
+
 // What the Switcher is pointed at. A client target always carries its resolved name, because the
 // hosted GrantBotChat requires it — the component holds an unresolved dashboard id separately and
 // only forms a client target once the roster resolves the name.
