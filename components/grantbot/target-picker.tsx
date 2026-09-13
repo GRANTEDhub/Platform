@@ -102,6 +102,17 @@ export function TargetPicker({
           <div
             ref={menuRef}
             role="listbox"
+            onKeyDown={(e) => {
+              // Escape ANYWHERE in the menu (the search input, the Firm button, a roster row — all
+              // Tab-reachable) closes just the menu. Catch it on the container so it never bubbles to the
+              // Switcher's window keydown listener, which would close the WHOLE panel (Claude Code Review
+              // #545). React halts the native event at the root, so the window listener never sees it.
+              if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                setOpen(false);
+              }
+            }}
             style={{ position: "fixed", top: pos.top, left: pos.left, width: 268 }}
             className="z-50 flex max-h-[360px] flex-col overflow-hidden rounded-xl bg-white shadow-floating"
           >
@@ -123,15 +134,6 @@ export function TargetPicker({
                 <input
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
-                  onKeyDown={(e) => {
-                    // Keep Escape from bubbling to the Switcher's window listener (which would close
-                    // the whole panel); just close the menu. React halts the native event at the root.
-                    if (e.key === "Escape") {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setOpen(false);
-                    }
-                  }}
                   placeholder="Search clients…"
                   aria-label="Search clients"
                   autoFocus

@@ -99,6 +99,13 @@ export function GrantBotSwitcher({
   // the loaded roster (a just-created client not yet in the cached list). Prevents an endless refetch
   // loop for a client that is genuinely absent (archived/rejected, filtered out of the roster).
   const refetchedForRef = useRef<string | null>(null);
+  // The latest target, mirrored to a ref so the dashId-keyed dashboard effect (whose closure is stale —
+  // its only dep is dashId) can read the CURRENT target when deciding whether leaving a dashboard would
+  // merely re-derive the same already-resolved client (a no-op) rather than a real target change.
+  const targetRef = useRef(target);
+  useEffect(() => {
+    targetRef.current = target;
+  });
 
   const openPanel = useCallback(() => {
     setEverOpened(true);
@@ -210,8 +217,18 @@ export function GrantBotSwitcher({
       setTarget((prev) => (prev?.kind === "client" && prev.id === dashId ? prev : { kind: "client", id: dashId, name: null }));
       setConvId(null);
     } else if (!manualPickRef.current) {
-      setTarget(computeDefaultTarget());
-      setConvId(null);
+      const next = computeDefaultTarget();
+      const prev = targetRef.current;
+      const sameResolvedClient =
+        next?.kind === "client" && prev?.kind === "client" && prev.id === next.id && prev.name !== null;
+      // Keep an already-resolved same-client target mounted rather than re-deriving it as a fresh
+      // {name:null} object (which would unmount/remount the id-keyed GrantBotChat — a spinner flash + a
+      // wasted transcript refetch when nothing changed). Only a real change resets convId (Claude Code
+      // Review #545).
+      if (!sameResolvedClient) {
+        setTarget(next);
+        setConvId(null);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dashId]);
@@ -260,6 +277,15 @@ export function GrantBotSwitcher({
       setRosterAttempt((n) => n + 1);
       return;
     }
+    // The id resolves against neither the loaded roster nor a refetch — it is genuinely inaccessible
+    // (deleted, or archived/rejected and filtered out of the roster). Forget the stored preference if it
+    // points at this id, so the open-time-default effect does not re-derive this same dead pick from
+    // localStorage on the next null-target render: without this, open-time-default (re-reads storage →
+    // {id, name:null}) and this effect (nulls the unresolvable target) ping-pong forever and freeze the
+    // tab — the failure mode of the round-3 name-strip revalidation on a stale pick (Claude Code Review
+    // #545).
+    const stored = readStoredTarget();
+    if (stored?.kind === "client" && stored.id === target.id) clearStoredTarget();
     if (showFirm) {
       setTarget({ kind: "firm" });
     } else if (roster[0]) {
@@ -466,5 +492,13 @@ function persistTarget(t: SwitcherTarget) {
     localStorage.setItem(SWITCHER_TARGET_KEY, JSON.stringify(t));
   } catch {
     /* non-fatal — the pick still applies this session */
+  }
+}
+
+function clearStoredTarget() {
+  try {
+    localStorage.removeItem(SWITCHER_TARGET_KEY);
+  } catch {
+    /* private mode / cleared storage — nothing to forget */
   }
 }
