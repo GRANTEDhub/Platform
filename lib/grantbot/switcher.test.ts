@@ -8,6 +8,7 @@ import {
   rosterUrl,
   pickRosterClients,
   mergeRecentThreads,
+  deepLinkNeedsRemount,
   type RosterRow,
   type RecentThread,
 } from "./switcher";
@@ -19,6 +20,8 @@ import {
 //   ③ isFullGrantbotPage: hide on the firm OR a client full-chat page (each owns its own surface).
 //   ④ switcherVisible: S2 shows on every internal page except a full GrantBot page (contractors get
 //      it too now — the picker, not visibility, gates Firm to admins).
+//   ⑤ deepLinkNeedsRemount: force a corner-body remount ONLY for a deep-link onto the already-open
+//      client, so the Ask-GrantBot seed / Collapse-to-corner is consumed instead of opening blank.
 
 describe("switcherEnabled", () => {
   const prev = process.env.GRANTBOT_SWITCHER_ENABLED;
@@ -172,5 +175,23 @@ describe("mergeRecentThreads", () => {
       { id: "n", scope: "client", clientId: "z", clientName: "NoTime", title: null, lastMessageAt: "" },
     ];
     expect(mergeRecentThreads(firm, withBlank, 10).map((t) => t.id)).toEqual(["f1", "f2", "n"]);
+  });
+});
+
+describe("deepLinkNeedsRemount", () => {
+  it("forces a remount ONLY for a deep-link onto the already-open client", () => {
+    // The bug case: a "?grantbot=" deep-link (Ask-GrantBot seed / Collapse-to-corner) whose target is
+    // the client the corner already shows keeps the id key unchanged, so without a bump the seed opens
+    // blank. This is the only case that must force the remount.
+    expect(deepLinkNeedsRemount(true, true)).toBe(true);
+  });
+
+  it("does NOT remount when the deep-link switches to a different client (id key already changes)", () => {
+    expect(deepLinkNeedsRemount(true, false)).toBe(false);
+  });
+
+  it("does NOT remount on a plain navigation with no deep-link (nothing to open; avoids a spinner + refetch)", () => {
+    expect(deepLinkNeedsRemount(false, true)).toBe(false);
+    expect(deepLinkNeedsRemount(false, false)).toBe(false);
   });
 });
