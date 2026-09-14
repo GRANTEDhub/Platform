@@ -118,6 +118,14 @@ describe("tool schemas are server-side constants with the expected names", () =>
     expect(DATA_TOOLS_INSTRUCTION_BLOCK.text).toContain("A FAILED OR EMPTY LOOKUP IS A FACT, NEVER A GUESS");
     expect(DATA_TOOLS_INSTRUCTION_BLOCK.text).toContain("ENTITY-ELIGIBILITY IS NOT COMPETITIVENESS");
   });
+  it("makes the who-wins lookup mandatory and forbids claiming unfetched USASpending data (eval-fix)", () => {
+    // The reflex fix for the eval's run-2 fabrication ("I pulled the winners from USASpending" with no
+    // tool call): the tool call is mandatory for who-wins, memory answers are banned, and the older
+    // "name it from your own knowledge" methodology line is explicitly superseded.
+    expect(DATA_TOOLS_INSTRUCTION_BLOCK.text).toContain("WHO WINS → CALL THE TOOL, DON'T RECALL");
+    expect(DATA_TOOLS_INSTRUCTION_BLOCK.text).toContain("SUPERSEDED");
+    expect(DATA_TOOLS_INSTRUCTION_BLOCK.text).toMatch(/claiming federal data you did not fetch is a fabrication/);
+  });
 });
 
 // ── lookup_program_awards ────────────────────────────────────────────────────────────────────────
