@@ -69,16 +69,24 @@ export function askStarters(clientName: string, grantTitle: string): AskStarter[
 // window (sessionStorage throws) is a harmless no-op — the corner still opens, just without the
 // pre-fill, so the worst case degrades to today's blank composer rather than an error.
 //
-// PRESERVES UNSENT WORK: the composer mirrors every keystroke into this SAME stash key, so a blind
-// overwrite would silently discard a half-typed message (or a pasted email / attachment) the staffer
-// left unsent for this client — the exact "unsent-work" the stash exists to protect. So if the stash
-// already holds real content, we DO NOT clobber it: the corner opens showing their in-progress work
-// (they can send or clear it, then re-click). Non-destructive by design.
-export function stashAskDraft(clientId: string, question: string): void {
+// PRESERVES UNSENT WORK, WITHOUT GOING INERT: the composer mirrors every keystroke into this SAME
+// stash key, so a blind overwrite would silently discard a half-typed message (or a pasted email /
+// attachment) the staffer left unsent for this client — the exact "unsent-work" the stash exists to
+// protect. So if the stash already holds real content, we DO NOT clobber it: the corner opens showing
+// their in-progress work (they can send or clear it, then re-click).
+//
+// BUT a prior chip click also leaves its seeded question sitting unsent in this same key (takeDraft
+// loads it, then the composer mirrors it straight back), so "any non-empty draft blocks the seed"
+// would make a SECOND chip click before the first is sent a silent no-op — the feature's core
+// interaction (clicking chips) going inert. So `seedQuestions` (the full starter set for this
+// grant+client) lets us tell the tool's OWN unedited prior seed (an exact match — overwrite it, so
+// re-seeding works) from the staffer's genuine typed/pasted/edited content (never an exact match —
+// preserve it). Best of both: unsent work is safe, and switching chips still re-seeds.
+export function stashAskDraft(clientId: string, question: string, seedQuestions: string[] = []): void {
   if (typeof window === "undefined") return;
   try {
     const existing = window.sessionStorage.getItem(draftKey(clientId));
-    if (existing && hasUnsentWork(existing)) return;
+    if (existing && hasUnsentWork(existing) && !isPriorSeed(existing, seedQuestions)) return;
     window.sessionStorage.setItem(
       draftKey(clientId),
       JSON.stringify({ draft: question, pasted: "", pasteLabel: "", attachedFile: null, attachedImage: null }),
@@ -107,6 +115,27 @@ function hasUnsentWork(raw: string): boolean {
         d.attachedFile ||
         d.attachedImage,
     );
+  } catch {
+    return false;
+  }
+}
+
+// True when the stashed content is the tool's OWN unedited prior seed: a bare draft (no paste, no
+// attachment) whose text exactly equals one of this grant+client's starter questions. A staffer's own
+// text never matches, and editing a seed (adding a word) or pasting alongside it makes it no longer a
+// bare exact match — so genuine work is still preserved, while an untouched prior seed is replaceable.
+function isPriorSeed(raw: string, seedQuestions: string[]): boolean {
+  if (seedQuestions.length === 0) return false;
+  try {
+    const d = JSON.parse(raw) as {
+      draft?: unknown;
+      pasted?: unknown;
+      pasteLabel?: unknown;
+      attachedFile?: unknown;
+      attachedImage?: unknown;
+    };
+    if (d.pasted || d.pasteLabel || d.attachedFile || d.attachedImage) return false;
+    return typeof d.draft === "string" && seedQuestions.includes(d.draft);
   } catch {
     return false;
   }

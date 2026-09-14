@@ -27,8 +27,14 @@ export function AskGrantBotButton({
   const starters = askStarters(clientName, grantTitle);
 
   function ask(question: string) {
-    // Seed first, then open: takeDraft reads the stash once on the corner chat's mount.
-    stashAskDraft(clientId, question);
+    // Seed first, then open: takeDraft reads the stash once on the corner chat's mount. Pass the full
+    // starter set so switching chips re-seeds (an unedited prior seed is replaceable) while a genuine
+    // typed/pasted draft is still preserved.
+    stashAskDraft(
+      clientId,
+      question,
+      starters.map((s) => s.question),
+    );
     router.push(askOpenHref(clientId));
   }
 

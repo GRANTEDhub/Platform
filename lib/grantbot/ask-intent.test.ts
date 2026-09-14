@@ -124,6 +124,33 @@ describe("stashAskDraft — writes the exact composer-stash shape GrantBotChat r
     expect(JSON.parse(store.get(draftKey("c2"))!).draft).toBe("Who wins this?");
   });
 
+  // The regression the second review nit named: switching chips before sending must still re-seed —
+  // the tool's own prior seed is replaceable, but a genuine/edited draft is still preserved.
+  const seedSet = askStarters("Mississippi County", "AURP").map((s) => s.question);
+
+  it("re-seeds when the existing draft is the tool's OWN prior unedited seed (switching chips works)", () => {
+    const { store } = fakeWindow();
+    store.set(draftKey("c1"), JSON.stringify({ draft: seedSet[0], pasted: "", pasteLabel: "", attachedFile: null, attachedImage: null }));
+    stashAskDraft("c1", seedSet[1], seedSet);
+    expect(JSON.parse(store.get(draftKey("c1"))!).draft).toBe(seedSet[1]);
+  });
+
+  it("still preserves a genuine typed draft even when seedQuestions is passed", () => {
+    const { store } = fakeWindow();
+    const typed = JSON.stringify({ draft: "my own half-typed question", pasted: "", pasteLabel: "", attachedFile: null, attachedImage: null });
+    store.set(draftKey("c1"), typed);
+    stashAskDraft("c1", seedSet[0], seedSet);
+    expect(store.get(draftKey("c1"))).toBe(typed);
+  });
+
+  it("preserves an EDITED seed (no longer an exact match → treated as the staffer's work)", () => {
+    const { store } = fakeWindow();
+    const edited = JSON.stringify({ draft: `${seedSet[0]} and also our match capacity?`, pasted: "", pasteLabel: "", attachedFile: null, attachedImage: null });
+    store.set(draftKey("c1"), edited);
+    stashAskDraft("c1", seedSet[1], seedSet);
+    expect(store.get(draftKey("c1"))).toBe(edited);
+  });
+
   it("is a harmless no-op when sessionStorage throws (private mode)", () => {
     (globalThis as { window?: unknown }).window = {
       sessionStorage: {
