@@ -46,6 +46,18 @@ describe("isAllowlistedHost", () => {
     expect(isAllowlistedHost("GRANTS.GOV")).toBe(true);
     expect(isAllowlistedHost("grants.gov.")).toBe(true);
   });
+  it("allows an extra host only when the set is passed (per-call, exact match, not global)", () => {
+    const extra = new Set(["media.ark.org"]);
+    expect(isAllowlistedHost("media.ark.org", extra)).toBe(true);
+    // Not global: without the extra set, the same non-.gov host is refused (intel's default path).
+    expect(isAllowlistedHost("media.ark.org")).toBe(false);
+    // EXACT match, not a suffix — a subdomain of an extra host is NOT covered (no spoof via prefix).
+    expect(isAllowlistedHost("evil.media.ark.org", extra)).toBe(false);
+    // The extra set never loosens the other rules: an unrelated host stays refused.
+    expect(isAllowlistedHost("evil.com", extra)).toBe(false);
+    // .gov still resolves alongside an extra set.
+    expect(isAllowlistedHost("grants.gov", extra)).toBe(true);
+  });
 });
 
 describe("fetchGrantSource — allowlist", () => {
@@ -72,6 +84,46 @@ describe("fetchGrantSource — allowlist", () => {
     const r = await fetchGrantSource("http://grants.gov/x", { fetchImpl: impl, lookup: lookupWith() });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe("bad_scheme");
+  });
+});
+
+describe("fetchGrantSource — extraAllowedHosts (scoped state-doc reach)", () => {
+  it("fetches an extra (non-.gov) host when it is passed for the call", async () => {
+    const { impl, calls } = fetchSequence([htmlResponse("<html>AR NPS plan</html>")]);
+    const r = await fetchGrantSource("https://media.ark.org/agri/FINAL-2024-2029-NPS-Management-Plan.pdf", {
+      fetchImpl: impl,
+      lookup: lookupWith(),
+      extraAllowedHosts: ["media.ark.org"],
+    });
+    expect(r.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+  });
+  it("refuses that same host when no extra hosts are passed (the intel .gov-only default)", async () => {
+    const { impl, calls } = fetchSequence([htmlResponse("should not be reached")]);
+    const r = await fetchGrantSource("https://media.ark.org/agri/plan.pdf", { fetchImpl: impl, lookup: lookupWith() });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("not_allowlisted");
+    expect(calls).toHaveLength(0);
+  });
+  it("follows a .gov redirect INTO an allowed extra host", async () => {
+    const { impl, calls } = fetchSequence([
+      htmlResponse("", 302, { location: "https://media.ark.org/agri/plan.pdf" }),
+      htmlResponse("<html>AR NPS plan</html>"),
+    ]);
+    const r = await fetchGrantSource("https://agriculture.arkansas.gov/plan", {
+      fetchImpl: impl,
+      lookup: lookupWith(),
+      extraAllowedHosts: ["media.ark.org"],
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.finalUrl).toBe("https://media.ark.org/agri/plan.pdf");
+    expect(calls).toHaveLength(2);
+  });
+  it("blocks a redirect into that host when no extra hosts are passed", async () => {
+    const { impl } = fetchSequence([htmlResponse("", 302, { location: "https://media.ark.org/agri/plan.pdf" })]);
+    const r = await fetchGrantSource("https://agriculture.arkansas.gov/plan", { fetchImpl: impl, lookup: lookupWith() });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("blocked_redirect");
   });
 });
 

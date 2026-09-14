@@ -83,10 +83,20 @@ export type FetchResult =
 //
 // Matches on the exact host. "grants.gov.evil.com" ends in ".com", so endsWith(".gov") is false --
 // the suffix rule cannot be spoofed by a subdomain trick. A bare "gov" is rejected.
-export function isAllowlistedHost(host: string): boolean {
+//
+// `extraHosts` is a PER-CALL widening, not a module-global one: a caller may pass a small set of
+// additional exact hosts to allow (already normalised to lowercase, no trailing dot). This is how
+// GrantBot's fetch reaches an official U.S. state DOCUMENT host that is not on the .gov TLD (Arkansas
+// publishes its authoritative plan/NOFO PDFs on media.ark.org, an .org media host) WITHOUT widening
+// the shared allowlist for every caller. In particular the intel QA pass calls fetchGrantSource with
+// NO extraHosts, so its grounding fail-safe stays exactly "a real .gov page was fetched" — the
+// documented invariant is unchanged for the auto-scoring path. Same exact-match, same anti-spoof
+// (an extra host must equal the resolved host exactly; it is not a suffix rule).
+export function isAllowlistedHost(host: string, extraHosts?: ReadonlySet<string>): boolean {
   const h = host.trim().toLowerCase().replace(/\.$/, "");
   if (!h || h === "gov") return false;
   if (EXPLICIT_ALLOWED_HOSTS.has(h)) return true;
+  if (extraHosts?.has(h)) return true;
   return h.endsWith(".gov");
 }
 
@@ -115,6 +125,10 @@ export interface FetchGrantSourceOptions {
   timeoutMs?: number;
   maxBytes?: number;
   maxRedirects?: number;
+  // Extra exact hosts to allow beyond the .gov rule, for THIS call only (see isAllowlistedHost).
+  // Default undefined = the shared .gov-only allowlist, so a caller that omits it is byte-identical
+  // to before (the intel QA grounding path relies on this).
+  extraAllowedHosts?: readonly string[];
 }
 
 const defaultLookup: LookupFn = async (host) => {
@@ -168,6 +182,11 @@ export async function fetchGrantSource(rawUrl: string, opts: FetchGrantSourceOpt
   const timeoutMs = opts.timeoutMs ?? FETCH_TIMEOUT_MS;
   const maxBytes = opts.maxBytes ?? MAX_RESPONSE_BYTES;
   const maxRedirects = opts.maxRedirects ?? MAX_REDIRECTS;
+  // Normalise the per-call extra hosts ONCE (lowercase, trailing dot stripped) so the exact-match in
+  // isAllowlistedHost is reliable. undefined when none were passed -> the .gov-only allowlist.
+  const extraAllowed = opts.extraAllowedHosts?.length
+    ? new Set(opts.extraAllowedHosts.map((h) => h.trim().toLowerCase().replace(/\.$/, "")))
+    : undefined;
 
   let current = rawUrl;
   for (let hop = 0; hop <= maxRedirects; hop++) {
@@ -175,8 +194,10 @@ export async function fetchGrantSource(rawUrl: string, opts: FetchGrantSourceOpt
     if ("error" in parsed) return { ok: false, reason: parsed.error, detail: current };
     const url = parsed.url;
 
-    // Guard 1: allowlist (re-checked on every hop, so a 302 off the allowlist is caught here).
-    if (!isAllowlistedHost(url.hostname)) {
+    // Guard 1: allowlist (re-checked on every hop, so a 302 off the allowlist is caught here). The
+    // extra hosts are honoured on EVERY hop too, so a redirect to an allowed state doc host is fine
+    // and a redirect off both the .gov rule and the extra set is still blocked_redirect.
+    if (!isAllowlistedHost(url.hostname, extraAllowed)) {
       return { ok: false, reason: hop === 0 ? "not_allowlisted" : "blocked_redirect", detail: url.hostname };
     }
     // Guard 2: the host must resolve only to public addresses.

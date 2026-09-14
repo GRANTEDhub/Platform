@@ -3,11 +3,13 @@ import {
   frameFetchResult,
   executeWebFetch,
   grantbotWebFetchEnabled,
+  grantbotStateDocFetcher,
   FETCH_INSTRUCTION_BLOCK,
   WEB_FETCH_TOOL,
   MAX_FETCH_TEXT_CHARS,
+  GRANTBOT_EXTRA_FETCH_HOSTS,
 } from "./web-fetch";
-import type { FetchResult } from "./fetch";
+import type { FetchResult, fetchGrantSource } from "./fetch";
 
 // The bounded tool-use LOOP is tested in tool-loop.test.ts (it is tool-agnostic now). This file
 // covers the fetch tool itself: the flag, the instruction block, and the result framing.
@@ -45,6 +47,42 @@ describe("FETCH_INSTRUCTION_BLOCK", () => {
     // should retry silently and surface only the result or a clean could-not-reach line.
     expect(FETCH_INSTRUCTION_BLOCK.text).toMatch(/plumbing/i);
     expect(FETCH_INSTRUCTION_BLOCK.text).toMatch(/play-by-play|narrat/i);
+  });
+  it("tells the model to pivot to the document PDF when a page comes back thin/truncated", () => {
+    // The AR watershed failure: the .gov landing page was script-rendered and truncated, and the real
+    // priority-watershed list was in the plan PDF on media.ark.org. The model must fetch the document,
+    // not conclude from the empty shell.
+    expect(FETCH_INSTRUCTION_BLOCK.text).toMatch(/truncat|thin|script-rendered/i);
+    expect(FETCH_INSTRUCTION_BLOCK.text).toMatch(/PDF/);
+    expect(FETCH_INSTRUCTION_BLOCK.text).toContain("media.ark.org");
+  });
+});
+
+describe("GRANTBOT_EXTRA_FETCH_HOSTS", () => {
+  it("includes Arkansas's official state document host (the reach the .gov-only allowlist lacked)", () => {
+    expect(GRANTBOT_EXTRA_FETCH_HOSTS).toContain("media.ark.org");
+  });
+});
+
+describe("state-doc reach is an EXPLICIT per-client opt-in, not the shared default", () => {
+  it("grantbotStateDocFetcher forwards the extra hosts to fetchGrantSource", async () => {
+    let receivedOpts: { extraAllowedHosts?: readonly string[] } | undefined;
+    const fake = (async (_url: string, opts?: { extraAllowedHosts?: readonly string[] }) => {
+      receivedOpts = opts;
+      return { ok: true, requestedUrl: _url, finalUrl: _url, contentType: "text/html", text: "x", truncated: false, fetchedAt: "T" } as FetchResult;
+    }) as unknown as typeof fetchGrantSource;
+    await grantbotStateDocFetcher("https://media.ark.org/plan.pdf", fake);
+    expect(receivedOpts?.extraAllowedHosts).toEqual(GRANTBOT_EXTRA_FETCH_HOSTS);
+  });
+
+  it("executeWebFetch's DEFAULT fetcher stays .gov-only — a state host is refused (firm bot unaffected)", async () => {
+    // No injected fetcher → the real, plain fetchGrantSource, which rejects a non-.gov host at the
+    // allowlist stage (before any DNS/network). This is the guarantee that sharing the executor with
+    // the firm bot does NOT silently widen its reach.
+    const { resultText, audit } = await executeWebFetch("https://media.ark.org/plan.pdf");
+    expect(audit.ok).toBe(false);
+    expect(audit.reason).toBe("not_allowlisted");
+    expect(resultText).toMatch(/COULD NOT RETRIEVE/);
   });
 });
 
