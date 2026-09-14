@@ -130,16 +130,24 @@ export function mergeRecentThreads(
 // Switcher flag is on — the button falls back to the dashboard deep-link when it is off (launcher path).
 export const GRANTBOT_OPEN_EVENT = "grantbot:open-in-place";
 
-// The event detail: which client's bot to open. A new blank thread every time (Ask GrantBot always starts
-// a fresh anchored conversation), so no conversation id — the anchor rides askContextKey, not this.
-export type OpenGrantBotDetail = { clientId: string };
+// The event detail: which client's bot to open, AND its display name. The name matters: it lets the
+// listener set a FULLY-RESOLVED target ({kind:"client", id, name}) so it does not have to resolve the name
+// from the roster. The roster fetch on a grant sub-route carries no `?include=` (dashId is null there), so
+// a client missing from the cached roster — archived/rejected, or created after the session's first fetch
+// — would never resolve and the Ask would silently fall back to Firm/another client, dropping the anchored
+// question. The grant card already knows the client's name, so handing it over sidesteps that hole. A new
+// blank thread every time (Ask GrantBot always starts a fresh anchored conversation), so no conversation
+// id — the grant anchor rides askContextKey, not this.
+export type OpenGrantBotDetail = { clientId: string; clientName: string };
 
 // Dispatch the in-place open. Window-guarded (SSR no-op) and typed so the button and the listener share one
 // event shape. Safe to call when no Switcher is listening (a no-op DOM event) — but the button only calls
 // this when the Switcher flag is on, so there is always a listener in that path.
-export function dispatchOpenGrantBot(clientId: string): void {
+export function dispatchOpenGrantBot(clientId: string, clientName: string): void {
   if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent<OpenGrantBotDetail>(GRANTBOT_OPEN_EVENT, { detail: { clientId } }));
+  window.dispatchEvent(
+    new CustomEvent<OpenGrantBotDetail>(GRANTBOT_OPEN_EVENT, { detail: { clientId, clientName } }),
+  );
 }
 
 // Whether a dashboard-navigation effect must FORCE the corner chat body to remount (a bodyNonce bump).

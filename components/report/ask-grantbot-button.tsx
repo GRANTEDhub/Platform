@@ -24,11 +24,13 @@ import { dispatchOpenGrantBot } from "@/lib/grantbot/switcher";
 // chrome "Generate concept proposal" so that stays the primary action, but it sits first.
 export function AskGrantBotButton({
   clientId,
+  clientName,
   grantId,
   grantTitle,
   switcherEnabled,
 }: {
   clientId: string;
+  clientName: string;
   grantId: string;
   grantTitle: string;
   switcherEnabled: boolean;
@@ -41,7 +43,9 @@ export function AskGrantBotButton({
     stashAskContext(clientId, { grantId, grantTitle });
     if (switcherEnabled) {
       // In place — the mounted Switcher opens the corner on this client without leaving the grant card.
-      dispatchOpenGrantBot(clientId);
+      // Pass the client NAME so the Switcher sets a fully-resolved target and never has to resolve it from
+      // the roster (which, on this grant sub-route, would drop an archived/rejected or not-yet-cached one).
+      dispatchOpenGrantBot(clientId, clientName);
     } else {
       // Switcher off: the launcher honours the dashboard deep-link, so navigate there (today's path).
       router.push(askOpenHref(clientId));

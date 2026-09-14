@@ -180,23 +180,34 @@ export function GrantBotSwitcher({
 
   // In-place open from a grant card's "Ask GrantBot" button. The button dispatches on `window` rather
   // than navigating to the dashboard deep-link (the dashboard-bounce fix): open the corner on this client
-  // at a NEW blank thread, mirroring the dashboard "?grantbot=new" branch below. The grant anchor is
-  // already stashed under askContextKey, so the corner chat picks it up on mount — which means the body
-  // must (re)mount: it does when the target changes to this client (a new id key), and via a bodyNonce
-  // bump when the corner is ALREADY on this client (the deepLinkNeedsRemount case), so the seed can't open
-  // blank. manualPickRef=false mirrors the deep-link sibling (a transient open, not a sticky pick); the
-  // button only clicks from a grant sub-route where dashId is null, so this never fights the dashboard
-  // follow. Dormant unless the button dispatches, so no existing Switcher behavior changes.
+  // at a NEW blank thread. The event carries the client's NAME (the grant card knows it), so we set a
+  // FULLY-RESOLVED target here and never lean on the roster to resolve it — a grant sub-route's roster
+  // fetch carries no `?include=` (dashId is null), so an archived/rejected or not-yet-cached client would
+  // otherwise fail to resolve and silently fall back to Firm/another client, dropping the Ask (the
+  // resolve-name effect only self-heals when target.id === dashId, never true here). The grant anchor is
+  // already stashed under askContextKey; the corner chat consumes it on mount, so the body must (re)mount:
+  // it does when the target changes to this client (a new id key), and via a bodyNonce bump when the corner
+  // is ALREADY on this client (the deepLinkNeedsRemount case), so the seed can't open blank.
+  //
+  // manualPickRef=true marks this a DELIBERATE current target (an explicit "open this client's bot"),
+  // honest — unlike a manualPickRef=false whose revert relies on a dashId→null transition that never
+  // happens from a grant sub-route (dashId is null throughout), so it would pin the target with no reset.
+  // We deliberately do NOT persistTarget: an Ask is task-scoped, not a preference change, so it stays
+  // sticky for this session (continuity) but never overwrites the staffer's durable default (Firm / last
+  // real pick), which correctly returns after the next dashboard visit. Dormant unless the button
+  // dispatches, so no existing Switcher behavior changes.
   useEffect(() => {
     const onOpen = (e: Event) => {
-      const clientId = (e as CustomEvent<OpenGrantBotDetail>).detail?.clientId;
-      if (!clientId) return;
-      manualPickRef.current = false;
+      const detail = (e as CustomEvent<OpenGrantBotDetail>).detail;
+      const clientId = detail?.clientId;
+      const clientName = detail?.clientName;
+      if (!clientId || !clientName) return;
+      manualPickRef.current = true;
       setFirmPending(null);
       setPendingInitial({ clientId, convId: null, blank: true });
       const prevT = targetRef.current;
       const keepSame = prevT?.kind === "client" && prevT.id === clientId;
-      setTarget(keepSame ? prevT : { kind: "client", id: clientId, name: null });
+      setTarget({ kind: "client", id: clientId, name: clientName });
       setConvId(null);
       if (deepLinkNeedsRemount(true, keepSame)) setBodyNonce((n) => n + 1);
       openPanel();
