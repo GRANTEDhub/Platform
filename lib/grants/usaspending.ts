@@ -114,9 +114,15 @@ export interface ProgramAwardee {
   most_recent_year: string | null;
 }
 
+// throwOnError (default false) is opt-in for a caller that must DISTINGUISH a genuine "no awardees"
+// (an OK response with no rows -> []) from a lookup that could not RUN (a non-OK response, a
+// network error, a timeout). The default swallows everything to [] so the discovery caller (which
+// falls back to web search on []) is byte-identical; a caller that presents the result to a human
+// as fact -- GrantBot's lookup_program_awards -- passes true so an outage surfaces as a "could not
+// run" fact instead of an authoritative "no winners found" (Vercel Agent Review, #552).
 export async function findProgramAwardees(
   cfdaNumbers: string[],
-  opts: { state?: string; limit?: number } = {},
+  opts: { state?: string; limit?: number; throwOnError?: boolean } = {},
 ): Promise<ProgramAwardee[]> {
   const programs = Array.from(new Set(cfdaNumbers.map((n) => n.trim()).filter(Boolean)));
   if (programs.length === 0) return [];
@@ -143,7 +149,10 @@ export async function findProgramAwardees(
         order: "desc",
       }),
     });
-    if (!response.ok) return [];
+    if (!response.ok) {
+      if (opts.throwOnError) throw new Error(`USASpending program lookup — HTTP ${response.status}`);
+      return [];
+    }
 
     const data = await response.json();
     const results: Record<string, unknown>[] = data.results ?? [];
@@ -179,7 +188,8 @@ export async function findProgramAwardees(
       }
     }
     return Array.from(byOrg.values());
-  } catch {
+  } catch (err) {
+    if (opts.throwOnError) throw err;
     return [];
   } finally {
     clearTimeout(timeout);

@@ -244,7 +244,11 @@ export async function executeDataTool(
       };
     }
     try {
-      const awardees = await deps.findProgramAwardees(cfdas, state ? { state } : {});
+      // throwOnError:true so a USASpending outage/timeout THROWS (→ the catch below, a "could not
+      // run" fact) instead of returning [] and being reported as an authoritative "no winners found"
+      // gap — the client-facing honesty rule. Without it findProgramAwardees swallows every failure
+      // to [] and this catch is dead code (Vercel Agent Review, #552).
+      const awardees = await deps.findProgramAwardees(cfdas, { ...(state ? { state } : {}), throwOnError: true });
       return {
         resultText: formatProgramAwards(cfdas, state, awardees),
         audit: { tool: toolUse.name, query, ok: awardees.length > 0, count: awardees.length, reason: awardees.length === 0 ? "no_data" : undefined, at },

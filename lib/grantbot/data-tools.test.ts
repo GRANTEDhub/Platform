@@ -124,8 +124,10 @@ describe("tool schemas are server-side constants with the expected names", () =>
 describe("executeDataTool — lookup_program_awards (who wins)", () => {
   it("lists the distinct winners and marks the audit ok", async () => {
     const d = deps({
-      findProgramAwardees: async (cfdas) => {
+      findProgramAwardees: async (cfdas, opts) => {
         expect(cfdas).toEqual(["20.284"]);
+        // MUST pass throwOnError so an outage can't be swallowed to [] and reported as "no winners".
+        expect(opts?.throwOnError).toBe(true);
         return [awardee(), awardee({ name: "State of Missouri DOT", state: "MO", most_recent_year: "2024" })];
       },
     });
