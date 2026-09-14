@@ -18,12 +18,14 @@ export class FakeDb {
   monitor: Row[] = [];
   writes: FakeWrite[] = [];
   failInsertTables: Set<string>;
+  failUpdateTables: Set<string>;
   private _id = 0;
 
-  constructor(seed?: { grants?: Row[]; monitor?: Row[]; failInsert?: string[] }) {
+  constructor(seed?: { grants?: Row[]; monitor?: Row[]; failInsert?: string[]; failUpdate?: string[] }) {
     if (seed?.grants) this.grants = seed.grants.map((r) => ({ ...r }));
     if (seed?.monitor) this.monitor = seed.monitor.map((r) => ({ ...r }));
     this.failInsertTables = new Set(seed?.failInsert ?? []);
+    this.failUpdateTables = new Set(seed?.failUpdate ?? []);
   }
 
   nextId(): string {
@@ -105,6 +107,9 @@ class FakeQuery {
       return { data: null, error: null };
     }
     if (this._update) {
+      if (this.db.failUpdateTables.has(this.table)) {
+        return { data: null, error: { message: `update failed: ${this.table}` } };
+      }
       const target = this.table === "grant_monitor_state" ? this.db.monitor : this.db.grants;
       for (const r of target) if (this.match(r)) Object.assign(r, this._update);
       this.db.writes.push({ op: "update", table: this.table, row: this._update, filters: this._filters });
