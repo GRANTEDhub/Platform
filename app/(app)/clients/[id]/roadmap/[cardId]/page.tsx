@@ -214,6 +214,15 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   const conceptProposal = showConcept ? await getConceptProposal(params.cardId) : null;
   const sentAlert = isLead ? await getSentAlertForCard(params.cardId) : null;
 
+  // "Ask GrantBot about this grant" — opens a per-client GrantBot thread ANCHORED to this grant, so a
+  // staffer asks who-wins / eligibility / deadline-reality without retyping which grant they mean. Rides
+  // the IntellEngine box's askGrantBot slot (staff-only by construction — the portal never passes the
+  // concept slot), flag-gated, and needs a grant to anchor to. Null otherwise → box + button byte-identical.
+  const askGrantBotNode =
+    grantbotAskFromReviewEnabled() && card.grant_id ? (
+      <AskGrantBotButton clientId={params.id} grantId={card.grant_id} grantTitle={g.title || "this grant"} />
+    ) : null;
+
   // ── The page's argument ───────────────────────────────────────────────────
   // Score -> weakness -> mitigation as one chain. See the note in
   // components/report/grant-review-console.tsx for why the layout exists to carry it.
@@ -512,13 +521,14 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         // the re-run alone. The re-run is the on-demand QA control relocated out of the navy Fit
         // Score box; the portal never passes this slot, so it stays staff-only.
         concept={
-          showConcept || showIntel ? (
+          showConcept || showIntel || askGrantBotNode ? (
             <ConceptCard
               cardId={params.cardId}
               status={conceptProposal?.status ?? null}
               anchorHref="#concept"
               overdue={overdueConfig}
               showConcept={showConcept}
+              askGrantBot={askGrantBotNode}
               rerun={
                 showIntel ? (
                   mergedRerunEnabled() ? (
@@ -557,16 +567,9 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         }
       />
 
-      {/* "Ask GrantBot about this grant" — staff-only, flag-gated (GRANTBOT_ASK_FROM_REVIEW_ENABLED,
-          default OFF → byte-identical). A sibling of the console (never inside the shared frame the
-          portal also renders), so it is staff-only by construction. */}
-      {grantbotAskFromReviewEnabled() && (
-        <AskGrantBotButton
-          clientId={params.id}
-          clientName={client?.name ?? "Client"}
-          grantTitle={g.title || "this grant"}
-        />
-      )}
+      {/* "Ask GrantBot about this grant" now rides the IntellEngine box's askGrantBot slot (above), so
+          it is inside the same staff-only console surface as Generate/Re-run rather than a separate
+          page-level card. See askGrantBotNode. */}
 
       {/* The generated concept expands BELOW the frame. The review screen is zero-scroll;
           reading a full draft is not, and pretending otherwise would mean a 386px rail

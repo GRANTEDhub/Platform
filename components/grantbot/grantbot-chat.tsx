@@ -20,6 +20,7 @@ import {
 import { BRAND } from "@/lib/brand";
 import { stripControlChars, truncateSafely, attachKindFor, isTextAttachable, isAttachableImage, splitImageTag, MAX_ATTACH_CHARS, MAX_ATTACH_BYTES, MAX_IMAGE_BYTES, IMAGE_ATTACHED_TAG, type ImageMime } from "@/lib/grantbot/label";
 import { BLANK_CONVERSATION, draftKey } from "@/lib/grantbot/wire";
+import { takeAskContext, askStarters } from "@/lib/grantbot/ask-intent";
 import type { GrantBotMsg, GrantBotThread } from "@/lib/grantbot/wire";
 
 // ── THE COMPOSER SURVIVES THE EXPAND NAVIGATION ──
@@ -213,6 +214,13 @@ export function GrantBotChat({
   const [attachedImage, setAttachedImage] =
     useState<{ previewUrl: string; data: string; mediaType: ImageMime; name: string } | null>(null);
   const [showThreads, setShowThreads] = useState(false);
+  // The GRANT this thread is anchored to ("Ask GrantBot about this grant"): set from the ask-context
+  // stash on mount, and it drives two things — the starter chips in the new thread's empty state, and
+  // the focusGrantId/Title the FIRST send carries so the turn route stores the anchor (focus_grant_id)
+  // + auto-names the thread. After that the anchor is durable server-side, so this only needs to survive
+  // until the first message; it is CLEARED on a thread switch / new conversation (that thread isn't the
+  // anchored one). Null on every ordinary thread → byte-identical.
+  const [focusGrant, setFocusGrant] = useState<{ id: string; title: string } | null>(null);
   // Inline thread rename. renamingId is the thread whose title is being edited (null = none);
   // renameDraft is the in-progress text. A rename edits only the conversation title (metadata) --
   // never a stored message -- so it does not break the append-only transcript.
@@ -534,6 +542,17 @@ export function GrantBotChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The GRANT ANCHOR stashed by the "Ask GrantBot about this grant" tile button, consumed once on mount
+  // (read-and-clear, like the draft above, and under its own key so it never touches the draft). It opens
+  // THIS newly-mounted thread anchored to the grant: the starter chips show in the empty state and the
+  // first send carries the anchor so the route stores focus_grant_id + auto-names the thread. A thread
+  // opened any other way finds no anchor → a general thread, byte-identical.
+  useEffect(() => {
+    const ctx = takeAskContext(clientId);
+    if (ctx) setFocusGrant({ id: ctx.grantId, title: ctx.grantTitle });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Mirror the composer into sessionStorage so a route change cannot swallow it. Cheap enough
   // to do on every keystroke, and it self-clears when the fields go empty.
   useEffect(() => {
@@ -571,6 +590,7 @@ export function GrantBotChat({
       setAttaching(false);
       setImageAttaching(false);
       setAttachedImage(null); // an image is per-turn; it does not carry across a thread switch
+      setFocusGrant(null); // the grant anchor belongs to the thread the corner opened, not a switched-to one
       // A switch/open opens the destination AT its latest turn with no animation (see the scroll effect).
       didUserSend.current = false;
       setLoading(true);
@@ -712,6 +732,12 @@ export function GrantBotChat({
           // One per-turn image (raw base64 + media type). Undefined when none; the server also drops it
           // unless GRANTBOT_VISION_ENABLED is on, and never stores the bytes.
           image: sentImage ? { data: sentImage.data, mediaType: sentImage.mediaType } : undefined,
+          // The grant anchor for a thread opened from a grant card. The route honours it ONLY when it
+          // CREATES the thread (stores focus_grant_id + auto-names it after the grant) and only when the
+          // flag is on; on later turns the stored anchor wins and this is ignored. Undefined on an
+          // ordinary thread → byte-identical body.
+          focusGrantId: focusGrant?.id,
+          focusGrantTitle: focusGrant?.title,
         }),
       });
       const data = await res.json();
@@ -794,6 +820,7 @@ export function GrantBotChat({
     setAttachedImage(null);
     // Same as a thread switch: the blank transcript opens instantly, not with a scroll animation.
     didUserSend.current = false;
+    setFocusGrant(null); // a fresh general thread — not the grant-anchored one the corner opened
     setConvId(null);
     setMessages([]);
     setError(null);
@@ -1012,7 +1039,44 @@ export function GrantBotChat({
         // corner it is the only thing in the panel, so it is a titled card that says what this
         // is for; on the full page it is one note above a screen that already announced itself
         // with a heading, a prompt read-out and a thread rail.
-        isCorner ? (
+        //
+        // GRANT-ANCHORED FIRST: a thread opened from a grant card (focusGrant set) already knows the
+        // grant, so it names it and offers the three starters as one-click chips (they fill the composer;
+        // the staffer can also just type a free-form question and it is still grant-scoped). The generic
+        // intros below are the ordinary, unanchored thread.
+        focusGrant ? (
+          <>
+            <div
+              className="rounded-2xl px-[15px] py-3.5"
+              style={{ background: BRAND.orangeWash, border: `1px solid ${BRAND.orangeWashEdge}` }}
+            >
+              <p
+                className="mb-1.5 text-[9.5px] font-bold uppercase tracking-[0.11em]"
+                style={{ color: BRAND.orangeDeep }}
+              >
+                Ask GrantBot about this grant
+              </p>
+              <p className="text-[12.5px] leading-[1.55] text-ink-muted">
+                This thread is about{" "}
+                <span className="font-semibold text-brand-navy">{focusGrant.title || "this grant"}</span> for{" "}
+                {clientName}. I already have the grant — just ask, or start with one of these:
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {askStarters(clientName, focusGrant.title).map((s) => (
+                <button
+                  key={s.key}
+                  type="button"
+                  onClick={() => setDraft(s.question)}
+                  title={s.question}
+                  className="inline-flex items-center rounded-pill border border-edge bg-white px-3 py-1.5 text-[12px] font-medium text-brand-navy transition-colors hover:border-brand-navy/40 hover:bg-brand-navy/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/50 focus-visible:ring-offset-1"
+                >
+                  {s.chip}
+                </button>
+              ))}
+            </div>
+          </>
+        ) : isCorner ? (
           <>
             <div
               className="rounded-2xl px-[15px] py-3.5"

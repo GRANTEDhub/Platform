@@ -73,6 +73,7 @@ export type PromptBlockKind =
   | "cross-thread"
   | "data-tools"
   | "web-search"
+  | "focus-grant"
   | "closing";
 
 export interface PromptBlock {

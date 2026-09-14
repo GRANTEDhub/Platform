@@ -1,28 +1,30 @@
-// "Ask GrantBot" from the grant review screen: the seam that lets a staffer, looking at one grant
-// card, open the per-client GrantBot with a grant-specific question already in the composer — instead
-// of navigating to the client, opening GrantBot, and retyping who the client is and which grant.
+// "Ask GrantBot about this grant" — the seam that lets a staffer, looking at one grant's IntellEngine
+// tile, open a per-client GrantBot thread ANCHORED to that grant, so they can just ask ("is the deadline
+// realistic?") without re-establishing which grant they mean (the MS County retyping this kills).
 //
-// WHY THIS IS A THIN, MECHANISM-FREE SEAM (and reuses only proven flows):
-//   - GrantBot is per-CLIENT, not per-grant (there is no grantId anywhere in its wire/store), so
-//     "scoped to this grant" means the grant is NAMED in the seeded question. The client's context
-//     pack already loads its matched grants (gather.ts), so a grant named by title resolves against
-//     context GrantBot already holds.
-//   - Opening is the EXISTING deep-link: `/clients/<id>?grantbot=new`, which the corner GrantBot
-//     already honours on the dashboard route — the launcher today (server-read into startOpen), and
-//     the Switcher when that flag is on. Seeding is the EXISTING composer stash (draftKey), which
-//     GrantBotChat reads-and-clears once on mount (takeDraft). So this adds NO new open/seed
-//     machinery and NO change to any GrantBot component — it writes the stash and navigates. When the
-//     universal Switcher is later turned on, the SAME navigate URL still works, so the button never
-//     needs reworking; docking the panel in place on the review sub-route is a separate future polish.
+// WHAT IT DOES (v2 — the grant-scoped thread, migration 0098):
+//   - The tile button stashes a GRANT ANCHOR (grantId + grantTitle) under askContextKey and opens the
+//     corner GrantBot on this client at a NEW thread (the existing `/clients/<id>?grantbot=new` deep-link,
+//     honoured by the Switcher / launcher). The chat reads-and-clears the anchor on mount.
+//   - On the first send the turn route stores focus_grant_id on the conversation and AUTO-NAMES the
+//     thread after the grant; every turn after is grounded on that grant server-side (focus-grant.ts),
+//     so the bot knows the grant + client durably — even after a reload — with nothing retyped.
+//   - The three starter questions (below) render as CLICKABLE CHIPS inside the new thread's empty state
+//     (the chat), one-click to fill the composer; the staffer can also just type a free-form question
+//     and it is still grant-scoped.
 //
-// FLAG-GATED, byte-identical OFF: the review page renders the button only when
-// GRANTBOT_ASK_FROM_REVIEW_ENABLED is on, so off is exactly today's page.
+// The anchor is a POINTER (an id) + a display label (the title). The grounding text the model reads is
+// composed server-side from the grant's own public row (focus-grant.ts), never from the client — so no
+// browser-supplied prompt text reaches the model, the turn's standing invariant.
+//
+// FLAG-GATED, byte-identical OFF: the review page renders the button and the turn route honours the
+// anchor only when GRANTBOT_ASK_FROM_REVIEW_ENABLED is on, so off is exactly today's page + turn.
 
-import { BLANK_CONVERSATION, draftKey } from "@/lib/grantbot/wire";
+import { BLANK_CONVERSATION, askContextKey, type AskContext } from "@/lib/grantbot/wire";
 
-// Server-read flag (the review page gates the button on it). Off unless exactly "true" — the same
-// shape as the other GrantBot flags; never NEXT_PUBLIC_, so it is read server-side and the button is
-// simply not rendered when off (no client bundle change, no affordance).
+// Server-read flag (the review page gates the button on it; the turn route honours the anchor on it).
+// Off unless exactly "true" — the same shape as the other GrantBot flags; never NEXT_PUBLIC_, so it is
+// read server-side and the button is simply not rendered when off (no client bundle change, no affordance).
 export function grantbotAskFromReviewEnabled(): boolean {
   return process.env.GRANTBOT_ASK_FROM_REVIEW_ENABLED === "true";
 }
@@ -32,9 +34,9 @@ export interface AskStarter {
   key: string;
   // The short pill label the staffer clicks.
   chip: string;
-  // The full question seeded into the composer — names BOTH the client and the grant so GrantBot has
-  // the scope without the staffer retyping it, and frames the grant-advisory distinctions GRANTED
-  // cares about (who actually wins, prime vs partner/sub, deadline reality incl. registration + LOE).
+  // The full question the chip drops into the composer. It still NAMES the client and the grant — the
+  // thread is already grounded server-side, so this is belt-and-suspenders (a robust question even if a
+  // turn's grounding were weak) and reads naturally on its own.
   question: string;
 }
 
@@ -64,85 +66,41 @@ export function askStarters(clientName: string, grantTitle: string): AskStarter[
   ];
 }
 
-// Seed a starter question into the client's composer stash, in the EXACT shape GrantBotChat's
-// takeDraft expects (draft set, every other field empty/null). Client-only; a no-window or a private
-// window (sessionStorage throws) is a harmless no-op — the corner still opens, just without the
-// pre-fill, so the worst case degrades to today's blank composer rather than an error.
+// Stash the grant anchor for the corner chat to consume on its next mount. Client-only; a no-window or a
+// private window (sessionStorage throws) is a harmless no-op — the corner still opens, just as a general
+// (unanchored) thread, so the worst case degrades to today's blank GrantBot rather than an error.
 //
-// PRESERVES UNSENT WORK, WITHOUT GOING INERT: the composer mirrors every keystroke into this SAME
-// stash key, so a blind overwrite would silently discard a half-typed message (or a pasted email /
-// attachment) the staffer left unsent for this client — the exact "unsent-work" the stash exists to
-// protect. So if the stash already holds real content, we DO NOT clobber it: the corner opens showing
-// their in-progress work (they can send or clear it, then re-click).
-//
-// BUT a prior chip click also leaves its seeded question sitting unsent in this same key (takeDraft
-// loads it, then the composer mirrors it straight back), so "any non-empty draft blocks the seed"
-// would make a SECOND chip click before the first is sent a silent no-op — the feature's core
-// interaction (clicking chips) going inert. So `seedQuestions` (the full starter set for this
-// grant+client) lets us tell the tool's OWN unedited prior seed (an exact match — overwrite it, so
-// re-seeding works) from the staffer's genuine typed/pasted/edited content (never an exact match —
-// preserve it). Best of both: unsent work is safe, and switching chips still re-seeds.
-export function stashAskDraft(clientId: string, question: string, seedQuestions: string[] = []): void {
+// A LAST-WRITE-WINS OVERWRITE, deliberately: it lives under its OWN key (askContextKey), separate from
+// the composer-draft stash, so it can never clobber a half-typed message / pasted email / attachment.
+// Clicking the button again (a different grant) just replaces the pending anchor with the latest one.
+export function stashAskContext(clientId: string, ctx: AskContext): void {
   if (typeof window === "undefined") return;
   try {
-    const existing = window.sessionStorage.getItem(draftKey(clientId));
-    if (existing && hasUnsentWork(existing) && !isPriorSeed(existing, seedQuestions)) return;
-    window.sessionStorage.setItem(
-      draftKey(clientId),
-      JSON.stringify({ draft: question, pasted: "", pasteLabel: "", attachedFile: null, attachedImage: null }),
-    );
+    window.sessionStorage.setItem(askContextKey(clientId), JSON.stringify(ctx));
   } catch {
-    // Private mode / quota. Degrade to opening the corner without the seed.
+    // Private mode / quota. Degrade to opening the corner without the anchor (a general thread).
   }
 }
 
-// True when a stashed draft JSON holds any non-empty unsent content (text, paste, or attachment).
-// Tolerant of a malformed value: an unparseable stash counts as "no work", so a corrupt entry never
-// blocks seeding.
-function hasUnsentWork(raw: string): boolean {
+// Read-and-clear the pending grant anchor: it belongs to the mount that picks it up, and leaving it
+// behind would re-anchor the next unrelated thread. Returns null when absent or malformed (a corrupt
+// entry just means a general thread, never a crash).
+export function takeAskContext(clientId: string): AskContext | null {
+  if (typeof window === "undefined") return null;
   try {
-    const d = JSON.parse(raw) as {
-      draft?: unknown;
-      pasted?: unknown;
-      pasteLabel?: unknown;
-      attachedFile?: unknown;
-      attachedImage?: unknown;
-    };
-    return Boolean(
-      (typeof d.draft === "string" && d.draft.trim()) ||
-        (typeof d.pasted === "string" && d.pasted.trim()) ||
-        (typeof d.pasteLabel === "string" && d.pasteLabel.trim()) ||
-        d.attachedFile ||
-        d.attachedImage,
-    );
+    const raw = window.sessionStorage.getItem(askContextKey(clientId));
+    if (!raw) return null;
+    window.sessionStorage.removeItem(askContextKey(clientId));
+    const parsed = JSON.parse(raw) as Partial<AskContext>;
+    if (typeof parsed.grantId !== "string" || !parsed.grantId) return null;
+    return { grantId: parsed.grantId, grantTitle: typeof parsed.grantTitle === "string" ? parsed.grantTitle : "" };
   } catch {
-    return false;
+    return null;
   }
 }
 
-// True when the stashed content is the tool's OWN unedited prior seed: a bare draft (no paste, no
-// attachment) whose text exactly equals one of this grant+client's starter questions. A staffer's own
-// text never matches, and editing a seed (adding a word) or pasting alongside it makes it no longer a
-// bare exact match — so genuine work is still preserved, while an untouched prior seed is replaceable.
-function isPriorSeed(raw: string, seedQuestions: string[]): boolean {
-  if (seedQuestions.length === 0) return false;
-  try {
-    const d = JSON.parse(raw) as {
-      draft?: unknown;
-      pasted?: unknown;
-      pasteLabel?: unknown;
-      attachedFile?: unknown;
-      attachedImage?: unknown;
-    };
-    if (d.pasted || d.pasteLabel || d.attachedFile || d.attachedImage) return false;
-    return typeof d.draft === "string" && seedQuestions.includes(d.draft);
-  } catch {
-    return false;
-  }
-}
-
-// The open target: the existing "open the corner on a blank thread" deep-link for this client. Both
-// the launcher (today) and the Switcher (when enabled) honour ?grantbot= on the dashboard route.
+// The open target: the existing "open the corner on a blank thread" deep-link for this client. Both the
+// launcher (today) and the Switcher (live) honour ?grantbot= on the dashboard route.
 export function askOpenHref(clientId: string): string {
   return `/clients/${clientId}?grantbot=${BLANK_CONVERSATION}`;
 }

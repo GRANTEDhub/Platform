@@ -32,6 +32,21 @@ export const BLANK_CONVERSATION = "new";
 // corner — cannot drift from the key the chat reads. Same drift-guard reason as BLANK_CONVERSATION.
 export const draftKey = (clientId: string) => `grantbot:draft:${clientId}`;
 
+// The sessionStorage key the "Ask GrantBot about this grant" tile button stashes a GRANT ANCHOR under
+// before opening the corner, and the key the chat reads-and-clears on mount to open the new thread
+// tied to that grant. SEPARATE from draftKey (it carries a grant reference, not composer text — so it
+// never touches or clobbers an unsent draft), and shared HERE so the button's write and the chat's read
+// cannot drift, the same drift-guard reason as draftKey / BLANK_CONVERSATION.
+export const askContextKey = (clientId: string) => `grantbot:ask-context:${clientId}`;
+
+// What the tile button stashes and the chat consumes: the grant this new thread should be anchored to.
+// grantId is the durable anchor (stored as focus_grant_id on first send); grantTitle names the thread
+// and seeds the in-conversation starter chips.
+export interface AskContext {
+  grantId: string;
+  grantTitle: string;
+}
+
 export interface GrantBotThread {
   id: string;
   title: string | null;

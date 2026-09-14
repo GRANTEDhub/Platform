@@ -65,7 +65,18 @@ export function conversationTitle(firstMessage: string): string {
 
 export async function createConversation(
   db: SupabaseClient,
-  opts: { clientId: string; title: string; startedBy?: string | null; startedByEmail?: string | null },
+  opts: {
+    clientId: string;
+    title: string;
+    startedBy?: string | null;
+    startedByEmail?: string | null;
+    // The grant this thread is anchored to (Ask GrantBot from a grant card; migration 0098). Included
+    // in the INSERT ONLY when set, so a general thread's write is byte-identical to before AND does not
+    // touch the focus_grant_id column at all — the create path stays safe before 0098 is applied. A
+    // focus thread is only ever created behind GRANTBOT_ASK_FROM_REVIEW_ENABLED, whose flip implies the
+    // migration; without it the insert fails soft (returns null) rather than a general thread breaking.
+    focusGrantId?: string | null;
+  },
 ): Promise<Conversation | null> {
   const { data, error } = await db
     .from("grantbot_conversations")
@@ -74,6 +85,7 @@ export async function createConversation(
       title: opts.title,
       started_by: opts.startedBy ?? null,
       started_by_email: opts.startedByEmail ?? null,
+      ...(opts.focusGrantId ? { focus_grant_id: opts.focusGrantId } : {}),
     })
     .select("id, client_id, title, started_by_email, created_at, last_message_at")
     .maybeSingle();
@@ -82,6 +94,20 @@ export async function createConversation(
     return null;
   }
   return rowToConversation(data);
+}
+
+// The anchored grant id for one conversation, or null. A NARROW read used ONLY by the turn's grounding
+// path and ONLY when GRANTBOT_ASK_FROM_REVIEW_ENABLED is on — so focus_grant_id is never selected on
+// the general (flag-off) path, keeping getConversation / listConversations byte-identical and the whole
+// module safe to ship before migration 0098. Fails SOFT: any error (incl. a missing column before 0098)
+// leaves `data` null, so an ungrounded turn proceeds rather than the general bot breaking.
+export async function getFocusGrantId(db: SupabaseClient, conversationId: string): Promise<string | null> {
+  const { data } = await db
+    .from("grantbot_conversations")
+    .select("focus_grant_id")
+    .eq("id", conversationId)
+    .maybeSingle();
+  return (data as { focus_grant_id?: string | null } | null)?.focus_grant_id ?? null;
 }
 
 export async function getConversation(
