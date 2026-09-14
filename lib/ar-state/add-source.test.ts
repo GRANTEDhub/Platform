@@ -308,4 +308,27 @@ describe("addSource — repoint (a seed URL corrected in place)", () => {
     expect((plan as { note?: string }).note).toMatch(/repoint/);
     expect(db.writes).toHaveLength(0);
   });
+
+  // Ordering invariant: repointGrant writes grant_monitor_state FIRST and grants.source_url (the dedup
+  // identity) LAST. If the monitor write fails, source_url MUST stay at the OLD url — that is what keeps
+  // the grant findable by repoint_from on the next seed so the idempotent repoint re-runs and completes
+  // (self-healing). The reverse order would move source_url first and strand a permanently half-migrated
+  // grant (new url, stale monitor) that is forever dedup-skipped. This is the VADE-FIX regression lock.
+  it("leaves source_url UNMIGRATED when the monitor-state write fails, so re-seed self-heals", async () => {
+    const db = new FakeDb({
+      grants: [{ id: "gOld", source_url: OLD, status: "complete" }],
+      monitor: [{ id: "mOld", grant_id: "gOld", monitor_url: OLD, jurisdiction: "AR", monitor_mode: "auto", last_content_hash: "oldhash" }],
+      failUpdate: ["grant_monitor_state"],
+    });
+    const pipeline = vi.fn().mockResolvedValue(undefined);
+    const res = await addSource(anyDb(db), repointEntry, {
+      fetchText: fakeFetch({ ok: true, text: "CORRECT PAGE" }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      runPipelineImpl: pipeline as any,
+    });
+    expect(res.action).toBe("error"); // repoint failed -> surfaced, not silently half-done
+    expect(db.grants[0].source_url).toBe(OLD); // dedup identity NOT moved -> next re-seed re-finds by repoint_from
+    expect(db.monitor[0].monitor_url).toBe(OLD); // monitor write was the one that failed; nothing applied
+    expect(pipeline).not.toHaveBeenCalled(); // never re-derive against a half-migrated row
+  });
 });
