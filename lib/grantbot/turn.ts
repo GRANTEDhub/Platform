@@ -23,6 +23,7 @@ import { budgetHistory } from "@/lib/grantbot/history";
 import {
   executeWebFetch,
   grantbotWebFetchEnabled,
+  grantbotStateDocFetcher,
   FETCH_INSTRUCTION_BLOCK,
   WEB_FETCH_TOOL,
   WEB_FETCH_TOOL_NAME,
@@ -333,7 +334,13 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
     // The dispatch closes over the sinks, so an execution's audit is recorded the moment it runs.
     const dispatch: ToolDispatch = async (tu) => {
       if (tu.name === WEB_FETCH_TOOL_NAME) {
-        const { resultText, audit } = await executeWebFetch((tu.input as { url?: unknown } | undefined)?.url);
+        // The per-client bot opts INTO the state-doc reach (grantbotStateDocFetcher) — its
+        // FETCH_INSTRUCTION_BLOCK tells it media.ark.org is reachable. The firm bot, which shares this
+        // executor, passes no fetcher and stays .gov-only (its own instruction block still says so).
+        const { resultText, audit } = await executeWebFetch(
+          (tu.input as { url?: unknown } | undefined)?.url,
+          { fetcher: grantbotStateDocFetcher },
+        );
         fetches.push(audit);
         return { resultText };
       }

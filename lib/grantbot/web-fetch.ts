@@ -42,7 +42,7 @@ export function grantbotWebFetchEnabled(): boolean {
 // page per round, so a turn adds at most a couple of these.
 export const MAX_FETCH_TEXT_CHARS = 60_000;
 
-// ── Extra fetch reach for GrantBot: official U.S. state DOCUMENT hosts that are not on .gov ────────
+// ── Extra fetch reach for the PER-CLIENT GrantBot: official U.S. state DOCUMENT hosts not on .gov ──
 //
 // Some states publish their authoritative plan / NOFO / allocation PDFs on an official media host
 // that is not a bare .gov. Arkansas — GRANTED's home turf — puts them on media.ark.org (the state's
@@ -50,20 +50,37 @@ export const MAX_FETCH_TEXT_CHARS = 60_000;
 // text, while the real document is the PDF on media.ark.org). GrantBot could FIND that PDF via
 // web_search but not READ it, because the fetcher is .gov-only. This is the narrow, explicit widening.
 //
-// SCOPED TO GrantBot, on purpose: it is passed only through executeWebFetch's default fetcher, so the
-// intel QA pass (which calls fetchGrantSource with no extra hosts) keeps its strict .gov grounding
-// fail-safe unchanged. Kept to specific, official, GET-served document hosts — NOT a blanket *.ark.org
-// — and still behind fetch.ts's IP-range guard (an allowed host that resolves private is still
-// blocked). Add a new state's official doc host here as a one-line change when a client needs it.
+// EXPLICIT OPT-IN, NOT the shared default: the reach is reached ONLY through grantbotStateDocFetcher
+// below, which a caller must deliberately pass as `executeWebFetch(url, { fetcher })`. executeWebFetch's
+// DEFAULT fetcher stays plain .gov-only fetchGrantSource, so the OTHER callers of the shared executor
+// are unaffected: the intel QA pass (calls fetchGrantSource directly, no extra hosts) keeps its strict
+// .gov grounding fail-safe, and the FIRM bot (firm-web-fetch.ts re-exports this same executeWebFetch and
+// its FIRM_FETCH_INSTRUCTION_BLOCK still says ".gov only") stays .gov-only and truthful. Only the
+// per-client turn (turn.ts) opts in. Kept to specific, official, GET-served document hosts — NOT a
+// blanket *.ark.org — and still behind fetch.ts's IP-range guard (an allowed host that resolves private
+// is still blocked). Add a new state's official doc host here as a one-line change when a client needs it.
 export const GRANTBOT_EXTRA_FETCH_HOSTS = ["media.ark.org"] as const;
+
+// The per-client bot's opt-in fetcher: fetchGrantSource widened to the state doc hosts. `fetchSource` is
+// injectable purely so the extra-hosts pass-through is unit-tested without a network; it defaults to the
+// real guarded fetcher. Pass this to executeWebFetch to grant the extra reach for THIS call only.
+export function grantbotStateDocFetcher(
+  url: string,
+  fetchSource: typeof fetchGrantSource = fetchGrantSource,
+): Promise<FetchResult> {
+  return fetchSource(url, { extraAllowedHosts: GRANTBOT_EXTRA_FETCH_HOSTS });
+}
 
 // ── The tool, as a server-side constant ─────────────────────────────────────────────────────────
 export const WEB_FETCH_TOOL_NAME = "fetch_grant_source";
 
 export const WEB_FETCH_TOOL = {
   name: WEB_FETCH_TOOL_NAME,
+  // Shared by BOTH the per-client bot and the firm bot, so it states the COMMON reach (.gov). The
+  // per-client bot's extra state-doc reach is stated in its own FETCH_INSTRUCTION_BLOCK, which the firm
+  // bot does not use — keeping this description truthful for the firm bot (whose executor stays .gov-only).
   description:
-    "Fetch the live text of a public U.S. federal or state grant source by URL, to verify against the actual source instead of recalling it from memory. Reachable: https:// .gov pages (grants.gov, sam.gov, federalregister.gov, agency and state .gov) plus a few official state document hosts (e.g. Arkansas's media.ark.org). Fetches a PDF too — a NOFO or plan PDF comes back as extracted text. Returns the page text, or a typed 'could not retrieve' result. Read-only: it only reads a public page and cannot change anything.",
+    "Fetch the live text of a public U.S. federal or state grant source by URL, to verify against the actual source instead of recalling it from memory. Only https:// .gov pages are reachable (grants.gov, sam.gov, federalregister.gov, agency and state .gov). Returns the page text, or a typed 'could not retrieve' result. Read-only: it only reads a public page and cannot change anything.",
   input_schema: {
     type: "object" as const,
     properties: {
@@ -152,11 +169,10 @@ export async function executeWebFetch(
   opts: { fetcher?: (url: string) => Promise<FetchResult>; now?: () => string } = {},
 ): Promise<{ resultText: string; audit: FetchAuditRecord }> {
   const now = opts.now ?? (() => new Date().toISOString());
-  // The default fetcher grants GrantBot the extra state-doc-host reach (GRANTBOT_EXTRA_FETCH_HOSTS);
-  // a test that injects its own fetcher bypasses this, and the intel pass never routes through here,
-  // so its .gov-only grounding is untouched.
-  const fetcher =
-    opts.fetcher ?? ((u: string) => fetchGrantSource(u, { extraAllowedHosts: GRANTBOT_EXTRA_FETCH_HOSTS }));
+  // DEFAULT is the plain .gov-only guarded fetcher — byte-identical to before, so every caller of the
+  // shared executor that does not opt in (the firm bot, any future caller) stays .gov-only. The
+  // per-client bot passes grantbotStateDocFetcher explicitly to widen the reach for its own turn.
+  const fetcher = opts.fetcher ?? fetchGrantSource;
   const url = typeof rawUrl === "string" ? rawUrl.trim() : "";
   if (!url) {
     return {
