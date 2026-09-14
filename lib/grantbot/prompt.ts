@@ -71,6 +71,7 @@ export type PromptBlockKind =
   | "web-fetch"
   | "artifacts"
   | "cross-thread"
+  | "data-tools"
   | "closing";
 
 export interface PromptBlock {

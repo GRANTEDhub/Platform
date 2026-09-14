@@ -194,6 +194,10 @@ export async function appendAssistant(
     // or read. Same NON-TEXT-block mechanism (normalizeContent drops it on read); omitted when empty,
     // so a turn that read no other thread is byte-identical to before.
     crossThreadReads?: unknown[] | null;
+    // Federal data lookups for this turn -- which USASpending/SAM lookups the model ran (data-tools).
+    // Same NON-TEXT-block mechanism (normalizeContent drops it on read); omitted when empty, so a turn
+    // that looked nothing up is byte-identical to before.
+    dataLookups?: unknown[] | null;
   },
 ): Promise<void> {
   const content: unknown[] = [{ type: "text", text: opts.text }];
@@ -205,6 +209,9 @@ export async function appendAssistant(
   }
   if (opts.crossThreadReads && opts.crossThreadReads.length > 0) {
     content.push({ type: "cross_thread_audit", reads: opts.crossThreadReads });
+  }
+  if (opts.dataLookups && opts.dataLookups.length > 0) {
+    content.push({ type: "data_lookup_audit", lookups: opts.dataLookups });
   }
   const { error } = await db.from("grantbot_messages").insert({
     conversation_id: opts.conversationId,
