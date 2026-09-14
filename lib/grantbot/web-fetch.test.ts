@@ -6,6 +6,7 @@ import {
   FETCH_INSTRUCTION_BLOCK,
   WEB_FETCH_TOOL,
   MAX_FETCH_TEXT_CHARS,
+  GRANTBOT_EXTRA_FETCH_HOSTS,
 } from "./web-fetch";
 import type { FetchResult } from "./fetch";
 
@@ -45,6 +46,20 @@ describe("FETCH_INSTRUCTION_BLOCK", () => {
     // should retry silently and surface only the result or a clean could-not-reach line.
     expect(FETCH_INSTRUCTION_BLOCK.text).toMatch(/plumbing/i);
     expect(FETCH_INSTRUCTION_BLOCK.text).toMatch(/play-by-play|narrat/i);
+  });
+  it("tells the model to pivot to the document PDF when a page comes back thin/truncated", () => {
+    // The AR watershed failure: the .gov landing page was script-rendered and truncated, and the real
+    // priority-watershed list was in the plan PDF on media.ark.org. The model must fetch the document,
+    // not conclude from the empty shell.
+    expect(FETCH_INSTRUCTION_BLOCK.text).toMatch(/truncat|thin|script-rendered/i);
+    expect(FETCH_INSTRUCTION_BLOCK.text).toMatch(/PDF/);
+    expect(FETCH_INSTRUCTION_BLOCK.text).toContain("media.ark.org");
+  });
+});
+
+describe("GRANTBOT_EXTRA_FETCH_HOSTS", () => {
+  it("includes Arkansas's official state document host (the reach the .gov-only allowlist lacked)", () => {
+    expect(GRANTBOT_EXTRA_FETCH_HOSTS).toContain("media.ark.org");
   });
 });
 
