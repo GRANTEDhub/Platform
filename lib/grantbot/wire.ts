@@ -26,6 +26,12 @@ import type { Conversation, StoredMessage, TurnUsage } from "@/lib/grantbot/stor
 // preference" -- so the intent needs a word of its own rather than a missing value.
 export const BLANK_CONVERSATION = "new";
 
+// The sessionStorage key GrantBotChat stashes an unsent composer draft under, per client. Shared
+// here (rather than defined inside grantbot-chat.tsx) so a second writer — the "Ask GrantBot"
+// review-screen button, which seeds a starter question into this same stash before opening the
+// corner — cannot drift from the key the chat reads. Same drift-guard reason as BLANK_CONVERSATION.
+export const draftKey = (clientId: string) => `grantbot:draft:${clientId}`;
+
 export interface GrantBotThread {
   id: string;
   title: string | null;

@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { BRAND } from "@/lib/brand";
 import { stripControlChars, truncateSafely, attachKindFor, isTextAttachable, isAttachableImage, splitImageTag, MAX_ATTACH_CHARS, MAX_ATTACH_BYTES, MAX_IMAGE_BYTES, IMAGE_ATTACHED_TAG, type ImageMime } from "@/lib/grantbot/label";
-import { BLANK_CONVERSATION } from "@/lib/grantbot/wire";
+import { BLANK_CONVERSATION, draftKey } from "@/lib/grantbot/wire";
 import type { GrantBotMsg, GrantBotThread } from "@/lib/grantbot/wire";
 
 // ── THE COMPOSER SURVIVES THE EXPAND NAVIGATION ──
@@ -30,8 +30,6 @@ import type { GrantBotMsg, GrantBotThread } from "@/lib/grantbot/wire";
 // writing. sessionStorage rather than a query param: pasted call notes have no business in
 // a URL that gets logged, bookmarked and shared. Per client, because the draft is about
 // that client.
-const draftKey = (clientId: string) => `grantbot:draft:${clientId}`;
-
 interface StashedDraft {
   draft: string;
   pasted: string;
