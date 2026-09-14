@@ -74,6 +74,7 @@ import {
   WEB_SEARCH_INSTRUCTION_BLOCK,
   type WebSearchAuditRecord,
 } from "@/lib/grantbot/web-search";
+import { loadFocusGrant, buildFocusGrantBlock } from "@/lib/grantbot/focus-grant";
 
 // One conversational turn: assemble, call, store. The orchestrator between the pure renderer and
 // the store, and the only place that knows anything about the model.
@@ -153,6 +154,12 @@ export interface RunTurnInput {
   // assembleSystem places these AFTER the cache breakpoints and rejects any that claim to be
   // cacheable, so adding retrieval later cannot silently turn every turn into a cache write.
   turnBlocks?: PromptBlock[];
+  // The grant this conversation is ANCHORED to (Ask GrantBot from a grant card; migration 0098). Read
+  // by the route from the STORED conversation, NOT the request body — so like turnBlocks it can never be
+  // a browser-supplied prompt. When set, a cacheable:false grounding block (composed from the grant's
+  // own public row) is appended after the cache breakpoint so the turn knows which grant it is about.
+  // Null/absent → a general thread, byte-identical to before.
+  focusGrantId?: string | null;
 }
 
 export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
@@ -208,12 +215,21 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
   const dataToolsEnabled = grantbotDataToolsEnabled();
   const webSearchEnabled = grantbotWebSearchEnabled();
   const toolsEnabled = webFetchEnabled || artifactsEnabled || crossThreadEnabled || dataToolsEnabled || webSearchEnabled;
+
+  // The grant anchor (Ask GrantBot from a grant card): when this conversation is tied to a grant, load
+  // its public facts and add a grounding block below. focusGrantId is the STORED anchor (the route reads
+  // it); the block text comes from the grant's own row, never the request body. A general thread
+  // (focusGrantId null, or the grant no longer resolves) adds no block → byte-identical.
+  const focusGrant = input.focusGrantId ? await loadFocusGrant(input.db, input.focusGrantId) : null;
   // Each instruction block is cacheable:false and appended ONLY when its flag is on, so it never
   // enters the shared cached prefix -- the flag-off system prompt is unchanged and existing caches
   // are not busted. When ALL flags are off, effectiveTurnBlocks equals input.turnBlocks and the
   // assembled system + manifest are byte-identical to the pre-tools turn.
   const effectiveTurnBlocks = [
     ...(input.turnBlocks ?? []),
+    // The grant-anchor grounding, when this thread was opened from a grant card. cacheable:false and
+    // present only for an anchored thread, so a general thread's prompt is unchanged.
+    ...(focusGrant ? [buildFocusGrantBlock(focusGrant)] : []),
     ...(webFetchEnabled ? [FETCH_INSTRUCTION_BLOCK] : []),
     ...(artifactsEnabled ? [ARTIFACT_INSTRUCTION_BLOCK] : []),
     ...(crossThreadEnabled ? [CROSS_THREAD_INSTRUCTION_BLOCK] : []),

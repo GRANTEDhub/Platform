@@ -1,11 +1,12 @@
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   grantbotAskFromReviewEnabled,
   askStarters,
-  stashAskDraft,
+  stashAskContext,
+  takeAskContext,
   askOpenHref,
 } from "./ask-intent";
-import { draftKey } from "./wire";
+import { askContextKey } from "./wire";
 
 describe("grantbotAskFromReviewEnabled — off unless exactly 'true'", () => {
   const prev = process.env.GRANTBOT_ASK_FROM_REVIEW_ENABLED;
@@ -39,7 +40,7 @@ describe("askStarters — three grant-scoped questions that name client + grant"
     expect(new Set(starters.map((s) => s.question)).size).toBe(3);
   });
 
-  it("names BOTH the client and the grant in every question (so GrantBot has the scope)", () => {
+  it("names BOTH the client and the grant in every question (robust even if grounding is weak)", () => {
     for (const s of starters) {
       expect(s.question).toContain("Mississippi County");
       expect(s.question).toContain("the Arkansas Unpaved Roads Program (AURP)");
@@ -63,7 +64,7 @@ describe("askStarters — three grant-scoped questions that name client + grant"
   });
 });
 
-describe("stashAskDraft — writes the exact composer-stash shape GrantBotChat reads", () => {
+describe("stashAskContext / takeAskContext — the grant anchor round-trip", () => {
   const realWindow = (globalThis as { window?: unknown }).window;
   afterEach(() => {
     if (realWindow === undefined) delete (globalThis as { window?: unknown }).window;
@@ -73,7 +74,7 @@ describe("stashAskDraft — writes the exact composer-stash shape GrantBotChat r
   function fakeWindow() {
     const store = new Map<string, string>();
     const sessionStorage = {
-      setItem: vi.fn((k: string, v: string) => store.set(k, v)),
+      setItem: (k: string, v: string) => store.set(k, v),
       getItem: (k: string) => store.get(k) ?? null,
       removeItem: (k: string) => store.delete(k),
     };
@@ -81,90 +82,66 @@ describe("stashAskDraft — writes the exact composer-stash shape GrantBotChat r
     return { store, sessionStorage };
   }
 
-  it("writes draft set, everything else empty/null, under the shared draftKey", () => {
+  it("stashes the anchor under its OWN key (not the draft key) and reads it back", () => {
     const { store } = fakeWindow();
-    stashAskDraft("c1", "Who wins this?");
-    const raw = store.get(draftKey("c1"));
-    expect(raw).toBeTruthy();
-    expect(JSON.parse(raw!)).toEqual({
-      draft: "Who wins this?",
-      pasted: "",
-      pasteLabel: "",
-      attachedFile: null,
-      attachedImage: null,
-    });
+    stashAskContext("c1", { grantId: "g-1", grantTitle: "AURP" });
+    expect(JSON.parse(store.get(askContextKey("c1"))!)).toEqual({ grantId: "g-1", grantTitle: "AURP" });
+    expect(takeAskContext("c1")).toEqual({ grantId: "g-1", grantTitle: "AURP" });
   });
 
-  it("does NOT clobber an existing non-empty draft (preserves the staffer's unsent work)", () => {
+  it("take is READ-AND-CLEAR (a second read is null, so it never re-anchors a later thread)", () => {
     const { store } = fakeWindow();
-    const typed = JSON.stringify({ draft: "half-typed question the staffer left", pasted: "", pasteLabel: "", attachedFile: null, attachedImage: null });
-    store.set(draftKey("c1"), typed);
-    stashAskDraft("c1", "Who wins this?");
-    // Unchanged — the seed was skipped so the in-progress work survives.
-    expect(store.get(draftKey("c1"))).toBe(typed);
+    stashAskContext("c1", { grantId: "g-1", grantTitle: "AURP" });
+    expect(takeAskContext("c1")).not.toBeNull();
+    expect(store.get(askContextKey("c1"))).toBeUndefined();
+    expect(takeAskContext("c1")).toBeNull();
   });
 
-  it("does NOT clobber an existing pasted email / attachment even with an empty draft field", () => {
-    const { store } = fakeWindow();
-    const pasted = JSON.stringify({ draft: "", pasted: "a long pasted email thread", pasteLabel: "email.txt", attachedFile: null, attachedImage: null });
-    store.set(draftKey("c1"), pasted);
-    stashAskDraft("c1", "Deadline realistic?");
-    expect(store.get(draftKey("c1"))).toBe(pasted);
+  it("is per-client keyed (a different client's anchor is not consumed)", () => {
+    fakeWindow();
+    stashAskContext("c1", { grantId: "g-1", grantTitle: "AURP" });
+    expect(takeAskContext("c2")).toBeNull();
+    expect(takeAskContext("c1")).toEqual({ grantId: "g-1", grantTitle: "AURP" });
   });
 
-  it("DOES seed when the existing stash is empty content or malformed", () => {
-    const { store } = fakeWindow();
-    // Empty draft → no unsent work → seed writes.
-    store.set(draftKey("c1"), JSON.stringify({ draft: "", pasted: "", pasteLabel: "", attachedFile: null, attachedImage: null }));
-    stashAskDraft("c1", "Eligible?");
-    expect(JSON.parse(store.get(draftKey("c1"))!).draft).toBe("Eligible?");
-    // Malformed → treated as no work → seed writes.
-    store.set(draftKey("c2"), "not json {");
-    stashAskDraft("c2", "Who wins this?");
-    expect(JSON.parse(store.get(draftKey("c2"))!).draft).toBe("Who wins this?");
+  it("last write wins (clicking a second grant replaces the pending anchor)", () => {
+    fakeWindow();
+    stashAskContext("c1", { grantId: "g-1", grantTitle: "First" });
+    stashAskContext("c1", { grantId: "g-2", grantTitle: "Second" });
+    expect(takeAskContext("c1")).toEqual({ grantId: "g-2", grantTitle: "Second" });
   });
 
-  // The regression the second review nit named: switching chips before sending must still re-seed —
-  // the tool's own prior seed is replaceable, but a genuine/edited draft is still preserved.
-  const seedSet = askStarters("Mississippi County", "AURP").map((s) => s.question);
-
-  it("re-seeds when the existing draft is the tool's OWN prior unedited seed (switching chips works)", () => {
+  it("returns null on a malformed or grant-id-less anchor (a corrupt entry → a general thread, no crash)", () => {
     const { store } = fakeWindow();
-    store.set(draftKey("c1"), JSON.stringify({ draft: seedSet[0], pasted: "", pasteLabel: "", attachedFile: null, attachedImage: null }));
-    stashAskDraft("c1", seedSet[1], seedSet);
-    expect(JSON.parse(store.get(draftKey("c1"))!).draft).toBe(seedSet[1]);
+    store.set(askContextKey("c1"), "not json {");
+    expect(takeAskContext("c1")).toBeNull();
+    store.set(askContextKey("c2"), JSON.stringify({ grantTitle: "no id" }));
+    expect(takeAskContext("c2")).toBeNull();
   });
 
-  it("still preserves a genuine typed draft even when seedQuestions is passed", () => {
-    const { store } = fakeWindow();
-    const typed = JSON.stringify({ draft: "my own half-typed question", pasted: "", pasteLabel: "", attachedFile: null, attachedImage: null });
-    store.set(draftKey("c1"), typed);
-    stashAskDraft("c1", seedSet[0], seedSet);
-    expect(store.get(draftKey("c1"))).toBe(typed);
+  it("tolerates a missing title (empty string) — askStarters handles the blank", () => {
+    fakeWindow();
+    stashAskContext("c1", { grantId: "g-1", grantTitle: "" });
+    expect(takeAskContext("c1")).toEqual({ grantId: "g-1", grantTitle: "" });
   });
 
-  it("preserves an EDITED seed (no longer an exact match → treated as the staffer's work)", () => {
-    const { store } = fakeWindow();
-    const edited = JSON.stringify({ draft: `${seedSet[0]} and also our match capacity?`, pasted: "", pasteLabel: "", attachedFile: null, attachedImage: null });
-    store.set(draftKey("c1"), edited);
-    stashAskDraft("c1", seedSet[1], seedSet);
-    expect(store.get(draftKey("c1"))).toBe(edited);
-  });
-
-  it("is a harmless no-op when sessionStorage throws (private mode)", () => {
+  it("is a harmless no-op when sessionStorage throws (private mode) and with no window (SSR)", () => {
     (globalThis as { window?: unknown }).window = {
       sessionStorage: {
         setItem: () => {
           throw new Error("QuotaExceeded");
         },
+        getItem: () => {
+          throw new Error("blocked");
+        },
+        removeItem: () => {},
       },
     };
-    expect(() => stashAskDraft("c1", "x")).not.toThrow();
-  });
-
-  it("is a no-op with no window (SSR)", () => {
+    expect(() => stashAskContext("c1", { grantId: "g", grantTitle: "t" })).not.toThrow();
+    expect(takeAskContext("c1")).toBeNull();
     delete (globalThis as { window?: unknown }).window;
-    expect(() => stashAskDraft("c1", "x")).not.toThrow();
+    expect(() => stashAskContext("c1", { grantId: "g", grantTitle: "t" })).not.toThrow();
+    expect(takeAskContext("c1")).toBeNull();
   });
 });
 

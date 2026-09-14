@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getConversation, updateConversationTitle } from "./store";
+import { createConversation, getConversation, getFocusGrantId, updateConversationTitle } from "./store";
 
 // A minimal fake of the update chain updateConversationTitle uses:
 //   db.from(t).update(row).eq("id", …).eq("client_id", …)  -> awaited -> { error }
@@ -124,5 +124,60 @@ describe("getConversation — firm-row isolation (0097 security boundary)", () =
       "x",
     );
     expect(convo?.clientId).toBe("client-1");
+  });
+});
+
+// A minimal fake of createConversation's insert chain:
+//   db.from(t).insert(row).select(cols).maybeSingle() -> { data, error }
+// Captures the inserted row so a test can assert focus_grant_id is present ONLY when anchored.
+function fakeInsertDb(capture: { insert?: Record<string, unknown> }, dataRow: Record<string, unknown>): SupabaseClient {
+  const from = () => ({
+    insert: (row: Record<string, unknown>) => {
+      capture.insert = row;
+      const chain: Record<string, unknown> = {
+        select: () => chain,
+        maybeSingle: async () => ({ data: dataRow, error: null }),
+      };
+      return chain;
+    },
+  });
+  return { from } as unknown as SupabaseClient;
+}
+
+// The safe-before-migration property: the create path touches focus_grant_id ONLY for an anchored
+// thread, so a general thread's write is byte-identical and carries no dependency on migration 0098.
+describe("createConversation — focus_grant_id included ONLY when anchored (safe before 0098)", () => {
+  const dataRow = { id: "conv1", client_id: "c1", title: "t", started_by_email: null, created_at: "d", last_message_at: "d" };
+
+  it("a GENERAL thread's INSERT does NOT touch focus_grant_id (no column dependency)", async () => {
+    const capture: { insert?: Record<string, unknown> } = {};
+    await createConversation(fakeInsertDb(capture, dataRow), { clientId: "c1", title: "t" });
+    expect(capture.insert).toBeDefined();
+    expect("focus_grant_id" in capture.insert!).toBe(false);
+  });
+
+  it("an ANCHORED thread's INSERT includes focus_grant_id", async () => {
+    const capture: { insert?: Record<string, unknown> } = {};
+    await createConversation(fakeInsertDb(capture, dataRow), { clientId: "c1", title: "t", focusGrantId: "g-1" });
+    expect(capture.insert?.focus_grant_id).toBe("g-1");
+  });
+
+  it("a null/empty focusGrantId is a general thread (no column touch)", async () => {
+    const capture: { insert?: Record<string, unknown> } = {};
+    await createConversation(fakeInsertDb(capture, dataRow), { clientId: "c1", title: "t", focusGrantId: null });
+    expect("focus_grant_id" in capture.insert!).toBe(false);
+  });
+});
+
+// The narrow read is fail-SOFT: any missing row/column (incl. before 0098 is applied) → null, so an
+// ungrounded turn proceeds rather than the general bot breaking.
+describe("getFocusGrantId — narrow, fail-soft anchor read", () => {
+  it("returns the stored focus_grant_id", async () => {
+    expect(await getFocusGrantId(fakeSelectDb({ focus_grant_id: "g-1" }), "conv1")).toBe("g-1");
+  });
+
+  it("returns null when the row or column is absent (fail-soft, never a crash)", async () => {
+    expect(await getFocusGrantId(fakeSelectDb(null), "conv1")).toBeNull();
+    expect(await getFocusGrantId(fakeSelectDb({}), "conv1")).toBeNull();
   });
 });

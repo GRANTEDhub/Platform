@@ -31,6 +31,7 @@ export function ConceptCard({
   showConcept,
   rerun = null,
   reextract = null,
+  askGrantBot = null,
 }: {
   cardId: string;
   status: ConceptProposalStatus | null;
@@ -52,6 +53,10 @@ export function ConceptCard({
   // below the re-run. Null when it doesn't apply. Staff-only by mount point like `rerun` — the
   // portal builds its own concept slot and never passes it.
   reextract?: React.ReactNode | null;
+  // "Ask GrantBot about this grant" (staff, GRANTBOT_ASK_FROM_REVIEW_ENABLED + a grant to anchor to),
+  // rendered at the TOP of the box, above Generate. Null when it doesn't apply. Staff-only by mount
+  // point like `rerun`/`reextract` — the portal builds its own concept slot and never passes it.
+  askGrantBot?: React.ReactNode | null;
 }) {
   const router = useRouter();
   // IN-FLIGHT POST ONLY. This used to be left true forever on purpose, on the theory
@@ -94,6 +99,10 @@ export function ConceptCard({
         <Sparkles className="h-3.5 w-3.5 shrink-0" style={{ color: BRAND.orangeDeep }} aria-hidden="true" />
         <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-ink-muted">IntellEngine</p>
       </div>
+
+      {/* Action 0 — Ask GrantBot about this grant (staff, flag-gated; null otherwise). At the TOP so it
+          reads as "ask a question first", above the generate/re-run actions. */}
+      {askGrantBot}
 
       {/* Action 1 — Generate concept proposal (boxed button, caption UNDER it). */}
       {showConcept && (
