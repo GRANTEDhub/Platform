@@ -33,7 +33,7 @@
 // methodology would appear to have licensed. So the opening section states that the guardrails
 // win, and that naming the gap IS the method applied rather than the method skipped.
 
-export const METHODOLOGY_VERSION = "2026-09-10.1";
+export const METHODOLOGY_VERSION = "2026-09-14.1";
 
 // ── BUILD DEPENDENCIES THIS TEXT ASSUMES ──
 //
