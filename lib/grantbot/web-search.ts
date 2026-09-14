@@ -47,6 +47,77 @@ export function grantbotWebSearchTool() {
   return webSearchTool(GRANTBOT_MAX_SEARCHES);
 }
 
+// ── AUDIT ──
+//
+// web_search is the ONE GrantBot tool with no dispatch branch (it runs on Anthropic's servers, so no
+// client tool_use is emitted and turn.ts's dispatch never sees it). Left as-is, the riskiest tool — the
+// one pulling untrusted content from anywhere on the open web into a staff-facing answer — would be the
+// only capability with no record of what it did, breaking the locked "every tool run is inspectable via
+// a non-text audit block on the assistant row" convention that fetch/artifacts/cross-thread/data-tools
+// all follow. This extractor reads the server-side blocks Anthropic adds to the response instead: one
+// record per search — the query it issued, and the result URLs that came back (or the error) — so
+// "what did it search, and what third-party pages reached the model" is answerable from the transcript.
+export interface WebSearchAuditRecord {
+  query: string; // the query the model issued
+  ok: boolean; // the search returned results (not an upstream error)
+  count?: number; // number of result URLs when ok
+  urls?: string[]; // the result URLs when ok (capped at MAX_AUDIT_URLS)
+  reason?: string; // the error_code when !ok
+  at: string;
+}
+
+// A single search can return many results; cap what we persist so the jsonb audit can't bloat the row.
+// The point is a faithful record of which pages reached the model, not the full result set.
+export const MAX_AUDIT_URLS = 10;
+
+// Extract the per-search audit from ONE Anthropic response's content blocks. Anthropic runs web_search
+// inline and reports it as a `server_tool_use` block (name "web_search", input.query) paired by
+// tool_use_id with a `web_search_tool_result` block (either an array of `web_search_result` items, each
+// with a url, or an error object with an error_code). PURE and exported so it is unit-tested directly;
+// callModel invokes it per round and accumulates into the turn's stable sink. Anything that is not one of
+// those two block types is ignored, so a text-only / client-tool-only response yields [] (the
+// byte-identical-off guarantee: no search blocks → no records → no audit block written).
+export function extractWebSearchAudit(content: unknown, at: string): WebSearchAuditRecord[] {
+  if (!Array.isArray(content)) return [];
+  // First pass: map each result block to its originating search by tool_use_id.
+  const results = new Map<string, { urls: string[]; error?: string }>();
+  for (const b of content) {
+    if (!b || typeof b !== "object") continue;
+    const blk = b as { type?: unknown; tool_use_id?: unknown; content?: unknown };
+    if (blk.type !== "web_search_tool_result") continue;
+    const id = typeof blk.tool_use_id === "string" ? blk.tool_use_id : "";
+    if (Array.isArray(blk.content)) {
+      const urls: string[] = [];
+      for (const r of blk.content) {
+        const rr = r as { type?: unknown; url?: unknown } | null;
+        if (rr && rr.type === "web_search_result" && typeof rr.url === "string") urls.push(rr.url);
+      }
+      results.set(id, { urls });
+    } else if (blk.content && typeof blk.content === "object") {
+      const code = (blk.content as { error_code?: unknown }).error_code;
+      results.set(id, { urls: [], error: typeof code === "string" ? code : "search_error" });
+    }
+  }
+  // Second pass: one audit record per search the model actually issued.
+  const out: WebSearchAuditRecord[] = [];
+  for (const b of content) {
+    if (!b || typeof b !== "object") continue;
+    const blk = b as { type?: unknown; id?: unknown; name?: unknown; input?: unknown };
+    if (blk.type !== "server_tool_use" || blk.name !== WEB_SEARCH_TOOL_NAME) continue;
+    const id = typeof blk.id === "string" ? blk.id : "";
+    const q = (blk.input as { query?: unknown } | null)?.query;
+    const query = typeof q === "string" ? q : "";
+    const matched = results.get(id);
+    if (matched?.error) {
+      out.push({ query, ok: false, reason: matched.error, at });
+    } else {
+      const urls = (matched?.urls ?? []).slice(0, MAX_AUDIT_URLS);
+      out.push({ query, ok: true, count: matched?.urls.length ?? 0, urls, at });
+    }
+  }
+  return out;
+}
+
 // The flag-gated instruction block. Appended AFTER the cache breakpoint (cacheable: false) and ONLY
 // when the flag is on, so it never enters the shared cached prefix — the flag-off system prompt is
 // unchanged and existing conversations' prompt caches are not busted (the web-fetch/data-tools discipline).

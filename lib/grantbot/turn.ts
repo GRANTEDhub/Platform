@@ -69,7 +69,9 @@ import {
 import {
   grantbotWebSearchEnabled,
   grantbotWebSearchTool,
+  extractWebSearchAudit,
   WEB_SEARCH_INSTRUCTION_BLOCK,
+  type WebSearchAuditRecord,
 } from "@/lib/grantbot/web-search";
 
 // One conversational turn: assemble, call, store. The orchestrator between the pure renderer and
@@ -253,6 +255,10 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
   const artifacts: ArtifactAuditRecord[] = [];
   const crossThreadReads: CrossThreadAuditRecord[] = [];
   const dataLookups: DataLookupAuditRecord[] = [];
+  // web_search has no dispatch branch (it runs on Anthropic's servers), so callModel below extracts its
+  // audit straight from each round's response content into this sink -- the same "recorded as it runs,
+  // so a mid-loop throw still keeps the audit of what already ran" discipline as the four above.
+  const searches: WebSearchAuditRecord[] = [];
 
   try {
     const anthropic = getAnthropicClient();
@@ -303,6 +309,12 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
           const tb = b as { id: string; name: string; input?: unknown };
           return { id: tb.id, name: tb.name, input: tb.input };
         });
+      // web_search runs server-side, so it never reaches dispatch; its audit lives in the response's
+      // server_tool_use / web_search_tool_result blocks. Extract per round and accumulate. Guarded by the
+      // flag so the flag-off path does no extra work and writes no audit block (byte-identical).
+      if (webSearchEnabled) {
+        searches.push(...extractWebSearchAudit(res.content, new Date().toISOString()));
+      }
       return {
         text,
         toolUses,
@@ -387,6 +399,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
     artifacts,
     crossThreadReads,
     dataLookups,
+    searches,
   });
   await touchConversation(input.db, input.conversationId);
 

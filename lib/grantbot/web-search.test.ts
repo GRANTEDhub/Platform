@@ -2,7 +2,9 @@ import { describe, it, expect, afterEach } from "vitest";
 import {
   grantbotWebSearchEnabled,
   grantbotWebSearchTool,
+  extractWebSearchAudit,
   GRANTBOT_MAX_SEARCHES,
+  MAX_AUDIT_URLS,
   WEB_SEARCH_INSTRUCTION_BLOCK,
   WEB_SEARCH_TOOL_NAME,
 } from "./web-search";
@@ -55,5 +57,79 @@ describe("WEB_SEARCH_INSTRUCTION_BLOCK — cacheable:false + the search discipli
     expect(WEB_SEARCH_INSTRUCTION_BLOCK.text).toMatch(/soft criterion .*hard gate/);
     // Plumbing-hygiene: no play-by-play of the searching.
     expect(WEB_SEARCH_INSTRUCTION_BLOCK.text).toMatch(/Keep the searching OUT of your reply/);
+  });
+});
+
+describe("extractWebSearchAudit — the server-side audit sink for the one dispatch-less tool", () => {
+  const AT = "2026-09-14T12:00:00.000Z";
+
+  it("pairs a server_tool_use search with its result block into one record (query + URLs)", () => {
+    const content = [
+      { type: "text", text: "some reasoning" },
+      { type: "server_tool_use", id: "srv_1", name: "web_search", input: { query: "MS County priority watersheds" } },
+      {
+        type: "web_search_tool_result",
+        tool_use_id: "srv_1",
+        content: [
+          { type: "web_search_result", url: "https://adeq.state.ar.us/watersheds", title: "ADEQ" },
+          { type: "web_search_result", url: "https://example.gov/nrd", title: "NRD" },
+        ],
+      },
+    ];
+    const audit = extractWebSearchAudit(content, AT);
+    expect(audit).toEqual([
+      {
+        query: "MS County priority watersheds",
+        ok: true,
+        count: 2,
+        urls: ["https://adeq.state.ar.us/watersheds", "https://example.gov/nrd"],
+        at: AT,
+      },
+    ]);
+  });
+
+  it("records an upstream error result as ok:false with the error_code", () => {
+    const content = [
+      { type: "server_tool_use", id: "srv_e", name: "web_search", input: { query: "x" } },
+      { type: "web_search_tool_result", tool_use_id: "srv_e", content: { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" } },
+    ];
+    const audit = extractWebSearchAudit(content, AT);
+    expect(audit).toEqual([{ query: "x", ok: false, reason: "max_uses_exceeded", at: AT }]);
+  });
+
+  it("returns [] for a text-only / client-tool-only response (the byte-identical-off guarantee)", () => {
+    expect(extractWebSearchAudit([{ type: "text", text: "hi" }], AT)).toEqual([]);
+    // A CLIENT tool_use (fetch/data-tools) is NOT a server_tool_use and must not be counted as a search.
+    expect(
+      extractWebSearchAudit([{ type: "tool_use", id: "t1", name: "fetch_grant_source", input: { url: "x" } }], AT),
+    ).toEqual([]);
+    expect(extractWebSearchAudit("not an array", AT)).toEqual([]);
+    expect(extractWebSearchAudit(null, AT)).toEqual([]);
+  });
+
+  it("caps stored URLs at MAX_AUDIT_URLS while count reflects the true total", () => {
+    const many = Array.from({ length: MAX_AUDIT_URLS + 5 }, (_, i) => ({
+      type: "web_search_result",
+      url: `https://example.gov/${i}`,
+    }));
+    const content = [
+      { type: "server_tool_use", id: "srv_big", name: "web_search", input: { query: "q" } },
+      { type: "web_search_tool_result", tool_use_id: "srv_big", content: many },
+    ];
+    const [rec] = extractWebSearchAudit(content, AT);
+    expect(rec.count).toBe(MAX_AUDIT_URLS + 5);
+    expect(rec.urls).toHaveLength(MAX_AUDIT_URLS);
+  });
+
+  it("keeps one record per search across multiple searches in one response", () => {
+    const content = [
+      { type: "server_tool_use", id: "a", name: "web_search", input: { query: "national" } },
+      { type: "web_search_tool_result", tool_use_id: "a", content: [{ type: "web_search_result", url: "https://example.gov/1" }] },
+      { type: "server_tool_use", id: "b", name: "web_search", input: { query: "in-state" } },
+      { type: "web_search_tool_result", tool_use_id: "b", content: [{ type: "web_search_result", url: "https://example.gov/2" }] },
+    ];
+    const audit = extractWebSearchAudit(content, AT);
+    expect(audit.map((r) => r.query)).toEqual(["national", "in-state"]);
+    expect(audit.every((r) => r.ok)).toBe(true);
   });
 });
