@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { runPipeline } from "@/lib/grants/pipeline";
 import { normalizeForHash, sha256hex, stripToText } from "@/lib/ar-grants/parse";
 import { needsHeadless, SEED_BATCH, type SeedGrant } from "@/lib/ar-state/fixture";
-import { commitMonitorBaseline, findExistingGrantByUrl, insertMonitorState } from "@/lib/ar-state/store";
+import { commitMonitorBaseline, findExistingGrantByUrl, insertMonitorState, repointGrant } from "@/lib/ar-state/store";
 
 // The LLM + headless-browser stacks are pulled in DYNAMICALLY (only when a real fetch/shred runs), so
 // this module — and the seed/monitor that import it — stay light for callers that inject their own
@@ -150,6 +150,21 @@ export async function addSource(db: SupabaseClient, entry: SeedGrant, deps: Seed
     return runShredForGrant(db, existing.id, entry, deps);
   }
 
+  // A fixture entry whose URL was corrected IN PLACE declares repoint_from (the prior source_url). Dedup
+  // keys on exact source_url, so a naked URL edit would insert a DUPLICATE grant beside the one stored
+  // under the old URL on the next seed. Instead: if no grant sits at the new url (checked above) but one
+  // exists at the OLD url, MIGRATE it — move its source_url + monitor_url to the corrected values and
+  // re-derive (re-shred the correct page). The live card self-heals on re-seed; no duplicate is created.
+  // No old-url grant found (already migrated, or never seeded) -> fall through to a normal fresh insert.
+  if (entry.repoint_from) {
+    const prior = await findExistingGrantByUrl(db, entry.repoint_from);
+    if (prior) {
+      const repointed = await repointGrant(db, prior.id, sourceUrl, entry.url);
+      if (!repointed) return { action: "error", reason: "repoint failed" };
+      return runShredForGrant(db, prior.id, entry, deps);
+    }
+  }
+
   const { data, error } = await db
     .from("grants")
     .insert({ source_url: sourceUrl, title: entry.program, status: "processing" })
@@ -198,8 +213,16 @@ export async function planSource(
     return { action: "skip_exists", program: entry.program, url: entry.url, grantId: existing.id };
   }
 
+  // Repoint preview: a URL-correcting entry (repoint_from) whose OLD-url grant still exists will be
+  // MIGRATED on apply, not inserted fresh — surface that so the dry-run shows a repoint, not a duplicate.
+  let repointNote: string | undefined;
+  if (!existing && entry.repoint_from) {
+    const prior = await findExistingGrantByUrl(db, entry.repoint_from);
+    if (prior) repointNote = `repoint: migrates existing grant from ${entry.repoint_from}`;
+  }
+
   const headless = needsHeadless(entry.url);
-  let note: string | undefined = existing ? "retry: previous seed attempt errored" : undefined;
+  let note: string | undefined = existing ? "retry: previous seed attempt errored" : repointNote;
   if (probeReach || entry.tags?.includes("verify_url")) {
     const fetchText = deps.fetchText ?? defaultFetchText;
     const r = await fetchText(entry.url, headless);

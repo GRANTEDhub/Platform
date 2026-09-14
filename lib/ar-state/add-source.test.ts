@@ -241,3 +241,71 @@ describe("addSource (apply)", () => {
     expect(pipeline).not.toHaveBeenCalled();
   });
 });
+
+describe("addSource — repoint (a seed URL corrected in place)", () => {
+  const OLD = "https://agriculture.arkansas.gov/natural-resources/divisions/water-management/arkansas-unpaved-roads-program/";
+  const NEW = "https://agriculture.arkansas.gov/natural-resources/water-management/arkansas-unpaved-roads-program/";
+  const repointEntry: SeedGrant = {
+    grantor: "AR Department of Agriculture",
+    program: "Unpaved Roads Program (AURP)",
+    url: NEW,
+    jurisdiction: "AR",
+    funder_type: "state",
+    monitor_mode: "auto",
+    tags: ["repointed"],
+    repoint_from: OLD,
+  };
+
+  it("MIGRATES the existing old-url grant instead of inserting a duplicate, and re-derives it", async () => {
+    const db = new FakeDb({
+      grants: [{ id: "gOld", source_url: OLD, status: "complete" }],
+      monitor: [{ id: "mOld", grant_id: "gOld", monitor_url: OLD, jurisdiction: "AR", monitor_mode: "auto", last_content_hash: "oldhash" }],
+    });
+    const pipeline = vi.fn().mockResolvedValue(undefined);
+    const res = await addSource(anyDb(db), repointEntry, {
+      fetchText: fakeFetch({ ok: true, text: "CORRECT PAGE" }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      runPipelineImpl: pipeline as any,
+    });
+    expect(res.action).toBe("seeded");
+    expect(db.grants).toHaveLength(1); // NO duplicate — the existing grant was migrated, not re-inserted
+    expect(db.grants[0].id).toBe("gOld");
+    expect(db.grants[0].source_url).toBe(NEW); // source_url (the dedup identity) moved to the correct URL
+    expect(db.monitor).toHaveLength(1); // no duplicate monitor row
+    expect(db.monitor[0].monitor_url).toBe(NEW); // monitor now watches the correct page
+    expect(pipeline.mock.calls[0][0]).toBe("gOld"); // re-derived on the SAME grant
+    expect(pipeline.mock.calls[0][2]).toContain("CORRECT PAGE"); // shredding the corrected page
+    expect(db.monitor[0].last_content_hash).toBeTruthy(); // fresh baseline committed after the re-derive
+    expect(db.writes.find((w) => w.op === "insert" && w.table === "grants")).toBeUndefined(); // no fresh insert
+  });
+
+  it("falls through to a normal insert when no grant sits at the old url (already migrated / never seeded)", async () => {
+    const db = new FakeDb();
+    const pipeline = vi.fn().mockResolvedValue(undefined);
+    const res = await addSource(anyDb(db), repointEntry, {
+      fetchText: fakeFetch({ ok: true, text: "x" }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      runPipelineImpl: pipeline as any,
+    });
+    expect(res.action).toBe("seeded");
+    expect(db.grants).toHaveLength(1);
+    expect(db.grants[0].source_url).toBe(NEW); // seeded fresh at the corrected URL
+  });
+
+  it("skips (does NOT repoint) when a grant already exists at the corrected url", async () => {
+    const db = new FakeDb({ grants: [{ id: "gNew", source_url: NEW, status: "complete" }] });
+    const pipeline = vi.fn();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = await addSource(anyDb(db), repointEntry, { runPipelineImpl: pipeline as any });
+    expect(res).toMatchObject({ action: "skip_exists", grantId: "gNew" });
+    expect(pipeline).not.toHaveBeenCalled();
+  });
+
+  it("dry-run surfaces the repoint (migrates, not a fresh seed) when the old-url grant still exists", async () => {
+    const db = new FakeDb({ grants: [{ id: "gOld", source_url: OLD, status: "complete" }] });
+    const plan = await planSource(anyDb(db), repointEntry, {});
+    expect(plan.action).toBe("would_seed");
+    expect((plan as { note?: string }).note).toMatch(/repoint/);
+    expect(db.writes).toHaveLength(0);
+  });
+});

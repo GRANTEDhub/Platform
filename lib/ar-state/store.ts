@@ -27,6 +27,33 @@ export async function findExistingGrantByUrl(
   return data && data.length > 0 ? { id: data[0].id as string, status: (data[0].status as string | null) ?? null } : null;
 }
 
+// Repoint a grant that was seeded under a now-corrected URL: move its source_url (the dedup identity)
+// AND its monitor_url to the new values, and NULL the change-detection baseline so the follow-up
+// re-derive re-shreds the corrected page from scratch (first-baseline). Used by addSource when a fixture
+// entry declares repoint_from — the alternative to inserting a duplicate grant beside the stale-URL one.
+// Returns false on any write error so the caller does not then re-derive against a half-migrated row.
+export async function repointGrant(
+  db: SupabaseClient,
+  grantId: string,
+  newSourceUrl: string,
+  newMonitorUrl: string,
+): Promise<boolean> {
+  const { error: gErr } = await db.from("grants").update({ source_url: newSourceUrl }).eq("id", grantId);
+  if (gErr) {
+    logWrite(`repointGrant.grants(${newSourceUrl})`, gErr);
+    return false;
+  }
+  const { error: mErr } = await db
+    .from("grant_monitor_state")
+    .update({ monitor_url: newMonitorUrl, last_content_hash: null })
+    .eq("grant_id", grantId);
+  if (mErr) {
+    logWrite(`repointGrant.monitor(${newMonitorUrl})`, mErr);
+    return false;
+  }
+  return true;
+}
+
 export interface InsertMonitorArgs {
   grantId: string;
   jurisdiction: Jurisdiction;

@@ -34,6 +34,11 @@ export interface SeedGrant {
   monitor_mode: MonitorMode;
   seed_text?: string; // per-program disambiguation (shared_page + repointed entries)
   tags?: SeedTag[];
+  // The PRIOR source_url this entry corrects, when a seeded program's URL is fixed in place. Dedup keys
+  // on exact source_url, so without this a re-seed under the new URL would INSERT a duplicate grant
+  // beside the one stored under the old URL. When set, addSource repoints the existing grant (source_url
+  // + monitor_url) and re-derives it instead — no duplicate, and the live card self-heals on re-seed.
+  repoint_from?: string;
 }
 
 // Provenance stamp written to grant_monitor_state.seed_batch, so every row this fixture created is
@@ -61,7 +66,7 @@ function ar(
   grantor: string,
   program: string,
   url: string,
-  extra?: { seed_text?: string; tags?: SeedTag[] },
+  extra?: { seed_text?: string; tags?: SeedTag[]; repoint_from?: string },
 ): SeedGrant {
   return {
     grantor,
@@ -94,7 +99,12 @@ export const AR_STATE_SEED: SeedGrant[] = [
   ar("AR State Aid Street Committee", "State Aid City Street Program", "https://citystreet.arkansas.gov/"),
 
   // ── AR Department of Agriculture (agriculture.arkansas.gov) ──
-  ar("AR Department of Agriculture", "Unpaved Roads Program (AURP)", "https://agriculture.arkansas.gov/natural-resources/water-management/arkansas-unpaved-roads-program/"),
+  ar("AR Department of Agriculture", "Unpaved Roads Program (AURP)", "https://agriculture.arkansas.gov/natural-resources/water-management/arkansas-unpaved-roads-program/", {
+    tags: ["repointed"],
+    seed_text:
+      "Arkansas Unpaved Roads Program (AURP), AR Dept. of Agriculture — Natural Resources Division. Cost-share grants to improve and stabilize unpaved county roads and reduce sediment runoff into waterways; typical applicants are county governments and road/improvement districts. Proposals are reviewed by an advisory committee, with preference for projects in priority watersheds (drinking-water source areas / endangered-species habitat).",
+    repoint_from: "https://agriculture.arkansas.gov/natural-resources/divisions/water-management/arkansas-unpaved-roads-program/",
+  }),
   ar("AR Department of Agriculture", "Conservation District Grants", "https://agriculture.arkansas.gov/natural-resources/conservation/conservation-district-support/"),
   ar("AR Department of Agriculture – Forestry", "Firewise USA Grants", "https://agriculture.arkansas.gov/forestry/arkansas-firewise/"),
   ar("AR Department of Agriculture", "Specialty Crop Block Grant Program (SCBGP)", "https://agriculture.arkansas.gov/resources/grants/", { tags: ["pass_through"] }),
