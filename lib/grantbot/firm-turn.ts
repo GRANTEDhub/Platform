@@ -34,6 +34,25 @@ import {
   WEB_FETCH_TOOL_NAME,
   type FetchAuditRecord,
 } from "@/lib/grantbot/firm-web-fetch";
+import {
+  firmDataToolsEnabled,
+  executeDataTool,
+  FIRM_DATA_TOOLS_INSTRUCTION_BLOCK,
+  PROGRAM_AWARDS_TOOL,
+  PROGRAM_AWARDS_TOOL_NAME,
+  ORG_HISTORY_TOOL,
+  ORG_HISTORY_TOOL_NAME,
+  SAM_ENTITY_TOOL,
+  SAM_ENTITY_TOOL_NAME,
+  type DataLookupAuditRecord,
+} from "@/lib/grantbot/firm-data-tools";
+import {
+  firmWebSearchEnabled,
+  grantbotWebSearchTool,
+  extractWebSearchAudit,
+  FIRM_WEB_SEARCH_INSTRUCTION_BLOCK,
+  type WebSearchAuditRecord,
+} from "@/lib/grantbot/firm-web-search";
 
 // One firm-bot turn: gather the roster, build the prompt, call the model, PERSIST the exchange.
 // The roster-wide sibling of turn.ts.
@@ -71,9 +90,18 @@ import {
 //     — behind its OWN flag GRANTBOT_FIRM_WEB_FETCH_ENABLED, default OFF. When OFF the fetch tool and
 //     its instruction block are absent, so the request/prompt/stored row are byte-identical to the
 //     cross-thread-only firm bot; when ON the bot can pull and read a live NOFO the staffer drops. This
-//     is the one outward-reaching tool (a read-only HTTPS GET against the `.gov` allowlist with the
-//     SSRF/IP guards) — no write, no internal reach.
-// No write path either way — the append-only transcript is untouched. The firm bot keeps ADAPTIVE
+//     is an outward-reaching tool (a read-only HTTPS GET against the `.gov` allowlist with the SSRF/IP
+//     guards) — no write, no internal reach.
+//   · lookup_program_awards / lookup_org_federal_history / lookup_sam_entity (firm-data-tools.ts, reusing
+//     the per-client executor) — behind GRANTBOT_FIRM_DATA_TOOLS_ENABLED, default OFF. Three read-only
+//     lookups against two fixed public .gov data APIs (USASpending, SAM), keyed by CFDA / org name / UEI.
+//   · web_search (firm-web-search.ts, reusing the per-client server tool) — behind
+//     GRANTBOT_FIRM_WEB_SEARCH_ENABLED, default OFF. Anthropic's server-side open-web search; it runs on
+//     Anthropic's servers, so it adds NO egress/SSRF/secret from our infra (no dispatch branch — the loop
+//     resumes its pause_turn), and its audit is read off the response blocks.
+// Each outward tool has its OWN flag, INDEPENDENT of the per-client bot's, and each OFF is byte-identical
+// (tool + instruction block absent). No write path either way — the append-only transcript is untouched.
+// The firm bot keeps ADAPTIVE
 // THINKING on (its 16k budget depends on it); the loop preserves thinking blocks by pushing raw
 // assistant content back verbatim, and Opus 5 + this loop (thinking on, tool_choice "none" on the
 // forced-final round) is proven safe by the green intel-review eval.
@@ -176,9 +204,12 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
   let instructionsVersion = FIRM_INSTRUCTIONS_VERSION;
   let knowledgeVersion = FIRM_KNOWLEDGE_VERSION;
 
-  // Read the fetch flag ONCE. OFF (default) → the fetch tool + its instruction block are never added,
-  // so the request/prompt/stored row are byte-identical to the cross-thread-only firm bot.
+  // Read the outward-reach flags ONCE. Each OFF (default) → its tool(s) + instruction block are never
+  // added, so the request/prompt/stored row are byte-identical to the cross-thread-only firm bot. Each
+  // is INDEPENDENT of the per-client bot's matching flag (the firm bot's reach is enabled on its own).
   const webFetchEnabled = firmWebFetchEnabled();
+  const dataToolsEnabled = firmDataToolsEnabled();
+  const webSearchEnabled = firmWebSearchEnabled();
 
   let answer = "";
   let usage: TurnUsage | null = null;
@@ -188,6 +219,10 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
   // audit of tools already executed on the (failed) turn's row.
   const crossThreadReads: FirmCrossThreadAuditRecord[] = [];
   const fetches: FetchAuditRecord[] = [];
+  const dataLookups: DataLookupAuditRecord[] = [];
+  // web_search has no dispatch branch (server-side), so callModel below extracts its audit straight from
+  // each round's response into this sink.
+  const searches: WebSearchAuditRecord[] = [];
 
   try {
     // gatherFirmPack THROWS on a query error (never a fake-empty roster), so a roster-load failure
@@ -205,8 +240,10 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
       pack,
       turnBlocks: [
         FIRM_CROSS_THREAD_INSTRUCTION_BLOCK,
-        // Only when the fetch flag is on — cacheable:false, so the flag-off prompt is byte-identical.
+        // Each only when its flag is on — cacheable:false, so a flag-off prompt is byte-identical.
         ...(webFetchEnabled ? [FIRM_FETCH_INSTRUCTION_BLOCK] : []),
+        ...(dataToolsEnabled ? [FIRM_DATA_TOOLS_INSTRUCTION_BLOCK] : []),
+        ...(webSearchEnabled ? [FIRM_WEB_SEARCH_INSTRUCTION_BLOCK] : []),
       ],
     });
     manifestBlocks = prompt.manifest;
@@ -237,6 +274,10 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
       LIST_FIRM_CONVERSATIONS_TOOL,
       READ_FIRM_CONVERSATION_TOOL,
       ...(webFetchEnabled ? [WEB_FETCH_TOOL] : []),
+      ...(dataToolsEnabled ? [PROGRAM_AWARDS_TOOL, ORG_HISTORY_TOOL, SAM_ENTITY_TOOL] : []),
+      // Anthropic's server-side web_search: it runs on Anthropic's servers (no dispatch branch below,
+      // and runToolLoop resumes the pause_turn it produces), so it appears only in the tool set.
+      ...(webSearchEnabled ? [grantbotWebSearchTool()] : []),
     ] as unknown as Anthropic.Tool[];
 
     const callModel: CallModel = async ({ messages: msgs, tools, remainingMs }) => {
@@ -264,6 +305,11 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
           const tb = b as { id: string; name: string; input?: unknown };
           return { id: tb.id, name: tb.name, input: tb.input };
         });
+      // web_search runs server-side, so it never reaches dispatch; its audit lives in the response's
+      // server_tool_use / web_search_tool_result blocks. Guarded by the flag → byte-identical when off.
+      if (webSearchEnabled) {
+        searches.push(...extractWebSearchAudit(res.content, new Date().toISOString()));
+      }
       return {
         text: answerText,
         toolUses,
@@ -295,6 +341,13 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
         // the typed could-not-retrieve fallback. Only reachable when the flag added the tool above.
         const { resultText, audit } = await executeWebFetch((tu.input as { url?: unknown } | undefined)?.url);
         fetches.push(audit);
+        return { resultText };
+      }
+      if (tu.name === PROGRAM_AWARDS_TOOL_NAME || tu.name === ORG_HISTORY_TOOL_NAME || tu.name === SAM_ENTITY_TOOL_NAME) {
+        // The exact per-client federal-data executor (USASpending/SAM), typed-gap discipline intact.
+        // Only reachable when the data-tools flag added the tools above.
+        const { resultText, audit } = await executeDataTool({ name: tu.name, input: tu.input });
+        dataLookups.push(audit);
         return { resultText };
       }
       return { resultText: `Unknown tool "${tu.name}". Nothing was done.` };
@@ -349,6 +402,10 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
     // Empty unless the model fetched a .gov source (flag on); omitted when empty, so a no-fetch turn's
     // stored row is byte-identical.
     fetches,
+    // Empty unless the data-tools / web-search flags are on AND the model used them; omitted when empty,
+    // so a turn that ran neither is byte-identical.
+    dataLookups,
+    searches,
   }).catch((e) => console.error("Firm GrantBot assistant-row append failed", e instanceof Error ? e.message : e));
   await touchConversation(db, conversationId);
 
