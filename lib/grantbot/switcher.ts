@@ -119,6 +119,29 @@ export function mergeRecentThreads(
     .slice(0, Math.max(0, limit));
 }
 
+// ── In-place open (Ask GrantBot from a grant card) ──
+// The Switcher is mounted on EVERY internal page, so a page that wants to open it — the "Ask GrantBot"
+// button on a grant card's IntellEngine tile — does NOT need to navigate to the dashboard to trigger the
+// `?grantbot=` deep-link (that dashboard bounce is the bug). It dispatches this window event instead, and
+// the mounted Switcher opens the corner IN PLACE on the given client at a new blank thread (the grant
+// anchor is already stashed under askContextKey, consumed by the corner chat's mount). A CustomEvent on
+// `window` is the seam because the button and the Switcher are unrelated subtrees (the Switcher lives in
+// the app layout, the button deep in a page), so there is no prop path between them. Fires only when the
+// Switcher flag is on — the button falls back to the dashboard deep-link when it is off (launcher path).
+export const GRANTBOT_OPEN_EVENT = "grantbot:open-in-place";
+
+// The event detail: which client's bot to open. A new blank thread every time (Ask GrantBot always starts
+// a fresh anchored conversation), so no conversation id — the anchor rides askContextKey, not this.
+export type OpenGrantBotDetail = { clientId: string };
+
+// Dispatch the in-place open. Window-guarded (SSR no-op) and typed so the button and the listener share one
+// event shape. Safe to call when no Switcher is listening (a no-op DOM event) — but the button only calls
+// this when the Switcher flag is on, so there is always a listener in that path.
+export function dispatchOpenGrantBot(clientId: string): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent<OpenGrantBotDetail>(GRANTBOT_OPEN_EVENT, { detail: { clientId } }));
+}
+
 // Whether a dashboard-navigation effect must FORCE the corner chat body to remount (a bodyNonce bump).
 // The body is keyed by the client id, and its "open on this conversation" props + the composer SEED
 // (GrantBotChat's mount-only takeDraft) are consumed ONLY on mount. So a "?grantbot=" deep-link — the

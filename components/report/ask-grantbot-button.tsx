@@ -4,13 +4,20 @@ import { useRouter } from "next/navigation";
 import { Sparkles } from "lucide-react";
 import { BRAND } from "@/lib/brand";
 import { stashAskContext, askOpenHref } from "@/lib/grantbot/ask-intent";
+import { dispatchOpenGrantBot } from "@/lib/grantbot/switcher";
 
 // "Ask GrantBot about this grant" — the button on the grant card's IntellEngine tile (above Generate
 // concept proposal). One click opens the per-client GrantBot at a NEW thread ANCHORED to this grant:
-// it stashes the grant anchor (grantId + title) and navigates to the corner's open-blank deep-link.
-// From there the thread is auto-named after the grant and grounded on it, so the staffer just asks —
-// the three starter chips render inside the new thread (see grantbot-chat.tsx). All the open/anchor
-// mechanics live in lib/grantbot/ask-intent.ts; this is only the affordance.
+// it stashes the grant anchor (grantId + title), then opens the corner. From there the thread is
+// auto-named after the grant and grounded on it, so the staffer just asks — the three starter chips
+// render inside the new thread (see grantbot-chat.tsx). All the anchor mechanics live in
+// lib/grantbot/ask-intent.ts; this is only the affordance.
+//
+// OPENING — in place, not a bounce. The Switcher is already mounted on this page, so when it is live we
+// open the corner IN PLACE via a window event (dispatchOpenGrantBot) and the staffer stays on the grant
+// card. When the Switcher flag is OFF we fall back to the dashboard open-blank deep-link (the launcher
+// path) — which does navigate, but that is today's behavior for the launcher and only reachable with the
+// Switcher off. `switcherEnabled` is read server-side (not NEXT_PUBLIC) and threaded down as a prop.
 //
 // It renders inside ConceptCard (the IntellEngine box), which the client portal never mounts — so it is
 // staff-only by construction. Visual language matches the box (navy + orange sparkle); lighter than the
@@ -19,10 +26,12 @@ export function AskGrantBotButton({
   clientId,
   grantId,
   grantTitle,
+  switcherEnabled,
 }: {
   clientId: string;
   grantId: string;
   grantTitle: string;
+  switcherEnabled: boolean;
 }) {
   const router = useRouter();
 
@@ -30,7 +39,13 @@ export function AskGrantBotButton({
     // Anchor first, then open: the corner chat reads-and-clears the anchor on mount and opens the new
     // thread tied to this grant. The anchor lives under its own key, so it never touches an unsent draft.
     stashAskContext(clientId, { grantId, grantTitle });
-    router.push(askOpenHref(clientId));
+    if (switcherEnabled) {
+      // In place — the mounted Switcher opens the corner on this client without leaving the grant card.
+      dispatchOpenGrantBot(clientId);
+    } else {
+      // Switcher off: the launcher honours the dashboard deep-link, so navigate there (today's path).
+      router.push(askOpenHref(clientId));
+    }
   }
 
   return (
