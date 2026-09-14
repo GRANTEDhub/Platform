@@ -66,6 +66,13 @@ import {
   SAM_ENTITY_TOOL_NAME,
   type DataLookupAuditRecord,
 } from "@/lib/grantbot/data-tools";
+import {
+  grantbotWebSearchEnabled,
+  grantbotWebSearchTool,
+  extractWebSearchAudit,
+  WEB_SEARCH_INSTRUCTION_BLOCK,
+  type WebSearchAuditRecord,
+} from "@/lib/grantbot/web-search";
 
 // One conversational turn: assemble, call, store. The orchestrator between the pure renderer and
 // the store, and the only place that knows anything about the model.
@@ -198,7 +205,8 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
   const artifactsEnabled = grantbotArtifactsEnabled();
   const crossThreadEnabled = grantbotCrossThreadEnabled();
   const dataToolsEnabled = grantbotDataToolsEnabled();
-  const toolsEnabled = webFetchEnabled || artifactsEnabled || crossThreadEnabled || dataToolsEnabled;
+  const webSearchEnabled = grantbotWebSearchEnabled();
+  const toolsEnabled = webFetchEnabled || artifactsEnabled || crossThreadEnabled || dataToolsEnabled || webSearchEnabled;
   // Each instruction block is cacheable:false and appended ONLY when its flag is on, so it never
   // enters the shared cached prefix -- the flag-off system prompt is unchanged and existing caches
   // are not busted. When ALL flags are off, effectiveTurnBlocks equals input.turnBlocks and the
@@ -209,6 +217,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
     ...(artifactsEnabled ? [ARTIFACT_INSTRUCTION_BLOCK] : []),
     ...(crossThreadEnabled ? [CROSS_THREAD_INSTRUCTION_BLOCK] : []),
     ...(dataToolsEnabled ? [DATA_TOOLS_INSTRUCTION_BLOCK] : []),
+    ...(webSearchEnabled ? [WEB_SEARCH_INSTRUCTION_BLOCK] : []),
     // Only when an image actually rides this turn (cacheable:false, after the breakpoint) — so a
     // no-image turn's prompt is byte-identical and existing caches are not busted.
     ...(image ? [IMAGE_INSTRUCTION_BLOCK] : []),
@@ -246,6 +255,10 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
   const artifacts: ArtifactAuditRecord[] = [];
   const crossThreadReads: CrossThreadAuditRecord[] = [];
   const dataLookups: DataLookupAuditRecord[] = [];
+  // web_search has no dispatch branch (it runs on Anthropic's servers), so callModel below extracts its
+  // audit straight from each round's response content into this sink -- the same "recorded as it runs,
+  // so a mid-loop throw still keeps the audit of what already ran" discipline as the four above.
+  const searches: WebSearchAuditRecord[] = [];
 
   try {
     const anthropic = getAnthropicClient();
@@ -261,6 +274,9 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
       ...(artifactsEnabled ? [CREATE_ARTIFACT_TOOL, EDIT_ARTIFACT_TOOL] : []),
       ...(crossThreadEnabled ? [LIST_CONVERSATIONS_TOOL, READ_CONVERSATION_TOOL] : []),
       ...(dataToolsEnabled ? [PROGRAM_AWARDS_TOOL, ORG_HISTORY_TOOL, SAM_ENTITY_TOOL] : []),
+      // Anthropic's server-side web_search: it executes on Anthropic's servers (no dispatch branch
+      // below, and runToolLoop resumes the pause_turn it produces), so it appears only in the tool set.
+      ...(webSearchEnabled ? [grantbotWebSearchTool()] : []),
     ] as unknown as Anthropic.Tool[];
 
     const callModel: CallModel = async ({ messages: msgs, tools, remainingMs }) => {
@@ -293,6 +309,12 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
           const tb = b as { id: string; name: string; input?: unknown };
           return { id: tb.id, name: tb.name, input: tb.input };
         });
+      // web_search runs server-side, so it never reaches dispatch; its audit lives in the response's
+      // server_tool_use / web_search_tool_result blocks. Extract per round and accumulate. Guarded by the
+      // flag so the flag-off path does no extra work and writes no audit block (byte-identical).
+      if (webSearchEnabled) {
+        searches.push(...extractWebSearchAudit(res.content, new Date().toISOString()));
+      }
       return {
         text,
         toolUses,
@@ -377,6 +399,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
     artifacts,
     crossThreadReads,
     dataLookups,
+    searches,
   });
   await touchConversation(input.db, input.conversationId);
 

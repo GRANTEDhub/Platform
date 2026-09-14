@@ -198,6 +198,10 @@ export async function appendAssistant(
     // Same NON-TEXT-block mechanism (normalizeContent drops it on read); omitted when empty, so a turn
     // that looked nothing up is byte-identical to before.
     dataLookups?: unknown[] | null;
+    // Open-web searches for this turn -- which queries web_search ran and which result URLs came back.
+    // Same NON-TEXT-block mechanism (normalizeContent drops it on read); omitted when empty, so a turn
+    // that searched nothing (the flag-off default) is byte-identical to before.
+    searches?: unknown[] | null;
   },
 ): Promise<void> {
   const content: unknown[] = [{ type: "text", text: opts.text }];
@@ -212,6 +216,9 @@ export async function appendAssistant(
   }
   if (opts.dataLookups && opts.dataLookups.length > 0) {
     content.push({ type: "data_lookup_audit", lookups: opts.dataLookups });
+  }
+  if (opts.searches && opts.searches.length > 0) {
+    content.push({ type: "web_search_audit", searches: opts.searches });
   }
   const { error } = await db.from("grantbot_messages").insert({
     conversation_id: opts.conversationId,
