@@ -68,15 +68,47 @@ export function askStarters(clientName: string, grantTitle: string): AskStarter[
 // takeDraft expects (draft set, every other field empty/null). Client-only; a no-window or a private
 // window (sessionStorage throws) is a harmless no-op — the corner still opens, just without the
 // pre-fill, so the worst case degrades to today's blank composer rather than an error.
+//
+// PRESERVES UNSENT WORK: the composer mirrors every keystroke into this SAME stash key, so a blind
+// overwrite would silently discard a half-typed message (or a pasted email / attachment) the staffer
+// left unsent for this client — the exact "unsent-work" the stash exists to protect. So if the stash
+// already holds real content, we DO NOT clobber it: the corner opens showing their in-progress work
+// (they can send or clear it, then re-click). Non-destructive by design.
 export function stashAskDraft(clientId: string, question: string): void {
   if (typeof window === "undefined") return;
   try {
+    const existing = window.sessionStorage.getItem(draftKey(clientId));
+    if (existing && hasUnsentWork(existing)) return;
     window.sessionStorage.setItem(
       draftKey(clientId),
       JSON.stringify({ draft: question, pasted: "", pasteLabel: "", attachedFile: null, attachedImage: null }),
     );
   } catch {
     // Private mode / quota. Degrade to opening the corner without the seed.
+  }
+}
+
+// True when a stashed draft JSON holds any non-empty unsent content (text, paste, or attachment).
+// Tolerant of a malformed value: an unparseable stash counts as "no work", so a corrupt entry never
+// blocks seeding.
+function hasUnsentWork(raw: string): boolean {
+  try {
+    const d = JSON.parse(raw) as {
+      draft?: unknown;
+      pasted?: unknown;
+      pasteLabel?: unknown;
+      attachedFile?: unknown;
+      attachedImage?: unknown;
+    };
+    return Boolean(
+      (typeof d.draft === "string" && d.draft.trim()) ||
+        (typeof d.pasted === "string" && d.pasted.trim()) ||
+        (typeof d.pasteLabel === "string" && d.pasteLabel.trim()) ||
+        d.attachedFile ||
+        d.attachedImage,
+    );
+  } catch {
+    return false;
   }
 }
 

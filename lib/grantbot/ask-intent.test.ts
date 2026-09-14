@@ -95,6 +95,35 @@ describe("stashAskDraft — writes the exact composer-stash shape GrantBotChat r
     });
   });
 
+  it("does NOT clobber an existing non-empty draft (preserves the staffer's unsent work)", () => {
+    const { store } = fakeWindow();
+    const typed = JSON.stringify({ draft: "half-typed question the staffer left", pasted: "", pasteLabel: "", attachedFile: null, attachedImage: null });
+    store.set(draftKey("c1"), typed);
+    stashAskDraft("c1", "Who wins this?");
+    // Unchanged — the seed was skipped so the in-progress work survives.
+    expect(store.get(draftKey("c1"))).toBe(typed);
+  });
+
+  it("does NOT clobber an existing pasted email / attachment even with an empty draft field", () => {
+    const { store } = fakeWindow();
+    const pasted = JSON.stringify({ draft: "", pasted: "a long pasted email thread", pasteLabel: "email.txt", attachedFile: null, attachedImage: null });
+    store.set(draftKey("c1"), pasted);
+    stashAskDraft("c1", "Deadline realistic?");
+    expect(store.get(draftKey("c1"))).toBe(pasted);
+  });
+
+  it("DOES seed when the existing stash is empty content or malformed", () => {
+    const { store } = fakeWindow();
+    // Empty draft → no unsent work → seed writes.
+    store.set(draftKey("c1"), JSON.stringify({ draft: "", pasted: "", pasteLabel: "", attachedFile: null, attachedImage: null }));
+    stashAskDraft("c1", "Eligible?");
+    expect(JSON.parse(store.get(draftKey("c1"))!).draft).toBe("Eligible?");
+    // Malformed → treated as no work → seed writes.
+    store.set(draftKey("c2"), "not json {");
+    stashAskDraft("c2", "Who wins this?");
+    expect(JSON.parse(store.get(draftKey("c2"))!).draft).toBe("Who wins this?");
+  });
+
   it("is a harmless no-op when sessionStorage throws (private mode)", () => {
     (globalThis as { window?: unknown }).window = {
       sessionStorage: {
