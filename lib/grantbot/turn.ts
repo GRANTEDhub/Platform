@@ -54,6 +54,18 @@ import {
   IMAGE_ATTACHED_NOTE,
   type TurnImage,
 } from "@/lib/grantbot/vision";
+import {
+  grantbotDataToolsEnabled,
+  executeDataTool,
+  DATA_TOOLS_INSTRUCTION_BLOCK,
+  PROGRAM_AWARDS_TOOL,
+  PROGRAM_AWARDS_TOOL_NAME,
+  ORG_HISTORY_TOOL,
+  ORG_HISTORY_TOOL_NAME,
+  SAM_ENTITY_TOOL,
+  SAM_ENTITY_TOOL_NAME,
+  type DataLookupAuditRecord,
+} from "@/lib/grantbot/data-tools";
 
 // One conversational turn: assemble, call, store. The orchestrator between the pure renderer and
 // the store, and the only place that knows anything about the model.
@@ -185,7 +197,8 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
   const webFetchEnabled = grantbotWebFetchEnabled();
   const artifactsEnabled = grantbotArtifactsEnabled();
   const crossThreadEnabled = grantbotCrossThreadEnabled();
-  const toolsEnabled = webFetchEnabled || artifactsEnabled || crossThreadEnabled;
+  const dataToolsEnabled = grantbotDataToolsEnabled();
+  const toolsEnabled = webFetchEnabled || artifactsEnabled || crossThreadEnabled || dataToolsEnabled;
   // Each instruction block is cacheable:false and appended ONLY when its flag is on, so it never
   // enters the shared cached prefix -- the flag-off system prompt is unchanged and existing caches
   // are not busted. When ALL flags are off, effectiveTurnBlocks equals input.turnBlocks and the
@@ -195,6 +208,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
     ...(webFetchEnabled ? [FETCH_INSTRUCTION_BLOCK] : []),
     ...(artifactsEnabled ? [ARTIFACT_INSTRUCTION_BLOCK] : []),
     ...(crossThreadEnabled ? [CROSS_THREAD_INSTRUCTION_BLOCK] : []),
+    ...(dataToolsEnabled ? [DATA_TOOLS_INSTRUCTION_BLOCK] : []),
     // Only when an image actually rides this turn (cacheable:false, after the breakpoint) — so a
     // no-image turn's prompt is byte-identical and existing caches are not busted.
     ...(image ? [IMAGE_INSTRUCTION_BLOCK] : []),
@@ -231,6 +245,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
   const fetches: FetchAuditRecord[] = [];
   const artifacts: ArtifactAuditRecord[] = [];
   const crossThreadReads: CrossThreadAuditRecord[] = [];
+  const dataLookups: DataLookupAuditRecord[] = [];
 
   try {
     const anthropic = getAnthropicClient();
@@ -245,6 +260,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
       ...(webFetchEnabled ? [WEB_FETCH_TOOL] : []),
       ...(artifactsEnabled ? [CREATE_ARTIFACT_TOOL, EDIT_ARTIFACT_TOOL] : []),
       ...(crossThreadEnabled ? [LIST_CONVERSATIONS_TOOL, READ_CONVERSATION_TOOL] : []),
+      ...(dataToolsEnabled ? [PROGRAM_AWARDS_TOOL, ORG_HISTORY_TOOL, SAM_ENTITY_TOOL] : []),
     ] as unknown as Anthropic.Tool[];
 
     const callModel: CallModel = async ({ messages: msgs, tools, remainingMs }) => {
@@ -315,6 +331,11 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
         crossThreadReads.push(audit);
         return { resultText };
       }
+      if (tu.name === PROGRAM_AWARDS_TOOL_NAME || tu.name === ORG_HISTORY_TOOL_NAME || tu.name === SAM_ENTITY_TOOL_NAME) {
+        const { resultText, audit } = await executeDataTool({ name: tu.name, input: tu.input });
+        dataLookups.push(audit);
+        return { resultText };
+      }
       return { resultText: `Unknown tool "${tu.name}". Nothing was done.` };
     };
 
@@ -352,6 +373,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
     fetches,
     artifacts,
     crossThreadReads,
+    dataLookups,
   });
   await touchConversation(input.db, input.conversationId);
 

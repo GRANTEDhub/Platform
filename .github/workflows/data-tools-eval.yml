@@ -1,0 +1,70 @@
+name: GrantBot Data-Tools Eval
+
+# Manual-only. Runs the model-in-the-loop federal-data-tools eval
+# (lib/grantbot/data-tools.eval.test.ts) — the behavioural trust gate for the
+# GRANTBOT_DATA_TOOLS_ENABLED flip. It is NOT part of CI: it makes real (paid)
+# model calls and drives the actual tool loop, so it only runs when a human
+# clicks "Run workflow".
+#
+# The button appears under Actions → "GrantBot Data-Tools Eval" only once this
+# file is on the default branch (main).
+#
+# WHAT IT PROVES. On the real model + the real runToolLoop, with the USASpending
+# clients faked to a deterministic winner list: (1) the FIX — a "what type of
+# applicant wins CFDA 20.284?" question now CALLS lookup_program_awards and
+# characterizes the winner TYPE off the list instead of stalling on a dangling
+# "let me pull the award list" (the live MS County failure); and (2) HONESTY —
+# an empty lookup is reported as a gap, never backfilled with a memory archetype.
+#
+# SECRETS. The data is faked and there is no production DB — so it needs ONLY
+# ANTHROPIC_API_KEY. It declares the SAME protected GitHub Environment as the
+# other evals ("subseat-eval", restricted to `main`), which already holds
+# ANTHROPIC_API_KEY; nothing new to add. No live .gov / USASpending / SAM
+# dependency (the clients are injected).
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Runs per case (stability sampling; DATA_TOOLS_EVAL_RUNS). Serial per case, so raising this grows cost and wall-clock roughly linearly."
+        required: false
+        default: "3"
+
+# Never let two eval runs race on the same paid job.
+concurrency:
+  group: data-tools-eval
+  cancel-in-progress: false
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    # Environment-scoped secret: GitHub injects this environment's secrets only into a job that declares
+    # it, and enforces the environment's branch policy. We reuse subseat-eval only for its ANTHROPIC_API_KEY.
+    environment: subseat-eval
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Fail LOUD if the key is unset/misnamed. Without this an empty ANTHROPIC_API_KEY trips the eval's own
+      # RUN gate (skipIf), every case is skipped, and vitest still exits 0 — a green check that verified
+      # nothing. This job is a trust gate, so a silent skip must be a hard failure instead.
+      - name: Verify ANTHROPIC_API_KEY is present
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY is empty or unset — add it to the 'subseat-eval' GitHub Environment (Settings → Environments). The eval would otherwise silently skip and report a false green."
+            exit 1
+          fi
+      - name: Run GrantBot data-tools eval
+        env:
+          RUN_DATA_TOOLS_EVAL: "1"
+          DATA_TOOLS_EVAL_RUNS: ${{ inputs.runs }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        # The per-case answers + tool-call traces the eval console.logs (and the soft-assertion messages)
+        # are captured in this step's log, so the pass/fail reads are readable in the browser.
+        run: npx vitest run lib/grantbot/data-tools.eval.test.ts
