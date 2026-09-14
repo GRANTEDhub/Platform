@@ -94,7 +94,7 @@ export const AR_STATE_SEED: SeedGrant[] = [
   ar("AR State Aid Street Committee", "State Aid City Street Program", "https://citystreet.arkansas.gov/"),
 
   // ── AR Department of Agriculture (agriculture.arkansas.gov) ──
-  ar("AR Department of Agriculture", "Unpaved Roads Program (AURP)", "https://agriculture.arkansas.gov/natural-resources/divisions/water-management/arkansas-unpaved-roads-program/"),
+  ar("AR Department of Agriculture", "Unpaved Roads Program (AURP)", "https://agriculture.arkansas.gov/natural-resources/water-management/arkansas-unpaved-roads-program/"),
   ar("AR Department of Agriculture", "Conservation District Grants", "https://agriculture.arkansas.gov/natural-resources/conservation/conservation-district-support/"),
   ar("AR Department of Agriculture – Forestry", "Firewise USA Grants", "https://agriculture.arkansas.gov/forestry/arkansas-firewise/"),
   ar("AR Department of Agriculture", "Specialty Crop Block Grant Program (SCBGP)", "https://agriculture.arkansas.gov/resources/grants/", { tags: ["pass_through"] }),
