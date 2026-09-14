@@ -118,3 +118,17 @@ export function mergeRecentThreads(
     .sort((a, b) => (a.lastMessageAt < b.lastMessageAt ? 1 : a.lastMessageAt > b.lastMessageAt ? -1 : 0))
     .slice(0, Math.max(0, limit));
 }
+
+// Whether a dashboard-navigation effect must FORCE the corner chat body to remount (a bodyNonce bump).
+// The body is keyed by the client id, and its "open on this conversation" props + the composer SEED
+// (GrantBotChat's mount-only takeDraft) are consumed ONLY on mount. So a "?grantbot=" deep-link — the
+// Ask-GrantBot seed, or a Collapse-to-corner — whose target is the client the corner is ALREADY pointed
+// at (`sameTarget`) leaves the id key unchanged: the body never remounts, so the pendingInitial + the
+// stashed seed are never consumed and the seed opens BLANK (the deferred Ask-GrantBot follow-up). A
+// forced remount on exactly that case consumes them. When the deep-link switches to a DIFFERENT client
+// (`!sameTarget`) the id key already changes, so the body remounts on its own and no bump is needed; a
+// navigation with no deep-link (`!hasDeepLink`) has no seed/conversation to open, so it must NOT remount
+// (that would flash a spinner + refetch the transcript for nothing). Pure so the truth table is locked.
+export function deepLinkNeedsRemount(hasDeepLink: boolean, sameTarget: boolean): boolean {
+  return hasDeepLink && sameTarget;
+}

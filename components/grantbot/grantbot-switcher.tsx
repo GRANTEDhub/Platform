@@ -8,6 +8,7 @@ import { BRAND } from "@/lib/brand";
 import {
   switcherVisible,
   clientDashboardId,
+  deepLinkNeedsRemount,
   rosterUrl,
   SWITCHER_TARGET_KEY,
   type RosterClient,
@@ -299,6 +300,11 @@ export function GrantBotSwitcher({
       const keepSame = prevT?.kind === "client" && prevT.id === dashId;
       setTarget(keepSame ? prevT : { kind: "client", id: dashId, name: null });
       if (gb !== null || !keepSame) setConvId(null);
+      // A deep-link that targets the client the corner is ALREADY showing keeps the id key unchanged,
+      // so the body won't remount on its own and its mount-only seed/pendingInitial never open. Force
+      // the remount for exactly that case (Ask-GrantBot's seed, or a Collapse-to-corner onto the same
+      // client); a target change or a plain navigation remounts / must not, so this is the only bump.
+      if (deepLinkNeedsRemount(gb !== null, keepSame)) setBodyNonce((n) => n + 1);
     } else if (!manualPickRef.current) {
       const next = computeDefaultTarget();
       const prev = targetRef.current;
