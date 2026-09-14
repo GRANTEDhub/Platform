@@ -1,0 +1,148 @@
+// "Ask GrantBot" from the grant review screen: the seam that lets a staffer, looking at one grant
+// card, open the per-client GrantBot with a grant-specific question already in the composer — instead
+// of navigating to the client, opening GrantBot, and retyping who the client is and which grant.
+//
+// WHY THIS IS A THIN, MECHANISM-FREE SEAM (and reuses only proven flows):
+//   - GrantBot is per-CLIENT, not per-grant (there is no grantId anywhere in its wire/store), so
+//     "scoped to this grant" means the grant is NAMED in the seeded question. The client's context
+//     pack already loads its matched grants (gather.ts), so a grant named by title resolves against
+//     context GrantBot already holds.
+//   - Opening is the EXISTING deep-link: `/clients/<id>?grantbot=new`, which the corner GrantBot
+//     already honours on the dashboard route — the launcher today (server-read into startOpen), and
+//     the Switcher when that flag is on. Seeding is the EXISTING composer stash (draftKey), which
+//     GrantBotChat reads-and-clears once on mount (takeDraft). So this adds NO new open/seed
+//     machinery and NO change to any GrantBot component — it writes the stash and navigates. When the
+//     universal Switcher is later turned on, the SAME navigate URL still works, so the button never
+//     needs reworking; docking the panel in place on the review sub-route is a separate future polish.
+//
+// FLAG-GATED, byte-identical OFF: the review page renders the button only when
+// GRANTBOT_ASK_FROM_REVIEW_ENABLED is on, so off is exactly today's page.
+
+import { BLANK_CONVERSATION, draftKey } from "@/lib/grantbot/wire";
+
+// Server-read flag (the review page gates the button on it). Off unless exactly "true" — the same
+// shape as the other GrantBot flags; never NEXT_PUBLIC_, so it is read server-side and the button is
+// simply not rendered when off (no client bundle change, no affordance).
+export function grantbotAskFromReviewEnabled(): boolean {
+  return process.env.GRANTBOT_ASK_FROM_REVIEW_ENABLED === "true";
+}
+
+export interface AskStarter {
+  // Stable id for the React key and tests.
+  key: string;
+  // The short pill label the staffer clicks.
+  chip: string;
+  // The full question seeded into the composer — names BOTH the client and the grant so GrantBot has
+  // the scope without the staffer retyping it, and frames the grant-advisory distinctions GRANTED
+  // cares about (who actually wins, prime vs partner/sub, deadline reality incl. registration + LOE).
+  question: string;
+}
+
+// The three starter questions. Pure and exported so their shape/text is unit-tested (each names the
+// client and the grant; the three are distinct and cover the who-wins / eligibility / deadline axes).
+// Deliberately phrased as the questions a strategist would actually ask — not "is this a good fit?"
+// but the specific decision inputs.
+export function askStarters(clientName: string, grantTitle: string): AskStarter[] {
+  const client = clientName.trim() || "this client";
+  const grant = grantTitle.trim() || "this grant";
+  return [
+    {
+      key: "who_wins",
+      chip: "Who wins this?",
+      question: `Who actually wins ${grant}? What applicant type or profile tends to get funded, and where would ${client} realistically sit against that field?`,
+    },
+    {
+      key: "eligibility",
+      chip: "Eligible? (prime vs sub)",
+      question: `Is ${client} eligible for ${grant} — as a prime applicant, or only as a partner/sub? Be specific about the entity-type requirement and any registration gates.`,
+    },
+    {
+      key: "deadline",
+      chip: "Deadline realistic?",
+      question: `Is the ${grant} deadline realistic for ${client} to pursue — factoring SAM/registration status and the level of effort a competitive application needs?`,
+    },
+  ];
+}
+
+// Seed a starter question into the client's composer stash, in the EXACT shape GrantBotChat's
+// takeDraft expects (draft set, every other field empty/null). Client-only; a no-window or a private
+// window (sessionStorage throws) is a harmless no-op — the corner still opens, just without the
+// pre-fill, so the worst case degrades to today's blank composer rather than an error.
+//
+// PRESERVES UNSENT WORK, WITHOUT GOING INERT: the composer mirrors every keystroke into this SAME
+// stash key, so a blind overwrite would silently discard a half-typed message (or a pasted email /
+// attachment) the staffer left unsent for this client — the exact "unsent-work" the stash exists to
+// protect. So if the stash already holds real content, we DO NOT clobber it: the corner opens showing
+// their in-progress work (they can send or clear it, then re-click).
+//
+// BUT a prior chip click also leaves its seeded question sitting unsent in this same key (takeDraft
+// loads it, then the composer mirrors it straight back), so "any non-empty draft blocks the seed"
+// would make a SECOND chip click before the first is sent a silent no-op — the feature's core
+// interaction (clicking chips) going inert. So `seedQuestions` (the full starter set for this
+// grant+client) lets us tell the tool's OWN unedited prior seed (an exact match — overwrite it, so
+// re-seeding works) from the staffer's genuine typed/pasted/edited content (never an exact match —
+// preserve it). Best of both: unsent work is safe, and switching chips still re-seeds.
+export function stashAskDraft(clientId: string, question: string, seedQuestions: string[] = []): void {
+  if (typeof window === "undefined") return;
+  try {
+    const existing = window.sessionStorage.getItem(draftKey(clientId));
+    if (existing && hasUnsentWork(existing) && !isPriorSeed(existing, seedQuestions)) return;
+    window.sessionStorage.setItem(
+      draftKey(clientId),
+      JSON.stringify({ draft: question, pasted: "", pasteLabel: "", attachedFile: null, attachedImage: null }),
+    );
+  } catch {
+    // Private mode / quota. Degrade to opening the corner without the seed.
+  }
+}
+
+// True when a stashed draft JSON holds any non-empty unsent content (text, paste, or attachment).
+// Tolerant of a malformed value: an unparseable stash counts as "no work", so a corrupt entry never
+// blocks seeding.
+function hasUnsentWork(raw: string): boolean {
+  try {
+    const d = JSON.parse(raw) as {
+      draft?: unknown;
+      pasted?: unknown;
+      pasteLabel?: unknown;
+      attachedFile?: unknown;
+      attachedImage?: unknown;
+    };
+    return Boolean(
+      (typeof d.draft === "string" && d.draft.trim()) ||
+        (typeof d.pasted === "string" && d.pasted.trim()) ||
+        (typeof d.pasteLabel === "string" && d.pasteLabel.trim()) ||
+        d.attachedFile ||
+        d.attachedImage,
+    );
+  } catch {
+    return false;
+  }
+}
+
+// True when the stashed content is the tool's OWN unedited prior seed: a bare draft (no paste, no
+// attachment) whose text exactly equals one of this grant+client's starter questions. A staffer's own
+// text never matches, and editing a seed (adding a word) or pasting alongside it makes it no longer a
+// bare exact match — so genuine work is still preserved, while an untouched prior seed is replaceable.
+function isPriorSeed(raw: string, seedQuestions: string[]): boolean {
+  if (seedQuestions.length === 0) return false;
+  try {
+    const d = JSON.parse(raw) as {
+      draft?: unknown;
+      pasted?: unknown;
+      pasteLabel?: unknown;
+      attachedFile?: unknown;
+      attachedImage?: unknown;
+    };
+    if (d.pasted || d.pasteLabel || d.attachedFile || d.attachedImage) return false;
+    return typeof d.draft === "string" && seedQuestions.includes(d.draft);
+  } catch {
+    return false;
+  }
+}
+
+// The open target: the existing "open the corner on a blank thread" deep-link for this client. Both
+// the launcher (today) and the Switcher (when enabled) honour ?grantbot= on the dashboard route.
+export function askOpenHref(clientId: string): string {
+  return `/clients/${clientId}?grantbot=${BLANK_CONVERSATION}`;
+}

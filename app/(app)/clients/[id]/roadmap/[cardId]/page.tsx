@@ -4,6 +4,8 @@ import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { ReleaseToClientBar } from "@/components/report/release-bar";
 import { ConceptProposalPanel } from "@/components/report/concept-proposal-panel";
+import { AskGrantBotButton } from "@/components/report/ask-grantbot-button";
+import { grantbotAskFromReviewEnabled } from "@/lib/grantbot/ask-intent";
 import { ConceptCard } from "@/components/report/concept-card";
 import { MarkUnreadButton } from "@/components/report/mark-unread-button";
 import { ScoreFactorsBackfill } from "@/components/report/score-factors-backfill";
@@ -554,6 +556,17 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
             : null
         }
       />
+
+      {/* "Ask GrantBot about this grant" — staff-only, flag-gated (GRANTBOT_ASK_FROM_REVIEW_ENABLED,
+          default OFF → byte-identical). A sibling of the console (never inside the shared frame the
+          portal also renders), so it is staff-only by construction. */}
+      {grantbotAskFromReviewEnabled() && (
+        <AskGrantBotButton
+          clientId={params.id}
+          clientName={client?.name ?? "Client"}
+          grantTitle={g.title || "this grant"}
+        />
+      )}
 
       {/* The generated concept expands BELOW the frame. The review screen is zero-scroll;
           reading a full draft is not, and pretending otherwise would mean a 386px rail
