@@ -6,6 +6,7 @@ import { ReleaseToClientBar } from "@/components/report/release-bar";
 import { ConceptProposalPanel } from "@/components/report/concept-proposal-panel";
 import { AskGrantBotButton } from "@/components/report/ask-grantbot-button";
 import { grantbotAskFromReviewEnabled } from "@/lib/grantbot/ask-intent";
+import { switcherEnabled } from "@/lib/grantbot/switcher";
 import { ConceptCard } from "@/components/report/concept-card";
 import { MarkUnreadButton } from "@/components/report/mark-unread-button";
 import { ScoreFactorsBackfill } from "@/components/report/score-factors-backfill";
@@ -220,7 +221,12 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
   // concept slot), flag-gated, and needs a grant to anchor to. Null otherwise → box + button byte-identical.
   const askGrantBotNode =
     grantbotAskFromReviewEnabled() && card.grant_id ? (
-      <AskGrantBotButton clientId={params.id} grantId={card.grant_id} grantTitle={g.title || "this grant"} />
+      <AskGrantBotButton
+        clientId={params.id}
+        grantId={card.grant_id}
+        grantTitle={g.title || "this grant"}
+        switcherEnabled={switcherEnabled()}
+      />
     ) : null;
 
   // ── The page's argument ───────────────────────────────────────────────────

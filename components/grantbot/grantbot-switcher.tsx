@@ -10,7 +10,9 @@ import {
   clientDashboardId,
   deepLinkNeedsRemount,
   rosterUrl,
+  GRANTBOT_OPEN_EVENT,
   SWITCHER_TARGET_KEY,
+  type OpenGrantBotDetail,
   type RosterClient,
   type RecentThread,
   type SwitcherTarget,
@@ -175,6 +177,33 @@ export function GrantBotSwitcher({
   useEffect(() => {
     if (!visible) setOpen(false);
   }, [visible]);
+
+  // In-place open from a grant card's "Ask GrantBot" button. The button dispatches on `window` rather
+  // than navigating to the dashboard deep-link (the dashboard-bounce fix): open the corner on this client
+  // at a NEW blank thread, mirroring the dashboard "?grantbot=new" branch below. The grant anchor is
+  // already stashed under askContextKey, so the corner chat picks it up on mount — which means the body
+  // must (re)mount: it does when the target changes to this client (a new id key), and via a bodyNonce
+  // bump when the corner is ALREADY on this client (the deepLinkNeedsRemount case), so the seed can't open
+  // blank. manualPickRef=false mirrors the deep-link sibling (a transient open, not a sticky pick); the
+  // button only clicks from a grant sub-route where dashId is null, so this never fights the dashboard
+  // follow. Dormant unless the button dispatches, so no existing Switcher behavior changes.
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const clientId = (e as CustomEvent<OpenGrantBotDetail>).detail?.clientId;
+      if (!clientId) return;
+      manualPickRef.current = false;
+      setFirmPending(null);
+      setPendingInitial({ clientId, convId: null, blank: true });
+      const prevT = targetRef.current;
+      const keepSame = prevT?.kind === "client" && prevT.id === clientId;
+      setTarget(keepSame ? prevT : { kind: "client", id: clientId, name: null });
+      setConvId(null);
+      if (deepLinkNeedsRemount(true, keepSame)) setBodyNonce((n) => n + 1);
+      openPanel();
+    };
+    window.addEventListener(GRANTBOT_OPEN_EVENT, onOpen);
+    return () => window.removeEventListener(GRANTBOT_OPEN_EVENT, onOpen);
+  }, [openPanel]);
 
   // Fetch the roster on first open, on each explicit retry, and on a stale-cache refetch (a dashboard
   // client missing from the loaded roster — see the resolve-name effect). Deps are ONLY

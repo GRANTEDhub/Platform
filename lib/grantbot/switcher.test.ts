@@ -9,6 +9,8 @@ import {
   pickRosterClients,
   mergeRecentThreads,
   deepLinkNeedsRemount,
+  dispatchOpenGrantBot,
+  GRANTBOT_OPEN_EVENT,
   type RosterRow,
   type RecentThread,
 } from "./switcher";
@@ -193,5 +195,32 @@ describe("deepLinkNeedsRemount", () => {
   it("does NOT remount on a plain navigation with no deep-link (nothing to open; avoids a spinner + refetch)", () => {
     expect(deepLinkNeedsRemount(false, true)).toBe(false);
     expect(deepLinkNeedsRemount(false, false)).toBe(false);
+  });
+});
+
+// The in-place open seam: the "Ask GrantBot" button dispatches this window event and the mounted Switcher
+// opens the corner without navigating (the dashboard-bounce fix). Locks the event name + detail shape so
+// the button and the listener can't drift, and the SSR no-op (a corner never opens server-side anyway).
+describe("dispatchOpenGrantBot", () => {
+  const realWindow = (globalThis as { window?: unknown }).window;
+  afterEach(() => {
+    if (realWindow === undefined) delete (globalThis as { window?: unknown }).window;
+    else (globalThis as { window?: unknown }).window = realWindow;
+  });
+
+  it("dispatches GRANTBOT_OPEN_EVENT carrying the clientId in detail", () => {
+    const bus = new EventTarget();
+    (globalThis as { window?: unknown }).window = bus;
+    let detail: unknown = null;
+    bus.addEventListener(GRANTBOT_OPEN_EVENT, (e) => {
+      detail = (e as CustomEvent).detail;
+    });
+    dispatchOpenGrantBot("client-1");
+    expect(detail).toEqual({ clientId: "client-1" });
+  });
+
+  it("is a harmless no-op when there is no window (SSR)", () => {
+    delete (globalThis as { window?: unknown }).window;
+    expect(() => dispatchOpenGrantBot("client-1")).not.toThrow();
   });
 });
