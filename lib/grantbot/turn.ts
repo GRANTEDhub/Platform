@@ -28,7 +28,7 @@ import {
   WEB_FETCH_TOOL_NAME,
   type FetchAuditRecord,
 } from "@/lib/grantbot/web-fetch";
-import { runToolLoop, TURN_DEADLINE_MS, type CallModel, type ToolDispatch } from "@/lib/grantbot/tool-loop";
+import { runToolLoop, TURN_DEADLINE_MS, PER_CLIENT_MAX_TOOL_ROUNDS, type CallModel, type ToolDispatch } from "@/lib/grantbot/tool-loop";
 import {
   grantbotArtifactsEnabled,
   executeArtifactTool,
@@ -346,6 +346,9 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
       dispatch,
       now: () => Date.now(),
       deadlineMs: TURN_DEADLINE_MS,
+      // 3, not the default 2 — a grounded who-wins answer wants national + in-state + synthesis (the
+      // data-tools eval's run-1 truncation). Still bounded by TURN_DEADLINE_MS.
+      maxToolRounds: PER_CLIENT_MAX_TOOL_ROUNDS,
     });
 
     answer = loop.text;

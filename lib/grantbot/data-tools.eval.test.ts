@@ -3,7 +3,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { getAnthropicClient, OPUS_MODEL } from "@/lib/anthropic";
 import { assembleSystem, buildSystemPrompt } from "./prompt";
 import type { ContextPack } from "./context-pack";
-import { runToolLoop, TURN_DEADLINE_MS, type CallModel, type ToolDispatch } from "./tool-loop";
+import { runToolLoop, TURN_DEADLINE_MS, PER_CLIENT_MAX_TOOL_ROUNDS, type CallModel, type ToolDispatch } from "./tool-loop";
 import {
   executeDataTool,
   DATA_TOOLS_INSTRUCTION_BLOCK,
@@ -131,6 +131,9 @@ async function callGrantBotWithTools(
     dispatch,
     now: () => Date.now(),
     deadlineMs: TURN_DEADLINE_MS,
+    // Mirror production (turn.ts): the per-client bot gets 3 rounds so national + in-state + synthesis
+    // completes instead of truncating.
+    maxToolRounds: PER_CLIENT_MAX_TOOL_ROUNDS,
   });
   return { text: loop.text, toolCalls };
 }

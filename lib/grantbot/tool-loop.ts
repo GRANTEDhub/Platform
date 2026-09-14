@@ -18,6 +18,11 @@ import type { TurnUsage } from "@/lib/grantbot/store";
 // (tools still present, tool_choice:{type:"none"}) to force a final text answer — NOT with tools
 // dropped, which would 400 against a tool_use history.
 export const MAX_TOOL_ROUNDS = 2;
+// The per-client GrantBot turn overrides the default to 3. A grounded who-wins answer wants a national
+// lookup_program_awards call, an in-state precedent call, AND a synthesis round — three model calls
+// that a 2-round budget truncated mid-thought ("let me also check…"), the data-tools eval's run-1
+// failure. Still bounded by TURN_DEADLINE_MS, so the extra round can never run past the route budget.
+export const PER_CLIENT_MAX_TOOL_ROUNDS = 3;
 // Wall-clock budget for the whole turn's model calls + tool executions, inside the route's
 // maxDuration=300s. The per-call timeout is clamped to what remains, so the first call is the full
 // budget when nothing has elapsed — which is part of what keeps flag-off byte-identical.

@@ -97,13 +97,15 @@ export const SAM_ENTITY_TOOL = {
 export const DATA_TOOLS_INSTRUCTION_BLOCK: PromptBlock = {
   kind: "data-tools",
   source: "lib/grantbot/data-tools.ts",
-  version: "2026-09-14.1",
+  version: "2026-09-14.2",
   cacheable: false,
   text: [
     "FEDERAL DATA LOOKUPS — THREE READ-ONLY TOOLS",
     `You have three read-only federal-data tools, in addition to any others named above: ${PROGRAM_AWARDS_TOOL_NAME} (who actually won a program, by CFDA), ${ORG_HISTORY_TOOL_NAME} (an org's federal award history, by name), and ${SAM_ENTITY_TOOL_NAME} (an org's SAM.gov registration status). Each only READS a public U.S. federal data API (USASpending.gov, SAM.gov) — none can write, act, send, or reach anything internal, so the READ-ONLY rule stands in full.`,
     "",
-    "USE THEM instead of recalling from memory. This is exactly GRANTED's method — verify against the authoritative federal record, never trust recollection for who-wins, past performance, or registration. When a staffer asks what kind of applicant wins a grant, look up the actual winners by its CFDA and read the TYPE off the real list; do not describe a generic archetype from memory when the data is one call away.",
+    `WHO WINS → CALL THE TOOL, DON'T RECALL. When a staffer asks who wins a grant, what type of applicant wins it, or who the recipients are — and you have or can ask for its CFDA — you MUST call ${PROGRAM_AWARDS_TOOL_NAME} and read the archetype off the ACTUAL winners. Do NOT answer a who-wins question from memory, and NEVER write "I pulled the winners from USASpending" or name any recipient unless you actually called the tool THIS turn — claiming federal data you did not fetch is a fabrication. Any earlier guidance to "name the archetype from your own knowledge" or to hand the staffer "a USASpending search on the CFDA" is SUPERSEDED here: you now HAVE that search — it is ${PROGRAM_AWARDS_TOOL_NAME} — so run it rather than describe it. This is GRANTED's method: verify against the authoritative federal record, never trust recollection.`,
+    "",
+    `A national ${PROGRAM_AWARDS_TOOL_NAME} call (no state) gives the full winner picture — read the TYPE off it. When the client is anchored in a state, a SECOND state-scoped call for in-state precedent is a good lateral read: make it, then SYNTHESIZE both into one finished answer in the SAME turn. Never end a turn on "let me also check…" — if you have called the tools you need, write the answer now.`,
     "",
     "ENTITY-ELIGIBILITY IS NOT COMPETITIVENESS. SAM registration (lookup_sam_entity) is a gate — registered/active or not. Who wins (lookup_program_awards) is the competitive reality. Keep them distinct, and keep prime vs. partner/sub distinct: a client that resembles the sub-awardees on a program is a partner fit, not a prime fit. Never force-fit — if the winners are all large research universities or state agencies and the client is a county, say so plainly.",
     "",
