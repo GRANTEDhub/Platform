@@ -233,6 +233,9 @@ describe("buildFitPatch — writes ONLY fit_narrative* columns", () => {
       fit_narrative_fit_score: 3,
       fit_narrative_model: "claude-opus-5",
       fit_narrative_at: TODAY_ISO,
+      // A machine (re)generation always CLEARS the human-edit lock (migration 0100) — the on-demand
+      // regenerate is the "revert to auto" that flips a staffer's true back to false.
+      fit_narrative_edited: false,
     });
     for (const k of Object.keys(p)) expect(k.startsWith("fit_narrative")).toBe(true);
   });
@@ -242,6 +245,7 @@ describe("buildFitPatch — writes ONLY fit_narrative* columns", () => {
     expect(p.fit_narrative).toBeNull();
     expect(p.fit_narrative_fit_score).toBeNull();
     expect(p.fit_narrative_at).toBe(TODAY_ISO);
+    expect(p.fit_narrative_edited).toBe(false); // machine write clears the lock
     for (const k of Object.keys(p)) expect(k.startsWith("fit_narrative")).toBe(true);
   });
 });
@@ -280,6 +284,19 @@ describe("displayedFitOf / fitNarrativeStale — go/marginal only, snapshot must
     const row = pollRow({ fit_score: 3, qa_status: "none", qa_fit_score: null, qa_engine_fit_score: 3, fit_narrative: null });
     expect(fitNarrativeStale(row)).toBe(true);
   });
+
+  // ── human-edit lock (migration 0100): the drain never regenerates an edited card ──
+  it("an EDITED card is never stale — even with a mismatched snapshot (the drain would otherwise regenerate)", () => {
+    // Snapshot 3 ≠ displayed 2 would normally be stale (regenerate); the lock overrides that so the drain
+    // never clobbers the staffer's edit.
+    const row = pollRow({ fit_score: 2, fit_narrative: "the staffer's edit", fit_narrative_fit_score: 3, fit_narrative_edited: true });
+    expect(fitNarrativeStale(row)).toBe(false);
+  });
+
+  it("an EDITED card with NO text is still not stale — the lock wins even over a missing narrative", () => {
+    const row = pollRow({ fit_score: 3, fit_narrative: null, fit_narrative_edited: true });
+    expect(fitNarrativeStale(row)).toBe(false);
+  });
 });
 
 // ── generateFitNarrative: the client-safety guard ────────────────────────────────────────────────────
@@ -313,6 +330,9 @@ describe("runFitAnalysis — flag gate, generate + write, skips, cost cap", () =
       proposed_role: "Prime", recommended_prime: null, why_this_org: ["eligible"], reasoning_context: {},
       qa_fit_score: null, qa_status: null, qa_engine_fit_score: null,
       fit_narrative: null, fit_narrative_fit_score: null, fit_narrative_at: null,
+      // Mirrors the DB default (migration 0100: NOT NULL DEFAULT false) so the poll's
+      // .eq("fit_narrative_edited", false) filter matches an unedited seeded card.
+      fit_narrative_edited: false,
       decision: "pending", sme_released_at: null, card_type: "client", created_at: "2026-09-01T00:00:00Z",
       ...over,
     });
@@ -379,6 +399,18 @@ describe("runFitAnalysis — flag gate, generate + write, skips, cost cap", () =
     expect(r.skippedClosed).toBe(1);
     expect(r.generated).toBe(0);
     expect(store.tables.review_cards[0].fit_narrative).toBeNull();
+  });
+
+  it("skips an EDITED card — the drain never regenerates a staffer's narrative (migration 0100)", async () => {
+    vi.stubEnv("FIT_ANALYSIS_ENABLED", "true");
+    const store = new Store();
+    // A mismatched snapshot (2 vs displayed 3) would normally be stale → regenerated; the lock stops it.
+    seedCard(store, { fit_narrative: "the staffer's edit", fit_narrative_fit_score: 2, fit_narrative_edited: true });
+    seedGrantClient(store);
+    const r = await runFitAnalysis(asDb(store), { now: () => NOW, generate: gen });
+    expect(r.eligible).toBe(0);
+    expect(r.generated).toBe(0);
+    expect(store.tables.review_cards[0].fit_narrative).toBe("the staffer's edit"); // untouched
   });
 
   it("daily cost cap stops the pass before any generation", async () => {

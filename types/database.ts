@@ -639,6 +639,10 @@ export interface ReviewCard {
   fit_narrative_fit_score: number | null;
   fit_narrative_model: string | null;
   fit_narrative_at: string | null;
+  // Human-edit LOCK (migration 0100). true = a staffer corrected the narrative before sending; the
+  // fit-analysis drain never regenerates it (never clobbers the edit) and resolveFit honors it across a
+  // benign band move. Cleared to false by any machine (re)generation (the on-demand regenerate = unlock).
+  fit_narrative_edited: boolean;
   // Track 2 discriminator (migration 0019). 'client' (default) or 'prospect'.
   // The client-first gate counts only client cards; a prospect card must never
   // enter the lock/release computation. prospect_id is set on prospect cards.

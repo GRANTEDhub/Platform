@@ -16,6 +16,7 @@ import { MergedRerunButton } from "@/components/report/merged-rerun-button";
 import { mergedRerunEnabled } from "@/lib/grants/intel-queue";
 import type { IntelReview } from "@/lib/grants/intel-review";
 import { GrantReviewConsole, type ReviewKeyDetail, type ReviewMeta } from "@/components/report/grant-review-console";
+import { NarrativeEditor } from "@/components/report/narrative-editor";
 import { forwardedStatusLabel } from "@/lib/report/referral";
 import { AlertSend } from "@/app/(app)/review/[id]/alert-send";
 import { getConceptProposal } from "@/lib/concept/store";
@@ -436,6 +437,19 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
         // The go/no-go verdict LEAD that opens the paragraph (flag-gated; null when off). Staff side gets
         // the full call including a no-go; the portal passes "client" and gets go/marginal-or-null.
         verdictLead={verdictLead}
+        // Staff-only inline editor for the fit-analysis narrative (the Grant Intelligence / IntellEngine
+        // Intel paragraph). Mounted ONLY when a fit_narrative would actually render — a pending, unreleased
+        // go/marginal card with no applied QA demote (resolveFit's direction gate) — so an edit can never
+        // land on text that never shows. The client portal mounts this same console and passes null, so the
+        // edit affordance is staff-only by construction. `canRevert` (admin) gates the model-regenerate unlock.
+        narrativeEditor={
+          card.decision === "pending" &&
+          !card.sme_released_at &&
+          (effFit === 2 || effFit === 3) &&
+          resolved.qa?.status !== "applied" ? (
+            <NarrativeEditor cardId={params.cardId} initialValue={resolved.narrative ?? ""} canRevert={isAdmin} />
+          ) : null
+        }
         // Displayed score: the ineligible hard kill pins it to 1 so bars + lead + Send/Pass read no-go
         // together; otherwise the coalesced engine/QA score. Byte-identical to effFit when the flag is off.
         fitScore={displayFit}

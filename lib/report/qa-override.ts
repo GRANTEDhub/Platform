@@ -28,6 +28,10 @@ export interface QaOverrideRow {
   // to pre-0099. resolveFit lets this narrative OWN the go/marginal paragraph (see below).
   fit_narrative?: string | null;
   fit_narrative_fit_score?: number | null;
+  // Human-edit LOCK (migration 0100). When true, resolveFit honors the stored narrative on ANY displayed
+  // go/marginal score regardless of the snapshot (it survives a benign band move); the direction gate
+  // (no-go / applied demote) still withholds it. Optional → a query that doesn't select it reads false.
+  fit_narrative_edited?: boolean | null;
 }
 
 // The client-safe QA badge a card renders when a verdict is in effect. `applied` carries the score
@@ -105,12 +109,18 @@ export function resolveFit(row: QaOverrideRow): ResolvedFit {
   // off, or not generated) → qaNarr → engine paragraph, byte-identical to pre-0099. Seat/role codes (S0_2, P0)
   // are SCRUBBED at this read boundary too — narrativeGuard strips them at generation, but this also cleans
   // narratives stored before that landed.
+  // HUMAN-EDIT LOCK (migration 0100): a staffer's corrected narrative is honored on ANY displayed
+  // go/marginal (2/3) regardless of the freshness snapshot — so it survives a benign band move (a rematch
+  // nudging 3→2) instead of being withheld the instant the snapshot goes stale. The DIRECTION gate is
+  // unchanged and still absolute: `!appliedFresh` + displayed 2/3 both apply, so an edited narrative is
+  // still withheld on a no-go (displayed-1, which fails the 2||3 test) or an applied QA demote — a human
+  // edit can never contradict the go/no-go call. A machine narrative still requires the exact snapshot.
   const fitNarr =
     !appliedFresh &&
     (displayedFit === 2 || displayedFit === 3) &&
     typeof row.fit_narrative === "string" &&
     row.fit_narrative.trim() &&
-    row.fit_narrative_fit_score === displayedFit
+    (row.fit_narrative_edited === true || row.fit_narrative_fit_score === displayedFit)
       ? stripSeatCodes(row.fit_narrative) || null
       : null;
   const qaNarr =
