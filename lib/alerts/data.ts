@@ -1,5 +1,4 @@
-import { format } from "date-fns";
-import { formatAwardRange, compactCostShare, formatDeadline } from "@/lib/grants/format";
+import { formatAwardRange, compactCostShare, formatDeadline, formatAwardStatTile, formatDeadlineStatTile, isPlaceholderAward } from "@/lib/grants/format";
 import { sanitizeRichText, sanitizeText } from "@/lib/sanitize/html";
 import { resolveFit } from "@/lib/report/qa-override";
 import { FIT_BAND } from "@/lib/report/shape";
@@ -17,15 +16,6 @@ function esc(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
-}
-
-// "Jul 8" when the deadline parses; else a trimmed raw token for the stat tile.
-function shortDeadline(raw: string | null | undefined): string {
-  const s = (raw ?? "").trim();
-  if (!s) return "TBD";
-  const d = new Date(s);
-  if (!isNaN(d.getTime()) && /\d{4}/.test(s)) return format(d, "MMM d");
-  return s.length > 12 ? s.slice(0, 12) : s;
 }
 
 function fiscalYear(g: Grant): string {
@@ -147,27 +137,18 @@ function shortAwards(raw: string): string {
   return num[0];
 }
 
-// A concise award value for the fixed stat tile. formatAwardRange keeps non-numeric prose verbatim
-// (right for a short token like "Varies" / "See NOFO"), but an AR-state grant stores award bounds as
-// PROSE, so "Not stated" × "Maximum per project set at the beginning of each cycle" joins to a ~60-char
-// string that blew the whole stats card out — the tile's own nowrap/ellipsis can't fire because a `1fr`
-// grid track won't shrink below its nowrap content (the classic grid min-width:auto blowout). A clean
-// $ range is ALWAYS short (<=18: "$10.5M – $100.5M" is 16) and is kept verbatim; only genuinely long
-// prose collapses to "Varies" — honest (the amount is not a fixed number). The template's
-// min-width:0 + ellipsis is the residual backstop for anything in between.
-function shortAward(raw: string): string {
-  return raw.length <= 18 ? raw : "Varies";
-}
-
-// Deterministic stats, deadline last + highlighted; cap at 4. Per-field bounding
-// (NOT a blanket char cap, which would clip a legitimately wide award range like
-// "$10.5M – $100.5M"): the free-text fields are num_awards -> shortAwards() and a
-// prose award -> shortAward(); match/deadline come pre-bounded from their
-// formatters. The template's nowrap/ellipsis is the visual safety net for any residual overflow.
+// Deterministic stats, deadline last + highlighted; cap at 4. TWO LAYERS keep the fixed strip intact on the
+// AR-state grants that dump long free-text into fields built for tidy numbers (Shannon, 2026-09-15 — mirrors
+// the grant-list column fix): (1) NORMALIZE — the free-text money/date fields go through formatAwardStatTile
+// / formatDeadlineStatTile, which reuse the list column's placeholder logic to collapse junk to clean labels
+// ("Not stated" / "No deadline" / "Rolling") instead of an ellipsized sentence; num_awards → shortAwards();
+// match → compactCostShare, both pre-bounded. (2) CLAMP — every tile in the template hard-truncates
+// (min-width:0; overflow:hidden; ellipsis; nowrap on a minmax(0,1fr) grid) so NO value, however long, can
+// overflow/wrap/clip the strip. NORMALIZE keeps the value readable; CLAMP is the universal safety net.
 function buildStats(g: Grant): AlertStat[] {
   const stats: AlertStat[] = [];
-  const award = formatAwardRange(g.award_range_min, g.award_range_max);
-  if (award !== "—") stats.push({ value: shortAward(award), label: g.award_range_is_estimate ? "award · est." : "award range" });
+  const award = formatAwardStatTile(g.award_range_min, g.award_range_max);
+  if (award) stats.push({ value: award, label: g.award_range_is_estimate ? "award · est." : "award range" });
   // Share the web pages' rule verbatim (grant-detail.tsx GrantStatBand): "None"
   // for no cost share, else the clean amount -- compactCostShare strips trailing
   // "match"/"cost share" wording, since the "match required" label already says it.
@@ -175,14 +156,19 @@ function buildStats(g: Grant): AlertStat[] {
   // template's ellipsis is the backstop for any pathologically long value.
   const cs = compactCostShare(g.cost_share);
   if (cs !== "—") stats.push({ value: cs, label: "match required" });
-  if (stats.length < 3 && g.num_awards) stats.push({ value: shortAwards(g.num_awards), label: "awards" });
-  // Deadline shows the ABSOLUTE date only (shortDeadline) — a frozen grant fact that never drifts.
+  if (stats.length < 3 && g.num_awards) {
+    const n = shortAwards(g.num_awards);
+    // Drop a placeholder count ("Unknown" / "Not available") rather than surface junk as an award count.
+    if (!isPlaceholderAward(n)) stats.push({ value: n, label: "awards" });
+  }
+  // Deadline shows the ABSOLUTE date only (formatDeadlineStatTile: a real date → "Sep 15", the rolling
+  // family → "Rolling", empty/placeholder junk → "No deadline") — a frozen grant fact that never drifts.
   // The old "N days left" countdown sub-line was REMOVED (Shannon, 2026-09-15): a time-relative value
   // baked into a save-once draft goes stale on the calendar clock, which is what forced the deadline into
   // the freshness check and drove the day-tick re-enrich + send-time churn. A static date needs no such
   // handling — see draftStillFresh (deadline no longer participates).
   stats.push({
-    value: shortDeadline(g.submission_deadline),
+    value: formatDeadlineStatTile(g.submission_deadline),
     label: "deadline",
     highlight: true,
   });

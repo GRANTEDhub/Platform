@@ -58,23 +58,46 @@ describe("buildAlertData — fit-score block + Grant Intelligence (PR B)", () =>
     expect(s).not.toHaveProperty("sub");
   });
 
-  // A long PROSE award (AR-state grants store award bounds as prose — "Not stated" ×
-  // "Maximum per project set at the beginning of each cycle") joined to ~60 chars blew the fixed
-  // stats card out (the `1fr` grid track won't shrink below nowrap content, so the tile's own
-  // ellipsis never fired). buildStats collapses a long award to a clean "Varies"; a clean $ range
-  // is short and kept verbatim (#570 preview fix).
-  it("a long PROSE award collapses to 'Varies' for the stat tile; a clean $ range is kept", () => {
-    const proseAward = buildAlertData(
-      grant({ award_range_min: "Not stated", award_range_max: "Maximum per project set at the beginning of each cycle" }),
+  // AR-state grants dump long free-text into fields built for tidy numbers, which clipped/blew out the
+  // fixed stat strip (Shannon's real MS County cards, 2026-09-15). buildStats NORMALIZES via the reused
+  // grant-list helpers: a pure-placeholder OR prose-sentence award collapses to a clean "Not stated"; a
+  // clean $ range is kept verbatim; a junk deadline → "No deadline"; a rolling one → "Rolling"; and a junk
+  // award-count tile is dropped rather than surfaced. (The template's per-tile ellipsis clamp is the
+  // universal backstop for anything in between.)
+  const awardTile = (min: string, max: string) =>
+    buildAlertData(grant({ award_range_min: min, award_range_max: max }), card(), null).stats.find((s) =>
+      s.label.startsWith("award range"),
+    )?.value;
+  const deadlineTile = (d: string | null) =>
+    buildAlertData(grant({ submission_deadline: d }), card(), null).stats.find((s) => s.label === "deadline")?.value;
+
+  it("a pure-placeholder award collapses to 'Not stated' (the exact MS County junk)", () => {
+    expect(awardTile("Not available", "Not available")).toBe("Not stated");
+    expect(awardTile("Unknown", "Unknown")).toBe("Not stated");
+  });
+
+  it("a prose-SENTENCE award collapses to 'Not stated' (RTP — the one that blew the strip apart)", () => {
+    expect(awardTile("Not stated", "Maximum per project set at the beginning of each funding cycle")).toBe("Not stated");
+  });
+
+  it("a clean $ range is kept verbatim", () => {
+    expect(awardTile("50000", "250000")).toBe("$50K – $250K");
+  });
+
+  it("the deadline tile normalizes junk to 'No deadline' and a rolling intake to 'Rolling'", () => {
+    expect(deadlineTile("Not available - verify at fly.arkansas.gov")).toBe("No deadline");
+    expect(deadlineTile("Unknown -- funding varies by federal fiscal year appropriation")).toBe("No deadline");
+    expect(deadlineTile("Applications accepted on a rolling basis")).toBe("Rolling");
+    expect(deadlineTile("2027-01-15")).toBe("Jan 15"); // a real date still renders clean
+  });
+
+  it("a junk award-COUNT tile is dropped, not surfaced as 'Unknown'", () => {
+    const stats = buildAlertData(
+      grant({ award_range_min: "50000", award_range_max: "250000", num_awards: "Unknown" }),
       card(),
       null,
-    ).stats.find((s) => s.label.startsWith("award"));
-    expect(proseAward?.value).toBe("Varies");
-
-    const cleanAward = buildAlertData(grant({ award_range_min: "50000", award_range_max: "250000" }), card(), null).stats.find(
-      (s) => s.label.startsWith("award"),
-    );
-    expect(cleanAward?.value).toBe("$50K – $250K");
+    ).stats;
+    expect(stats.find((s) => s.label === "awards")).toBeUndefined();
   });
 
   it("an applied QA demote drives the DISPLAYED fit + its narrative (resolveFit coalesce)", () => {

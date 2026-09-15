@@ -231,7 +231,7 @@ export function formatDeadlineListLabel(raw: string | null | undefined): string 
 const AWARD_PLACEHOLDER =
   /^(?:not\s+(?:stated|available|specified|listed|given)|unspecified|unknown|undetermined|to\s+be\s+determined|tbd|n\/?a|none)$/i;
 
-function isPlaceholderAward(s: string): boolean {
+export function isPlaceholderAward(s: string): boolean {
   // formatAwardRange joins bounds with " – "; split on any dash and require EVERY non-blank part to be a
   // placeholder token. A single real word (e.g. a long shred sentence, or "$500K") makes this false, so
   // it falls through to soft-truncation / passes through rather than being mislabelled "Not stated".
@@ -251,6 +251,46 @@ export function formatAwardListLabel(awardRange: string | null | undefined): str
   if (!s) return "—";
   if (isPlaceholderAward(s)) return "Not stated";
   return softTruncateLabel(s, 22, 10);
+}
+
+// The award value for the ALERT PDF stat TILE — a tiny fixed grid fraction with a 26px serif value, tighter
+// than the list cell (formatAwardListLabel soft-truncates to a fragment). Here a clean FIGURE range
+// ("$50K – $250K") is kept and EVERYTHING else collapses to one clean "Not stated" rather than an ellipsized
+// sentence: a pure placeholder ("Not available – Not available", "Unknown – Unknown"), a prose sentence
+// ("Not stated – Maximum per project set at the beginning of each funding cycle"), or any long free-text an
+// AR-state shred dumps into the text award_range_* columns. Reuses isPlaceholderAward so the junk set matches
+// the list column; returns null (no tile) when there is genuinely no award. A real range is ALWAYS short
+// (abbrevAmount collapses "$1,000,000" → "$1M", so "$10.5M – $100.5M" is 16), so ≤ CAP keeps every real
+// figure and a legitimate short token ("Varies", "See NOFO"); only genuine long free-text is collapsed.
+export function formatAwardStatTile(min: string | null | undefined, max: string | null | undefined): string | null {
+  const range = formatAwardRange(min, max);
+  if (range === "—") return null;
+  if (isPlaceholderAward(range)) return "Not stated";
+  return range.length <= 22 ? range : "Not stated";
+}
+
+// A "no value" token the AR-state shred writes into submission_deadline when it found no date. A leading
+// match is enough ("Not available - verify at fly.arkansas.gov", "Unknown -- funding varies…") — the note
+// after the placeholder is the shred telling the client where to look, which the tiny tile can't carry.
+const DEADLINE_PLACEHOLDER =
+  /^(?:not\s+(?:stated|available|specified|listed|given|provided|posted)|unspecified|unknown|undetermined|to\s+be\s+determined|tbd|n\/?a|none)\b/i;
+// The rolling/continuous family — a real intake with no single fixed date.
+const ROLLING_DEADLINE =
+  /\b(?:rolling|continuous(?:ly)?|ongoing|year[-\s]?round|open[-\s]?until[-\s]?filled|accepted\s+(?:on\s+a\s+)?rolling|no\s+(?:fixed\s+)?deadline)\b/i;
+
+// The deadline value for the ALERT PDF stat TILE. A real date → "Sep 15"; the rolling/continuous family →
+// "Rolling"; a genuinely empty OR placeholder value → "No deadline"; any other free-text soft-truncates (the
+// tile's CSS clamp is the final net). REPLACES the old hard 12-char slice that produced mid-word junk like
+// "Not availabl" from "Not available - verify at fly.arkansas.gov". Mirrors the list column's
+// date-else-normalize discipline; month+day only (no year) because the tile is narrow.
+export function formatDeadlineStatTile(raw: string | null | undefined): string {
+  const s = (raw ?? "").trim();
+  if (!s) return "No deadline";
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(`${s}T00:00:00`) : new Date(s);
+  if (!isNaN(d.getTime()) && /\d{4}/.test(s)) return format(d, "MMM d");
+  if (ROLLING_DEADLINE.test(s)) return "Rolling";
+  if (DEADLINE_PLACEHOLDER.test(s)) return "No deadline";
+  return softTruncateLabel(s, 14, 7);
 }
 
 // Budget one-liner for the Ideal Applicant Profile: award range, plus a match

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { awardRangeOrEstimate, formatAwardRange, formatAwardListLabel, compactTerm, parseAwardCount, formatDeadlineCompact, formatDeadlineListLabel } from "./format";
+import { awardRangeOrEstimate, formatAwardRange, formatAwardListLabel, compactTerm, parseAwardCount, formatDeadlineCompact, formatDeadlineListLabel, formatAwardStatTile, formatDeadlineStatTile } from "./format";
 
 // Deterministic — no model, no network. Locks the two PR-A grant-report fixes:
 //   ① Award range never renders a bare blank when the size is deducible (pool ÷ awards, labeled "est.").
@@ -212,5 +212,57 @@ describe("formatAwardListLabel", () => {
   it("returns an em dash for empty / missing", () => {
     expect(formatAwardListLabel(null)).toBe("—");
     expect(formatAwardListLabel("   ")).toBe("—");
+  });
+});
+
+// The ALERT PDF stat-TILE variants — tighter than the list cell (collapse, not soft-truncate) because the
+// tile is a tiny fixed grid fraction with a 26px serif value. Proven end-to-end on the real MS County junk
+// values in lib/alerts/data.test.ts; these lock the helper contract directly.
+describe("formatAwardStatTile", () => {
+  it("keeps a clean $ range / short token", () => {
+    expect(formatAwardStatTile("50000", "250000")).toBe("$50K – $250K");
+    expect(formatAwardStatTile("Varies", "Varies")).toBe("Varies – Varies");
+  });
+
+  it("collapses pure-placeholder junk to 'Not stated'", () => {
+    expect(formatAwardStatTile("Not available", "Not available")).toBe("Not stated");
+    expect(formatAwardStatTile("Unknown", "Unknown")).toBe("Not stated");
+  });
+
+  it("collapses a prose SENTENCE award to 'Not stated' (not an ellipsized fragment)", () => {
+    expect(formatAwardStatTile("Not stated", "Maximum per project set at the beginning of each funding cycle")).toBe(
+      "Not stated",
+    );
+  });
+
+  it("returns null (no tile) when there is genuinely no award", () => {
+    expect(formatAwardStatTile(null, null)).toBeNull();
+    expect(formatAwardStatTile("0", "0")).toBeNull(); // formatAwardRange drops a $0 sentinel → "—"
+  });
+});
+
+describe("formatDeadlineStatTile", () => {
+  it("formats a real date as month + day (no year)", () => {
+    expect(formatDeadlineStatTile("2027-01-15")).toBe("Jan 15");
+    expect(formatDeadlineStatTile("10/9/2026")).toBe("Oct 9");
+  });
+
+  it("maps the rolling/continuous family to 'Rolling'", () => {
+    expect(formatDeadlineStatTile("Applications accepted on a rolling basis")).toBe("Rolling");
+    expect(formatDeadlineStatTile("Continuous / open until filled")).toBe("Rolling");
+  });
+
+  it("maps empty OR placeholder junk to 'No deadline'", () => {
+    expect(formatDeadlineStatTile(null)).toBe("No deadline");
+    expect(formatDeadlineStatTile("")).toBe("No deadline");
+    expect(formatDeadlineStatTile("Not available - verify at fly.arkansas.gov")).toBe("No deadline");
+    expect(formatDeadlineStatTile("Unknown -- funding varies by federal fiscal year appropriation")).toBe("No deadline");
+    expect(formatDeadlineStatTile("TBD")).toBe("No deadline");
+  });
+
+  it("soft-truncates any OTHER free-text (never a long overflow)", () => {
+    const out = formatDeadlineStatTile("Due 30 days after the annual program announcement is posted");
+    expect(out.length).toBeLessThanOrEqual(15); // CAP 14 + the ellipsis
+    expect(out.endsWith("…")).toBe(true);
   });
 });
