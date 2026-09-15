@@ -365,6 +365,11 @@ export interface FitPollRow {
   qa_engine_fit_score?: number | null;
   fit_narrative?: string | null;
   fit_narrative_fit_score?: number | null;
+  // Decision-integrity gate (Claude Code Review #564): only a pending, unreleased card may be (re)narrated —
+  // never rewrite what a client has already seen ("preview == sent"). The cron poll filters these in SQL; the
+  // on-demand path (runFitAnalysisForCard) leans on the processOne guard.
+  decision?: string | null;
+  sme_released_at?: string | null;
 }
 
 // The DISPLAYED (QA-coalesced) score, via the ONE resolver — so the drain, the freshness snapshot, and the
@@ -375,9 +380,14 @@ export function displayedFitOf(row: FitPollRow): 1 | 2 | 3 | null {
 
 // Does this card need a fresh fit_narrative? Eligible = displayed is a go/marginal (2/3) AND the stored
 // narrative is missing OR its snapshot no longer matches the displayed score (an engine re-score or a QA
-// apply/clear moved it). A displayed-1 (no-go / applied demote) is never eligible — qa_narrative owns it.
+// apply/clear moved it). A displayed-1 (no-go) is never eligible — qa_narrative owns it.
 export function fitNarrativeStale(row: FitPollRow): boolean {
-  const displayed = displayedFitOf(row);
+  const resolved = resolveFit(row);
+  // A fresh APPLIED QA demote OWNS the card (its grounded qa_narrative is the disqualifying reason, and a
+  // demote can land at displayed-2). resolveFit defers to qa_narrative there, so an affirmative fit_narrative
+  // would never render — and would be ungrounded content besides. Never generate one (Claude Code Review #564).
+  if (resolved.qa?.status === "applied") return false;
+  const displayed = resolved.fitScore;
   if (displayed !== 2 && displayed !== 3) return false;
   const hasText = typeof row.fit_narrative === "string" && row.fit_narrative.trim().length > 0;
   // A stamped-but-null narrative (fit_narrative null, snapshot null, but generated) is NOT stale on its own —
@@ -419,7 +429,7 @@ function startOfUtcDayIso(nowMs: number): string {
 // coalesced score), and the fit_narrative* columns (for freshness). fit_narrative_at is selected so a card
 // generated THIS pass is not re-scanned, and a stamped-null card (model couldn't write) is not looped on.
 const POLL_COLUMNS =
-  "id, grant_id, client_id, fit_score, factor_scores, proposed_role, recommended_prime, why_this_org, reasoning_context, qa_fit_score, qa_factor_scores, qa_status, qa_engine_fit_score, fit_narrative, fit_narrative_fit_score, fit_narrative_at";
+  "id, grant_id, client_id, fit_score, factor_scores, proposed_role, recommended_prime, why_this_org, reasoning_context, qa_fit_score, qa_factor_scores, qa_status, qa_engine_fit_score, fit_narrative, fit_narrative_fit_score, fit_narrative_at, decision, sme_released_at";
 
 type PollRowWithStamp = FitPollRow & { fit_narrative_at?: string | null };
 
@@ -527,6 +537,15 @@ async function processOne(
   deps: { now: string; generate: FitGenerate; estCost: number },
 ): Promise<ProcessOutcome> {
   if (!row.grant_id || !row.client_id) return "skipped";
+  // DECISION INTEGRITY (Claude Code Review #564): never (re)write the narrative on a card that is already
+  // DECIDED or already RELEASED to a client — the "preview == sent" / decision-integrity invariant. The cron
+  // poll filters these in SQL; this guard also covers the on-demand path (runFitAnalysisForCard), which the
+  // poll's SQL does not — so both paths are uniform (mirrors backfillBroadApply's two write-time guards).
+  if (row.decision !== "pending" || row.sme_released_at != null) return "skipped";
+  // OWNERSHIP (Claude Code Review #564): a fresh APPLIED QA demote owns the card's narrative — its grounded
+  // qa_narrative is the disqualifying reason (and a demote can land at displayed-2). resolveFit defers to it,
+  // so an affirmative fit_narrative here would never render and would be ungrounded content — never generate it.
+  if (resolveFit(row).qa?.status === "applied") return "skipped";
   const [{ data: grant }, { data: client }] = await Promise.all([
     db
       .from("grants")

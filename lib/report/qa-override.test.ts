@@ -164,6 +164,25 @@ describe("resolveFit — fit-analysis narrative ownership (migration 0099)", () 
     expect(r.narrative).toBe("Cannot prime this program as a standalone applicant.");
   });
 
+  it("QA demoted 3→2 (applied+fresh) with a MATCHING fit_narrative snapshot (2) → qa_narrative STILL wins (defers to the grounded demote reason)", () => {
+    // The #564 ownership fix: a QA demote lands at DISPLAYED 2 (marginal), and the fit-analysis narrative was
+    // (wrongly) eligible there. Even with a fresh, snapshot-matching fit_narrative, the grounded qa_narrative
+    // (the disqualifying reason) must win — the fit-analysis pass has no access to it, so it can't be right.
+    const r = resolveFit(
+      row({
+        fit_score: 3,
+        fit_narrative: "an ungrounded affirmative paragraph that must NOT replace the grounded demote reason",
+        fit_narrative_fit_score: 2, // matches the displayed 2 — would have won before the fix
+        qa_status: "applied",
+        qa_fit_score: 2,
+        qa_engine_fit_score: 3,
+        qa_narrative: "Cannot prime as a disparate jurisdiction; the fundable lane is an MOU with the county.",
+      }),
+    );
+    expect(r.fitScore).toBe(2);
+    expect(r.narrative).toBe("Cannot prime as a disparate jurisdiction; the fundable lane is an MOU with the county.");
+  });
+
   it("QA demoted 3→2 (applied+fresh) but fit_narrative snapshot is stale (3 ≠ displayed 2) → fit_narrative ignored, qa_narrative shows", () => {
     // A card whose displayed score is now 2 via a QA demote: the fit_narrative was written for the engine's 3,
     // so its snapshot (3) no longer matches the displayed 2 → withheld. The QA demote narrative owns the card.
