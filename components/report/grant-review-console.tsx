@@ -244,6 +244,8 @@ export function GrantReviewConsole({
             {programAward && (
               <ProgramAwardMap
                 compact
+                awardTable
+                awardTableHideLocation
                 grantId={programAward.grantId}
                 initialSummary={programAward.summary}
                 hasCfda={programAward.hasCfda}

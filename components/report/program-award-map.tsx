@@ -87,18 +87,23 @@ export function ProgramAwardMap({
   hasCfda,
   compact = false,
   awardTable = false,
+  awardTableHideLocation = false,
 }: {
   grantId: string;
   initialSummary: ProgramAwardSummary | null;
   hasCfda: boolean;
-  // Compact: render for the report console's narrow right column — tighter shell, no award table /
-  // selection chip (the map + hover + legend are the interactive value there), map still fully interactive.
+  // Compact: render for the report console's narrow right column — tighter shell. The map + hover + legend
+  // are the interactive value; the click-through award table appears only when awardTable is also passed.
   compact?: boolean;
-  // awardTable (Prospecting-only, /intel/[id]): render an interactive per-state award-detail table under the
-  // map, and enable click-to-filter EVEN in compact mode. Default false, so every other caller — the client
-  // report / portal (compact) and /review/[id] (full) — is byte-identical. Opens on Arkansas (GRANTED's home
+  // awardTable: render an interactive per-state "Notable recipients" table under the map, and enable
+  // click-to-filter EVEN in compact mode. Used by Prospecting (/intel/[id]) AND the compact Grant Report
+  // console. Default false, so /review/[id] (full) is byte-identical. Opens on Arkansas (GRANTED's home
   // state) and swaps to whatever state is clicked; distinct from the FULL variant's own table.
   awardTable?: boolean;
+  // awardTableHideLocation: drop the Location column from the awardTable. The Grant Report console renders
+  // the table in a narrower column than Prospecting, so it trades the (state-code) Location column for the
+  // room — the map already carries the geography. Default false, so Prospecting keeps Location.
+  awardTableHideLocation?: boolean;
 }) {
   const [summary, setSummary] = useState<ProgramAwardSummary | null>(initialSummary);
   const [loading, setLoading] = useState(false);
@@ -196,6 +201,14 @@ export function ProgramAwardMap({
   });
 
   const selName = selected ? STATE_NAMES[selected] ?? selected : null;
+  // The selected state's aggregate (authoritative program-wide amount + a count from byState) — present for
+  // any state the map colored, so an empty top-N table can say what the state HAS rather than a bare "no
+  // awards" (a colored state whose awards just don't rank in the program-wide top-N carried here). NOTE the
+  // count is only a floor when summary.awardsTruncated (byState.count is built from the first MAX_AWARD_PAGES
+  // awards, and a truncated state can even carry amount>0 with count 0; the amount is the authoritative
+  // geography total). So the empty-state states the exact count ONLY when not truncated, and leads with the
+  // authoritative amount alone otherwise — never an undercounted "0 awards ($X total)".
+  const selAgg = selected ? byStateMap.get(selected) ?? null : null;
   const rows = (summary.topAwards ?? []).filter((a) => !selected || a.state === selected);
   // Prospecting table only: surface the Agency column solely when it actually varies across the program's
   // top awards. Every row is the SAME funded program, so a constant agency would just repeat down the column
@@ -322,8 +335,10 @@ export function ProgramAwardMap({
         </span>
       </div>
 
-      {/* The selection chip + click-through award table are the FULL variant only — the compact console
-          box keeps the map + hover + legend (the interactive value in a 386px column) and drops the table. */}
+      {/* This selection chip + click-through award table are the FULL variant (/review/[id]) only. The
+          compact console box drops THIS table and instead renders the `awardTable` block below (the same
+          Prospecting "notable recipients" table, Location column hidden) — so the compact Grant Report
+          still gets a click-through table, just the narrower one. */}
       {!compact && (
         <>
       {/* Selection chip + truncation note */}
@@ -380,11 +395,13 @@ export function ProgramAwardMap({
         </>
       )}
 
-      {/* Prospecting-only (/intel/[id]) award-detail table, directly under the map. Reuses the map's
-          `selected` state — it opens on Arkansas and swaps to whatever state is clicked. topAwards is the
+      {/* Award-detail table for Prospecting (/intel/[id]) AND the compact Grant Report console (which
+          passes `awardTable awardTableHideLocation`), directly under the map. Reuses the map's `selected`
+          state — it opens on Arkansas and swaps to whatever state is clicked. topAwards is the
           program-wide top-N by amount, so this is a "notable recipients" view WITHIN that N, never an
-          exhaustive per-state list (the caption says so). No program/CFDA column — every row is the same
-          program the map is showing. */}
+          exhaustive per-state list (the caption says so). A selected state with awards but none in the
+          top-N shows its real aggregate, not a bare "no awards". No program/CFDA column — every row is the
+          same program the map is showing. */}
       {awardTable && (
         <div className="mt-4">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
@@ -410,7 +427,7 @@ export function ProgramAwardMap({
               <thead>
                 <tr className="border-b border-brand-navy/[0.08] text-left text-[11px] uppercase tracking-wide text-muted-foreground">
                   <th className="py-2 pr-3 font-medium">Recipient</th>
-                  <th className="py-2 pr-3 font-medium">Location</th>
+                  {!awardTableHideLocation && <th className="py-2 pr-3 font-medium">Location</th>}
                   <th className="py-2 pr-3 font-medium">Amount</th>
                   <th className={agencyVaries ? "py-2 pr-3 font-medium" : "py-2 font-medium"}>Year</th>
                   {agencyVaries && <th className="py-2 font-medium">Agency</th>}
@@ -419,15 +436,19 @@ export function ProgramAwardMap({
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={agencyVaries ? 5 : 4} className="py-3 text-sm text-muted-foreground">
-                      No top-{summary.topAwards.length} awards in {selName ?? "any state"}.
+                    <td colSpan={(awardTableHideLocation ? 3 : 4) + (agencyVaries ? 1 : 0)} className="py-3 text-sm text-muted-foreground">
+                      {selAgg
+                        ? summary.awardsTruncated
+                          ? `${selName} received ${fmtUsd(selAgg.amount)} in program-wide awards, but none rank in the top ${summary.topAwards.length} shown here.`
+                          : `${selName} has ${selAgg.count} award${selAgg.count === 1 ? "" : "s"} (${fmtUsd(selAgg.amount)} total), but none rank in the program-wide top ${summary.topAwards.length} shown here.`
+                        : `No top-${summary.topAwards.length} awards in ${selName ?? "any state"}.`}
                     </td>
                   </tr>
                 ) : (
                   rows.map((a, i) => (
                     <tr key={`${a.awardId}-${i}`} className="border-b border-brand-navy/[0.06] last:border-0">
                       <td className="py-2 pr-3 text-foreground">{a.recipient || "—"}</td>
-                      <td className="py-2 pr-3 text-muted-foreground">{a.state ?? "—"}</td>
+                      {!awardTableHideLocation && <td className="py-2 pr-3 text-muted-foreground">{a.state ?? "—"}</td>}
                       <td className="py-2 pr-3 font-semibold tabular-nums text-brand-navy">{fmtUsd(a.amount)}</td>
                       <td className="py-2 pr-3 tabular-nums text-muted-foreground">
                         {(a.startDate || "").slice(0, 4) || "—"}
