@@ -88,20 +88,22 @@ async function loadTemplate(which: AlertTemplate) {
 }
 
 // Logo art inlined as data URIs -- relative asset paths can't resolve when Chromium renders from an
-// in-memory string. The CLIENT template uses the REAL brand LOCKUP (mark + wordmark + tagline as one SVG,
-// the same `public/granted-lockup-*.svg` the app login uses) instead of a reconstructed PNG mark + text
-// wordmark + text tagline. Naming: `-dark.svg` is the WHITE artwork (for the navy hero), `-light.svg` is the
-// NAVY artwork (for the white footer). The two granted-mark PNGs are KEPT for the untouched prospect/outreach
-// template (grant-alert.hbs), which still references them.
+// in-memory string. The CLIENT template uses the REAL brand LOCKUP (mark + wordmark + tagline as one SVG —
+// the SAME artwork as the app login's `public/granted-lockup-*.svg`) instead of a reconstructed PNG mark +
+// text wordmark + text tagline. Naming: `-dark.svg` is the WHITE artwork (for the navy hero), `-light.svg`
+// is the NAVY artwork (for the white footer). **These are read from `lib/alerts/assets/` — a COPY of the
+// public ones — NOT from `public/`, because only `lib/alerts/assets/**` is traced into the alert routes'
+// serverless bundle (next.config.mjs outputFileTracingIncludes); a runtime fs.readFile of `public/` would
+// 500 with ENOENT in prod (Vercel Agent Review #571).** The two granted-mark PNGs are KEPT for the untouched
+// prospect/outreach template (grant-alert.hbs), which still references them.
 async function loadAssets() {
   if (!cachedAssets) {
     const dir = path.join(ROOT, "lib/alerts/assets");
-    const pub = path.join(ROOT, "public");
     const [navy, white, lockupWhite, lockupNavy] = await Promise.all([
       fs.readFile(path.join(dir, "granted-mark-navy.png")),
       fs.readFile(path.join(dir, "granted-mark-white.png")),
-      fs.readFile(path.join(pub, "granted-lockup-dark.svg")),
-      fs.readFile(path.join(pub, "granted-lockup-light.svg")),
+      fs.readFile(path.join(dir, "granted-lockup-dark.svg")),
+      fs.readFile(path.join(dir, "granted-lockup-light.svg")),
     ]);
     cachedAssets = {
       navy: `data:image/png;base64,${navy.toString("base64")}`,
