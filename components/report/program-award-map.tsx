@@ -201,6 +201,10 @@ export function ProgramAwardMap({
   });
 
   const selName = selected ? STATE_NAMES[selected] ?? selected : null;
+  // The selected state's aggregate (count + total from byState) — present for any state the map colored, so
+  // an empty top-N table can say what the state HAS rather than a bare "no awards" (a colored state whose
+  // awards just don't rank in the program-wide top-N carried here).
+  const selAgg = selected ? byStateMap.get(selected) ?? null : null;
   const rows = (summary.topAwards ?? []).filter((a) => !selected || a.state === selected);
   // Prospecting table only: surface the Agency column solely when it actually varies across the program's
   // top awards. Every row is the SAME funded program, so a constant agency would just repeat down the column
@@ -327,8 +331,10 @@ export function ProgramAwardMap({
         </span>
       </div>
 
-      {/* The selection chip + click-through award table are the FULL variant only — the compact console
-          box keeps the map + hover + legend (the interactive value in a 386px column) and drops the table. */}
+      {/* This selection chip + click-through award table are the FULL variant (/review/[id]) only. The
+          compact console box drops THIS table and instead renders the `awardTable` block below (the same
+          Prospecting "notable recipients" table, Location column hidden) — so the compact Grant Report
+          still gets a click-through table, just the narrower one. */}
       {!compact && (
         <>
       {/* Selection chip + truncation note */}
@@ -385,11 +391,13 @@ export function ProgramAwardMap({
         </>
       )}
 
-      {/* Prospecting-only (/intel/[id]) award-detail table, directly under the map. Reuses the map's
-          `selected` state — it opens on Arkansas and swaps to whatever state is clicked. topAwards is the
+      {/* Award-detail table for Prospecting (/intel/[id]) AND the compact Grant Report console (which
+          passes `awardTable awardTableHideLocation`), directly under the map. Reuses the map's `selected`
+          state — it opens on Arkansas and swaps to whatever state is clicked. topAwards is the
           program-wide top-N by amount, so this is a "notable recipients" view WITHIN that N, never an
-          exhaustive per-state list (the caption says so). No program/CFDA column — every row is the same
-          program the map is showing. */}
+          exhaustive per-state list (the caption says so). A selected state with awards but none in the
+          top-N shows its real aggregate, not a bare "no awards". No program/CFDA column — every row is the
+          same program the map is showing. */}
       {awardTable && (
         <div className="mt-4">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
@@ -425,7 +433,9 @@ export function ProgramAwardMap({
                 {rows.length === 0 ? (
                   <tr>
                     <td colSpan={(awardTableHideLocation ? 3 : 4) + (agencyVaries ? 1 : 0)} className="py-3 text-sm text-muted-foreground">
-                      No top-{summary.topAwards.length} awards in {selName ?? "any state"}.
+                      {selAgg
+                        ? `${selName} has ${selAgg.count} award${selAgg.count === 1 ? "" : "s"} (${fmtUsd(selAgg.amount)} total), but none rank in the program-wide top ${summary.topAwards.length} shown here.`
+                        : `No top-${summary.topAwards.length} awards in ${selName ?? "any state"}.`}
                     </td>
                   </tr>
                 ) : (
