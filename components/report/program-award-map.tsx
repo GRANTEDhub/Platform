@@ -201,9 +201,13 @@ export function ProgramAwardMap({
   });
 
   const selName = selected ? STATE_NAMES[selected] ?? selected : null;
-  // The selected state's aggregate (count + total from byState) — present for any state the map colored, so
-  // an empty top-N table can say what the state HAS rather than a bare "no awards" (a colored state whose
-  // awards just don't rank in the program-wide top-N carried here).
+  // The selected state's aggregate (authoritative program-wide amount + a count from byState) — present for
+  // any state the map colored, so an empty top-N table can say what the state HAS rather than a bare "no
+  // awards" (a colored state whose awards just don't rank in the program-wide top-N carried here). NOTE the
+  // count is only a floor when summary.awardsTruncated (byState.count is built from the first MAX_AWARD_PAGES
+  // awards, and a truncated state can even carry amount>0 with count 0; the amount is the authoritative
+  // geography total). So the empty-state states the exact count ONLY when not truncated, and leads with the
+  // authoritative amount alone otherwise — never an undercounted "0 awards ($X total)".
   const selAgg = selected ? byStateMap.get(selected) ?? null : null;
   const rows = (summary.topAwards ?? []).filter((a) => !selected || a.state === selected);
   // Prospecting table only: surface the Agency column solely when it actually varies across the program's
@@ -434,7 +438,9 @@ export function ProgramAwardMap({
                   <tr>
                     <td colSpan={(awardTableHideLocation ? 3 : 4) + (agencyVaries ? 1 : 0)} className="py-3 text-sm text-muted-foreground">
                       {selAgg
-                        ? `${selName} has ${selAgg.count} award${selAgg.count === 1 ? "" : "s"} (${fmtUsd(selAgg.amount)} total), but none rank in the program-wide top ${summary.topAwards.length} shown here.`
+                        ? summary.awardsTruncated
+                          ? `${selName} received ${fmtUsd(selAgg.amount)} in program-wide awards, but none rank in the top ${summary.topAwards.length} shown here.`
+                          : `${selName} has ${selAgg.count} award${selAgg.count === 1 ? "" : "s"} (${fmtUsd(selAgg.amount)} total), but none rank in the program-wide top ${summary.topAwards.length} shown here.`
                         : `No top-${summary.topAwards.length} awards in ${selName ?? "any state"}.`}
                     </td>
                   </tr>
