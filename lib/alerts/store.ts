@@ -6,7 +6,7 @@ import { mintAccessToken } from "@/lib/tokens";
 import { enrichAlert } from "./enrich";
 import { ensureGrantBrief } from "@/lib/grants/brief";
 import { conceptHookForCard } from "@/lib/concept/store";
-import { buildAlertData, buildAlertEmailBody, buildProspectEmailBody, draftFitStillFresh } from "./data";
+import { buildAlertData, buildAlertEmailBody, buildProspectEmailBody, draftFitStillFresh, draftDeadlineStillFresh } from "./data";
 import { senderFirstName } from "./sender";
 import { renderAlertPdf, renderHorizonPdf, launchAlertBrowser, closeBrowserOnReject } from "./render";
 import { mergeAlertPdfs } from "./merge-pdf";
@@ -243,18 +243,24 @@ export async function getOrCreateDraftAlert(
   opts?: { withHorizon?: boolean; withDecisionLinks?: boolean },
 ): Promise<GrantAlertRow> {
   const existing = await getDraftAlert(ctx.card.id);
-  // STALENESS GUARD. The alert is save-once — this row is reused VERBATIM for preview AND send — and the
-  // fit-score block + Grant Intelligence are a snapshot of resolveFit(ctx.card) at draft time. A QA apply
-  // (qa_*), the fit-analysis drain (fit_narrative*), or an engine rematch (fit_score) can move that AFTER
-  // the draft is saved, and NONE of those paths calls invalidateDraftAlert — so a stale draft would ship a
-  // PDF whose fit score / narrative contradicts the card's current verdict. Re-derive from the live card
-  // and DROP a drifted draft so it regenerates fresh (covers every writer in one place, including the
-  // protected pipeline rematch we can't hook). Only the WARM CLIENT template renders the signature; cold
-  // outreach (prospect/lead) never shows it, so a drift there is invisible and regenerating would only
-  // waste an enrich+render and re-mint the baked booking token — skip the check for those.
+  // STALENESS GUARD. The alert is save-once — this row is reused VERBATIM for preview AND send — so a
+  // frozen field that has drifted since the draft was generated would ship a PDF contradicting the card's
+  // current state. TWO independent drifts, both un-invalidated: (1) the fit-score block + Grant Intelligence
+  // are a snapshot of resolveFit(ctx.card) that a QA apply (qa_*), the fit-analysis drain (fit_narrative*),
+  // or an engine rematch (fit_score) can move AFTER save, and none of those paths calls invalidateDraftAlert
+  // (draftFitStillFresh); (2) the deadline tile's "N days left" countdown is frozen at render time and goes
+  // stale on the CALENDAR's clock — a draft held past its deadline would ship "N days left" for a CLOSED
+  // grant (draftDeadlineStillFresh). Either false → DROP the drifted draft so it regenerates fresh with a
+  // countdown correct as-of send day (covers every writer in one place, including the protected pipeline
+  // rematch we can't hook). Only the WARM CLIENT template renders the fit signature AND the countdown; cold
+  // outreach (prospect/lead) shows neither, so a drift there is invisible and regenerating would only waste
+  // an enrich+render and re-mint the baked booking token — skip the check for those.
   const isColdOutreach = ctx.card.card_type === "prospect" || ctx.isLead;
   const usable =
-    existing && (isColdOutreach || draftFitStillFresh(existing.alert_data as AlertData, ctx.card))
+    existing &&
+    (isColdOutreach ||
+      (draftFitStillFresh(existing.alert_data as AlertData, ctx.card) &&
+        draftDeadlineStillFresh(existing.alert_data as AlertData, ctx.grant)))
       ? existing
       : null;
   const draft = usable

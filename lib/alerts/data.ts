@@ -193,11 +193,12 @@ function buildStats(g: Grant): AlertStat[] {
 }
 
 // The card-derived alert fields (displayed fit score + the "Grant Intelligence" paragraph) that
-// resolveFit produces. These are the ONLY alert content that can change AFTER a draft is saved with no
-// grant/enrichment edit — a QA apply (qa_*), the fit-analysis drain (fit_narrative*), or an engine
-// rematch (fit_score) all move them. buildAlertData writes the snapshot from this, and the draft
-// staleness check (getOrCreateDraftAlert) re-derives from it, so the two can never drift on how the
-// value is computed. Clamped identically to the render path.
+// resolveFit produces. These change AFTER a draft is saved on a CARD write with no grant/enrichment edit —
+// a QA apply (qa_*), the fit-analysis drain (fit_narrative*), or an engine rematch (fit_score) all move
+// them. buildAlertData writes the snapshot from this, and the draft staleness check (getOrCreateDraftAlert)
+// re-derives from it, so the two can never drift on how the value is computed. Clamped identically to the
+// render path. (The deadline countdown is the OTHER post-save drift — grant-derived, on the calendar's
+// clock rather than a card write — and is covered separately by draftDeadlineStillFresh.)
 export function alertFitSignature(card: ReviewCard): { fitScore: 1 | 2 | 3 | null; grantIntelligence: string | null } {
   const resolved = resolveFit(card);
   const conceptSynopsis = clampAtSentence((card.concept_synopsis || "").trim(), CONCEPT_MAX) || null;
@@ -217,6 +218,20 @@ export function draftFitStillFresh(
 ): boolean {
   const sig = alertFitSignature(card);
   return (stored.fitScore ?? null) === sig.fitScore && (stored.grantIntelligence ?? null) === sig.grantIntelligence;
+}
+
+// True when a saved draft's FROZEN deadline countdown ("N days left") still matches what the live grant
+// would render TODAY. Unlike the fit signature this drifts on the CALENDAR's clock, not a card write:
+// deadlineDaysLeftSub is computed once at draft-render time and baked into the saved PDF (save-once,
+// preview == sent), so a warm-client draft generated when the deadline was days out and then held unsent
+// would ship a STALE count — worst case "N days left" for a grant whose deadline has PASSED, the exact
+// "shown only for a firm future date" invariant violated by an aged draft. Re-derive from the live grant
+// and compare to the stored deadline stat; a false — a drifted count OR a countdown that should now be
+// ABSENT (closed) — means the draft must regenerate so the sent PDF's countdown is correct as-of send day.
+// Warm client ONLY (the outreach template renders no countdown); draftFitStillFresh covers the card's side.
+export function draftDeadlineStillFresh(stored: AlertData, grant: Grant): boolean {
+  const storedSub = stored.stats?.find((s) => s.label === "deadline")?.sub ?? undefined;
+  return storedSub === deadlineDaysLeftSub(grant.submission_deadline);
 }
 
 export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichment | null): AlertData {

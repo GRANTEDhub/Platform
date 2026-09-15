@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildAlertData, alertFitSignature, draftFitStillFresh } from "./data";
+import { buildAlertData, alertFitSignature, draftFitStillFresh, draftDeadlineStillFresh } from "./data";
 import type { Grant, ReviewCard } from "@/types/database";
 
 // Minimal fixtures — buildAlertData reads a handful of grant fields (all null-safe in the helpers) and the
@@ -136,5 +136,35 @@ describe("draft staleness — alertFitSignature / draftFitStillFresh", () => {
 
   it("a legacy draft with no snapshotted signature reads STALE (regenerates into the new format)", () => {
     expect(draftFitStillFresh({}, card({ fit_score: 3, fit_narrative: "x", fit_narrative_fit_score: 3 }))).toBe(false);
+  });
+});
+
+// The deadline countdown is a SECOND post-save drift the fit signature doesn't cover: it's frozen at
+// draft-render time but goes stale on the calendar's clock, so a held draft could ship "N days left" for a
+// grant that has already CLOSED. draftDeadlineStillFresh re-derives from the live grant so getOrCreateDraftAlert
+// regenerates a drifted draft (#570, Claude Code Review 🔴).
+describe("draft staleness — draftDeadlineStillFresh (deadline countdown)", () => {
+  const daysFromNow = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
+  // A stored AlertData built from a grant, so its deadline stat's frozen `sub` is exactly what the render baked in.
+  const storedFor = (deadline: string) => buildAlertData(grant({ submission_deadline: deadline }), card(), null);
+
+  it("FRESH when the live grant's countdown still matches the frozen one (same firm future date)", () => {
+    const g = grant({ submission_deadline: daysFromNow(10) });
+    expect(draftDeadlineStillFresh(buildAlertData(g, card(), null), g)).toBe(true);
+  });
+
+  it("STALE when the deadline has PASSED since the draft was frozen (countdown must now be ABSENT)", () => {
+    // Frozen at "10 days left"; the grant's deadline is now 5 days in the PAST → live countdown is undefined.
+    // This is the 🔴: a closed grant would otherwise still show "10 days left".
+    expect(draftDeadlineStillFresh(storedFor(daysFromNow(10)), grant({ submission_deadline: daysFromNow(-5) }))).toBe(false);
+  });
+
+  it("STALE when the count has DRIFTED but the deadline is still future (frozen 10, live 3)", () => {
+    expect(draftDeadlineStillFresh(storedFor(daysFromNow(10)), grant({ submission_deadline: daysFromNow(3) }))).toBe(false);
+  });
+
+  it("FRESH when there is no countdown either way (rolling/undated deadline → no sub, no drift)", () => {
+    const g = grant({ submission_deadline: "Rolling" });
+    expect(draftDeadlineStillFresh(buildAlertData(g, card(), null), g)).toBe(true);
   });
 });
