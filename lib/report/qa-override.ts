@@ -89,17 +89,24 @@ export function resolveFit(row: QaOverrideRow): ResolvedFit {
   const displayedFit = appliedFresh ? qaFit : engineFit;
 
   // NARRATIVE OWNERSHIP SPLIT (migration 0099). Two narratives can sit on a card; exactly one renders:
-  //   - The dedicated FIT-ANALYSIS narrative (fit_narrative) OWNS the GO/MARGINAL affirmative case. It is the
-  //     profile-aware, non-scoring pass (lib/grants/fit-analysis.ts) — richer than the QA narrative for a
-  //     go/marginal — so it WINS when the DISPLAYED score is a 2 or 3 AND its snapshot still matches that
-  //     score (freshness + direction in one rule: a card that fell to no-go, by engine re-score or QA demote,
-  //     no longer matches a stored 2/3, so it's withheld and the drain regenerates).
-  //   - The QA narrative (qa_narrative) keeps the DEMOTE/NO-GO reasoning — it shows when there is no fresh
-  //     fit_narrative to prefer (a displayed-1, or a not-yet-generated go/marginal).
-  // So the two never stack. fit_narrative absent/null (flag off, or not generated) → qaNarr → engine paragraph,
-  // byte-identical to pre-0099. Seat/role codes (S0_2, P0) are SCRUBBED at this read boundary too —
-  // narrativeGuard strips them at generation, but this also cleans narratives stored before that landed.
+  //   - The QA narrative (qa_narrative) ALWAYS wins on a fresh APPLIED QA demote. Its grounded reason (e.g.
+  //     "cannot prime as a disparate jurisdiction") is the disqualifying catch — and a QA demote can land at a
+  //     DISPLAYED 2 (marginal), not only a 1. So the fit-analysis narrative must DEFER whenever `appliedFresh`,
+  //     or an ungrounded affirmative paragraph would silently REPLACE the grounded demote reason at displayed-2
+  //     (Claude Code Review, #564). The fit-analysis pass has no access to qa_narrative, so it can only be
+  //     right on a card QA did NOT demote — its poller likewise skips an applied-demote card.
+  //   - The dedicated FIT-ANALYSIS narrative (fit_narrative) OWNS the GO/MARGINAL affirmative case on a card
+  //     with NO applied demote — the profile-aware, non-scoring pass (lib/grants/fit-analysis.ts), richer than
+  //     the engine paragraph. It wins when NOT appliedFresh, the DISPLAYED score is a 2 or 3, AND its snapshot
+  //     still matches that score (freshness + direction in one rule: a card that fell out of that band, by an
+  //     engine re-score or a QA demote, no longer matches a stored 2/3, so it's withheld and the drain
+  //     regenerates).
+  // So the two never stack, and a grounded demote reason is never replaced. fit_narrative absent/null (flag
+  // off, or not generated) → qaNarr → engine paragraph, byte-identical to pre-0099. Seat/role codes (S0_2, P0)
+  // are SCRUBBED at this read boundary too — narrativeGuard strips them at generation, but this also cleans
+  // narratives stored before that landed.
   const fitNarr =
+    !appliedFresh &&
     (displayedFit === 2 || displayedFit === 3) &&
     typeof row.fit_narrative === "string" &&
     row.fit_narrative.trim() &&

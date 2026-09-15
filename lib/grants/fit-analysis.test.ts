@@ -268,10 +268,16 @@ describe("displayedFitOf / fitNarrativeStale — go/marginal only, snapshot must
     expect(fitNarrativeStale(pollRow({ fit_score: 2, fit_narrative: "written for a 3", fit_narrative_fit_score: 3 }))).toBe(true);
   });
 
-  it("a QA demote that drops the DISPLAYED score below the snapshot makes it stale", () => {
-    // engine 3, fit_narrative written for 3, but QA applied a demote to 2 → displayed 2 ≠ snapshot 3.
-    const row = pollRow({ fit_score: 3, fit_narrative: "for the clean 3", fit_narrative_fit_score: 3, qa_status: "applied", qa_fit_score: 2, qa_engine_fit_score: 3 });
+  it("a card with a fresh APPLIED QA demote is NOT eligible — qa_narrative owns it (#564)", () => {
+    // engine 3, QA applied a demote to 2. displayed is 2, but the grounded qa_narrative owns the card, so the
+    // fit-analysis pass must NOT generate an (ungrounded) affirmative paragraph for it.
+    const row = pollRow({ fit_score: 3, qa_status: "applied", qa_fit_score: 2, qa_engine_fit_score: 3, fit_narrative: null });
     expect(displayedFitOf(row)).toBe(2);
+    expect(fitNarrativeStale(row)).toBe(false);
+  });
+
+  it("an AFFIRM/flag clearing verdict (qa_status 'none') does NOT block eligibility — no applied demote", () => {
+    const row = pollRow({ fit_score: 3, qa_status: "none", qa_fit_score: null, qa_engine_fit_score: 3, fit_narrative: null });
     expect(fitNarrativeStale(row)).toBe(true);
   });
 });
@@ -386,10 +392,46 @@ describe("runFitAnalysis — flag gate, generate + write, skips, cost cap", () =
     expect(r.capReached).toBe(true);
     expect(r.generated).toBe(0);
   });
+
+  it("skips a card with a fresh applied QA demote — qa_narrative owns it, no generation (#564)", async () => {
+    vi.stubEnv("FIT_ANALYSIS_ENABLED", "true");
+    const store = new Store();
+    seedCard(store, { qa_status: "applied", qa_fit_score: 2, qa_engine_fit_score: 3 }); // engine 3, QA demoted to 2
+    seedGrantClient(store);
+    const r = await runFitAnalysis(asDb(store), { now: () => NOW, generate: gen });
+    expect(r.eligible).toBe(0);
+    expect(store.tables.review_cards[0].fit_narrative).toBeNull();
+  });
 });
 
 // ── runFitAnalysisForCard: the on-demand admin path ──────────────────────────────────────────────────
 describe("runFitAnalysisForCard — single card, ignores the daily cap", () => {
+  const seedOne = (store: Store, over: Row) => {
+    store.tables.review_cards = [{
+      id: "card-x", grant_id: "g1", client_id: "c1", fit_score: 3, factor_scores: null,
+      proposed_role: "Prime", recommended_prime: null, why_this_org: null, reasoning_context: {},
+      qa_fit_score: null, qa_status: null, qa_engine_fit_score: null, fit_narrative: null, fit_narrative_fit_score: null, fit_narrative_at: null,
+      decision: "pending", sme_released_at: null, card_type: "client", ...over,
+    }];
+    store.tables.grants = [{ id: "g1", ...grant() }];
+    store.tables.clients = [client() as unknown as Row];
+  };
+
+  it("skips a RELEASED card — never rewrites a client-visible narrative (#564)", async () => {
+    const store = new Store();
+    seedOne(store, { sme_released_at: "2026-09-10T00:00:00Z" });
+    const res = await runFitAnalysisForCard(asDb(store), "card-x", { now: () => NOW, generate: async () => "must not generate" });
+    expect(res.outcome).toBe("skipped");
+    expect(store.tables.review_cards[0].fit_narrative).toBeNull();
+  });
+
+  it("skips a DECIDED (passed) card (#564)", async () => {
+    const store = new Store();
+    seedOne(store, { decision: "passed" });
+    const res = await runFitAnalysisForCard(asDb(store), "card-x", { now: () => NOW, generate: async () => "must not generate" });
+    expect(res.outcome).toBe("skipped");
+  });
+
   it("generates for one go/marginal card and returns the stored narrative", async () => {
     const store = new Store();
     store.tables.review_cards = [{
