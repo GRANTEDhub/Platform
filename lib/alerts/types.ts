@@ -5,7 +5,9 @@
 
 import type { ForecastHorizonItem } from "@/lib/grants/forecast-relevance";
 
-export type AlertStat = { value: string; label: string; highlight?: boolean };
+// `sub` is the optional middle line under a stat's value — today only the deadline tile
+// uses it, for the "N days left" countdown (buildStats). Absent → the tile is value + label.
+export type AlertStat = { value: string; label: string; highlight?: boolean; sub?: string };
 export type AlertRiskCallout = { label: string; points?: string; headline: string; body: string };
 export type AlertEligibilityNote = { label: string; body: string };
 
@@ -69,4 +71,14 @@ export interface AlertData {
   // which has no concept to show and no portal to send anyone to.
   conceptSynopsis?: string | null;
   portalUrl?: string | null;
+  // CLIENT template only. The DISPLAYED (QA-coalesced, resolveFit) fit score 1–3 + its band label
+  // ("Strong fit" / "Conditional" / "Weak", FIT_BAND) — the fit-score block in the hero. Absent on the
+  // prospect/lead template (a cold teaser carries no fit score).
+  fitScore?: 1 | 2 | 3 | null;
+  fitScoreLabel?: string | null;
+  // CLIENT template only. The "Grant Intelligence" paragraph — resolveFit(card).narrative (the fit-analysis
+  // narrative, or a QA demote's grounded reason), clamped for the layout. Falls back to conceptSynopsis
+  // when there is no narrative (flag off / not generated / a card QA never touched); the template shows a
+  // static line when both are absent.
+  grantIntelligence?: string | null;
 }

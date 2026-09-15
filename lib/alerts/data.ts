@@ -1,6 +1,8 @@
 import { format } from "date-fns";
 import { formatAwardRange, compactCostShare, formatDeadline } from "@/lib/grants/format";
 import { sanitizeRichText, sanitizeText } from "@/lib/sanitize/html";
+import { resolveFit } from "@/lib/report/qa-override";
+import { FIT_BAND } from "@/lib/report/shape";
 import { PROSPECT_CREDENTIAL } from "./copy";
 import type { Grant, ReviewCard } from "@/types/database";
 import type { AlertData, AlertEnrichment, AlertStat } from "./types";
@@ -24,6 +26,25 @@ function shortDeadline(raw: string | null | undefined): string {
   const d = new Date(s);
   if (!isNaN(d.getTime()) && /\d{4}/.test(s)) return format(d, "MMM d");
   return s.length > 12 ? s.slice(0, 12) : s;
+}
+
+// The deadline tile's countdown sub-line ("8 days left"), or undefined when there's no
+// firm future date to count to. Computed at DRAFT-RENDER time and FROZEN into the saved
+// PDF (save-once: preview == sent), so it reads as-of send day; the absolute date
+// (shortDeadline) is always shown beside it, so a stale relative count never stands alone.
+// Only a real, parseable date renders a sub-line: a rolling/TBD/unparseable deadline, or a
+// date already PAST (closed — the closed-sweep gate handles those), returns undefined.
+function deadlineDaysLeftSub(raw: string | null | undefined): string | undefined {
+  const s = (raw ?? "").trim();
+  if (!s || !/\d{4}/.test(s)) return undefined;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return undefined;
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const days = Math.ceil((d.getTime() - startOfToday) / 86_400_000);
+  if (days < 0) return undefined; // closed — no countdown
+  if (days === 0) return "Due today";
+  return `${days} day${days === 1 ? "" : "s"} left`;
 }
 
 function fiscalYear(g: Grant): string {
@@ -78,6 +99,11 @@ export function clampAtSentence(raw: string, max: number): string {
 // then the band off the page, which is the failure these constants exist to prevent.
 const CONCEPT_MAX = 620;
 const INTRO_MAX = 520;
+// The "Grant Intelligence" paragraph (resolveFit's narrative) sits in the same grid cell the concept box
+// used, so it carries the same layout budget as CONCEPT_MAX. Clamped on a sentence boundary because the
+// alert is ONE letter page with a hard pageRanges:"1" clamp (render.ts) -- an unclamped ~1,000-char fit
+// narrative would be silently CLIPPED. The full, untruncated narrative shows on the portal.
+const GRANT_INTEL_MAX = 620;
 
 function introSource(g: Grant): string {
   const brief = (g.description_brief || "").trim();
@@ -157,7 +183,12 @@ function buildStats(g: Grant): AlertStat[] {
   const cs = compactCostShare(g.cost_share);
   if (cs !== "—") stats.push({ value: cs, label: "match required" });
   if (stats.length < 3 && g.num_awards) stats.push({ value: shortAwards(g.num_awards), label: "awards" });
-  stats.push({ value: shortDeadline(g.submission_deadline), label: "deadline", highlight: true });
+  stats.push({
+    value: shortDeadline(g.submission_deadline),
+    label: "deadline",
+    highlight: true,
+    sub: deadlineDaysLeftSub(g.submission_deadline),
+  });
   return stats.slice(-4); // keep the deadline (last) if we overflow
 }
 
@@ -174,6 +205,14 @@ export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichme
   const awardsFull = (g.num_awards || "").trim();
   const awardsFootnote =
     awardsFull.length > 24 && shortAwards(awardsFull) !== awardsFull ? awardsFull : null;
+
+  // The DISPLAYED (QA-coalesced) fit + the client-facing "Grant Intelligence" narrative, from the ONE
+  // read-layer resolver (the same seam the console/portal render through). loadAlertContext selects the
+  // whole card, so every resolveFit input column (qa_*, fit_narrative*) is present.
+  const resolved = resolveFit(card);
+  const displayedFit = resolved.fitScore;
+  const conceptSynopsis = clampAtSentence((card.concept_synopsis || "").trim(), CONCEPT_MAX) || null;
+  const narrative = resolved.narrative ? clampAtSentence(resolved.narrative.trim(), GRANT_INTEL_MAX) || null : null;
 
   return {
     // ── narrative (model, with fallbacks) ──
@@ -197,7 +236,12 @@ export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichme
     // band off the page. 400 is real headroom (a typical synopsis runs ~290), so this bites
     // rarely rather than constantly. A limit can only fix overflow; short text still leaves
     // whitespace, which the grid's height:100% absorbs.
-    conceptSynopsis: clampAtSentence((card.concept_synopsis || "").trim(), CONCEPT_MAX) || null,
+    conceptSynopsis,
+    // The fit-score block (hero) + the Grant Intelligence paragraph (the concept box, swapped): the fit
+    // narrative when present, else the matcher synopsis, else (both null) a static line in the template.
+    fitScore: displayedFit,
+    fitScoreLabel: displayedFit ? FIT_BAND[displayedFit].label : null,
+    grantIntelligence: narrative ?? conceptSynopsis,
     stats: buildStats(g),
     statsFootnote: awardsFootnote,
     // Concise, grounded eligibility from the model; deterministic tight fallback.

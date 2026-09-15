@@ -172,7 +172,7 @@ function NarrativeDrawer({
       >
         <div className="flex items-center justify-between border-b border-brand-navy/[0.08] px-6 py-4">
           <div>
-            <h2 className="font-serif text-lg font-semibold text-brand-navy">Edit fit narrative</h2>
+            <h2 className="font-serif text-lg font-semibold text-brand-navy">Edit Grant Intelligence</h2>
             <p className="mt-0.5 text-[12px] text-muted-foreground">
               The client-facing “why this fits” paragraph. Your edit is locked from auto-regeneration and
               rides the next alert.

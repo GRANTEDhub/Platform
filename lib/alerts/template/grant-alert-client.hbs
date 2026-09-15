@@ -30,14 +30,16 @@
 <div class="brief-page" style="width:816px; min-height:1056px; margin:24px auto; padding:22px 0 0 0; background:#fff; color:#0B1E3A; font-family:'Inter Tight', sans-serif; box-shadow:0 18px 50px rgba(11,30,58,0.18); display:flex; flex-direction:column;">
 
   <!-- ===================== TOP BAR ===================== -->
+  <!-- Mock (2026-09-15): logo + wordmark left, the tagline on the RIGHT (was the
+       uppercase alertLabel). The alertLabel is dropped from the bar -- the orange
+       kicker line under the rule already carries program/FON identity, so it was
+       redundant. alertLabel stays in the data model for the email subject. -->
   <div style="display:flex; align-items:center; justify-content:space-between; padding:0 46px;">
     <div style="display:flex; align-items:center; gap:11px;">
       <img src="assets/granted-mark-navy.png" alt="GRANTED logo" width="31" height="31" style="display:block; flex-shrink:0;">
       <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:23px; letter-spacing:0.04em; color:#0B1E3A;">GRANTED</span>
-      <span style="width:1px; height:15px; background:#E4761F; display:inline-block;"></span>
-      <span style="font-family:'Source Serif 4', serif; font-style:italic; font-weight:700; font-size:14px; color:#E4761F;">More Grants. Less Grind.</span>
     </div>
-    <span style="font-size:10.5px; font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:#0B1E3A; opacity:0.55;">{{alertLabel}}</span>
+    <span style="font-family:'Source Serif 4', serif; font-style:italic; font-weight:700; font-size:14px; color:#0B1E3A;">More <span style="color:#E4761F; text-decoration:underline; text-underline-offset:2px;">Grants</span>. Less Grind.</span>
   </div>
 
   <div style="height:1px; background:#0B1E3A; opacity:0.12; margin:14px 46px 0 46px;"></div>
@@ -46,12 +48,28 @@
   <!-- The chips moved UP here from their own section: on a client alert the fundable
        items are context for the description, not a section of their own. -->
   <div style="padding:18px 46px 14px 46px;">
-    <div style="font-size:11px; font-weight:600; letter-spacing:0.15em; text-transform:uppercase; color:#E4761F; margin-bottom:9px;">
-      {{programName}}{{#if programShort}} &middot; {{programShort}}{{/if}}{{#if fiscalYear}} &middot; {{fiscalYear}}{{/if}}{{#if fon}} &middot; FON {{fon}}{{/if}}
+    <!-- Title on the left, the FIT SCORE block on the right (client template only; the prospect teaser has
+         no fit score). The number carries the signal and the word "Strong fit"/"Conditional"/"Weak" is
+         redundant with it, so the block stays navy-neutral -- no band hue (the colour-blind rule). -->
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:22px; margin-bottom:11px;">
+      <div style="min-width:0;">
+        <div style="font-size:11px; font-weight:600; letter-spacing:0.15em; text-transform:uppercase; color:#E4761F; margin-bottom:9px;">
+          {{programName}}{{#if programShort}} &middot; {{programShort}}{{/if}}{{#if fiscalYear}} &middot; {{fiscalYear}}{{/if}}{{#if fon}} &middot; FON {{fon}}{{/if}}
+        </div>
+        <h1 style="font-family:'Source Serif 4', serif; font-weight:700; font-size:37px; line-height:1.04; letter-spacing:-0.02em; margin:0; color:#0B1E3A;">
+          {{headline}}
+        </h1>
+      </div>
+      {{#if fitScore}}
+      <div style="flex-shrink:0; text-align:center; border:1px solid rgba(11,30,58,0.14); border-radius:4px; padding:9px 16px 10px 16px;">
+        <div style="font-family:'Source Serif 4', serif; font-weight:700; font-size:32px; line-height:1; color:#0B1E3A;">{{fitScore}}</div>
+        <div style="font-size:9px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:#6E7683; margin-top:2px;">of 3</div>
+        <div style="height:1px; background:rgba(11,30,58,0.1); margin:7px 0;"></div>
+        <div style="font-size:8.5px; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:#6E7683;">Fit Score</div>
+        <div style="font-size:11.5px; font-weight:700; color:#0B1E3A; margin-top:2px; white-space:nowrap;">{{fitScoreLabel}}</div>
+      </div>
+      {{/if}}
     </div>
-    <h1 style="font-family:'Source Serif 4', serif; font-weight:700; font-size:37px; line-height:1.04; letter-spacing:-0.02em; margin:0 0 11px 0; color:#0B1E3A;">
-      {{headline}}
-    </h1>
     <div style="font-size:14.5px; line-height:1.55; margin:0 0 11px 0; max-width:700px; color:#2a3a52; text-wrap:pretty;">{{{introHtml}}}{{#if statePassThrough}} In {{state}} it runs through the {{administeringAgency}} as a pass-through, so your application competes only against other in-state organizations, not the entire country.{{/if}}</div>
     {{#if whatItFunds.length}}
     <div style="display:flex; flex-wrap:wrap; gap:6px;">
@@ -63,11 +81,18 @@
   </div>
 
   <!-- ===================== STATS STRIP ===================== -->
-  <div style="display:grid; grid-template-columns:repeat({{stats.length}}, 1fr); background:rgba(11,30,58,0.85); margin:0 46px;">
+  <!-- Mock (2026-09-15): LIGHT tiles (white ground, navy serif numbers, grey labels)
+       with a single ORANGE deadline tile (white text). The deadline tile also carries
+       a middle "N days left" countdown (stat.sub, buildStats) between the date and the
+       label -- absent when there's no firm future date. White-on-#E4761F matches the
+       "Your call" button; the date value is large, so the tile's meaning is carried by
+       the value + position, not the small label alone. -->
+  <div style="display:grid; grid-template-columns:repeat({{stats.length}}, 1fr); margin:0 46px; border:1px solid rgba(11,30,58,0.12);">
     {{#each stats}}
-    <div style="padding:11px 14px; {{#unless @last}}border-right:1px solid rgba(250,247,242,0.18); {{/unless}}display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:4px;{{#if this.highlight}} background:rgba(179,84,30,0.85);{{/if}}">
-      <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:20px; line-height:1; color:#fff; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{this.value}}</span>
-      <span style="font-size:9.5px; font-weight:600; letter-spacing:0.09em; text-transform:uppercase; color:{{#if this.highlight}}#fff{{else}}#f4d8c6{{/if}};">{{this.label}}</span>
+    <div style="padding:12px 14px; {{#unless @last}}border-right:1px solid rgba(11,30,58,0.12); {{/unless}}display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:3px; background:{{#if this.highlight}}#E4761F{{else}}#fff{{/if}};">
+      <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:21px; line-height:1; color:{{#if this.highlight}}#fff{{else}}#0B1E3A{{/if}}; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{this.value}}</span>
+      {{#if this.sub}}<span style="font-size:11px; font-weight:700; line-height:1; color:{{#if this.highlight}}#fff{{else}}#0B1E3A{{/if}};">{{this.sub}}</span>{{/if}}
+      <span style="font-size:9.5px; font-weight:600; letter-spacing:0.09em; text-transform:uppercase; color:{{#if this.highlight}}#fff{{else}}#6E7683{{/if}};">{{this.label}}</span>
     </div>
     {{/each}}
   </div>
@@ -75,45 +100,31 @@
   <div style="font-size:10px; line-height:1.4; margin:6px 46px 0 46px; color:#6b7688;">{{statsFootnote}}</div>
   {{/if}}
 
-  <!-- ============= CONCEPT PROPOSAL + WHO CAN APPLY ============= -->
-  <!-- Replaces the prospect template's "What it funds" column. A client already knows
-       what they do; what they have not seen is OUR read of how they would run it. The
-       synopsis is clamped in buildAlertData (CONCEPT_MAX) so it cannot drive this grid
-       taller and push the decision band off the page.
+  <!-- ============= WHO CAN APPLY, then GRANT INTELLIGENCE ============= -->
+  <!-- Mock (2026-09-15): the two blocks are STACKED full-width, not the old side-by-side
+       grid. "Who can apply" is a plain full-width paragraph directly under the stats
+       strip; the "Grant Intelligence" read (resolveFit's narrative, swapped in for the
+       old concept synopsis) is the full-width orange-left-border callout below it.
 
-       12px of headroom, not 18px: the stats strip directly above is a full-bleed navy
-       block, and a wide light gap under it detached the concept box from the numbers it
-       is reading. The box has its own 16px of interior padding, so the perceived space
-       above the words is 28px either way -- the 6px comes off the part that was doing
-       nothing.
-
-       min-height ON THE BOX, NOT MORE WORDS IN IT. Raising CONCEPT_MAX (#308) was the
-       wrong lever and did nothing: the matcher's tool schema asks for concept_synopsis in
-       "2-3 sentences" (~200-350 chars), so the text was never near the old 400 ceiling and
-       is not near the new 620 one either. The box read as cramped because a two-sentence
-       panel is short, not because it was being clipped. Making it TALLER than its text is
-       the honest fix -- a deliberate panel rather than a small box adrift in white space --
-       and it keeps this off lib/grants/engine.ts, where changing that instruction risks
-       moving fit scores for a cosmetic gain.
-
-       This does NOT close the gap above the decision band, and nothing here can: the page
-       is a fixed 1056px, the band is pinned to the bottom by design, and #306 already
-       showed that splitting the slack opens two gaps instead of one. Some white space
-       below a short alert is the shape of a one-page letter. -->
-  <div style="display:grid; grid-template-columns:1.35fr 1fr; gap:34px; padding:12px 46px 2px 46px; align-items:stretch;">
-    <div style="background:#faf7f2; border-left:3px solid #E4761F; padding:16px 18px; height:100%; min-height:170px; box-sizing:border-box;">
-      <div style="font-size:10.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:#E4761F; margin-bottom:10px;">Concept proposal</div>
-      <p style="font-size:13.5px; line-height:1.6; margin:0; color:#2a3a52; text-wrap:pretty;">{{#if conceptSynopsis}}{{conceptSynopsis}}{{else}}We will scope how your organization would run this programme once you tell us to proceed.{{/if}}</p>
+       Full-width means the callout sizes to its content -- no min-height prop is needed
+       to keep it from reading as a small box adrift in a column (that was a two-up-grid
+       problem). grantIntelligence is still clamped in buildAlertData (GRANT_INTEL_MAX) so
+       a long narrative can't drive the page past one letter sheet and push the decision
+       band off the bottom. The band stays pinned to the bottom by margin-top:auto below;
+       whatever slack a short alert leaves lands above it, the shape of a one-page letter. -->
+  <div style="padding:14px 46px 2px 46px;">
+    <div style="font-size:10.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:#E4761F; margin-bottom:9px;">Who can apply</div>
+    <p style="font-size:13.5px; line-height:1.55; margin:0; color:#2a3a52;">{{{eligibilityHtml}}}</p>
+    {{#if eligibilityNote}}
+    <div style="background:#faf7f2; border-left:3px solid #E4761F; padding:10px 12px; margin-top:10px;">
+      <div style="font-size:10px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:#E4761F; margin-bottom:3px;">{{eligibilityNote.label}}</div>
+      <div style="font-size:12px; line-height:1.45; color:#2a3a52;">{{eligibilityNote.body}}</div>
     </div>
-    <div>
-      <div style="font-size:10.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:#E4761F; margin-bottom:10px;">Who can apply</div>
-      <p style="font-size:13px; line-height:1.55; margin:0 0 10px 0; color:#2a3a52;">{{{eligibilityHtml}}}</p>
-      {{#if eligibilityNote}}
-      <div style="background:#faf7f2; border-left:3px solid #E4761F; padding:10px 12px;">
-        <div style="font-size:10px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:#E4761F; margin-bottom:3px;">{{eligibilityNote.label}}</div>
-        <div style="font-size:12px; line-height:1.45; color:#2a3a52;">{{eligibilityNote.body}}</div>
-      </div>
-      {{/if}}
+    {{/if}}
+
+    <div style="background:#faf7f2; border-left:3px solid #E4761F; padding:16px 18px; margin-top:16px;">
+      <div style="font-size:10.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:#E4761F; margin-bottom:10px;">Grant Intelligence</div>
+      <p style="font-size:13.5px; line-height:1.6; margin:0; color:#2a3a52; text-wrap:pretty;">{{#if grantIntelligence}}{{grantIntelligence}}{{else}}We will scope how your organization would run this programme once you tell us to proceed.{{/if}}</p>
     </div>
   </div>
 
