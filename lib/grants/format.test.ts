@@ -239,6 +239,15 @@ describe("formatAwardStatTile", () => {
     expect(formatAwardStatTile(null, null)).toBeNull();
     expect(formatAwardStatTile("0", "0")).toBeNull(); // formatAwardRange drops a $0 sentinel → "—"
   });
+
+  it("keeps a real bound when the other is long prose — 'Not stated' means NO figure known, not 'too long'", () => {
+    // The exact finding: a real min + a long prose max must keep "$50K", not nuke the known floor.
+    expect(formatAwardStatTile("50000", "Maximum per project set at the beginning of each funding cycle")).toBe("$50K");
+    // Symmetric: a long prose min + a real max.
+    expect(formatAwardStatTile("Amount varies by the specific project scope", "250000")).toBe("$250K");
+    // NEITHER bound is a real figure → still "Not stated".
+    expect(formatAwardStatTile("Not stated", "Maximum per project set at the beginning of each funding cycle")).toBe("Not stated");
+  });
 });
 
 describe("formatDeadlineStatTile", () => {

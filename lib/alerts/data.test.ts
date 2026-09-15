@@ -102,6 +102,10 @@ describe("buildAlertData — fit-score block + Grant Intelligence (PR B)", () =>
     expect(stats).toHaveLength(4);
     expect(stats.map((s) => s.label)).toEqual(["award range", "match required", "awards", "deadline"]);
     expect(stats.find((s) => s.label === "awards")?.value).toBe("Not stated");
+    // A LONG placeholder count ("Not available", 13 chars) → "Not stated", NOT the truncated "Not availab…"
+    // (placeholder checked on the raw string before shortAwards slices it) — Claude Code Review.
+    const longPlaceholder = buildAlertData(grant({ award_range_min: "50000", award_range_max: "250000", num_awards: "Not available" }), card(), null).stats;
+    expect(longPlaceholder.find((s) => s.label === "awards")?.value).toBe("Not stated");
     // A grant missing award + match + count entirely is STILL a full 4-wide strip of clean labels.
     const bare = buildAlertData(grant({ award_range_min: null, award_range_max: null, cost_share: null, num_awards: null, submission_deadline: null }), card(), null).stats;
     expect(bare.map((s) => s.value)).toEqual(["Not stated", "Not stated", "Not stated", "No deadline"]);

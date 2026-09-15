@@ -162,9 +162,13 @@ function buildStats(g: Grant): AlertStat[] {
   // Share the web pages' rule (grant-detail.tsx GrantStatBand): compactCostShare → "None" for no cost share,
   // else the clean amount; "—" (genuinely unknown) becomes "Not stated" here so the tile never drops.
   const cs = compactCostShare(g.cost_share);
-  // num_awards is free text — a real count via shortAwards, but a placeholder ("Unknown" / "Not available")
-  // shows "Not stated" rather than surfacing junk as a count.
-  const count = g.num_awards ? shortAwards(g.num_awards) : "";
+  // num_awards is free text — a real count via shortAwards, but a placeholder shows "Not stated" rather than
+  // surfacing junk. The placeholder check is on the RAW string, BEFORE shortAwards truncates: a long
+  // placeholder ("Not available", 13 chars) would be sliced to "Not availab…" and then MISS the placeholder
+  // regex, shipping mid-word junk on a client tile (Claude Code Review). A short one ("Unknown") was caught
+  // either way; the raw check covers the long ones too.
+  const rawAwards = (g.num_awards || "").trim();
+  const awardsTile = !rawAwards || isPlaceholderAward(rawAwards) ? "Not stated" : shortAwards(rawAwards);
   return [
     {
       value: formatAwardStatTile(g.award_range_min, g.award_range_max) ?? "Not stated",
@@ -174,7 +178,7 @@ function buildStats(g: Grant): AlertStat[] {
     // not in our data) → "Required": the "· TBD" is redundant under the "match required" label and clipped in
     // the now-narrower 4-tile strip. A real figure / "None" is kept verbatim.
     { value: cs === "—" ? "Not stated" : cs.replace(/\s*·\s*TBD$/, ""), label: "match required" },
-    { value: !count || isPlaceholderAward(count) ? "Not stated" : count, label: "awards" },
+    { value: awardsTile, label: "awards" },
     // Deadline shows the ABSOLUTE date only (formatDeadlineStatTile: a real date → "Sep 15", the rolling
     // family → "Rolling", empty/placeholder junk → "No deadline") — a frozen grant fact that never drifts.
     // The old "N days left" countdown was REMOVED (Shannon, 2026-09-15): a time-relative value baked into a
