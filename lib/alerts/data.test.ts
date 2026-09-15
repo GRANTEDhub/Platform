@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildAlertData, alertFitSignature, draftFitStillFresh, draftDeadlineStillFresh } from "./data";
+import { buildAlertData, alertFitSignature, draftFitStillFresh, draftDeadlineStillFresh, draftStillFresh } from "./data";
 import type { Grant, ReviewCard } from "@/types/database";
 
 // Minimal fixtures — buildAlertData reads a handful of grant fields (all null-safe in the helpers) and the
@@ -185,5 +185,37 @@ describe("draft staleness — draftDeadlineStillFresh (deadline countdown)", () 
   it("FRESH when there is no countdown either way (rolling/undated deadline → no sub, no drift)", () => {
     const g = grant({ submission_deadline: "Rolling" });
     expect(draftDeadlineStillFresh(buildAlertData(g, card(), null), g)).toBe(true);
+  });
+});
+
+// draftStillFresh is the ONE composite predicate both the single-send guard (getOrCreateDraftAlert) AND the
+// multi-select BATCH path (prepare skip / send / preview) share, so the batch's raw getDraftAlert reads
+// can't ship a draft single-send would regenerate (#570 Claude Code Review — the batch bypassed the guard).
+describe("draft staleness — draftStillFresh (shared single-send + batch predicate)", () => {
+  const daysFromNow = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
+  const ctxOf = (c: ReviewCard, g: Grant, isLead = false) => ({ card: c, grant: g, isLead });
+
+  it("COLD outreach (prospect card) is ALWAYS fresh — that template renders neither signal", () => {
+    const stored = buildAlertData(grant({ submission_deadline: daysFromNow(10) }), card({ fit_score: 3, fit_narrative: "x", fit_narrative_fit_score: 3 }), null);
+    // A prospect card whose live verdict fully contradicts the snapshot is STILL fresh (no fit/countdown shown).
+    const prospectLive = card({ card_type: "prospect", fit_score: 1, fit_narrative: null, concept_synopsis: null });
+    expect(draftStillFresh(stored, ctxOf(prospectLive, grant({ submission_deadline: daysFromNow(-5) })))).toBe(true);
+  });
+
+  it("a LEAD (isLead) is ALWAYS fresh regardless of drift", () => {
+    const stored = buildAlertData(grant({ submission_deadline: daysFromNow(10) }), card({ fit_score: 3 }), null);
+    expect(draftStillFresh(stored, ctxOf(card({ fit_score: 1 }), grant({ submission_deadline: daysFromNow(-5) }), true))).toBe(true);
+  });
+
+  it("WARM client is fresh only when BOTH the fit signature AND the deadline countdown still match", () => {
+    const g = grant({ submission_deadline: daysFromNow(10) });
+    const c = card({ fit_score: 3, fit_narrative: "why this fits", fit_narrative_fit_score: 3 });
+    const stored = buildAlertData(g, c, null); // snapshot from this exact card + grant
+    expect(draftStillFresh(stored, ctxOf(c, g))).toBe(true);
+    // fit moved (an applied QA demote) → stale
+    const demoted = card({ fit_score: 3, qa_status: "applied", qa_fit_score: 2, qa_engine_fit_score: 3, qa_narrative: "cannot prime", fit_narrative: "why this fits", fit_narrative_fit_score: 2 });
+    expect(draftStillFresh(stored, ctxOf(demoted, g))).toBe(false);
+    // deadline passed since the draft was frozen → stale
+    expect(draftStillFresh(stored, ctxOf(c, grant({ submission_deadline: daysFromNow(-5) })))).toBe(false);
   });
 });

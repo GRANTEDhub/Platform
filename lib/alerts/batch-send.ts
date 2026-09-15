@@ -3,6 +3,7 @@ import { createServiceClient, type createClient } from "@/lib/supabase/server";
 import { canSendOutreach } from "@/lib/email/guard";
 import { sendGrantAlertEmail, isDeliverableEmail } from "@/lib/email/send";
 import { loadAlertContext } from "@/lib/alerts/generate";
+import { draftStillFresh } from "@/lib/alerts/data";
 import {
   getOrCreateDraftAlert,
   getDraftAlert,
@@ -113,15 +114,29 @@ export async function prepareClientBatch(opts: {
   const deadlineMs = Date.now() + opts.budgetMs;
   let prepared = 0;
   const failed: { id: string; error: string }[] = [];
+  // Cache loadAlertContext per card for this round (the live card/grant don't change mid-round), so the
+  // freshness re-check that computes `remaining` reuses the render loop's context loads instead of
+  // doubling them.
+  const ctxCache = new Map<string, Awaited<ReturnType<typeof loadAlertContext>>>();
+  const ctxFor = async (id: string) => {
+    if (!ctxCache.has(id)) ctxCache.set(id, await loadAlertContext(id));
+    return ctxCache.get(id) ?? null;
+  };
   for (const c of loaded.cards) {
     if (Date.now() >= deadlineMs) break; // budget spent; caller re-POSTs for the rest
-    if (await getDraftAlert(c.id)) continue; // already drafted -> reuse untouched
     try {
-      const ctx = await loadAlertContext(c.id);
+      const ctx = await ctxFor(c.id);
       if (!ctx) {
         failed.push({ id: c.id, error: "alert context not found" });
         continue;
       }
+      // Reuse a FRESH draft untouched; a missing OR STALE one (re)renders. A stale draft — a QA demote /
+      // fit-analysis / rematch / deadline-countdown drift, none of which invalidates the draft — must NOT
+      // be reused-and-shipped by the batch path; the old `getDraftAlert -> continue` skip shipped it
+      // verbatim, contradicting the card's current verdict (#570 Claude Code Review). getOrCreateDraftAlert
+      // applies the SAME draftStillFresh guard as single-send, so a re-render only happens when needed.
+      const existing = await getDraftAlert(c.id);
+      if (existing && draftStillFresh(existing.alert_data, ctx)) continue;
       await getOrCreateDraftAlert(ctx, opts.userId, opts.origin); // enrich + render + persist
       prepared++;
     } catch (err) {
@@ -133,8 +148,14 @@ export async function prepareClientBatch(opts: {
       failed.push({ id: c.id, error: errMsg(err) });
     }
   }
+  // remaining = cards WITHOUT a FRESH draft (a stale draft is NOT prepared — it must regenerate), so
+  // `done` is reached only once every selected card carries a draft consistent with its current verdict.
   const remainingIds: string[] = [];
-  for (const c of loaded.cards) if (!(await getDraftAlert(c.id))) remainingIds.push(c.id);
+  for (const c of loaded.cards) {
+    const ctx = await ctxFor(c.id);
+    const existing = ctx ? await getDraftAlert(c.id) : null;
+    if (!ctx || !existing || !draftStillFresh(existing.alert_data, ctx)) remainingIds.push(c.id);
+  }
   const remaining = remainingIds.length;
   // No progress + work remains + something errored => every renderable card is
   // failing. STOP: report `failed` so the caller surfaces it, never spins.
@@ -197,8 +218,20 @@ export async function sendClientBatch(
   const missing: string[] = [];
   for (const c of candidates) {
     const d = await getDraftAlert(c.id);
-    if (d) drafts.set(c.id, d);
-    else missing.push(c.id);
+    if (!d) {
+      missing.push(c.id);
+      continue;
+    }
+    // A prepared draft can go STALE between prepare and send (a QA demote / fit-analysis / rematch /
+    // deadline-countdown drift never invalidates it — the same #570 gap as the prepare skip). Treat a
+    // stale warm-client draft as NOT prepared so the merged PDF can't ship a fit-score/narrative/countdown
+    // that contradicts the card's current verdict; the UI re-prepares (which regenerates), then re-sends.
+    const ctx = await loadAlertContext(c.id);
+    if (ctx && !draftStillFresh(d.alert_data, ctx)) {
+      missing.push(c.id);
+      continue;
+    }
+    drafts.set(c.id, d);
   }
   if (missing.length) {
     return { result: { sent: false, error: "Drafts not prepared for all selected grants", missing }, status: 409 };
@@ -436,6 +469,10 @@ export async function mergePreparedBatchPdf(
   for (const c of cards) {
     const d = await getDraftAlert(c.id);
     if (!d) return { error: "Drafts not prepared for all selected grants", status: 409 };
+    // Refuse a STALE draft (same guard as send) so the preview can't show — and thus promise — a
+    // fit-score/narrative/countdown the current card no longer supports; re-prepare regenerates it.
+    const ctx = await loadAlertContext(c.id);
+    if (ctx && !draftStillFresh(d.alert_data, ctx)) return { error: "Drafts not prepared for all selected grants", status: 409 };
     pdfs.push(await loadAlertPdf(d));
   }
   return { pdf: await mergeAlertPdfs(pdfs) };

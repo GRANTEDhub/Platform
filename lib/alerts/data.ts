@@ -246,6 +246,19 @@ export function draftDeadlineStillFresh(stored: AlertData, grant: Grant): boolea
   return storedSub === deadlineDaysLeftSub(grant.submission_deadline);
 }
 
+// The ONE composite freshness predicate for a saved DRAFT — shared by the single-send guard
+// (getOrCreateDraftAlert) AND the multi-select BATCH path (prepare skip / send / preview reuse, which read
+// drafts via a raw getDraftAlert), so a batch can never ship a draft the single-send path would have
+// regenerated (#570 Claude Code Review). A WARM-CLIENT draft is fresh only while BOTH its snapshotted fit
+// signature (draftFitStillFresh) AND its frozen deadline countdown (draftDeadlineStillFresh) still match
+// the LIVE card/grant. Cold outreach (prospect/lead) is ALWAYS fresh — that template renders neither
+// signal, so a drift there is invisible and regenerating would only waste an enrich+render and re-mint the
+// baked booking token. Structural ctx param (not the AlertContext import) to keep this module decoupled.
+export function draftStillFresh(stored: AlertData, ctx: { card: ReviewCard; grant: Grant; isLead: boolean }): boolean {
+  const isColdOutreach = ctx.card.card_type === "prospect" || ctx.isLead;
+  return isColdOutreach || (draftFitStillFresh(stored, ctx.card) && draftDeadlineStillFresh(stored, ctx.grant));
+}
+
 export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichment | null): AlertData {
   const funder = (g.funder || "").trim();
   const incumbentFallback = g.incumbent_risk
