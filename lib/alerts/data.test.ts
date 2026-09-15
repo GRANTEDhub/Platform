@@ -69,6 +69,25 @@ describe("buildAlertData — fit-score block + Grant Intelligence (PR B)", () =>
     expect(deadlineStat("Rolling")?.sub).toBeUndefined();
   });
 
+  // A long PROSE award (AR-state grants store award bounds as prose — "Not stated" ×
+  // "Maximum per project set at the beginning of each cycle") joined to ~60 chars blew the fixed
+  // stats card out (the `1fr` grid track won't shrink below nowrap content, so the tile's own
+  // ellipsis never fired). buildStats collapses a long award to a clean "Varies"; a clean $ range
+  // is short and kept verbatim (#570 preview fix).
+  it("a long PROSE award collapses to 'Varies' for the stat tile; a clean $ range is kept", () => {
+    const proseAward = buildAlertData(
+      grant({ award_range_min: "Not stated", award_range_max: "Maximum per project set at the beginning of each cycle" }),
+      card(),
+      null,
+    ).stats.find((s) => s.label.startsWith("award"));
+    expect(proseAward?.value).toBe("Varies");
+
+    const cleanAward = buildAlertData(grant({ award_range_min: "50000", award_range_max: "250000" }), card(), null).stats.find(
+      (s) => s.label.startsWith("award"),
+    );
+    expect(cleanAward?.value).toBe("$50K – $250K");
+  });
+
   it("an applied QA demote drives the DISPLAYED fit + its narrative (resolveFit coalesce)", () => {
     // engine 3, QA applied a demote to 2 (fresh) with a grounded reason → the block shows 2/Conditional and
     // the QA reason as Grant Intelligence.

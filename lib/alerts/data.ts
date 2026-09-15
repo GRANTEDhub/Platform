@@ -166,15 +166,27 @@ function shortAwards(raw: string): string {
   return num[0];
 }
 
+// A concise award value for the fixed stat tile. formatAwardRange keeps non-numeric prose verbatim
+// (right for a short token like "Varies" / "See NOFO"), but an AR-state grant stores award bounds as
+// PROSE, so "Not stated" × "Maximum per project set at the beginning of each cycle" joins to a ~60-char
+// string that blew the whole stats card out — the tile's own nowrap/ellipsis can't fire because a `1fr`
+// grid track won't shrink below its nowrap content (the classic grid min-width:auto blowout). A clean
+// $ range is ALWAYS short (<=18: "$10.5M – $100.5M" is 16) and is kept verbatim; only genuinely long
+// prose collapses to "Varies" — honest (the amount is not a fixed number). The template's
+// min-width:0 + ellipsis is the residual backstop for anything in between.
+function shortAward(raw: string): string {
+  return raw.length <= 18 ? raw : "Varies";
+}
+
 // Deterministic stats, deadline last + highlighted; cap at 4. Per-field bounding
 // (NOT a blanket char cap, which would clip a legitimately wide award range like
-// "$10.5M – $100.5M"): the only free-text field is num_awards -> shortAwards();
-// award range/match/deadline come pre-bounded from their formatters. The
-// template's nowrap/ellipsis is the visual safety net for any residual overflow.
+// "$10.5M – $100.5M"): the free-text fields are num_awards -> shortAwards() and a
+// prose award -> shortAward(); match/deadline come pre-bounded from their
+// formatters. The template's nowrap/ellipsis is the visual safety net for any residual overflow.
 function buildStats(g: Grant): AlertStat[] {
   const stats: AlertStat[] = [];
   const award = formatAwardRange(g.award_range_min, g.award_range_max);
-  if (award !== "—") stats.push({ value: award, label: g.award_range_is_estimate ? "award · est." : "award range" });
+  if (award !== "—") stats.push({ value: shortAward(award), label: g.award_range_is_estimate ? "award · est." : "award range" });
   // Share the web pages' rule verbatim (grant-detail.tsx GrantStatBand): "None"
   // for no cost share, else the clean amount -- compactCostShare strips trailing
   // "match"/"cost share" wording, since the "match required" label already says it.
