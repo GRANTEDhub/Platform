@@ -180,4 +180,20 @@ describe("getFocusGrantId — narrow, fail-soft anchor read", () => {
     expect(await getFocusGrantId(fakeSelectDb(null), "conv1")).toBeNull();
     expect(await getFocusGrantId(fakeSelectDb({}), "conv1")).toBeNull();
   });
+
+  it("returns null when the read THROWS (fail-soft on a network throw, never propagates)", async () => {
+    const throwingDb = {
+      from: () => {
+        const chain: Record<string, unknown> = {
+          select: () => chain,
+          eq: () => chain,
+          maybeSingle: async () => {
+            throw new Error("network");
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    expect(await getFocusGrantId(throwingDb, "conv1")).toBeNull();
+  });
 });

@@ -102,12 +102,20 @@ export async function createConversation(
 // module safe to ship before migration 0098. Fails SOFT: any error (incl. a missing column before 0098)
 // leaves `data` null, so an ungrounded turn proceeds rather than the general bot breaking.
 export async function getFocusGrantId(db: SupabaseClient, conversationId: string): Promise<string | null> {
-  const { data } = await db
-    .from("grantbot_conversations")
-    .select("focus_grant_id")
-    .eq("id", conversationId)
-    .maybeSingle();
-  return (data as { focus_grant_id?: string | null } | null)?.focus_grant_id ?? null;
+  try {
+    const { data } = await db
+      .from("grantbot_conversations")
+      .select("focus_grant_id")
+      .eq("id", conversationId)
+      .maybeSingle();
+    return (data as { focus_grant_id?: string | null } | null)?.focus_grant_id ?? null;
+  } catch {
+    // Fail soft on a THROWN read (network, or the column missing before 0098 is applied): return null so
+    // the turn proceeds ungrounded rather than the route 500-ing. This read runs before appendUser on the
+    // existing-conversation path, so a throw here can't orphan a row — but null-on-throw keeps the route's
+    // clean 200 behaviour and matches the fail-soft contract loadFocusGrant hardens for the same reason.
+    return null;
+  }
 }
 
 export async function getConversation(

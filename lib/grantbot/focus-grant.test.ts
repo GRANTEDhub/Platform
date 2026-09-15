@@ -99,4 +99,23 @@ describe("loadFocusGrant — grant row → FocusGrant", () => {
   it("returns null when the grant does not resolve (turn proceeds ungrounded, never a crash)", async () => {
     expect(await loadFocusGrant(fakeDb(null), "missing")).toBeNull();
   });
+
+  it("returns null when the read THROWS — fail-soft on a network throw, never propagates", async () => {
+    // A genuine Supabase/network throw (not the ordinary {data,error}) would otherwise escape between
+    // appendUser's write and the assistant-row guarantee, orphaning the user turn. The try/catch fails
+    // soft to null instead (an ungrounded turn), which is what the loader's contract promises.
+    const throwingDb = {
+      from: () => {
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          maybeSingle: async () => {
+            throw new Error("network");
+          },
+        };
+        return chain;
+      },
+    } as unknown as SupabaseClient;
+    expect(await loadFocusGrant(throwingDb, "g-1")).toBeNull();
+  });
 });
