@@ -4,17 +4,26 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{headline}}</title>
-<!-- THE ACTIVE-CLIENT ALERT. The sibling grant-alert.hbs is the PROSPECT/LEAD one and
-     keeps the how-to-get-started steps and the discovery-call booking link -- cold
-     outreach to someone with no portal and no account manager needs both. A serviced
-     client needs neither: the only thing we want from them is whether to pursue it.
+<!-- THE ACTIVE-CLIENT ALERT. Rebuilt 2026-09-15 from Design's Claude Design export
+     (GRANTED_Grant_Alert_v2) — the REAL artboard markup, not a reverse-engineered PDF.
+     The sibling grant-alert.hbs is the PROSPECT/LEAD one (cold outreach) and is untouched.
 
-     Brand fonts are embedded as local @font-face data URIs at render time (see
-     lib/alerts/render.ts). No CDN <link>: serverless Chromium may have no egress to
-     fonts.gstatic.com, and a competing/blocked CDN face is what garbled the glyphs.
-     Design's mock specified Inter Tight / Source Serif 4; the embedded faces are the
-     same two roles this template names, so the layout is the mock's and the type is
-     ours. -->
+     Structure (from the design): a 4px orange top rule; a NAVY dot-pattern HERO carrying the
+     logo row, the monospace-style kicker, a white serif title + a bordered fit-score block,
+     the description, and outline tag chips; a WHITE stats card that OVERLAPS UP into the hero
+     (margin-top:-52px + shadow) whose last tile is the deep-orange DEADLINE tile; stacked
+     Who-can-apply then the Grant Intelligence callout; and an ABSOLUTELY-positioned bottom
+     stack (Your Call band + footer) pinned to the fixed letter page.
+
+     Colours are CONFORMED to lib/brand.ts, not copied: the design's #A8501A eyebrow IS the
+     platform's orangeDeep; the design's deep-orange deadline fill #B3541E conforms to
+     orangeFill #B85A17 (the sanctioned white-on-orange fill — the banned #b3541e never
+     appears). Brand orange #E4761F, navy #0B1E3A elsewhere.
+
+     Fonts embedded as local @font-face data URIs at render time (lib/alerts/render.ts):
+     Source Serif 4 (display) + Inter Tight (body/labels). No CDN <link> — serverless Chromium
+     has no gstatic egress. The design's micro-labels are JetBrains Mono; that face is NOT
+     vendored, so the uppercase letter-spaced labels render in the embedded Inter Tight. -->
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: #e8e2d8; }
@@ -27,165 +36,134 @@
 </style>
 </head>
 <body>
-<div class="brief-page" style="width:816px; min-height:1056px; margin:24px auto; padding:22px 0 0 0; background:#fff; color:#0B1E3A; font-family:'Inter Tight', sans-serif; box-shadow:0 18px 50px rgba(11,30,58,0.18); display:flex; flex-direction:column;">
+<div class="brief-page" style="width:816px; height:1056px; position:relative; overflow:hidden; margin:24px auto; background:#fff; color:#3c4150; font-family:'Inter Tight', sans-serif; box-shadow:0 18px 50px rgba(11,30,58,0.18);">
 
-  <!-- ===================== TOP BAR ===================== -->
-  <!-- Mock (2026-09-15): logo + wordmark left, the tagline on the RIGHT (was the
-       uppercase alertLabel). The alertLabel is dropped from the bar -- the orange
-       kicker line under the rule already carries program/FON identity, so it was
-       redundant. alertLabel stays in the data model for the email subject. -->
-  <div style="display:flex; align-items:center; justify-content:space-between; padding:0 46px;">
-    <div style="display:flex; align-items:center; gap:11px;">
-      <img src="assets/granted-mark-navy.png" alt="GRANTED logo" width="31" height="31" style="display:block; flex-shrink:0;">
-      <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:23px; letter-spacing:0.04em; color:#0B1E3A;">GRANTED</span>
-    </div>
-    <span style="font-family:'Source Serif 4', serif; font-style:italic; font-weight:700; font-size:14px; color:#0B1E3A;">More <span style="color:#E4761F; text-decoration:underline; text-underline-offset:2px;">Grants</span>. Less Grind.</span>
-  </div>
+  <!-- top orange rule -->
+  <div style="height:4px; background:#E4761F;"></div>
 
-  <div style="height:1px; background:#0B1E3A; opacity:0.12; margin:14px 46px 0 46px;"></div>
+  <!-- ===================== HERO (navy dot band) ===================== -->
+  <div style="background:#0B1E3A radial-gradient(rgba(255,255,255,.055) 1px, transparent 1.2px) 0 0/22px 22px; padding:30px 46px 76px 46px;">
 
-  <!-- ===================== HERO ===================== -->
-  <!-- The chips moved UP here from their own section: on a client alert the fundable
-       items are context for the description, not a section of their own. -->
-  <div style="padding:18px 46px 14px 46px;">
-    <!-- Title on the left, the FIT SCORE block on the right (client template only; the prospect teaser has
-         no fit score). The number carries the signal and the word "Strong fit"/"Conditional"/"Weak" is
-         redundant with it, so the block stays navy-neutral -- no band hue (the colour-blind rule). -->
-    <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:22px; margin-bottom:11px;">
-      <div style="min-width:0;">
-        <div style="font-size:11px; font-weight:600; letter-spacing:0.15em; text-transform:uppercase; color:#E4761F; margin-bottom:9px;">
-          {{programName}}{{#if programShort}} &middot; {{programShort}}{{/if}}{{#if fiscalYear}} &middot; {{fiscalYear}}{{/if}}{{#if fon}} &middot; FON {{fon}}{{/if}}
-        </div>
-        <h1 style="font-family:'Source Serif 4', serif; font-weight:700; font-size:37px; line-height:1.04; letter-spacing:-0.02em; margin:0; color:#0B1E3A;">
-          {{headline}}
-        </h1>
+    <!-- logo row: white mark + wordmark left, tagline right -->
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:24px; height:30px;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <img src="assets/granted-mark-white.png" alt="GRANTED logo" width="28" height="28" style="display:block; flex-shrink:0;">
+        <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:22px; letter-spacing:0.04em; color:#fff;">GRANTED</span>
       </div>
+      <span style="font-family:'Source Serif 4', serif; font-style:italic; font-weight:700; font-size:14px; color:#fff;">More <span style="color:#E4761F; text-decoration:underline; text-underline-offset:2px;">Grants</span>. Less Grind.</span>
+    </div>
+
+    <!-- kicker: program · abbrev · FY · FON (uppercase, letter-spaced; no nowrap so a long one wraps rather than clipping) -->
+    <div style="margin-top:26px; font-size:10px; line-height:14px; letter-spacing:0.16em; text-transform:uppercase; color:#E4761F;">
+      {{programName}}{{#if programShort}}&nbsp;&nbsp;&middot;&nbsp;&nbsp;{{programShort}}{{/if}}{{#if fiscalYear}}&nbsp;&nbsp;&middot;&nbsp;&nbsp;{{fiscalYear}}{{/if}}{{#if fon}}&nbsp;&nbsp;&middot;&nbsp;&nbsp;FON {{fon}}{{/if}}
+    </div>
+
+    <!-- title (white serif) + fit-score block (client template only; bordered on the navy) -->
+    <div style="margin-top:10px; display:flex; align-items:center; justify-content:space-between; gap:32px;">
+      <h1 style="margin:0; font-family:'Source Serif 4', serif; font-weight:400; font-size:47px; line-height:50px; letter-spacing:-0.015em; color:#fff; max-width:470px;">{{headline}}</h1>
       {{#if fitScore}}
-      <div style="flex-shrink:0; text-align:center; border:1px solid rgba(11,30,58,0.14); border-radius:4px; padding:9px 16px 10px 16px;">
-        <div style="font-family:'Source Serif 4', serif; font-weight:700; font-size:32px; line-height:1; color:#0B1E3A;">{{fitScore}}</div>
-        <div style="font-size:9px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:#6E7683; margin-top:2px;">of 3</div>
-        <div style="height:1px; background:rgba(11,30,58,0.1); margin:7px 0;"></div>
-        <div style="font-size:8.5px; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:#6E7683;">Fit Score</div>
-        <div style="font-size:11.5px; font-weight:700; color:#0B1E3A; margin-top:2px; white-space:nowrap;">{{fitScoreLabel}}</div>
+      <div style="flex-shrink:0; display:flex; align-items:center; gap:14px; border:1px solid rgba(255,255,255,.28); padding:14px 20px 14px 14px;">
+        <div style="width:50px; height:50px; flex-shrink:0; border:1px solid #E4761F; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px;">
+          <div style="font-family:'Source Serif 4', serif; font-weight:600; font-size:24px; line-height:24px; color:#fff;">{{fitScore}}</div>
+          <div style="font-size:8px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,.72);">of 3</div>
+        </div>
+        <div>
+          <div style="font-size:9px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,.72);">Fit Score</div>
+          <div style="margin-top:4px; font-family:'Source Serif 4', serif; font-weight:600; font-size:21px; line-height:24px; color:#E4761F;">{{fitScoreLabel}}</div>
+        </div>
       </div>
       {{/if}}
     </div>
-    <div style="font-size:14.5px; line-height:1.55; margin:0 0 11px 0; max-width:700px; color:#2a3a52; text-wrap:pretty;">{{{introHtml}}}{{#if statePassThrough}} In {{state}} it runs through the {{administeringAgency}} as a pass-through, so your application competes only against other in-state organizations, not the entire country.{{/if}}</div>
+
+    <!-- description (white on navy) -->
+    <p style="margin:24px 0 0; font-size:14px; line-height:21px; color:rgba(255,255,255,.86); max-width:700px; text-align:justify;">{{{introHtml}}}{{#if statePassThrough}} In {{state}} it runs through the {{administeringAgency}} as a pass-through, so your application competes only against other in-state organizations, not the entire country.{{/if}}</p>
+
+    <!-- tag chips (outline on navy) -->
     {{#if whatItFunds.length}}
-    <div style="display:flex; flex-wrap:wrap; gap:6px;">
+    <div style="margin-top:16px; display:flex; flex-wrap:wrap; gap:6px;">
       {{#each whatItFunds}}
-      <span style="font-size:11.5px; font-weight:500; color:#0B1E3A; background:#faf7f2; border:1px solid rgba(11,30,58,0.12); border-radius:2px; padding:5px 9px;">{{this}}</span>
+      <span style="border:1px solid rgba(255,255,255,.26); padding:4px 9px; font-size:10.5px; line-height:13px; color:rgba(255,255,255,.88);">{{this}}</span>
       {{/each}}
     </div>
     {{/if}}
   </div>
 
-  <!-- ===================== STATS STRIP ===================== -->
-  <!-- Mock (2026-09-15): LIGHT tiles (white ground, navy serif numbers, grey labels)
-       with a single ORANGE deadline tile (white text). The deadline tile also carries
-       a middle "N days left" countdown (stat.sub, buildStats) between the date and the
-       label -- absent when there's no firm future date. White-on-#E4761F matches the
-       "Your call" button; the date value is large, so the tile's meaning is carried by
-       the value + position, not the small label alone. -->
-  <div style="display:grid; grid-template-columns:repeat({{stats.length}}, 1fr); margin:0 46px; border:1px solid rgba(11,30,58,0.12);">
+  <!-- ===================== STATS CARD (overlaps hero) ===================== -->
+  <!-- White card pulled UP 52px so it straddles the navy hero / white body edge. The last
+       tile is the deep-orange DEADLINE tile (orangeFill), carrying the "N days left" countdown
+       (stat.sub) between the date and the label. The `award range` label is KEPT (Shannon's
+       call), not the design's "Award ceiling" — it is a range. -->
+  <div style="margin:-52px 46px 0 46px; position:relative; display:grid; grid-template-columns:repeat({{stats.length}}, 1fr); background:#fff; box-shadow:0 10px 28px rgba(11,30,58,.14);">
     {{#each stats}}
-    <div style="padding:12px 14px; {{#unless @last}}border-right:1px solid rgba(11,30,58,0.12); {{/unless}}display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:3px; background:{{#if this.highlight}}#E4761F{{else}}#fff{{/if}};">
-      <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:21px; line-height:1; color:{{#if this.highlight}}#fff{{else}}#0B1E3A{{/if}}; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{this.value}}</span>
-      {{#if this.sub}}<span style="font-size:11px; font-weight:700; line-height:1; color:{{#if this.highlight}}#fff{{else}}#0B1E3A{{/if}};">{{this.sub}}</span>{{/if}}
-      <span style="font-size:9.5px; font-weight:600; letter-spacing:0.09em; text-transform:uppercase; color:{{#if this.highlight}}#fff{{else}}#6E7683{{/if}};">{{this.label}}</span>
+    {{#if this.highlight}}
+    <div style="background:#B85A17; padding:18px 12px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;">
+      <div style="font-family:'Source Serif 4', serif; font-weight:600; font-size:26px; line-height:28px; color:#fff; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{this.value}}</div>
+      {{#if this.sub}}<div style="font-size:11px; font-weight:700; line-height:14px; color:#fff;">{{this.sub}}</div>{{/if}}
+      <div style="font-size:8px; letter-spacing:0.16em; text-transform:uppercase; color:rgba(255,255,255,.85);">{{this.label}}</div>
     </div>
+    {{else}}
+    <div style="padding:18px 12px; {{#unless @first}}border-left:1px solid #e8e2d6; {{/unless}}display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px;">
+      <div style="font-family:'Source Serif 4', serif; font-weight:600; font-size:26px; line-height:28px; color:#0B1E3A; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{this.value}}</div>
+      <div style="font-size:8px; letter-spacing:0.16em; text-transform:uppercase; color:#6E7683;">{{this.label}}</div>
+    </div>
+    {{/if}}
     {{/each}}
   </div>
   {{#if statsFootnote}}
-  <div style="font-size:10px; line-height:1.4; margin:6px 46px 0 46px; color:#6b7688;">{{statsFootnote}}</div>
+  <div style="font-size:10px; line-height:1.4; margin:8px 46px 0 46px; color:#6b7688;">{{statsFootnote}}</div>
   {{/if}}
 
-  <!-- ============= WHO CAN APPLY, then GRANT INTELLIGENCE ============= -->
-  <!-- Mock (2026-09-15): the two blocks are STACKED full-width, not the old side-by-side
-       grid. "Who can apply" is a plain full-width paragraph directly under the stats
-       strip; the "Grant Intelligence" read (resolveFit's narrative, swapped in for the
-       old concept synopsis) is the full-width orange-left-border callout below it.
-
-       Full-width means the callout sizes to its content -- no min-height prop is needed
-       to keep it from reading as a small box adrift in a column (that was a two-up-grid
-       problem). grantIntelligence is still clamped in buildAlertData (GRANT_INTEL_MAX) so
-       a long narrative can't drive the page past one letter sheet and push the decision
-       band off the bottom. The band stays pinned to the bottom by margin-top:auto below;
-       whatever slack a short alert leaves lands above it, the shape of a one-page letter. -->
-  <div style="padding:14px 46px 2px 46px;">
-    <div style="font-size:10.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:#E4761F; margin-bottom:9px;">Who can apply</div>
-    <p style="font-size:13.5px; line-height:1.55; margin:0; color:#2a3a52;">{{{eligibilityHtml}}}</p>
-    {{#if eligibilityNote}}
-    <div style="background:#faf7f2; border-left:3px solid #E4761F; padding:10px 12px; margin-top:10px;">
-      <div style="font-size:10px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:#E4761F; margin-bottom:3px;">{{eligibilityNote.label}}</div>
-      <div style="font-size:12px; line-height:1.45; color:#2a3a52;">{{eligibilityNote.body}}</div>
+  <!-- ===================== WHO CAN APPLY, then GRANT INTELLIGENCE ===================== -->
+  <div style="padding:18px 46px 0 46px;">
+    <div>
+      <div style="font-size:10px; letter-spacing:0.22em; text-transform:uppercase; color:#A8501A;">Who can apply</div>
+      <p style="margin:12px 0 0; font-size:13.5px; line-height:21px; color:#3c4150; text-align:justify;">{{{eligibilityHtml}}}</p>
+      {{#if eligibilityNote}}
+      <div style="margin-top:12px; background:#faf7f2; border-left:3px solid #E4761F; padding:10px 14px;">
+        <div style="font-size:9.5px; letter-spacing:0.14em; text-transform:uppercase; color:#A8501A; margin-bottom:3px;">{{eligibilityNote.label}}</div>
+        <div style="font-size:12px; line-height:1.45; color:#3c4150;">{{eligibilityNote.body}}</div>
+      </div>
+      {{/if}}
     </div>
-    {{/if}}
 
-    <div style="background:#faf7f2; border-left:3px solid #E4761F; padding:16px 18px; margin-top:16px;">
-      <div style="font-size:10.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:#E4761F; margin-bottom:10px;">Grant Intelligence</div>
-      <p style="font-size:13.5px; line-height:1.6; margin:0; color:#2a3a52; text-wrap:pretty;">{{#if grantIntelligence}}{{grantIntelligence}}{{else}}We will scope how your organization would run this programme once you tell us to proceed.{{/if}}</p>
+    <div style="margin-top:24px; background:#faf7f2; border-left:3px solid #E4761F; padding:20px 24px;">
+      <div style="font-size:10px; letter-spacing:0.22em; text-transform:uppercase; color:#A8501A;">Grant Intelligence</div>
+      <p style="margin:12px 0 0; font-size:13.5px; line-height:21px; color:#3c4150; text-align:justify;">{{#if grantIntelligence}}{{grantIntelligence}}{{else}}We will scope how your organization would run this programme once you tell us to proceed.{{/if}}</p>
     </div>
   </div>
 
-  <!-- ===================== YOUR CALL ===================== -->
-  <!-- ONE reliable way through, not two one-click buttons. A PDF's links are not
-       dependable where most people first open the attachment -- Gmail's preview pane
-       (especially on mobile) frequently does not activate them, and a control that
-       looks pressable but is not is the dead affordance this product keeps removing.
-       A PDF also cannot show what you already clicked, and it gets DOWNLOADED, so a
-       decision token would sit in a Downloads folder indefinitely.
-       So one-click lives in the EMAIL (see lib/email/html.ts DecisionBox) and this
-       carries a portal deep link: honest in every viewer, still readable when printed,
-       and it lands a forwarded reader on login rather than on someone else's decision.
-       No booking link -- that is prospect-shaped, and an active client has an account
-       manager rather than a discovery call to schedule.
-
-       margin-top:auto ONLY. With margin-bottom:auto as well, a flex item takes ALL the
-       page's leftover height and splits it evenly above and below itself -- so a short
-       alert opened two gaps instead of none: one under the concept grid, and a dead white
-       strip between this navy band and the footer, which read as a rendering fault. The
-       page is min-height:1056px and the content rarely fills it, so that slack has to land
-       somewhere; the only question is where. Top-only sends all of it above the band,
-       which pins the band and the footer together at the bottom of the letter page -- the
-       normal shape for a one-page document, and it keeps the closing rule flush against
-       the footer at every content length. -->
-  <div style="margin-top:auto; padding:0;">
+  <!-- ===================== BOTTOM (absolute, pinned to the letter page) ===================== -->
+  <!-- Your Call band + footer are position:absolute at bottom:0 of the fixed 1056px page (the
+       design's structure). One reliable way through — a portal deep link, not two PDF buttons
+       (a PDF's links are unreliable in Gmail's preview; one-click lives in the EMAIL). -->
+  <div style="position:absolute; left:0; right:0; bottom:0;">
     <div style="height:3px; background:#E4761F;"></div>
-    <div style="background:#0B1E3A; color:#faf7f2; padding:22px 46px 20px 46px; display:grid; grid-template-columns:1.25fr 1fr; gap:34px; align-items:center;">
-      <div>
-        <div style="font-size:10.5px; font-weight:700; letter-spacing:0.13em; text-transform:uppercase; color:#e6b89a; margin-bottom:7px;">Your call</div>
-        <p style="font-size:12.5px; line-height:1.55; margin:0 0 8px 0; color:#e2e9f2; text-wrap:pretty;">Tell us how to proceed. <b style="color:#fff;">Interested</b> moves this into your grant report for full analysis; <b style="color:#fff;">Pass</b> clears it off your list.</p>
-        <div style="font-size:10.5px; line-height:1.45; color:#adbcd0;">You can answer in one click straight from the alert email, or just reply to it. Not ready this cycle? Pass and we position you for the next one.</div>
+    <div style="height:124px; background:#0B1E3A; padding:0 46px; box-sizing:border-box; display:flex; align-items:center; justify-content:space-between; gap:40px;">
+      <div style="max-width:430px;">
+        <div style="font-size:10px; letter-spacing:0.22em; text-transform:uppercase; color:#E4761F;">Your call</div>
+        <p style="margin:10px 0 0; font-size:12.5px; line-height:18px; color:rgba(255,255,255,.92); text-wrap:pretty;">Tell us how to proceed. <strong style="font-weight:700; color:#fff;">Interested</strong> moves this into your grant report for full analysis; <strong style="font-weight:700; color:#fff;">Pass</strong> clears it off your list.</p>
+        <p style="margin:8px 0 0; font-size:10.5px; line-height:14.5px; color:rgba(255,255,255,.62); text-wrap:pretty;">You can answer in one click straight from the alert email, or just reply to it. Not ready this cycle? Pass and we position you for the next one.</p>
       </div>
-      <div>
-        {{#if portalUrl}}
-        <a href="{{portalUrl}}" style="display:flex; align-items:center; justify-content:space-between; gap:10px; background:#E4761F; color:#fff; text-decoration:none; padding:13px 16px; border-radius:3px;">
-          <span style="font-size:14px; font-weight:600; letter-spacing:0.01em;">Review and decide in your portal</span>
-          <span style="font-size:16px; line-height:1;">&rarr;</span>
-        </a>
-        {{else}}
-        <div style="border:1px solid rgba(250,247,242,0.35); border-radius:3px; padding:13px 16px; font-size:13px; line-height:1.45; color:#cdd6e2;">Answer from the alert email, or reply to it and we will record your decision.</div>
-        {{/if}}
-      </div>
+      {{#if portalUrl}}
+      <a href="{{portalUrl}}" style="width:306px; height:44px; flex-shrink:0; background:#E4761F; text-decoration:none; display:flex; align-items:center; justify-content:center; gap:12px;">
+        <span style="font-size:13px; font-weight:700; color:#fff;">Review and decide in your portal</span>
+        <span style="font-size:15px; color:#fff; line-height:1;">&rarr;</span>
+      </a>
+      {{else}}
+      <div style="width:306px; flex-shrink:0; box-sizing:border-box; border:1px solid rgba(250,247,242,0.35); padding:12px 16px; font-size:12px; line-height:1.45; color:#cdd6e2;">Answer from the alert email, or reply to it and we will record your decision.</div>
+      {{/if}}
     </div>
     <div style="height:3px; background:#E4761F;"></div>
-  </div>
-
-  <!-- ===================== FOOTER ===================== -->
-  <!-- Light and compact, replacing the prospect footer's navy block and firm blurb. A
-       client does not need to be told who we are. -->
-  <div style="height:1px; background:#0B1E3A; opacity:0.12; margin:0 46px;"></div>
-  <div style="background:#fff; color:#0B1E3A; padding:14px 46px 16px 46px; display:flex; align-items:center; justify-content:space-between; gap:30px;">
-    <div style="display:flex; align-items:center; gap:10px;">
-      <img src="assets/granted-mark-navy.png" alt="GRANTED logo" width="27" height="27" style="display:block; flex-shrink:0;">
-      <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:18px; letter-spacing:0.03em; color:#0B1E3A;">GRANTED</span>
-      <span style="font-family:'Source Serif 4', serif; font-style:italic; font-size:14px; color:#E4761F;">More Grants. Less Grind.</span>
-    </div>
-    <div style="display:flex; align-items:center; gap:14px;">
-      <span style="font-size:12.5px; font-weight:600; color:#0B1E3A;">grantedco.com</span>
-      <span style="width:1px; height:13px; background:rgba(11,30,58,0.2); display:inline-block;"></span>
-      <span style="font-size:12.5px; font-weight:500; color:#E4761F;">support@grantedco.com</span>
+    <div style="height:50px; padding:0 46px; box-sizing:border-box; background:#fff; display:flex; align-items:center; justify-content:space-between; gap:24px;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <img src="assets/granted-mark-navy.png" alt="GRANTED logo" width="20" height="20" style="display:block; flex-shrink:0;">
+        <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:16px; letter-spacing:0.03em; color:#0B1E3A;">GRANTED</span>
+        <span style="font-family:'Source Serif 4', serif; font-style:italic; font-size:13px; color:#E4761F;">More Grants. Less Grind.</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:22px; font-size:12.5px;">
+        <span style="font-weight:700; color:#0B1E3A;">grantedco.com</span>
+        <span style="color:#3c4150;">support@grantedco.com</span>
+      </div>
     </div>
   </div>
 
