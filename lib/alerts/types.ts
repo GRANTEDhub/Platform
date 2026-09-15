@@ -5,9 +5,8 @@
 
 import type { ForecastHorizonItem } from "@/lib/grants/forecast-relevance";
 
-// `sub` is the optional middle line under a stat's value — today only the deadline tile
-// uses it, for the "N days left" countdown (buildStats). Absent → the tile is value + label.
-export type AlertStat = { value: string; label: string; highlight?: boolean; sub?: string };
+// A single stat tile: a value + label, optionally the highlighted (deep-orange deadline) one.
+export type AlertStat = { value: string; label: string; highlight?: boolean };
 export type AlertRiskCallout = { label: string; points?: string; headline: string; body: string };
 export type AlertEligibilityNote = { label: string; body: string };
 

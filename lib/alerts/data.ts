@@ -28,25 +28,6 @@ function shortDeadline(raw: string | null | undefined): string {
   return s.length > 12 ? s.slice(0, 12) : s;
 }
 
-// The deadline tile's countdown sub-line ("8 days left"), or undefined when there's no
-// firm future date to count to. Computed at DRAFT-RENDER time and FROZEN into the saved
-// PDF (save-once: preview == sent), so it reads as-of send day; the absolute date
-// (shortDeadline) is always shown beside it, so a stale relative count never stands alone.
-// Only a real, parseable date renders a sub-line: a rolling/TBD/unparseable deadline, or a
-// date already PAST (closed — the closed-sweep gate handles those), returns undefined.
-function deadlineDaysLeftSub(raw: string | null | undefined): string | undefined {
-  const s = (raw ?? "").trim();
-  if (!s || !/\d{4}/.test(s)) return undefined;
-  const d = new Date(s);
-  if (isNaN(d.getTime())) return undefined;
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const days = Math.ceil((d.getTime() - startOfToday) / 86_400_000);
-  if (days < 0) return undefined; // closed — no countdown
-  if (days === 0) return "Due today";
-  return `${days} day${days === 1 ? "" : "s"} left`;
-}
-
 function fiscalYear(g: Grant): string {
   const src = (g.submission_deadline || g.ingested_at || "").toString();
   const m = src.match(/(20\d{2})/);
@@ -195,11 +176,15 @@ function buildStats(g: Grant): AlertStat[] {
   const cs = compactCostShare(g.cost_share);
   if (cs !== "—") stats.push({ value: cs, label: "match required" });
   if (stats.length < 3 && g.num_awards) stats.push({ value: shortAwards(g.num_awards), label: "awards" });
+  // Deadline shows the ABSOLUTE date only (shortDeadline) — a frozen grant fact that never drifts.
+  // The old "N days left" countdown sub-line was REMOVED (Shannon, 2026-09-15): a time-relative value
+  // baked into a save-once draft goes stale on the calendar clock, which is what forced the deadline into
+  // the freshness check and drove the day-tick re-enrich + send-time churn. A static date needs no such
+  // handling — see draftStillFresh (deadline no longer participates).
   stats.push({
     value: shortDeadline(g.submission_deadline),
     label: "deadline",
     highlight: true,
-    sub: deadlineDaysLeftSub(g.submission_deadline),
   });
   return stats.slice(-4); // keep the deadline (last) if we overflow
 }
@@ -209,8 +194,8 @@ function buildStats(g: Grant): AlertStat[] {
 // a QA apply (qa_*), the fit-analysis drain (fit_narrative*), or an engine rematch (fit_score) all move
 // them. buildAlertData writes the snapshot from this, and the draft staleness check (getOrCreateDraftAlert)
 // re-derives from it, so the two can never drift on how the value is computed. Clamped identically to the
-// render path. (The deadline countdown is the OTHER post-save drift — grant-derived, on the calendar's
-// clock rather than a card write — and is covered separately by draftDeadlineStillFresh.)
+// render path. This is the ONLY post-save drift the alert has: every other field is a frozen grant fact
+// (the deadline is now the absolute date only — no time-relative countdown — so it never goes stale).
 export function alertFitSignature(card: ReviewCard): { fitScore: 1 | 2 | 3 | null; grantIntelligence: string | null } {
   const resolved = resolveFit(card);
   const conceptSynopsis = clampAtSentence((card.concept_synopsis || "").trim(), CONCEPT_MAX) || null;
@@ -232,31 +217,20 @@ export function draftFitStillFresh(
   return (stored.fitScore ?? null) === sig.fitScore && (stored.grantIntelligence ?? null) === sig.grantIntelligence;
 }
 
-// True when a saved draft's FROZEN deadline countdown ("N days left") still matches what the live grant
-// would render TODAY. Unlike the fit signature this drifts on the CALENDAR's clock, not a card write:
-// deadlineDaysLeftSub is computed once at draft-render time and baked into the saved PDF (save-once,
-// preview == sent), so a warm-client draft generated when the deadline was days out and then held unsent
-// would ship a STALE count — worst case "N days left" for a grant whose deadline has PASSED, the exact
-// "shown only for a firm future date" invariant violated by an aged draft. Re-derive from the live grant
-// and compare to the stored deadline stat; a false — a drifted count OR a countdown that should now be
-// ABSENT (closed) — means the draft must regenerate so the sent PDF's countdown is correct as-of send day.
-// Warm client ONLY (the outreach template renders no countdown); draftFitStillFresh covers the card's side.
-export function draftDeadlineStillFresh(stored: AlertData, grant: Grant): boolean {
-  const storedSub = stored.stats?.find((s) => s.label === "deadline")?.sub ?? undefined;
-  return storedSub === deadlineDaysLeftSub(grant.submission_deadline);
-}
-
-// The ONE composite freshness predicate for a saved DRAFT — shared by the single-send guard
-// (getOrCreateDraftAlert) AND the multi-select BATCH path (prepare skip / send / preview reuse, which read
-// drafts via a raw getDraftAlert), so a batch can never ship a draft the single-send path would have
-// regenerated (#570 Claude Code Review). A WARM-CLIENT draft is fresh only while BOTH its snapshotted fit
-// signature (draftFitStillFresh) AND its frozen deadline countdown (draftDeadlineStillFresh) still match
-// the LIVE card/grant. Cold outreach (prospect/lead) is ALWAYS fresh — that template renders neither
-// signal, so a drift there is invisible and regenerating would only waste an enrich+render and re-mint the
-// baked booking token. Structural ctx param (not the AlertContext import) to keep this module decoupled.
-export function draftStillFresh(stored: AlertData, ctx: { card: ReviewCard; grant: Grant; isLead: boolean }): boolean {
+// The ONE freshness predicate for a saved DRAFT — shared by the single-send guard (getOrCreateDraftAlert)
+// AND the multi-select BATCH path (prepare skip / send / preview reuse, which read drafts via a raw
+// getDraftAlert), so a batch can never ship a draft the single-send path would have regenerated (#570
+// Claude Code Review). A WARM-CLIENT draft is fresh only while its snapshotted fit signature
+// (draftFitStillFresh — displayed fit score + Grant Intelligence narrative) still matches the LIVE card; a
+// QA apply / fit-analysis drain / engine rematch moves that WITHOUT calling invalidateDraftAlert. That is
+// the ONLY thing that can go stale: the deadline shows the absolute date (a frozen grant fact), no longer a
+// time-relative countdown, so it never drifts and is not checked here (Shannon, 2026-09-15 — removing the
+// countdown killed the day-tick re-enrich cost + send-time churn at the source). Cold outreach
+// (prospect/lead) is ALWAYS fresh — that template renders no fit signature. Structural ctx param (not the
+// AlertContext import) to keep this module decoupled.
+export function draftStillFresh(stored: AlertData, ctx: { card: ReviewCard; isLead: boolean }): boolean {
   const isColdOutreach = ctx.card.card_type === "prospect" || ctx.isLead;
-  return isColdOutreach || (draftFitStillFresh(stored, ctx.card) && draftDeadlineStillFresh(stored, ctx.grant));
+  return isColdOutreach || draftFitStillFresh(stored, ctx.card);
 }
 
 export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichment | null): AlertData {

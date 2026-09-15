@@ -131,10 +131,11 @@ export async function prepareClientBatch(opts: {
         continue;
       }
       // Reuse a FRESH draft untouched; a missing OR STALE one (re)renders. A stale draft — a QA demote /
-      // fit-analysis / rematch / deadline-countdown drift, none of which invalidates the draft — must NOT
-      // be reused-and-shipped by the batch path; the old `getDraftAlert -> continue` skip shipped it
-      // verbatim, contradicting the card's current verdict (#570 Claude Code Review). getOrCreateDraftAlert
-      // applies the SAME draftStillFresh guard as single-send, so a re-render only happens when needed.
+      // fit-analysis / rematch move to the fit-score block or Grant Intelligence narrative, none of which
+      // invalidates the draft — must NOT be reused-and-shipped by the batch path; the old
+      // `getDraftAlert -> continue` skip shipped it verbatim, contradicting the card's current verdict
+      // (#570 Claude Code Review). getOrCreateDraftAlert applies the SAME draftStillFresh guard as
+      // single-send, so a re-render only happens when needed.
       const existing = await getDraftAlert(c.id);
       if (existing && draftStillFresh(existing.alert_data, ctx)) continue;
       await getOrCreateDraftAlert(ctx, opts.userId, opts.origin); // enrich + render + persist
@@ -231,10 +232,11 @@ export async function sendClientBatch(
       missing.push(c.id);
       continue;
     }
-    // A prepared draft can go STALE between prepare and send (a QA demote / fit-analysis / rematch /
-    // deadline-countdown drift never invalidates it — the same #570 gap as the prepare skip). Treat a
-    // stale warm-client draft as NOT prepared so the merged PDF can't ship a fit-score/narrative/countdown
-    // that contradicts the card's current verdict; the UI re-prepares (which regenerates), then re-sends.
+    // A prepared draft can go STALE between prepare and send (a QA demote / fit-analysis / rematch move to
+    // the fit-score block or Grant Intelligence narrative never invalidates it — the same #570 gap as the
+    // prepare skip). Treat a stale warm-client draft as NOT prepared so the merged PDF can't ship a
+    // fit-score/narrative that contradicts the card's current verdict; the UI re-prepares (which
+    // regenerates), then re-sends.
     // FAIL CLOSED on a null ctx: loadAlertContext returns null on a missing/orphaned grant AND swallows a
     // transient .single() error, so "can't verify freshness" is treated as NOT prepared (matching the
     // render loop's null-ctx handling) — a stale draft can't ship on a DB glitch; the staffer re-prepares.

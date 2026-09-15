@@ -245,16 +245,15 @@ export async function getOrCreateDraftAlert(
   const existing = await getDraftAlert(ctx.card.id);
   // STALENESS GUARD. The alert is save-once — this row is reused VERBATIM for preview AND send — so a
   // frozen field that has drifted since the draft was generated would ship a PDF contradicting the card's
-  // current state. TWO independent drifts, both un-invalidated (draftStillFresh checks both): (1) the
-  // fit-score block + Grant Intelligence are a snapshot of resolveFit(ctx.card) that a QA apply (qa_*), the
-  // fit-analysis drain (fit_narrative*), or an engine rematch (fit_score) can move AFTER save, and none of
-  // those paths calls invalidateDraftAlert; (2) the deadline tile's "N days left" countdown is frozen at
-  // render time and goes stale on the CALENDAR's clock — a draft held past its deadline would ship
-  // "N days left" for a CLOSED grant. Stale → DROP the drifted draft so it regenerates fresh with a
-  // countdown correct as-of send day (covers every writer in one place, including the protected pipeline
-  // rematch we can't hook). Cold outreach (prospect/lead) renders neither signal so it is always fresh.
-  // The SAME draftStillFresh predicate guards the multi-select batch path (lib/alerts/batch-send.ts), so
-  // that second read seam can't ship a stale draft this one would regenerate.
+  // current state. The ONE such drift is the fit-score block + Grant Intelligence narrative, a snapshot of
+  // resolveFit(ctx.card) that a QA apply (qa_*), the fit-analysis drain (fit_narrative*), or an engine
+  // rematch (fit_score) can move AFTER save, and none of those paths calls invalidateDraftAlert. Stale →
+  // DROP the drifted draft so it regenerates fresh (covers every writer in one place, including the
+  // protected pipeline rematch we can't hook). Every other field is a frozen grant FACT that never drifts —
+  // the deadline shows the absolute date (no time-relative countdown), so it needs no freshness check.
+  // Cold outreach (prospect/lead) renders no fit signature so it is always fresh. The SAME draftStillFresh
+  // predicate guards the multi-select batch path (lib/alerts/batch-send.ts), so that second read seam can't
+  // ship a stale draft this one would regenerate.
   const usable = existing && draftStillFresh(existing.alert_data, ctx) ? existing : null;
   const draft = usable
     ? opts?.withHorizon
