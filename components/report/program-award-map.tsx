@@ -87,18 +87,23 @@ export function ProgramAwardMap({
   hasCfda,
   compact = false,
   awardTable = false,
+  awardTableHideLocation = false,
 }: {
   grantId: string;
   initialSummary: ProgramAwardSummary | null;
   hasCfda: boolean;
-  // Compact: render for the report console's narrow right column — tighter shell, no award table /
-  // selection chip (the map + hover + legend are the interactive value there), map still fully interactive.
+  // Compact: render for the report console's narrow right column — tighter shell. The map + hover + legend
+  // are the interactive value; the click-through award table appears only when awardTable is also passed.
   compact?: boolean;
-  // awardTable (Prospecting-only, /intel/[id]): render an interactive per-state award-detail table under the
-  // map, and enable click-to-filter EVEN in compact mode. Default false, so every other caller — the client
-  // report / portal (compact) and /review/[id] (full) — is byte-identical. Opens on Arkansas (GRANTED's home
+  // awardTable: render an interactive per-state "Notable recipients" table under the map, and enable
+  // click-to-filter EVEN in compact mode. Used by Prospecting (/intel/[id]) AND the compact Grant Report
+  // console. Default false, so /review/[id] (full) is byte-identical. Opens on Arkansas (GRANTED's home
   // state) and swaps to whatever state is clicked; distinct from the FULL variant's own table.
   awardTable?: boolean;
+  // awardTableHideLocation: drop the Location column from the awardTable. The Grant Report console renders
+  // the table in a narrower column than Prospecting, so it trades the (state-code) Location column for the
+  // room — the map already carries the geography. Default false, so Prospecting keeps Location.
+  awardTableHideLocation?: boolean;
 }) {
   const [summary, setSummary] = useState<ProgramAwardSummary | null>(initialSummary);
   const [loading, setLoading] = useState(false);
@@ -410,7 +415,7 @@ export function ProgramAwardMap({
               <thead>
                 <tr className="border-b border-brand-navy/[0.08] text-left text-[11px] uppercase tracking-wide text-muted-foreground">
                   <th className="py-2 pr-3 font-medium">Recipient</th>
-                  <th className="py-2 pr-3 font-medium">Location</th>
+                  {!awardTableHideLocation && <th className="py-2 pr-3 font-medium">Location</th>}
                   <th className="py-2 pr-3 font-medium">Amount</th>
                   <th className={agencyVaries ? "py-2 pr-3 font-medium" : "py-2 font-medium"}>Year</th>
                   {agencyVaries && <th className="py-2 font-medium">Agency</th>}
@@ -419,7 +424,7 @@ export function ProgramAwardMap({
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={agencyVaries ? 5 : 4} className="py-3 text-sm text-muted-foreground">
+                    <td colSpan={(awardTableHideLocation ? 3 : 4) + (agencyVaries ? 1 : 0)} className="py-3 text-sm text-muted-foreground">
                       No top-{summary.topAwards.length} awards in {selName ?? "any state"}.
                     </td>
                   </tr>
@@ -427,7 +432,7 @@ export function ProgramAwardMap({
                   rows.map((a, i) => (
                     <tr key={`${a.awardId}-${i}`} className="border-b border-brand-navy/[0.06] last:border-0">
                       <td className="py-2 pr-3 text-foreground">{a.recipient || "—"}</td>
-                      <td className="py-2 pr-3 text-muted-foreground">{a.state ?? "—"}</td>
+                      {!awardTableHideLocation && <td className="py-2 pr-3 text-muted-foreground">{a.state ?? "—"}</td>}
                       <td className="py-2 pr-3 font-semibold tabular-nums text-brand-navy">{fmtUsd(a.amount)}</td>
                       <td className="py-2 pr-3 tabular-nums text-muted-foreground">
                         {(a.startDate || "").slice(0, 4) || "—"}
