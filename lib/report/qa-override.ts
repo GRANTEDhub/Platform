@@ -23,6 +23,11 @@ export interface QaOverrideRow {
   qa_narrative?: string | null;
   qa_status?: string | null;
   qa_engine_fit_score?: number | null;
+  // The dedicated fit-analysis narrative (migration 0099) + its displayed-score freshness snapshot. Optional:
+  // a query that doesn't select them resolves to "no fit narrative" → the QA/engine paragraph, byte-identical
+  // to pre-0099. resolveFit lets this narrative OWN the go/marginal paragraph (see below).
+  fit_narrative?: string | null;
+  fit_narrative_fit_score?: number | null;
 }
 
 // The client-safe QA badge a card renders when a verdict is in effect. `applied` carries the score
@@ -79,16 +84,33 @@ export function resolveFit(row: QaOverrideRow): ResolvedFit {
   const snapshotFresh = snapshot !== null && snapshot === engineFit;
   const appliedFresh = status === "applied" && qaFit !== null && snapshotFresh;
 
-  // The narrative is DECOUPLED from the score override: an affirm/flag carries a reasoning body with no
-  // score change (qa_fit_score null, status 'none'), and it must still render. So it keys on qa_narrative
-  // present + the snapshot fresh, NOT on appliedFresh — a fresh demote, affirm, or flag narrative all show;
-  // an absent one, or a stale one (engine re-scored), falls back to the engine paragraph.
-  // Scrub the matcher's internal seat/role codes (S0_2, P0) at the read boundary too — narrativeGuard
-  // strips them at generation, but this also cleans narratives stored before that landed, on every surface.
-  const narrative =
+  // The DISPLAYED (coalesced) score the two return branches below emit: the applied QA score when fresh,
+  // else the engine's. Both the fit-analysis narrative's direction gate and the display key off this.
+  const displayedFit = appliedFresh ? qaFit : engineFit;
+
+  // NARRATIVE OWNERSHIP SPLIT (migration 0099). Two narratives can sit on a card; exactly one renders:
+  //   - The dedicated FIT-ANALYSIS narrative (fit_narrative) OWNS the GO/MARGINAL affirmative case. It is the
+  //     profile-aware, non-scoring pass (lib/grants/fit-analysis.ts) — richer than the QA narrative for a
+  //     go/marginal — so it WINS when the DISPLAYED score is a 2 or 3 AND its snapshot still matches that
+  //     score (freshness + direction in one rule: a card that fell to no-go, by engine re-score or QA demote,
+  //     no longer matches a stored 2/3, so it's withheld and the drain regenerates).
+  //   - The QA narrative (qa_narrative) keeps the DEMOTE/NO-GO reasoning — it shows when there is no fresh
+  //     fit_narrative to prefer (a displayed-1, or a not-yet-generated go/marginal).
+  // So the two never stack. fit_narrative absent/null (flag off, or not generated) → qaNarr → engine paragraph,
+  // byte-identical to pre-0099. Seat/role codes (S0_2, P0) are SCRUBBED at this read boundary too —
+  // narrativeGuard strips them at generation, but this also cleans narratives stored before that landed.
+  const fitNarr =
+    (displayedFit === 2 || displayedFit === 3) &&
+    typeof row.fit_narrative === "string" &&
+    row.fit_narrative.trim() &&
+    row.fit_narrative_fit_score === displayedFit
+      ? stripSeatCodes(row.fit_narrative) || null
+      : null;
+  const qaNarr =
     snapshotFresh && typeof row.qa_narrative === "string" && row.qa_narrative.trim()
       ? stripSeatCodes(row.qa_narrative) || null
       : null;
+  const narrative = fitNarr ?? qaNarr;
 
   if (appliedFresh) {
     const sources = (row.qa_sources ?? []).filter((s): s is string => typeof s === "string" && s.length > 0);

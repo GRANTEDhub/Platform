@@ -630,6 +630,15 @@ export interface ReviewCard {
   qa_engine_fit_score: number | null;
   qa_applied_at: string | null;
   qa_reviewed_by: string | null;
+  // Fit-analysis narrative (migration 0099). The dedicated, NON-scoring, profile-aware "why this client
+  // fits" paragraph for a GO/MARGINAL card, written by lib/grants/fit-analysis.ts. Distinct from the QA
+  // narrative: it owns the go/marginal case, qa_narrative owns demote/no-go, and resolveFit picks by the
+  // displayed direction. fit_narrative_fit_score snapshots the displayed score it was written for (the
+  // freshness + direction gate). All null until FIT_ANALYSIS_ENABLED's drain generates one.
+  fit_narrative: string | null;
+  fit_narrative_fit_score: number | null;
+  fit_narrative_model: string | null;
+  fit_narrative_at: string | null;
   // Track 2 discriminator (migration 0019). 'client' (default) or 'prospect'.
   // The client-first gate counts only client cards; a prospect card must never
   // enter the lock/release computation. prospect_id is set on prospect cards.
