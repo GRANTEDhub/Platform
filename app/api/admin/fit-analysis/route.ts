@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { runFitAnalysisForCard } from "@/lib/grants/fit-analysis";
+import { invalidateDraftAlert } from "@/lib/alerts/store";
 
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
@@ -36,5 +37,17 @@ export async function POST(req: NextRequest) {
 
   const db = createServiceClient();
   const result = await runFitAnalysisForCard(db, cardId);
+  // A regenerate that rewrote the client-facing narrative (this is the "Revert to auto" path from the
+  // narrative editor) leaves any saved alert draft stale — the alert is generated once and reused for
+  // preview AND send, so the next send would ship the pre-regenerate PDF. Invalidate it, symmetric with the
+  // staff fit-narrative edit route (Vercel Agent Review, #569). No-op when no draft exists; only when the
+  // narrative column actually changed (generated → new text, or cleared → nulled to the engine paragraph).
+  if (result.outcome === "generated" || result.outcome === "cleared") {
+    try {
+      await invalidateDraftAlert(cardId);
+    } catch (e) {
+      console.error(`[admin/fit-analysis] card ${cardId}: draft invalidation failed:`, e instanceof Error ? e.message : e);
+    }
+  }
   return NextResponse.json(result);
 }
