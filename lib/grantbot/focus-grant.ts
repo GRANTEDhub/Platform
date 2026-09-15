@@ -30,31 +30,43 @@ export interface FocusGrant {
 // then proceeds ungrounded (fail-open), never a crash. Errors (incl. a missing column before 0098 is
 // applied) leave `data` null, so this is resilient to the migration not being applied yet.
 export async function loadFocusGrant(db: SupabaseClient, grantId: string): Promise<FocusGrant | null> {
-  const { data } = await db
-    .from("grants")
-    .select("id, title, funder, fon, assistance_listings, submission_deadline")
-    .eq("id", grantId)
-    .maybeSingle();
-  if (!data) return null;
-  const g = data as {
-    id: string;
-    title: string | null;
-    funder: string | null;
-    fon: string | null;
-    assistance_listings: { number?: string | null }[] | null;
-    submission_deadline: string | null;
-  };
-  const cfda = Array.isArray(g.assistance_listings)
-    ? g.assistance_listings.map((a) => a?.number).filter(Boolean).join(", ") || null
-    : null;
-  return {
-    id: String(g.id),
-    title: (g.title ?? "").trim() || "this grant",
-    funder: g.funder?.trim() || null,
-    cfda,
-    deadline: g.submission_deadline?.trim() || null,
-    fon: g.fon?.trim() || null,
-  };
+  try {
+    const { data } = await db
+      .from("grants")
+      .select("id, title, funder, fon, assistance_listings, submission_deadline")
+      .eq("id", grantId)
+      .maybeSingle();
+    if (!data) return null;
+    const g = data as {
+      id: string;
+      title: string | null;
+      funder: string | null;
+      fon: string | null;
+      assistance_listings: { number?: string | null }[] | null;
+      submission_deadline: string | null;
+    };
+    const cfda = Array.isArray(g.assistance_listings)
+      ? g.assistance_listings.map((a) => a?.number).filter(Boolean).join(", ") || null
+      : null;
+    return {
+      id: String(g.id),
+      title: (g.title ?? "").trim() || "this grant",
+      funder: g.funder?.trim() || null,
+      cfda,
+      deadline: g.submission_deadline?.trim() || null,
+      fon: g.fon?.trim() || null,
+    };
+  } catch (err) {
+    // A THROWN read (a genuine network-level Supabase failure, not the ordinary {data,error} result) must
+    // NOT propagate: runTurn awaits loadFocusGrant AFTER appendUser has durably written the user turn but
+    // BEFORE the try/catch that guarantees a paired assistant row, so a throw here would orphan the user
+    // row (the exact firm-turn.ts-hardened window). Fail soft to null → an ungrounded turn, which is what
+    // this function's contract above already promises ("Errors … leave `data` null … never a crash").
+    // Log first (matching this module's sibling fail-soft reads) so a persistent failure stays observable
+    // rather than silently degrading every anchored turn to ungrounded with no trace in the logs.
+    console.error("GrantBot focus grant read failed", err);
+    return null;
+  }
 }
 
 // The grounding block. cacheable:false + appended AFTER the cache breakpoint (like every other
