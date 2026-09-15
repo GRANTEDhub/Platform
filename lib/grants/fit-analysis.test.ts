@@ -432,6 +432,30 @@ describe("runFitAnalysisForCard — single card, ignores the daily cap", () => {
     expect(res.outcome).toBe("skipped");
   });
 
+  it("does NOT write if the card is RELEASED during generation — write-time race (#565)", async () => {
+    const store = new Store();
+    seedOne(store, {}); // pending + unreleased at read time → passes the read guard
+    // Simulate a staffer releasing the card DURING the (slow) Opus call: the generate callback mutates
+    // sme_released_at before returning, so the atomic write guard must skip the write.
+    const releasingGenerate = async () => {
+      store.tables.review_cards[0].sme_released_at = "2026-09-11T00:00:00Z";
+      return "a narrative that must NOT land on the now-released card";
+    };
+    await runFitAnalysisForCard(asDb(store), "card-x", { now: () => NOW, generate: releasingGenerate });
+    expect(store.tables.review_cards[0].fit_narrative).toBeNull();
+  });
+
+  it("does NOT write if the card is DECIDED during generation — write-time race (#565)", async () => {
+    const store = new Store();
+    seedOne(store, {});
+    const decidingGenerate = async () => {
+      store.tables.review_cards[0].decision = "passed";
+      return "a narrative that must NOT land on the now-decided card";
+    };
+    await runFitAnalysisForCard(asDb(store), "card-x", { now: () => NOW, generate: decidingGenerate });
+    expect(store.tables.review_cards[0].fit_narrative).toBeNull();
+  });
+
   it("generates for one go/marginal card and returns the stored narrative", async () => {
     const store = new Store();
     store.tables.review_cards = [{

@@ -337,7 +337,18 @@ export function buildFitPatch(narrative: string | null, displayedFit: number, mo
 }
 
 async function applyFitPatch(db: DB, cardId: string, patch: FitNarrativePatch): Promise<boolean> {
-  const { error } = await db.from("review_cards").update(patch).eq("id", cardId);
+  // ATOMIC decision-integrity guard (Claude Code Review #565): the write itself is scoped to a card that is
+  // STILL pending + unreleased, so a card DECIDED or RELEASED to a client during the ~60s generation window
+  // (between processOne's read-time guard and this write) is never rewritten — no TOCTOU. This is the
+  // write-time half of the guard backfillBroadApply enforces by re-reading; a conditional UPDATE is the
+  // atomic form. A released/decided card simply matches 0 rows here (no error, no write) → its client-visible
+  // narrative is untouched ("preview == sent").
+  const { error } = await db
+    .from("review_cards")
+    .update(patch)
+    .eq("id", cardId)
+    .eq("decision", "pending")
+    .is("sme_released_at", null);
   if (error) {
     console.error(`[fit-analysis] card ${cardId}: fit_narrative write failed: ${error.message}`);
     return false;
