@@ -14,7 +14,7 @@ import type { AlertData } from "./types";
 // PUPPETEER_EXECUTABLE_PATH (falls back to the preinstalled Playwright chromium).
 
 const ROOT = process.cwd();
-let cachedAssets: { navy: string; white: string } | null = null;
+let cachedAssets: { navy: string; white: string; lockupWhite: string; lockupNavy: string } | null = null;
 let cachedFontCss: string | null = null;
 
 // Embed the brand fonts as local @font-face data URIs. Fetching Google Fonts at
@@ -31,7 +31,7 @@ let cachedFontCss: string | null = null;
 export async function loadFontCss(): Promise<string> {
   if (!cachedFontCss) {
     const dir = path.join(ROOT, "lib/contracts/fonts");
-    const [serifReg, serifSemi, interReg, interSemi, monoReg] = await Promise.all([
+    const [serifReg, serifSemi, interReg, interSemi, monoReg, libreReg, libreBold] = await Promise.all([
       fs.readFile(path.join(dir, "SourceSerif4-Regular.ttf")),
       fs.readFile(path.join(dir, "SourceSerif4-SemiBold.ttf")),
       fs.readFile(path.join(dir, "InterTight-Regular.ttf")),
@@ -40,6 +40,14 @@ export async function loadFontCss(): Promise<string> {
       // monospace kicker + micro-labels. One weight; the range mapping resolves any weight to it (the
       // template only asks for 400 mono), the same "cover a range" trick the other faces use.
       fs.readFile(path.join(dir, "JetBrainsMono-Regular.woff2")),
+      // Libre Baskerville (woff2, latin 400 + 700) — the BRAND HEADING serif (`font-serif` /
+      // --font-libre-baskerville, lib/fonts.ts), vendored so the alert HERO TITLE matches how titles render
+      // in the app (grant report main box) instead of Source Serif 4. Only 400 + 700 exist (no italic axis),
+      // exactly as next/font loads it — the emphasized word uses CSS font-style:italic (faux italic) on 400,
+      // the SAME way EmphasizedTitle renders it in the browser. Serverless Chromium has no gstatic egress, so
+      // it must be embedded like every other face here.
+      fs.readFile(path.join(dir, "LibreBaskerville-Regular.woff2")),
+      fs.readFile(path.join(dir, "LibreBaskerville-Bold.woff2")),
     ]);
     const face = (family: string, buf: Buffer, weight: string, fmt: "truetype" | "woff2" = "truetype") =>
       `@font-face{font-family:'${family}';font-style:normal;font-weight:${weight};font-display:swap;` +
@@ -50,6 +58,8 @@ export async function loadFontCss(): Promise<string> {
       face("Inter Tight", interReg, "400 500"),
       face("Inter Tight", interSemi, "600 700"),
       face("JetBrains Mono", monoReg, "400 700", "woff2"),
+      face("Libre Baskerville", libreReg, "400 500", "woff2"),
+      face("Libre Baskerville", libreBold, "600 700", "woff2"),
     ].join("");
   }
   return cachedFontCss;
@@ -77,18 +87,27 @@ async function loadTemplate(which: AlertTemplate) {
   return compiled;
 }
 
-// The two logo marks are inlined as data URIs -- relative asset paths can't
-// resolve when Chromium renders from an in-memory string.
+// Logo art inlined as data URIs -- relative asset paths can't resolve when Chromium renders from an
+// in-memory string. The CLIENT template uses the REAL brand LOCKUP (mark + wordmark + tagline as one SVG,
+// the same `public/granted-lockup-*.svg` the app login uses) instead of a reconstructed PNG mark + text
+// wordmark + text tagline. Naming: `-dark.svg` is the WHITE artwork (for the navy hero), `-light.svg` is the
+// NAVY artwork (for the white footer). The two granted-mark PNGs are KEPT for the untouched prospect/outreach
+// template (grant-alert.hbs), which still references them.
 async function loadAssets() {
   if (!cachedAssets) {
     const dir = path.join(ROOT, "lib/alerts/assets");
-    const [navy, white] = await Promise.all([
+    const pub = path.join(ROOT, "public");
+    const [navy, white, lockupWhite, lockupNavy] = await Promise.all([
       fs.readFile(path.join(dir, "granted-mark-navy.png")),
       fs.readFile(path.join(dir, "granted-mark-white.png")),
+      fs.readFile(path.join(pub, "granted-lockup-dark.svg")),
+      fs.readFile(path.join(pub, "granted-lockup-light.svg")),
     ]);
     cachedAssets = {
       navy: `data:image/png;base64,${navy.toString("base64")}`,
       white: `data:image/png;base64,${white.toString("base64")}`,
+      lockupWhite: `data:image/svg+xml;base64,${lockupWhite.toString("base64")}`,
+      lockupNavy: `data:image/svg+xml;base64,${lockupNavy.toString("base64")}`,
     };
   }
   return cachedAssets;
@@ -102,6 +121,8 @@ export async function renderAlertHtml(data: AlertData, which: AlertTemplate = "o
   return tpl(data)
     .replaceAll("assets/granted-mark-navy.png", assets.navy)
     .replaceAll("assets/granted-mark-white.png", assets.white)
+    .replaceAll("assets/granted-lockup-white.svg", assets.lockupWhite)
+    .replaceAll("assets/granted-lockup-navy.svg", assets.lockupNavy)
     // Inject the embedded @font-face rules right before </head> so they win over
     // the CDN <link> (which stays as a harmless progressive-enhancement fallback).
     .replace("</head>", `<style>${fontCss}</style></head>`);

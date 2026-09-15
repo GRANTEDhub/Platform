@@ -2,6 +2,7 @@ import { formatAwardRange, compactCostShare, formatDeadline, formatAwardStatTile
 import { sanitizeRichText, sanitizeText } from "@/lib/sanitize/html";
 import { resolveFit } from "@/lib/report/qa-override";
 import { FIT_BAND } from "@/lib/report/shape";
+import { titleParts } from "@/lib/report/title";
 import { PROSPECT_CREDENTIAL } from "./copy";
 import type { Grant, ReviewCard } from "@/types/database";
 import type { AlertData, AlertEnrichment, AlertStat } from "./types";
@@ -16,6 +17,17 @@ function esc(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+// The hero title as HTML with the single most DISTINCTIVE word italic-orange — the SAME treatment the app
+// grant-report title uses (titleParts / EmphasizedTitle), replicated here because the PDF is Handlebars, not
+// React, and can't mount the component. The em word inherits the h1's weight and gets CSS faux-italic, exactly
+// as the browser renders it (Libre Baskerville ships no italic). Every text part is esc'd; only the one <em>
+// wrapper is markup, so it's safe to emit via {{{headlineHtml}}}.
+function buildHeadlineHtml(headline: string): string {
+  return titleParts(headline)
+    .map((p) => (p.em ? `<em style="font-style:italic;color:#E4761F;">${esc(p.text)}</em>` : esc(p.text)))
+    .join(" ");
 }
 
 function fiscalYear(g: Grant): string {
@@ -137,42 +149,39 @@ function shortAwards(raw: string): string {
   return num[0];
 }
 
-// Deterministic stats, deadline last + highlighted; cap at 4. TWO LAYERS keep the fixed strip intact on the
-// AR-state grants that dump long free-text into fields built for tidy numbers (Shannon, 2026-09-15 — mirrors
-// the grant-list column fix): (1) NORMALIZE — the free-text money/date fields go through formatAwardStatTile
-// / formatDeadlineStatTile, which reuse the list column's placeholder logic to collapse junk to clean labels
-// ("Not stated" / "No deadline" / "Rolling") instead of an ellipsized sentence; num_awards → shortAwards();
-// match → compactCostShare, both pre-bounded. (2) CLAMP — every tile in the template hard-truncates
-// (min-width:0; overflow:hidden; ellipsis; nowrap on a minmax(0,1fr) grid) so NO value, however long, can
-// overflow/wrap/clip the strip. NORMALIZE keeps the value readable; CLAMP is the universal safety net.
+// ALWAYS EXACTLY 4 TILES, in a fixed order (Shannon, 2026-09-15 — visual consistency): award range · match
+// required · awards · deadline (deadline last + highlighted). A junk/missing value shows a clean label
+// ("Not stated" / "None" / "No deadline") rather than DROPPING the tile, so the strip is always 4-wide —
+// reversing the earlier junk-drop that left a 3-cell row. TWO LAYERS still keep each tile intact on the
+// AR-state grants that dump long free-text into fields built for tidy numbers (mirrors the grant-list column
+// fix): (1) NORMALIZE — the free-text money/date fields go through formatAwardStatTile / formatDeadlineStatTile
+// / compactCostShare / shortAwards, collapsing junk to the clean labels above instead of an ellipsized
+// sentence; (2) CLAMP — every tile in the template hard-truncates (min-width:0; overflow:hidden; ellipsis;
+// nowrap on a repeat(4, minmax(0,1fr)) grid) so NO value, however long, can overflow/wrap/clip the strip.
 function buildStats(g: Grant): AlertStat[] {
-  const stats: AlertStat[] = [];
-  const award = formatAwardStatTile(g.award_range_min, g.award_range_max);
-  if (award) stats.push({ value: award, label: g.award_range_is_estimate ? "award · est." : "award range" });
-  // Share the web pages' rule verbatim (grant-detail.tsx GrantStatBand): "None"
-  // for no cost share, else the clean amount -- compactCostShare strips trailing
-  // "match"/"cost share" wording, since the "match required" label already says it.
-  // No hard slice (it clipped mid-number, e.g. "$150,000" -> "$150,000 "); the
-  // template's ellipsis is the backstop for any pathologically long value.
+  // Share the web pages' rule (grant-detail.tsx GrantStatBand): compactCostShare → "None" for no cost share,
+  // else the clean amount; "—" (genuinely unknown) becomes "Not stated" here so the tile never drops.
   const cs = compactCostShare(g.cost_share);
-  if (cs !== "—") stats.push({ value: cs, label: "match required" });
-  if (stats.length < 3 && g.num_awards) {
-    const n = shortAwards(g.num_awards);
-    // Drop a placeholder count ("Unknown" / "Not available") rather than surface junk as an award count.
-    if (!isPlaceholderAward(n)) stats.push({ value: n, label: "awards" });
-  }
-  // Deadline shows the ABSOLUTE date only (formatDeadlineStatTile: a real date → "Sep 15", the rolling
-  // family → "Rolling", empty/placeholder junk → "No deadline") — a frozen grant fact that never drifts.
-  // The old "N days left" countdown sub-line was REMOVED (Shannon, 2026-09-15): a time-relative value
-  // baked into a save-once draft goes stale on the calendar clock, which is what forced the deadline into
-  // the freshness check and drove the day-tick re-enrich + send-time churn. A static date needs no such
-  // handling — see draftStillFresh (deadline no longer participates).
-  stats.push({
-    value: formatDeadlineStatTile(g.submission_deadline),
-    label: "deadline",
-    highlight: true,
-  });
-  return stats.slice(-4); // keep the deadline (last) if we overflow
+  // num_awards is free text — a real count via shortAwards, but a placeholder ("Unknown" / "Not available")
+  // shows "Not stated" rather than surfacing junk as a count.
+  const count = g.num_awards ? shortAwards(g.num_awards) : "";
+  return [
+    {
+      value: formatAwardStatTile(g.award_range_min, g.award_range_max) ?? "Not stated",
+      label: g.award_range_is_estimate ? "award · est." : "award range",
+    },
+    // "—" (unknown whether a match is required) → "Not stated". "Required · TBD" (a match IS required, amount
+    // not in our data) → "Required": the "· TBD" is redundant under the "match required" label and clipped in
+    // the now-narrower 4-tile strip. A real figure / "None" is kept verbatim.
+    { value: cs === "—" ? "Not stated" : cs.replace(/\s*·\s*TBD$/, ""), label: "match required" },
+    { value: !count || isPlaceholderAward(count) ? "Not stated" : count, label: "awards" },
+    // Deadline shows the ABSOLUTE date only (formatDeadlineStatTile: a real date → "Sep 15", the rolling
+    // family → "Rolling", empty/placeholder junk → "No deadline") — a frozen grant fact that never drifts.
+    // The old "N days left" countdown was REMOVED (Shannon, 2026-09-15): a time-relative value baked into a
+    // save-once draft goes stale on the calendar clock, which forced the deadline into the freshness check
+    // and drove the day-tick re-enrich + send-time churn. See draftStillFresh (deadline no longer participates).
+    { value: formatDeadlineStatTile(g.submission_deadline), label: "deadline", highlight: true },
+  ];
 }
 
 // The card-derived alert fields (displayed fit score + the "Grant Intelligence" paragraph) that
@@ -238,10 +247,14 @@ export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichme
   // whole card, so every resolveFit input column (qa_*, fit_narrative*) is present.
   const conceptSynopsis = clampAtSentence((card.concept_synopsis || "").trim(), CONCEPT_MAX) || null;
   const { fitScore: displayedFit, grantIntelligence } = alertFitSignature(card);
+  const headline = enrich?.headline?.trim() || g.title || "New grant opportunity";
 
   return {
     // ── narrative (model, with fallbacks) ──
-    headline: enrich?.headline?.trim() || g.title || "New grant opportunity",
+    headline,
+    // The hero title, with the one distinctive word italic-orange (EmphasizedTitle parity). The plain
+    // `headline` above stays the source for the email subject / any non-HTML use.
+    headlineHtml: buildHeadlineHtml(headline),
     alertLabel: enrich?.alertLabel?.trim() || (funder ? `${funder} Alert` : "GRANTED Alert"),
     programShort: enrich?.programShort?.trim() || "",
     whatItFundsIntro: enrich?.whatItFundsIntro?.trim() || "What this grant funds:",

@@ -91,13 +91,29 @@ describe("buildAlertData — fit-score block + Grant Intelligence (PR B)", () =>
     expect(deadlineTile("2027-01-15")).toBe("Jan 15"); // a real date still renders clean
   });
 
-  it("a junk award-COUNT tile is dropped, not surfaced as 'Unknown'", () => {
+  it("the strip is ALWAYS 4 tiles; a junk/missing award-COUNT shows 'Not stated', never dropped", () => {
+    // Shannon, 2026-09-15: always 4 tiles for visual consistency — a junk/missing value shows "Not stated"
+    // rather than dropping the tile (reversing the earlier junk-drop that left a 3-cell row).
     const stats = buildAlertData(
       grant({ award_range_min: "50000", award_range_max: "250000", num_awards: "Unknown" }),
       card(),
       null,
     ).stats;
-    expect(stats.find((s) => s.label === "awards")).toBeUndefined();
+    expect(stats).toHaveLength(4);
+    expect(stats.map((s) => s.label)).toEqual(["award range", "match required", "awards", "deadline"]);
+    expect(stats.find((s) => s.label === "awards")?.value).toBe("Not stated");
+    // A grant missing award + match + count entirely is STILL a full 4-wide strip of clean labels.
+    const bare = buildAlertData(grant({ award_range_min: null, award_range_max: null, cost_share: null, num_awards: null, submission_deadline: null }), card(), null).stats;
+    expect(bare.map((s) => s.value)).toEqual(["Not stated", "Not stated", "Not stated", "No deadline"]);
+  });
+
+  it("headlineHtml wraps the distinctive word in an orange-italic <em> (EmphasizedTitle parity); headline stays plain", () => {
+    const d = buildAlertData(grant({ title: "Airport Aid Program" }), card({ fit_score: 2 }), null);
+    expect(d.headline).toBe("Airport Aid Program");
+    expect(d.headlineHtml).toContain('<em style="font-style:italic;color:#E4761F;">Airport</em>');
+    expect((d.headlineHtml.match(/<em /g) || []).length).toBe(1); // exactly one emphasized word
+    // The plain words are escaped, not wrapped.
+    expect(d.headlineHtml).toContain("Aid Program");
   });
 
   it("an applied QA demote drives the DISPLAYED fit + its narrative (resolveFit coalesce)", () => {

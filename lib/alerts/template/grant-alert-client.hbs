@@ -45,13 +45,12 @@
   <!-- ===================== HERO (navy dot band) ===================== -->
   <div style="flex-shrink:0; background:#0B1E3A radial-gradient(rgba(255,255,255,.055) 1px, transparent 1.2px) 0 0/22px 22px; padding:30px 46px 60px 46px;">
 
-    <!-- logo row: white mark + wordmark left, tagline right -->
-    <div style="display:flex; align-items:center; justify-content:space-between; gap:24px; height:30px;">
-      <div style="display:flex; align-items:center; gap:10px;">
-        <img src="assets/granted-mark-white.png" alt="GRANTED logo" width="28" height="28" style="display:block; flex-shrink:0;">
-        <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:22px; letter-spacing:0.04em; color:#fff;">GRANTED</span>
-      </div>
-      <span style="font-family:'Source Serif 4', serif; font-style:italic; font-weight:700; font-size:14px; color:#fff;">More <span style="color:#E4761F; text-decoration:underline; text-underline-offset:2px;">Grants</span>. Less Grind.</span>
+    <!-- REAL brand lockup (public/granted-lockup-dark.svg, white artwork), inlined as a data URI by
+         render.ts — mark + GRANTED wordmark + "More Grants. Less Grind." tagline in one authentic asset,
+         the same lockup the app login uses. Replaces the reconstructed PNG mark + text wordmark + separate
+         text tagline; the tagline is part of the lockup, so there is no separate right-side tagline. -->
+    <div style="height:38px;">
+      <img src="assets/granted-lockup-white.svg" alt="GRANTED — More Grants. Less Grind." style="display:block; height:38px; width:auto;">
     </div>
 
     <!-- kicker: program · abbrev · FY · FON (mono, uppercase, letter-spaced; no nowrap so a long one wraps rather than clipping) -->
@@ -61,7 +60,11 @@
 
     <!-- title (white serif) + fit-score block (client template only; bordered on the navy) -->
     <div style="margin-top:10px; display:flex; align-items:center; justify-content:space-between; gap:32px;">
-      <h1 style="margin:0; font-family:'Source Serif 4', serif; font-weight:400; font-size:47px; line-height:50px; letter-spacing:-0.015em; color:#fff; max-width:470px;">{{headline}}</h1>
+      <!-- Hero title in the BRAND heading serif (Libre Baskerville, `font-serif`), with the single most
+           distinctive word italic-orange — the SAME treatment as the app grant-report title (EmphasizedTitle
+           / titleParts). headlineHtml is built server-side in data.ts (esc'd text + the one <em>); the em word
+           inherits 700 and gets CSS faux-italic, exactly as the browser renders it. -->
+      <h1 style="margin:0; font-family:'Libre Baskerville', Georgia, serif; font-weight:700; font-size:43px; line-height:1.1; letter-spacing:-0.01em; color:#fff; max-width:470px;">{{{headlineHtml}}}</h1>
       {{#if fitScore}}
       <div style="flex-shrink:0; display:flex; align-items:center; gap:14px; border:1px solid rgba(255,255,255,.28); padding:14px 20px 14px 14px;">
         <div style="width:50px; height:50px; flex-shrink:0; border:1px solid #E4761F; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px;">
@@ -162,11 +165,9 @@
     </div>
     <div style="height:3px; background:#E4761F;"></div>
     <div style="height:50px; padding:0 46px; box-sizing:border-box; background:#fff; display:flex; align-items:center; justify-content:space-between; gap:24px;">
-      <div style="display:flex; align-items:center; gap:12px;">
-        <img src="assets/granted-mark-navy.png" alt="GRANTED logo" width="20" height="20" style="display:block; flex-shrink:0;">
-        <span style="font-family:'Source Serif 4', serif; font-weight:700; font-size:16px; letter-spacing:0.03em; color:#0B1E3A;">GRANTED</span>
-        <span style="font-family:'Source Serif 4', serif; font-style:italic; font-size:13px; color:#E4761F;">More Grants. Less Grind.</span>
-      </div>
+      <!-- REAL brand lockup (public/granted-lockup-light.svg, navy artwork) — mark + wordmark + tagline in
+           one authentic asset, replacing the reconstructed PNG mark + text wordmark + text tagline. -->
+      <img src="assets/granted-lockup-navy.svg" alt="GRANTED — More Grants. Less Grind." style="display:block; height:24px; width:auto; flex-shrink:0;">
       <div style="display:flex; align-items:center; gap:22px; font-size:12.5px;">
         <span style="font-weight:700; color:#0B1E3A;">grantedco.com</span>
         <span style="color:#3c4150;">support@grantedco.com</span>
