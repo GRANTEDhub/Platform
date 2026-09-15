@@ -150,11 +150,20 @@ export async function prepareClientBatch(opts: {
   }
   // remaining = cards WITHOUT a FRESH draft (a stale draft is NOT prepared — it must regenerate), so
   // `done` is reached only once every selected card carries a draft consistent with its current verdict.
+  // Per-card try/catch mirrors the render loop above (guarded after the swallowed-error incident): a
+  // transient loadAlertContext/getDraftAlert failure here must NOT throw out of the whole round and
+  // discard its recorded `prepared`/`failed` progress — treat the card as STILL remaining (unknown
+  // freshness → not done), so it re-checks next round instead of turning a partial success into a 500.
   const remainingIds: string[] = [];
   for (const c of loaded.cards) {
-    const ctx = await ctxFor(c.id);
-    const existing = ctx ? await getDraftAlert(c.id) : null;
-    if (!ctx || !existing || !draftStillFresh(existing.alert_data, ctx)) remainingIds.push(c.id);
+    try {
+      const ctx = await ctxFor(c.id);
+      const existing = ctx ? await getDraftAlert(c.id) : null;
+      if (!ctx || !existing || !draftStillFresh(existing.alert_data, ctx)) remainingIds.push(c.id);
+    } catch (err) {
+      console.error(`[prepare-batch] remaining-check failed for card ${c.id}:`, err);
+      remainingIds.push(c.id); // conservative: unknown freshness -> re-check next round, never abort the round
+    }
   }
   const remaining = remainingIds.length;
   // No progress + work remains + something errored => every renderable card is
