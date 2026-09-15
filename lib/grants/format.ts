@@ -200,14 +200,13 @@ export function formatDeadlineCompact(raw: string | null | undefined): string | 
 // overlapping them. NEVER returns a long string, so the narrow cell can't overflow; the full
 // text stays on the grant detail page. Runs server-side (toReportItem), so the date path uses
 // the plain new Date() the sibling formatDeadlineShort does — same output on the UTC runtime.
-export function formatDeadlineListLabel(raw: string | null | undefined): string {
-  const s = (raw ?? "").trim();
-  if (!s) return "—";
-  const d = new Date(s);
-  if (!isNaN(d.getTime()) && /\d{4}/.test(s)) return format(d, "MMM d, yyyy");
-  const CAP = 22;
-  if (s.length <= CAP) return s;
-  let cut = s.slice(0, CAP);
+// Soft-truncate a free-text label at a word boundary, surrogate-safe, with any dangling separator or
+// punctuation stripped before the ellipsis. Shared by the deadline AND award list-cell labels so the two
+// fixed-width Grant Report columns truncate identically and can't drift. A value at/under `cap` is
+// returned whole; `minWordBoundary` (≈ cap/2) is the earliest space we'll break on before a hard cut.
+function softTruncateLabel(s: string, cap: number, minWordBoundary: number): string {
+  if (s.length <= cap) return s;
+  let cut = s.slice(0, cap);
   // slice() cuts on UTF-16 units, so an astral char straddling the boundary leaves a lone high
   // surrogate that renders as mojibake — drop it (Claude Code Review).
   const lastUnit = cut.charCodeAt(cut.length - 1);
@@ -215,7 +214,43 @@ export function formatDeadlineListLabel(raw: string | null | undefined): string 
   const sp = cut.lastIndexOf(" ");
   // Strip any trailing whitespace / punctuation / dash — INCLUDING the em dash (U+2014), which is
   // common in the shred prose — so nothing dangles before the ellipsis.
-  return (sp > 10 ? cut.slice(0, sp) : cut).replace(/[\s,;:.–—-]+$/, "") + "…";
+  return (sp > minWordBoundary ? cut.slice(0, sp) : cut).replace(/[\s,;:.–—-]+$/, "") + "…";
+}
+
+export function formatDeadlineListLabel(raw: string | null | undefined): string {
+  const s = (raw ?? "").trim();
+  if (!s) return "—";
+  const d = new Date(s);
+  if (!isNaN(d.getTime()) && /\d{4}/.test(s)) return format(d, "MMM d, yyyy");
+  return softTruncateLabel(s, 22, 10);
+}
+
+// A "no value" token the AR-state shred writes into the free-text award_range_* columns when it found no
+// figure. These carry no information — UNLIKE "Varies" / "See NOFO", which say the award is variable or
+// stated elsewhere and are KEPT — so a range made ENTIRELY of them collapses to one clean "Not stated".
+const AWARD_PLACEHOLDER =
+  /^(?:not\s+(?:stated|available|specified|listed|given)|unspecified|unknown|undetermined|to\s+be\s+determined|tbd|n\/?a|none)$/i;
+
+function isPlaceholderAward(s: string): boolean {
+  // formatAwardRange joins bounds with " – "; split on any dash and require EVERY non-blank part to be a
+  // placeholder token. A single real word (e.g. a long shred sentence, or "$500K") makes this false, so
+  // it falls through to soft-truncation / passes through rather than being mislabelled "Not stated".
+  const parts = s.split(/[–—-]/).map((p) => p.trim()).filter(Boolean);
+  return parts.length > 0 && parts.every((p) => AWARD_PLACEHOLDER.test(p));
+}
+
+// The award range for the FIXED-WIDTH Grant Report list cell — the award sibling of formatDeadlineListLabel.
+// awardRangeOrEstimate keeps non-numeric award text verbatim (short values like "Varies" are legitimate),
+// and the AR-state shred writes long free-text or a placeholder into the text award_range_* columns —
+// either of which overflowed the cell. Collapse pure placeholder junk to one "Not stated", soft-truncate
+// any residual long free-text, and pass a real figure (or a short "Varies") through unchanged. The SHARED
+// ReportItem shape keeps the FULL awardRange, so the detail/swipe surfaces are untouched (the same
+// keep-full-in-shape discipline as the deadline label, Codex #535).
+export function formatAwardListLabel(awardRange: string | null | undefined): string {
+  const s = (awardRange ?? "").trim();
+  if (!s) return "—";
+  if (isPlaceholderAward(s)) return "Not stated";
+  return softTruncateLabel(s, 22, 10);
 }
 
 // Budget one-liner for the Ideal Applicant Profile: award range, plus a match
