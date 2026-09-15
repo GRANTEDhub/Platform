@@ -64,9 +64,38 @@ describe("section finder", () => {
     expect(excerpt).toContain("necessary, reasonable, allocable");
   });
 
-  it("a document with no cost language at all is not anchored (falls back to the head)", () => {
+  it("a document with no cost language at all is not anchored (falls back to the whole doc)", () => {
     const { anchored } = allowableSource("Program goals and background. ".repeat(50));
     expect(anchored).toBe(false);
+  });
+
+  // The gen-4 whole-document no-anchor window. A state / agency page states its uses under a
+  // non-standard heading ("Reimbursement Program") that no SECTION_PATTERN names, and the list sits
+  // BEYOND the first 10k chars -- so the old head slice missed it and the model answered
+  // has_section=false (the RTP / AR-state no_section bug). The no-anchor excerpt is now the whole
+  // bounded doc, so the far list is in view.
+  it("no-anchor window is the whole bounded doc, not a 10k head slice (the RTP / AR-state fix)", () => {
+    // ~14.8k of clean program prose with NO cost/heading language, then the uses list under a heading
+    // none of the patterns match. Old behaviour: head = first 10k, list never seen.
+    const head = "The program supports Arkansas trail development and community recreation. ".repeat(200);
+    const reimbursementList = `Reimbursement Program
+Eligible reimbursable work items include:
+- New Construction of motorized and non-motorized trails.
+- Major maintenance and rehabilitation of existing trails.
+- Purchase and installation of trail bridges.
+- Construction of trailheads, restrooms, parking areas, and signage.
+- Development of trail education and interpretive materials.`;
+    const raw = head + reimbursementList;
+    const { excerpt, anchored } = allowableSource(raw);
+    // No SECTION_PATTERN matches "Reimbursement Program" or the activity bullets -> not anchored.
+    expect(anchored).toBe(false);
+    expect(sectionHits(raw, SECTION_PATTERNS)).toHaveLength(0);
+    // The list is past char 10000, so the OLD head slice (raw.slice(0, 10000)) would have missed it...
+    expect(raw.indexOf("Reimbursement Program")).toBeGreaterThan(10000);
+    expect(raw.slice(0, 10000)).not.toContain("New Construction");
+    // ...but the whole-doc no-anchor window contains it.
+    expect(excerpt).toContain("Reimbursement Program");
+    expect(excerpt).toContain("New Construction of motorized and non-motorized trails.");
   });
 });
 

@@ -40,17 +40,27 @@ const WINDOW_CHARS = 14000;
 // than the primary because it is the hedge, not the main read: allowable costs and funding
 // restrictions are sometimes pages apart, and a single window has to pick one.
 const SECOND_WINDOW_CHARS = 8000;
-// Fallback window when no heading matches, taken from the head like the brief's excerpt.
-const HEAD_CHARS = 10000;
-// Below this, a document has no room for a real allowable-costs section -- it is a
-// Grants.gov synopsis or a forecast stub, not a NOFO. Used ONLY by the recut to skip rows
-// that cannot benefit from better anchoring; generation itself never applies it, because a
-// short document with a real section should still be read.
+// Window when no heading matches. NOT a head slice: the WHOLE bounded document. A state / agency
+// notice routinely states its uses of funds under a non-standard heading ("Reimbursement Program",
+// "Eligible Projects") or as a plain fundable-activities list that no SECTION_PATTERN anchors -- so
+// the old 10k head slice often handed the model a window that did not even contain the list, and it
+// correctly answered has_section=false (the RTP / AR-state no_section family). 40k covers an AR-state
+// page in full (raw_text is capped at 40k at seed) and gives a large head to any longer no-anchor
+// notice; the quote gate still bounds a wider window to lines that are verbatim in raw_text.
+const NO_ANCHOR_CHARS = 40000;
+// The recut's HUSK floor: below this a no_section row has essentially no document to re-read -- an
+// AR seed that shredded from its preamble alone, or a bare forecast stub -- so re-asking it only
+// spends a call to confirm nothing. Used ONLY by the recut to skip such rows; generation never applies it.
 //
-// 20k is where the corpus splits cleanly: grants that produced a list average ~45k chars,
-// grants that came back no_section average ~15k, and 403 of the 468 no_section rows sit
-// under this line.
-const RECUT_MIN_RAW_CHARS = 20000;
+// WAS 20000 through gen 3, on the theory that a short document "has no room for a real allowable-costs
+// SECTION" (20k was where the corpus split: lists averaged ~45k, no_section averaged ~15k). Gen 4
+// retired that theory -- the whole-document no-anchor pass (NO_ANCHOR_CHARS) extracts uses from a short
+// state / agency page that states them as a fundable-activities list under a non-standard heading, and
+// those pages sit well under 20k, so a 20k floor RETIRED unread exactly the rows gen 4 exists to heal
+// (RTP and the AR-state family). Dropped to a genuine husk floor so they are re-asked. The trade is
+// more Phase-B calls on short synopses that still come back no_section; it is one-time per generation
+// (each row is stamped recut and leaves the window) and isAllowableUsesRegression still guards writes.
+const RECUT_MIN_RAW_CHARS = 1200;
 
 // The headings a federal NOFO actually uses for this section. Deliberately broad and
 // deliberately including the NEGATIVE forms ("unallowable", "funding restrictions"): those
@@ -201,9 +211,11 @@ Call the tool exactly once.`;
 // that we never showed it the page. That is the failure mode this function exists to stop.
 //
 // The model still decides whether a real section is present -- this only decides where it
-// gets to look. When no heading matches we fall back to the head rather than skipping the
-// call, because a notice can describe allowable spending without using any of these words,
-// and the attempt cap already bounds what a husk can cost.
+// gets to look. When no heading matches we hand it the WHOLE bounded document (NO_ANCHOR_CHARS)
+// rather than a head slice, because a notice -- above all a state / agency page -- can state its
+// allowable spending as a fundable-activities or eligible-projects list under a heading none of
+// these patterns name, and a head slice would often not even contain it. The quote gate bounds what
+// the wider window can admit, and the attempt cap already bounds what a husk can cost.
 // sectionHits (every heading occurrence, contents-page entries removed) and its
 // looksLikeTocEntry helper now live in lib/grants/nofo-text.ts, shared with requirements.ts. The
 // TOC-detection rationale and the "\s\d{1,4}$" regression that shaped it are documented there.
@@ -229,7 +241,7 @@ Call the tool exactly once.`;
 // in the document.
 export function allowableSource(raw: string): { excerpt: string; anchored: boolean } {
   const hits = sectionHits(raw, SECTION_PATTERNS);
-  if (hits.length === 0) return { excerpt: raw.slice(0, HEAD_CHARS), anchored: false };
+  if (hits.length === 0) return { excerpt: raw.slice(0, NO_ANCHOR_CHARS), anchored: false };
 
   const density = (at: number) => hits.filter((h) => Math.abs(h - at) <= WINDOW_CHARS).length;
   let best = hits[0];
@@ -429,8 +441,14 @@ export async function generateAllowableUses(
           role: "user",
           content:
             `Grant: ${grant.title ?? "(untitled)"}\nFunder: ${grant.funder ?? "(unknown)"}\n` +
-            `Excerpt ${anchored ? "centred on the allowable-costs section" : "from the start of the notice"}:\n\n` +
-            `${excerpt}\n\nExtract the allowable uses now.`,
+            (anchored
+              ? "Excerpt centred on the allowable-costs section:"
+              : // No standard cost-section heading matched -> the model has the WHOLE notice (allowableSource's
+                // NO_ANCHOR_CHARS window). Tell it the uses may sit under any heading or as a fundable-activities
+                // list, because has_section=false (SYSTEM rule 7) is exactly what over-fires when it reads such a
+                // list as "program goals". This nudges the read; the quote gate still bounds every line.
+                'Full notice text -- no standard cost-section heading matched. The uses of funds may appear under ANY heading (e.g. "Reimbursement Program", "Eligible Projects", "Project Types") or as a plain list of fundable activities. Scan the ENTIRE text, and treat a fundable-activities or eligible-projects list as the uses of funds (an allowed use is anything funds MAY pay for), not as mere program goals.') +
+            `\n\n${excerpt}\n\nExtract the allowable uses now.`,
         },
       ],
     });
@@ -504,11 +522,14 @@ async function saveAllowableUses(db: SupabaseClient, grantId: string, value: All
 // and would leave the existing corpus exactly as wrong as it is now. The measured 43
 // recoverable grants are all in that written set.
 //
-// SCOPED TO DOCUMENTS THAT CAN BENEFIT. 403 of the 468 are synopsis and forecast stubs under
-// RECUT_MIN_RAW_CHARS -- re-asking them would spend 403 Anthropic calls to confirm what we
-// already know. Those are stamped and retired WITHOUT a call, which is the same
-// retire-as-well-as-regenerate discipline requeueThinBriefs needed: a row that cannot improve
-// must still leave the window, or the phase never stops costing something.
+// SCOPED TO DOCUMENTS THAT CAN BENEFIT. Through gen 3 that meant 403 of the 468 rows -- synopsis and
+// forecast stubs under the old 20k RECUT_MIN_RAW_CHARS -- were stamped and retired WITHOUT a call
+// (re-asking them would only confirm what we already knew), the same retire-as-well-as-regenerate
+// discipline requeueThinBriefs needed: a row that cannot improve must still leave the window, or the
+// phase never stops costing something. Gen 4 shrank that set -- RECUT_MIN_RAW_CHARS is now a husk
+// floor, because the short state / agency pages it used to retire unread are exactly the rows the
+// whole-document pass can heal, so they move into Phase B and are re-asked. Only a genuine husk (a
+// preamble-only seed, a bare stub) still retires for free.
 //
 // TWO PHASES ON TWO BUDGETS, because sharing one starved the phase that mattered. The recut
 // ran both kinds of row through the same RECUT_FLOOR slots in allowable_uses_at order, and
@@ -538,12 +559,17 @@ const RETIRE_CHUNK = 50;
 // any no_section row BELOW the current generation, so a finder/prompt change re-touches the whole
 // no_section corpus simply by bumping this. History: gen 2 widened SECTION_PATTERNS to the ACF-style
 // headings and added not-allowed extraction; gen 3 added the NSF-family patterns (Budgetary
-// Information / cost sharing / participant support / "funds may be used for" ...). Gen 3 must re-run
-// the rows gen 2's recut already stamped -- an NSF grant the ACF-only finder missed would otherwise
-// stay no_section -- which "re-run any row below the current generation" already does. Kept
-// single-digit: the recut scan compares `recut` as TEXT (PostgREST `.lt`), and "1"<"2"<"3" holds
-// lexically only while the numbers are single digits.
-const ALLOWABLE_USES_GENERATION = 3;
+// Information / cost sharing / participant support / "funds may be used for" ...); gen 4 is the
+// WHOLE-DOCUMENT no-anchor pass -- when no heading matches, hand the model the full bounded notice
+// (NO_ANCHOR_CHARS) with look-everywhere framing instead of a 10k head slice, so a state / agency page
+// that states its uses under a non-standard heading ("Reimbursement Program") or as a fundable-
+// activities list is finally read. Gen 4 is ALSO why RECUT_MIN_RAW_CHARS dropped to a husk floor: the
+// short AR-state pages the old 20k floor retired unread are exactly the rows the whole-doc pass heals,
+// so they must be re-asked, not retired. Each generation must re-run the rows the prior recut stamped
+// -- which "re-run any row below the current generation" already does. Kept single-digit: the recut
+// scan compares `recut` as TEXT (PostgREST `.lt`), and "1"<"2"<"3"<"4" holds lexically only while the
+// numbers are single digits.
+const ALLOWABLE_USES_GENERATION = 4;
 
 // The recut scan predicate: a no_section row whose generation is BELOW the current one -- absent
 // (never recut) OR an older generation number. Shared by the probe and the scan so they can't drift.
