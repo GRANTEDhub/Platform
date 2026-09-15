@@ -56,12 +56,15 @@ export async function loadFocusGrant(db: SupabaseClient, grantId: string): Promi
       deadline: g.submission_deadline?.trim() || null,
       fon: g.fon?.trim() || null,
     };
-  } catch {
+  } catch (err) {
     // A THROWN read (a genuine network-level Supabase failure, not the ordinary {data,error} result) must
     // NOT propagate: runTurn awaits loadFocusGrant AFTER appendUser has durably written the user turn but
     // BEFORE the try/catch that guarantees a paired assistant row, so a throw here would orphan the user
     // row (the exact firm-turn.ts-hardened window). Fail soft to null → an ungrounded turn, which is what
     // this function's contract above already promises ("Errors … leave `data` null … never a crash").
+    // Log first (matching this module's sibling fail-soft reads) so a persistent failure stays observable
+    // rather than silently degrading every anchored turn to ungrounded with no trace in the logs.
+    console.error("GrantBot focus grant read failed", err);
     return null;
   }
 }

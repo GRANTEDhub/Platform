@@ -109,11 +109,13 @@ export async function getFocusGrantId(db: SupabaseClient, conversationId: string
       .eq("id", conversationId)
       .maybeSingle();
     return (data as { focus_grant_id?: string | null } | null)?.focus_grant_id ?? null;
-  } catch {
+  } catch (err) {
     // Fail soft on a THROWN read (network, or the column missing before 0098 is applied): return null so
     // the turn proceeds ungrounded rather than the route 500-ing. This read runs before appendUser on the
     // existing-conversation path, so a throw here can't orphan a row — but null-on-throw keeps the route's
     // clean 200 behaviour and matches the fail-soft contract loadFocusGrant hardens for the same reason.
+    // Log it (matching this module's other fail-soft reads) so a persistent failure stays observable.
+    console.error("GrantBot focus grant id read failed", err);
     return null;
   }
 }
