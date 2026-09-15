@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { awardRangeOrEstimate, formatAwardRange, compactTerm, parseAwardCount, formatDeadlineCompact, formatDeadlineListLabel } from "./format";
+import { awardRangeOrEstimate, formatAwardRange, formatAwardListLabel, compactTerm, parseAwardCount, formatDeadlineCompact, formatDeadlineListLabel } from "./format";
 
 // Deterministic — no model, no network. Locks the two PR-A grant-report fixes:
 //   ① Award range never renders a bare blank when the size is deducible (pool ÷ awards, labeled "est.").
@@ -171,5 +171,46 @@ describe("formatDeadlineListLabel", () => {
   it("returns an em dash for empty / missing", () => {
     expect(formatDeadlineListLabel(null)).toBe("—");
     expect(formatDeadlineListLabel("   ")).toBe("—");
+  });
+});
+
+describe("formatAwardListLabel", () => {
+  it("passes a real figure / range through unchanged", () => {
+    expect(formatAwardListLabel("$100K – $500K")).toBe("$100K – $500K");
+    expect(formatAwardListLabel("$500K")).toBe("$500K");
+    expect(formatAwardListLabel("~$598K est.")).toBe("~$598K est.");
+    expect(formatAwardListLabel("—")).toBe("—");
+  });
+
+  it("keeps SHORT stated-but-unnumeric values (not placeholder junk)", () => {
+    // formatAwardRange deliberately keeps "Varies"/"See NOFO" — they say the award is variable / stated
+    // elsewhere, unlike the AR-shred "no value" tokens. The list label must not clobber them.
+    expect(formatAwardListLabel("Varies")).toBe("Varies");
+    expect(formatAwardListLabel("See NOFO")).toBe("See NOFO");
+    expect(formatAwardListLabel("Varies – Varies")).toBe("Varies – Varies");
+  });
+
+  it("collapses AR-shred placeholder junk to a single 'Not stated'", () => {
+    expect(formatAwardListLabel("Not stated – Not stated")).toBe("Not stated");
+    expect(formatAwardListLabel("Unknown – Unknown")).toBe("Not stated");
+    expect(formatAwardListLabel("Not available – Not available")).toBe("Not stated");
+    expect(formatAwardListLabel("N/A")).toBe("Not stated");
+    expect(formatAwardListLabel("TBD – TBD")).toBe("Not stated");
+  });
+
+  it("soft-truncates a long free-text award so the fixed-width cell can't overflow", () => {
+    // The exact AR-state failure mode from Shannon's screenshot: a whole sentence in award_range_*.
+    const long = "Maximum per project set at the beginning of each funding cycle -- not specified in the NOFO";
+    const out = formatAwardListLabel(long);
+    expect(out.length).toBeLessThanOrEqual(23); // CAP 22 + the ellipsis
+    expect(out.endsWith("…")).toBe(true);
+    expect(out).not.toMatch(/[\s—–-]…$/); // no dangling space/dash before the ellipsis
+    // A phrase that merely CONTAINS a placeholder word ("not specified in…") is NOT mislabelled.
+    expect(out).not.toBe("Not stated");
+  });
+
+  it("returns an em dash for empty / missing", () => {
+    expect(formatAwardListLabel(null)).toBe("—");
+    expect(formatAwardListLabel("   ")).toBe("—");
   });
 });

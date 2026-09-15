@@ -8,7 +8,7 @@ import { BRAND, INK, RATING, SURFACE } from "@/lib/brand";
 import { rollUpQueue, sortQueue, type QueueRow, type QueueSort } from "@/lib/report/report-queue";
 import { forwardedStatusLabel } from "@/lib/report/referral";
 import type { StaffBucket } from "@/lib/report/shape";
-import { formatDeadlineListLabel } from "@/lib/grants/format";
+import { formatDeadlineListLabel, formatAwardListLabel } from "@/lib/grants/format";
 import { cn } from "@/lib/utils";
 
 // The client's Grant Report — the queue of matched grants awaiting review, and the entry
@@ -570,7 +570,16 @@ function QueueCard({
       </div>
 
       <div className="w-[118px] shrink-0 text-right">
-        <p className="text-[13px] font-semibold tabular-nums text-brand-navy">{item.awardRange}</p>
+        <p
+          className="truncate text-[13px] font-semibold tabular-nums text-brand-navy"
+          title={item.awardRange}
+        >
+          {/* Compact only HERE, the fixed-width cell — the shared shape keeps the full awardRange for the
+              detail/swipe surfaces (mirrors the deadline label, Codex #535). formatAwardListLabel collapses
+              AR-shred placeholder junk to "Not stated" and soft-truncates long free-text; truncate + title
+              are the hard no-overflow safety net so no value can ever wrap into adjacent rows again. */}
+          {formatAwardListLabel(item.awardRange)}
+        </p>
         <p className="mt-[5px] text-[10.5px] text-ink-muted">ceiling{item.awardIsEstimate ? " · est." : ""}</p>
       </div>
 
