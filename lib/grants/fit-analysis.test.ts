@@ -413,6 +413,26 @@ describe("runFitAnalysis — flag gate, generate + write, skips, cost cap", () =
     expect(store.tables.review_cards[0].fit_narrative).toBe("the staffer's edit"); // untouched
   });
 
+  it("TOCTOU: an edit landing DURING the Opus call is not overwritten (write-time lock re-check, #569)", async () => {
+    vi.stubEnv("FIT_ANALYSIS_ENABLED", "true");
+    const store = new Store();
+    seedCard(store); // unedited → passes the poll's fit_narrative_edited=false filter
+    seedGrantClient(store);
+    // Simulate the staffer's edit landing mid-Opus-call: the injected generate mutates the LIVE store row to
+    // edited AFTER the poll captured its (unedited) copy but BEFORE applyFitPatch writes. Without the write's
+    // onlyIfUnedited guard, the drain's machine narrative would clobber the human edit.
+    const racingGenerate = async () => {
+      const card = store.tables.review_cards[0];
+      card.fit_narrative = "the staffer's edit";
+      card.fit_narrative_fit_score = 3;
+      card.fit_narrative_edited = true;
+      return "the drain's machine narrative that must NOT win";
+    };
+    await runFitAnalysis(asDb(store), { now: () => NOW, generate: racingGenerate });
+    expect(store.tables.review_cards[0].fit_narrative).toBe("the staffer's edit"); // human edit stands
+    expect(store.tables.review_cards[0].fit_narrative_edited).toBe(true); // lock intact
+  });
+
   it("daily cost cap stops the pass before any generation", async () => {
     vi.stubEnv("FIT_ANALYSIS_ENABLED", "true");
     const store = new Store();
@@ -475,6 +495,17 @@ describe("runFitAnalysisForCard — single card, ignores the daily cap", () => {
     };
     await runFitAnalysisForCard(asDb(store), "card-x", { now: () => NOW, generate: releasingGenerate });
     expect(store.tables.review_cards[0].fit_narrative).toBeNull();
+  });
+
+  it("UNLOCK: overwrites an EDITED card and clears the lock — the deliberate 'revert to auto' (#569)", async () => {
+    // The on-demand path must bypass the drain's write-time edit guard (it omits onlyIfUnedited), so a
+    // staffer's "Revert to auto" replaces their edit with a fresh machine narrative and clears the lock.
+    const store = new Store();
+    seedOne(store, { fit_narrative: "the staffer's edit", fit_narrative_fit_score: 3, fit_narrative_edited: true });
+    const res = await runFitAnalysisForCard(asDb(store), "card-x", { now: () => NOW, generate: async () => "the fresh auto narrative" });
+    expect(res.outcome).toBe("generated");
+    expect(store.tables.review_cards[0].fit_narrative).toBe("the fresh auto narrative");
+    expect(store.tables.review_cards[0].fit_narrative_edited).toBe(false); // lock cleared by the regenerate
   });
 
   it("does NOT write if the card is DECIDED during generation — write-time race (#565)", async () => {

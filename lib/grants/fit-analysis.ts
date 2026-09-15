@@ -340,19 +340,32 @@ export function buildFitPatch(narrative: string | null, displayedFit: number, mo
     : { fit_narrative: null, fit_narrative_fit_score: null, fit_narrative_model: model, fit_narrative_at: nowIso, fit_narrative_edited: false };
 }
 
-async function applyFitPatch(db: DB, cardId: string, patch: FitNarrativePatch): Promise<boolean> {
+async function applyFitPatch(
+  db: DB,
+  cardId: string,
+  patch: FitNarrativePatch,
+  opts: { onlyIfUnedited?: boolean } = {},
+): Promise<boolean> {
   // ATOMIC decision-integrity guard (Claude Code Review #565): the write itself is scoped to a card that is
   // STILL pending + unreleased, so a card DECIDED or RELEASED to a client during the ~60s generation window
   // (between processOne's read-time guard and this write) is never rewritten — no TOCTOU. This is the
   // write-time half of the guard backfillBroadApply enforces by re-reading; a conditional UPDATE is the
   // atomic form. A released/decided card simply matches 0 rows here (no error, no write) → its client-visible
   // narrative is untouched ("preview == sent").
-  const { error } = await db
+  //
+  // ATOMIC human-edit-lock guard (Claude Code Review #569): the DRAIN passes onlyIfUnedited so the WRITE also
+  // re-checks fit_narrative_edited=false, not just the poll. Otherwise a staffer's edit landing DURING the
+  // Opus call (after the poll fetched the row, before this write) would be silently overwritten — a TOCTOU
+  // the poll filter alone can't close. The on-demand "Revert to auto" path (runFitAnalysisForCard) omits it,
+  // because it MUST overwrite an edited card to clear the lock; so the guard is opt-in per caller.
+  let q = db
     .from("review_cards")
     .update(patch)
     .eq("id", cardId)
     .eq("decision", "pending")
     .is("sme_released_at", null);
+  if (opts.onlyIfUnedited) q = q.eq("fit_narrative_edited", false);
+  const { error } = await q;
   if (error) {
     console.error(`[fit-analysis] card ${cardId}: fit_narrative write failed: ${error.message}`);
     return false;
@@ -543,7 +556,9 @@ export async function runFitAnalysis(db: DB, opts: FitAnalysisOptions = {}): Pro
   for (let i = 0; i < eligible.length; i += concurrency) {
     const chunk = eligible.slice(i, i + concurrency);
     const outcomes = await Promise.all(
-      chunk.map((row) => processOne(db, row, { now: nowIso, generate, estCost })),
+      // onlyIfUnedited: the DRAIN re-checks the human-edit lock atomically in the write (Claude Code Review
+      // #569), so an edit landing mid-Opus-call is never clobbered. The on-demand revert path omits it.
+      chunk.map((row) => processOne(db, row, { now: nowIso, generate, estCost, onlyIfUnedited: true })),
     );
     for (const o of outcomes) {
       if (o === "generated") result.generated += 1;
@@ -560,7 +575,7 @@ type ProcessOutcome = "generated" | "cleared" | "closed" | "failed" | "skipped";
 async function processOne(
   db: DB,
   row: FitPollRow,
-  deps: { now: string; generate: FitGenerate; estCost: number },
+  deps: { now: string; generate: FitGenerate; estCost: number; onlyIfUnedited?: boolean },
 ): Promise<ProcessOutcome> {
   if (!row.grant_id || !row.client_id) return "skipped";
   // DECISION INTEGRITY (Claude Code Review #564): never (re)write the narrative on a card that is already
@@ -613,7 +628,7 @@ async function processOne(
   }
 
   const patch = buildFitPatch(narrative, displayed, FIT_ANALYSIS_MODEL, deps.now);
-  const ok = await applyFitPatch(db, row.id, patch);
+  const ok = await applyFitPatch(db, row.id, patch, { onlyIfUnedited: deps.onlyIfUnedited });
   if (!ok) return "failed";
   return narrative ? "generated" : "cleared";
 }

@@ -134,6 +134,20 @@ function NarrativeDrawer({
         setError(body.error || "Couldn't regenerate. Try again.");
         return;
       }
+      // The admin route returns 200 for EVERY outcome; only "generated"/"cleared" actually regenerated the
+      // paragraph and cleared the lock. "skipped"/"closed"/"failed" left the edit (and its lock) in place, so
+      // surfacing them as success would tell the staffer they reverted when they didn't (Claude Code Review
+      // #569).
+      if (body.outcome !== "generated" && body.outcome !== "cleared") {
+        setError(
+          body.outcome === "closed"
+            ? "Couldn't revert — the grant's deadline has passed."
+            : body.outcome === "failed"
+              ? "Couldn't regenerate — try again."
+              : "Couldn't revert — this card is no longer eligible for an auto-generated narrative (it may have been decided, released, or re-scored).",
+        );
+        return;
+      }
       router.refresh();
       handleClose();
     } catch {
