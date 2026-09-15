@@ -80,6 +80,7 @@ export function GrantReviewConsole({
   qaVerdict = null,
   recommendation = null,
   verdictLead = null,
+  narrativeEditor = null,
   fitScore,
   verdict,
   consequence,
@@ -134,6 +135,11 @@ export function GrantReviewConsole({
   // passed in, and null on any surface that should not be able to spend a scorer call.
   // Rendered ONLY in the unscored branch — a scored card never sees it.
   scoreFactors: React.ReactNode | null;
+  // Staff-only inline editor for the fit-analysis narrative (the Grant Intelligence box). A client
+  // component passed in by the STAFF page only; the client portal passes null, so the edit affordance is
+  // staff-only by construction (this shared frame never forks on actor). Rendered in the RationaleCard
+  // header when present.
+  narrativeEditor?: React.ReactNode;
   // The APPLIED, client-safe QA projection (migration 0088), as DATA — not a control, so it renders on
   // both this staff screen and the portal without forking on actor. `fitScore`/`factors` above already
   // reflect an applied+fresh override (resolveFit on the page); this only drives the small provenance
@@ -231,6 +237,7 @@ export function GrantReviewConsole({
               qaVerdict={qaVerdict}
               recommendation={recommendation}
               verdictLead={verdictLead}
+              narrativeEditor={narrativeEditor}
             />
           </div>
 
@@ -683,6 +690,7 @@ function RationaleCard({
   qaVerdict,
   recommendation,
   verdictLead,
+  narrativeEditor,
 }: {
   rationale: { lead: string | null; blocking: string | null; mitigation: string | null; narrative?: string | null };
   factors: FitFactorView;
@@ -691,6 +699,7 @@ function RationaleCard({
   qaVerdict: QaVerdictView | null;
   recommendation: Recommendation | null;
   verdictLead: VerdictLead | null;
+  narrativeEditor?: React.ReactNode;
 }) {
   // Last-line seat-code scrub. The matcher's internal codes ("S0_1", "S1_2", the truncated "S0_") live in
   // the engine's why-this-org / consortium prose, which feed rationale.lead + rationale.mitigation here.
@@ -728,9 +737,13 @@ function RationaleCard({
           <Puzzle className="h-4 w-4 text-brand-navy" aria-hidden="true" />
         </span>
         <h2 className="font-serif text-[17px] font-bold text-brand-navy">IntellEngine Intel</h2>
-        <span className="ml-auto rounded-full bg-brand-navy/[0.06] px-3 py-1 text-[11px] font-semibold text-brand-navy">
-          Why this grant fits
-        </span>
+        <div className="ml-auto flex items-center gap-3">
+          {/* Staff-only edit affordance (null on the client portal). */}
+          {narrativeEditor}
+          <span className="rounded-full bg-brand-navy/[0.06] px-3 py-1 text-[11px] font-semibold text-brand-navy">
+            Why this grant fits
+          </span>
+        </div>
       </div>
 
       {/* THE FLEXIBLE, SCROLLABLE MIDDLE — rationale on the left, the factor table on the right.

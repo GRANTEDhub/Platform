@@ -325,6 +325,10 @@ export interface FitNarrativePatch {
   fit_narrative_fit_score: number | null;
   fit_narrative_model: string | null;
   fit_narrative_at: string;
+  // Machine (re)generation always CLEARS the human-edit lock (migration 0100): whatever this pass writes
+  // is the model's, not a staffer's. The drain never reaches an edited card, so in practice only the
+  // on-demand regenerate (runFitAnalysisForCard) flips a true→false here — the deliberate "revert to auto".
+  fit_narrative_edited: boolean;
 }
 
 export function buildFitPatch(narrative: string | null, displayedFit: number, model: string, nowIso: string): FitNarrativePatch {
@@ -332,23 +336,36 @@ export function buildFitPatch(narrative: string | null, displayedFit: number, mo
   // re-pick the card every cycle and burn spend on a card the model can't write cleanly; it clears the text
   // and snapshot so resolveFit shows the engine paragraph. A real narrative stores text + the freshness snapshot.
   return narrative
-    ? { fit_narrative: narrative, fit_narrative_fit_score: displayedFit, fit_narrative_model: model, fit_narrative_at: nowIso }
-    : { fit_narrative: null, fit_narrative_fit_score: null, fit_narrative_model: model, fit_narrative_at: nowIso };
+    ? { fit_narrative: narrative, fit_narrative_fit_score: displayedFit, fit_narrative_model: model, fit_narrative_at: nowIso, fit_narrative_edited: false }
+    : { fit_narrative: null, fit_narrative_fit_score: null, fit_narrative_model: model, fit_narrative_at: nowIso, fit_narrative_edited: false };
 }
 
-async function applyFitPatch(db: DB, cardId: string, patch: FitNarrativePatch): Promise<boolean> {
+async function applyFitPatch(
+  db: DB,
+  cardId: string,
+  patch: FitNarrativePatch,
+  opts: { onlyIfUnedited?: boolean } = {},
+): Promise<boolean> {
   // ATOMIC decision-integrity guard (Claude Code Review #565): the write itself is scoped to a card that is
   // STILL pending + unreleased, so a card DECIDED or RELEASED to a client during the ~60s generation window
   // (between processOne's read-time guard and this write) is never rewritten — no TOCTOU. This is the
   // write-time half of the guard backfillBroadApply enforces by re-reading; a conditional UPDATE is the
   // atomic form. A released/decided card simply matches 0 rows here (no error, no write) → its client-visible
   // narrative is untouched ("preview == sent").
-  const { error } = await db
+  //
+  // ATOMIC human-edit-lock guard (Claude Code Review #569): the DRAIN passes onlyIfUnedited so the WRITE also
+  // re-checks fit_narrative_edited=false, not just the poll. Otherwise a staffer's edit landing DURING the
+  // Opus call (after the poll fetched the row, before this write) would be silently overwritten — a TOCTOU
+  // the poll filter alone can't close. The on-demand "Revert to auto" path (runFitAnalysisForCard) omits it,
+  // because it MUST overwrite an edited card to clear the lock; so the guard is opt-in per caller.
+  let q = db
     .from("review_cards")
     .update(patch)
     .eq("id", cardId)
     .eq("decision", "pending")
     .is("sme_released_at", null);
+  if (opts.onlyIfUnedited) q = q.eq("fit_narrative_edited", false);
+  const { error } = await q;
   if (error) {
     console.error(`[fit-analysis] card ${cardId}: fit_narrative write failed: ${error.message}`);
     return false;
@@ -376,6 +393,9 @@ export interface FitPollRow {
   qa_engine_fit_score?: number | null;
   fit_narrative?: string | null;
   fit_narrative_fit_score?: number | null;
+  // Human-edit LOCK (migration 0100): true → a staffer corrected the narrative; the drain never
+  // regenerates it (fitNarrativeStale returns false + the poll query filters it out).
+  fit_narrative_edited?: boolean | null;
   // Decision-integrity gate (Claude Code Review #564): only a pending, unreleased card may be (re)narrated —
   // never rewrite what a client has already seen ("preview == sent"). The cron poll filters these in SQL; the
   // on-demand path (runFitAnalysisForCard) leans on the processOne guard.
@@ -393,6 +413,10 @@ export function displayedFitOf(row: FitPollRow): 1 | 2 | 3 | null {
 // narrative is missing OR its snapshot no longer matches the displayed score (an engine re-score or a QA
 // apply/clear moved it). A displayed-1 (no-go) is never eligible — qa_narrative owns it.
 export function fitNarrativeStale(row: FitPollRow): boolean {
+  // HUMAN-EDIT LOCK (migration 0100): a staffer corrected this narrative — the drain must never
+  // regenerate it (never clobber the edit). The on-demand regenerate is the only path that rewrites an
+  // edited card (it bypasses this check), and buildFitPatch clears the flag when it does.
+  if (row.fit_narrative_edited) return false;
   const resolved = resolveFit(row);
   // A fresh APPLIED QA demote OWNS the card (its grounded qa_narrative is the disqualifying reason, and a
   // demote can land at displayed-2). resolveFit defers to qa_narrative there, so an affirmative fit_narrative
@@ -440,7 +464,7 @@ function startOfUtcDayIso(nowMs: number): string {
 // coalesced score), and the fit_narrative* columns (for freshness). fit_narrative_at is selected so a card
 // generated THIS pass is not re-scanned, and a stamped-null card (model couldn't write) is not looped on.
 const POLL_COLUMNS =
-  "id, grant_id, client_id, fit_score, factor_scores, proposed_role, recommended_prime, why_this_org, reasoning_context, qa_fit_score, qa_factor_scores, qa_status, qa_engine_fit_score, fit_narrative, fit_narrative_fit_score, fit_narrative_at, decision, sme_released_at";
+  "id, grant_id, client_id, fit_score, factor_scores, proposed_role, recommended_prime, why_this_org, reasoning_context, qa_fit_score, qa_factor_scores, qa_status, qa_engine_fit_score, fit_narrative, fit_narrative_fit_score, fit_narrative_edited, fit_narrative_at, decision, sme_released_at";
 
 type PollRowWithStamp = FitPollRow & { fit_narrative_at?: string | null };
 
@@ -498,6 +522,10 @@ export async function runFitAnalysis(db: DB, opts: FitAnalysisOptions = {}): Pro
       .eq("decision", "pending")
       .is("sme_released_at", null)
       .eq("card_type", "client")
+      // Human-edit lock (migration 0100): never scan an edited card into the drain's batch — its
+      // narrative is a staffer's, not the model's to regenerate. (fitNarrativeStale also guards this,
+      // so the filter is defense-in-depth + keeps edited cards out of the scanned window entirely.)
+      .eq("fit_narrative_edited", false)
       .not("client_id", "is", null)
       .not("grant_id", "is", null)
       .order("created_at", { ascending: true })
@@ -528,7 +556,9 @@ export async function runFitAnalysis(db: DB, opts: FitAnalysisOptions = {}): Pro
   for (let i = 0; i < eligible.length; i += concurrency) {
     const chunk = eligible.slice(i, i + concurrency);
     const outcomes = await Promise.all(
-      chunk.map((row) => processOne(db, row, { now: nowIso, generate, estCost })),
+      // onlyIfUnedited: the DRAIN re-checks the human-edit lock atomically in the write (Claude Code Review
+      // #569), so an edit landing mid-Opus-call is never clobbered. The on-demand revert path omits it.
+      chunk.map((row) => processOne(db, row, { now: nowIso, generate, estCost, onlyIfUnedited: true })),
     );
     for (const o of outcomes) {
       if (o === "generated") result.generated += 1;
@@ -545,7 +575,7 @@ type ProcessOutcome = "generated" | "cleared" | "closed" | "failed" | "skipped";
 async function processOne(
   db: DB,
   row: FitPollRow,
-  deps: { now: string; generate: FitGenerate; estCost: number },
+  deps: { now: string; generate: FitGenerate; estCost: number; onlyIfUnedited?: boolean },
 ): Promise<ProcessOutcome> {
   if (!row.grant_id || !row.client_id) return "skipped";
   // DECISION INTEGRITY (Claude Code Review #564): never (re)write the narrative on a card that is already
@@ -598,7 +628,7 @@ async function processOne(
   }
 
   const patch = buildFitPatch(narrative, displayed, FIT_ANALYSIS_MODEL, deps.now);
-  const ok = await applyFitPatch(db, row.id, patch);
+  const ok = await applyFitPatch(db, row.id, patch, { onlyIfUnedited: deps.onlyIfUnedited });
   if (!ok) return "failed";
   return narrative ? "generated" : "cleared";
 }

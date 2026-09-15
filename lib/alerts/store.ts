@@ -60,6 +60,27 @@ export async function getDraftAlert(cardId: string): Promise<GrantAlertRow | nul
   return data ?? null;
 }
 
+// Invalidate a card's saved DRAFT alert (row + its PDF/horizon objects) so the next composer open
+// re-renders fresh. Called when a staffer edits a card field that feeds the PDF (e.g. the fit-analysis
+// narrative): the alert is generated ONCE and reused for preview AND send (preview == sent), keyed only
+// on card_id + status='draft' with no freshness check — so without this, an edit made after the draft was
+// generated would silently ship the pre-edit PDF. Only ever touches a status='draft' row (getDraftAlert
+// filters that); a SENT alert is immutable history and is never affected. Best-effort + idempotent: no
+// draft → no-op; a stale storage object that won't delete is logged (removeObjectsGrouped), not fatal.
+export async function invalidateDraftAlert(cardId: string): Promise<void> {
+  const db = createServiceClient();
+  const prior = await getDraftAlert(cardId);
+  if (!prior) return;
+  const priorHorizon = (prior.alert_data as AlertData)?.horizonStoragePath;
+  await removeObjectsGrouped(
+    [prior.storage_path, ...(priorHorizon ? [priorHorizon] : [])].map(
+      (p): StorageObjectRef => ({ storage_bucket: prior.storage_bucket, storage_path: p }),
+    ),
+    "alert-draft-invalidate",
+  );
+  await db.from("grant_alerts").delete().eq("id", prior.id);
+}
+
 // Generate a fresh draft: enrich (narrative) + deterministic facts -> render ->
 // upload PDF -> insert row. Replaces any existing draft (and deletes its stale
 // PDF) so "Regenerate" is a clean swap. This is the ONLY place enrich + render

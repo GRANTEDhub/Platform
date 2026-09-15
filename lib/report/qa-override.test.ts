@@ -218,3 +218,55 @@ describe("resolveFit — fit-analysis narrative ownership (migration 0099)", () 
     expect(r.narrative).not.toMatch(/[SP]\d/);
   });
 });
+
+describe("resolveFit — human-edit narrative lock (migration 0100)", () => {
+  it("edited narrative SURVIVES a benign band move: snapshot 3, displayed 2 → still shown (snapshot bypass)", () => {
+    // A staffer edited the paragraph on a clean 3; a rematch later nudged the card to 2. A MACHINE narrative
+    // would be withheld here (stale snapshot), but a human edit is honored on any go/marginal regardless.
+    const r = resolveFit(
+      row({ fit_score: 2, fit_narrative: "The staffer's corrected fit rationale.", fit_narrative_fit_score: 3, fit_narrative_edited: true }),
+    );
+    expect(r.fitScore).toBe(2);
+    expect(r.narrative).toBe("The staffer's corrected fit rationale.");
+  });
+
+  it("edited narrative on a NO-GO (displayed 1) → still WITHHELD (direction gate is absolute)", () => {
+    const r = resolveFit(
+      row({
+        fit_score: 1,
+        fit_narrative: "an edited affirmative paragraph that must NOT show on a no-go",
+        fit_narrative_fit_score: 3,
+        fit_narrative_edited: true,
+        qa_status: "none",
+        qa_engine_fit_score: 1,
+        qa_narrative: "Cannot prime this program.",
+      }),
+    );
+    expect(r.fitScore).toBe(1);
+    expect(r.narrative).toBe("Cannot prime this program."); // qa_narrative owns the no-go, not the human edit
+  });
+
+  it("edited narrative on an APPLIED QA demote → still WITHHELD (qa_narrative owns it)", () => {
+    const r = resolveFit(
+      row({
+        fit_score: 3,
+        fit_narrative: "an edited affirmative paragraph that must defer to the grounded demote",
+        fit_narrative_fit_score: 2,
+        fit_narrative_edited: true,
+        qa_status: "applied",
+        qa_fit_score: 2,
+        qa_engine_fit_score: 3,
+        qa_narrative: "Cannot prime as a disparate jurisdiction.",
+      }),
+    );
+    expect(r.fitScore).toBe(2);
+    expect(r.narrative).toBe("Cannot prime as a disparate jurisdiction.");
+  });
+
+  it("a MACHINE narrative (edited=false) with a stale snapshot is still withheld — the bypass is edited-only", () => {
+    const r = resolveFit(
+      row({ fit_score: 2, fit_narrative: "machine paragraph written for a 3", fit_narrative_fit_score: 3, fit_narrative_edited: false }),
+    );
+    expect(r.narrative).toBeNull(); // unchanged pre-0100 behavior for machine narratives
+  });
+});
