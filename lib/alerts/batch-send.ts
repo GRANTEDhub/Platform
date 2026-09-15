@@ -235,8 +235,11 @@ export async function sendClientBatch(
     // deadline-countdown drift never invalidates it — the same #570 gap as the prepare skip). Treat a
     // stale warm-client draft as NOT prepared so the merged PDF can't ship a fit-score/narrative/countdown
     // that contradicts the card's current verdict; the UI re-prepares (which regenerates), then re-sends.
+    // FAIL CLOSED on a null ctx: loadAlertContext returns null on a missing/orphaned grant AND swallows a
+    // transient .single() error, so "can't verify freshness" is treated as NOT prepared (matching the
+    // render loop's null-ctx handling) — a stale draft can't ship on a DB glitch; the staffer re-prepares.
     const ctx = await loadAlertContext(c.id);
-    if (ctx && !draftStillFresh(d.alert_data, ctx)) {
+    if (!ctx || !draftStillFresh(d.alert_data, ctx)) {
       missing.push(c.id);
       continue;
     }
@@ -478,10 +481,11 @@ export async function mergePreparedBatchPdf(
   for (const c of cards) {
     const d = await getDraftAlert(c.id);
     if (!d) return { error: "Drafts not prepared for all selected grants", status: 409 };
-    // Refuse a STALE draft (same guard as send) so the preview can't show — and thus promise — a
+    // Refuse a STALE draft (same guard as send), and FAIL CLOSED on a null ctx (same as send: can't
+    // verify freshness → treat as un-prepared), so the preview can't show — and thus promise — a
     // fit-score/narrative/countdown the current card no longer supports; re-prepare regenerates it.
     const ctx = await loadAlertContext(c.id);
-    if (ctx && !draftStillFresh(d.alert_data, ctx)) return { error: "Drafts not prepared for all selected grants", status: 409 };
+    if (!ctx || !draftStillFresh(d.alert_data, ctx)) return { error: "Drafts not prepared for all selected grants", status: 409 };
     pdfs.push(await loadAlertPdf(d));
   }
   return { pdf: await mergeAlertPdfs(pdfs) };
