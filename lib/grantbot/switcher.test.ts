@@ -208,19 +208,21 @@ describe("dispatchOpenGrantBot", () => {
     else (globalThis as { window?: unknown }).window = realWindow;
   });
 
-  it("dispatches GRANTBOT_OPEN_EVENT carrying the clientId in detail", () => {
+  it("dispatches GRANTBOT_OPEN_EVENT carrying the clientId AND clientName in detail", () => {
     const bus = new EventTarget();
     (globalThis as { window?: unknown }).window = bus;
     let detail: unknown = null;
     bus.addEventListener(GRANTBOT_OPEN_EVENT, (e) => {
       detail = (e as CustomEvent).detail;
     });
-    dispatchOpenGrantBot("client-1");
-    expect(detail).toEqual({ clientId: "client-1" });
+    dispatchOpenGrantBot("client-1", "Acme Corp");
+    // The name rides the event so the listener sets a fully-resolved target (no roster lookup, so an
+    // archived/not-yet-cached client can't be dropped on a grant sub-route with no ?include=).
+    expect(detail).toEqual({ clientId: "client-1", clientName: "Acme Corp" });
   });
 
   it("is a harmless no-op when there is no window (SSR)", () => {
     delete (globalThis as { window?: unknown }).window;
-    expect(() => dispatchOpenGrantBot("client-1")).not.toThrow();
+    expect(() => dispatchOpenGrantBot("client-1", "Acme Corp")).not.toThrow();
   });
 });

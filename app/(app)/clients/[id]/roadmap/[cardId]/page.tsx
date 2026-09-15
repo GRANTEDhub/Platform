@@ -223,6 +223,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
     grantbotAskFromReviewEnabled() && card.grant_id ? (
       <AskGrantBotButton
         clientId={params.id}
+        clientName={client?.name ?? "Client"}
         grantId={card.grant_id}
         grantTitle={g.title || "this grant"}
         switcherEnabled={switcherEnabled()}
