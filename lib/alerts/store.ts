@@ -6,7 +6,7 @@ import { mintAccessToken } from "@/lib/tokens";
 import { enrichAlert } from "./enrich";
 import { ensureGrantBrief } from "@/lib/grants/brief";
 import { conceptHookForCard } from "@/lib/concept/store";
-import { buildAlertData, buildAlertEmailBody, buildProspectEmailBody } from "./data";
+import { buildAlertData, buildAlertEmailBody, buildProspectEmailBody, draftFitStillFresh } from "./data";
 import { senderFirstName } from "./sender";
 import { renderAlertPdf, renderHorizonPdf, launchAlertBrowser, closeBrowserOnReject } from "./render";
 import { mergeAlertPdfs } from "./merge-pdf";
@@ -243,10 +243,24 @@ export async function getOrCreateDraftAlert(
   opts?: { withHorizon?: boolean; withDecisionLinks?: boolean },
 ): Promise<GrantAlertRow> {
   const existing = await getDraftAlert(ctx.card.id);
-  const draft = existing
+  // STALENESS GUARD. The alert is save-once — this row is reused VERBATIM for preview AND send — and the
+  // fit-score block + Grant Intelligence are a snapshot of resolveFit(ctx.card) at draft time. A QA apply
+  // (qa_*), the fit-analysis drain (fit_narrative*), or an engine rematch (fit_score) can move that AFTER
+  // the draft is saved, and NONE of those paths calls invalidateDraftAlert — so a stale draft would ship a
+  // PDF whose fit score / narrative contradicts the card's current verdict. Re-derive from the live card
+  // and DROP a drifted draft so it regenerates fresh (covers every writer in one place, including the
+  // protected pipeline rematch we can't hook). Only the WARM CLIENT template renders the signature; cold
+  // outreach (prospect/lead) never shows it, so a drift there is invisible and regenerating would only
+  // waste an enrich+render and re-mint the baked booking token — skip the check for those.
+  const isColdOutreach = ctx.card.card_type === "prospect" || ctx.isLead;
+  const usable =
+    existing && (isColdOutreach || draftFitStillFresh(existing.alert_data as AlertData, ctx.card))
+      ? existing
+      : null;
+  const draft = usable
     ? opts?.withHorizon
-      ? await ensureHorizon(ctx, existing)
-      : existing
+      ? await ensureHorizon(ctx, usable)
+      : usable
     : await generateDraftAlert(ctx, userId, origin, opts);
   return opts?.withHorizon || opts?.withDecisionLinks
     ? ensureDecisionLinks(ctx, draft, userId, origin)

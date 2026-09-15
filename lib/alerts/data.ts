@@ -192,6 +192,33 @@ function buildStats(g: Grant): AlertStat[] {
   return stats.slice(-4); // keep the deadline (last) if we overflow
 }
 
+// The card-derived alert fields (displayed fit score + the "Grant Intelligence" paragraph) that
+// resolveFit produces. These are the ONLY alert content that can change AFTER a draft is saved with no
+// grant/enrichment edit — a QA apply (qa_*), the fit-analysis drain (fit_narrative*), or an engine
+// rematch (fit_score) all move them. buildAlertData writes the snapshot from this, and the draft
+// staleness check (getOrCreateDraftAlert) re-derives from it, so the two can never drift on how the
+// value is computed. Clamped identically to the render path.
+export function alertFitSignature(card: ReviewCard): { fitScore: 1 | 2 | 3 | null; grantIntelligence: string | null } {
+  const resolved = resolveFit(card);
+  const conceptSynopsis = clampAtSentence((card.concept_synopsis || "").trim(), CONCEPT_MAX) || null;
+  const narrative = resolved.narrative ? clampAtSentence(resolved.narrative.trim(), GRANT_INTEL_MAX) || null : null;
+  return { fitScore: resolved.fitScore, grantIntelligence: narrative ?? conceptSynopsis };
+}
+
+// True when a saved draft's snapshotted fit score + Grant Intelligence still match what the live card
+// would render — i.e. no QA / fit-analysis / rematch write has moved them since the draft was generated.
+// A save-once draft is reused VERBATIM for preview AND send, and the QA/fit-analysis/rematch writers do
+// NOT call invalidateDraftAlert, so a false here means the draft must be regenerated before it ships or
+// it would send a PDF whose fit score / narrative contradicts the platform's current verdict. Compares
+// the clamped values (both sides go through alertFitSignature / buildAlertData), so a re-clamp is stable.
+export function draftFitStillFresh(
+  stored: { fitScore?: 1 | 2 | 3 | null; grantIntelligence?: string | null },
+  card: ReviewCard,
+): boolean {
+  const sig = alertFitSignature(card);
+  return (stored.fitScore ?? null) === sig.fitScore && (stored.grantIntelligence ?? null) === sig.grantIntelligence;
+}
+
 export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichment | null): AlertData {
   const funder = (g.funder || "").trim();
   const incumbentFallback = g.incumbent_risk
@@ -209,10 +236,8 @@ export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichme
   // The DISPLAYED (QA-coalesced) fit + the client-facing "Grant Intelligence" narrative, from the ONE
   // read-layer resolver (the same seam the console/portal render through). loadAlertContext selects the
   // whole card, so every resolveFit input column (qa_*, fit_narrative*) is present.
-  const resolved = resolveFit(card);
-  const displayedFit = resolved.fitScore;
   const conceptSynopsis = clampAtSentence((card.concept_synopsis || "").trim(), CONCEPT_MAX) || null;
-  const narrative = resolved.narrative ? clampAtSentence(resolved.narrative.trim(), GRANT_INTEL_MAX) || null : null;
+  const { fitScore: displayedFit, grantIntelligence } = alertFitSignature(card);
 
   return {
     // ── narrative (model, with fallbacks) ──
@@ -241,7 +266,7 @@ export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichme
     // narrative when present, else the matcher synopsis, else (both null) a static line in the template.
     fitScore: displayedFit,
     fitScoreLabel: displayedFit ? FIT_BAND[displayedFit].label : null,
-    grantIntelligence: narrative ?? conceptSynopsis,
+    grantIntelligence,
     stats: buildStats(g),
     statsFootnote: awardsFootnote,
     // Concise, grounded eligibility from the model; deterministic tight fallback.

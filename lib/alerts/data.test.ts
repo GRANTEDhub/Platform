@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildAlertData } from "./data";
+import { buildAlertData, alertFitSignature, draftFitStillFresh } from "./data";
 import type { Grant, ReviewCard } from "@/types/database";
 
 // Minimal fixtures — buildAlertData reads a handful of grant fields (all null-safe in the helpers) and the
@@ -88,5 +88,53 @@ describe("buildAlertData — fit-score block + Grant Intelligence (PR B)", () =>
     expect(d.fitScore).toBe(2);
     expect(d.fitScoreLabel).toBe("Conditional");
     expect(d.grantIntelligence).toBe("Cannot prime as a disparate jurisdiction; the lane is an MOU.");
+  });
+});
+
+// The save-once draft's fit-score/Grant Intelligence snapshot can go stale when a QA apply, the
+// fit-analysis drain, or an engine rematch moves the card's resolveFit AFTER the draft is generated
+// (none of those paths invalidates the draft). getOrCreateDraftAlert re-derives this signature and
+// regenerates a drifted draft so the sent PDF can't contradict the card's current verdict (PR B, #570).
+describe("draft staleness — alertFitSignature / draftFitStillFresh", () => {
+  it("alertFitSignature: narrative wins over synopsis, else synopsis, else null", () => {
+    expect(
+      alertFitSignature(card({ fit_score: 3, fit_narrative: "why this fits", fit_narrative_fit_score: 3, concept_synopsis: "syn" })),
+    ).toEqual({ fitScore: 3, grantIntelligence: "why this fits" });
+    expect(alertFitSignature(card({ fit_score: 2, fit_narrative: null, concept_synopsis: "syn" }))).toEqual({
+      fitScore: 2,
+      grantIntelligence: "syn",
+    });
+    expect(alertFitSignature(card({ fit_score: 1, fit_narrative: null, concept_synopsis: null }))).toEqual({
+      fitScore: 1,
+      grantIntelligence: null,
+    });
+  });
+
+  it("FRESH when the stored snapshot matches the card's current resolveFit", () => {
+    const c = card({ fit_score: 3, fit_narrative: "why this fits", fit_narrative_fit_score: 3 });
+    expect(draftFitStillFresh({ fitScore: 3, grantIntelligence: "why this fits" }, c)).toBe(true);
+  });
+
+  it("STALE when a QA demote lands after the draft (displayed fit moved 3 → 2)", () => {
+    // The draft snapshotted 3; the card now carries an applied, fresh QA demote to 2.
+    const c = card({
+      fit_score: 3,
+      qa_status: "applied",
+      qa_fit_score: 2,
+      qa_engine_fit_score: 3,
+      qa_narrative: "Cannot prime as a disparate jurisdiction.",
+      fit_narrative: "an affirmative paragraph the demote overrides",
+      fit_narrative_fit_score: 2,
+    });
+    expect(draftFitStillFresh({ fitScore: 3, grantIntelligence: "the old paragraph" }, c)).toBe(false);
+  });
+
+  it("STALE when only the narrative changed (fit score unchanged)", () => {
+    const c = card({ fit_score: 2, fit_narrative: "the regenerated paragraph", fit_narrative_fit_score: 2 });
+    expect(draftFitStillFresh({ fitScore: 2, grantIntelligence: "the original paragraph" }, c)).toBe(false);
+  });
+
+  it("a legacy draft with no snapshotted signature reads STALE (regenerates into the new format)", () => {
+    expect(draftFitStillFresh({}, card({ fit_score: 3, fit_narrative: "x", fit_narrative_fit_score: 3 }))).toBe(false);
   });
 });
