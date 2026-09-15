@@ -1,0 +1,54 @@
+name: Fit-Analysis Narrative Eval
+
+# Manual-only. This runs the model-in-the-loop fit-analysis narrative eval
+# (lib/grants/fit-analysis.eval.test.ts) — the trust gate that must pass before
+# FIT_ANALYSIS_ENABLED is flipped on. It is NOT part of CI: it makes real (paid)
+# Opus calls, so it only runs when a human clicks "Run workflow".
+#
+# The button appears under Actions → "Fit-Analysis Narrative Eval" only once this
+# file is on the default branch (main).
+#
+# SECRETS. The eval uses SYNTHETIC fixtures (constructed in the test) plus the real
+# model — it reads NO production DB rows — so it needs ONLY ANTHROPIC_API_KEY, not
+# the Supabase service-role key. It declares the SAME protected GitHub Environment
+# as the other evals ("subseat-eval", restricted to `main`), which already holds
+# ANTHROPIC_API_KEY; nothing new to add.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Runs per fixture (stability sampling; FIT_ANALYSIS_EVAL_RUNS). Serial, so raising this grows both cost and wall-clock roughly linearly."
+        required: false
+        default: "3"
+
+concurrency:
+  group: fit-analysis-eval
+  cancel-in-progress: false
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    environment: subseat-eval
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify ANTHROPIC_API_KEY is present
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY is empty or unset — add it to the 'subseat-eval' GitHub Environment (Settings → Environments). The eval would otherwise silently skip and report a false green."
+            exit 1
+          fi
+      - name: Run fit-analysis narrative eval
+        env:
+          RUN_FIT_ANALYSIS_EVAL: "1"
+          FIT_ANALYSIS_EVAL_RUNS: ${{ inputs.runs }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: npx vitest run lib/grants/fit-analysis.eval.test.ts
