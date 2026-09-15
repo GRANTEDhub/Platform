@@ -29,6 +29,10 @@ import type { Client } from "@/types/database";
 
 const RUN = process.env.RUN_FIT_ANALYSIS_EVAL === "1" && !!process.env.ANTHROPIC_API_KEY;
 const RUNS = Math.max(1, Number(process.env.FIT_ANALYSIS_EVAL_RUNS) || 3);
+// Each case makes RUNS sequential live Opus calls (~10-30s each), far over vitest's 5s default per-test
+// timeout — so each `it` needs its own generous timeout or it fails on the clock, not the content. Bounded
+// by the workflow's own timeout-minutes. Scales with RUNS so a higher sample count doesn't clip.
+const EVAL_TIMEOUT_MS = Math.max(120_000, RUNS * 90_000);
 
 // Markers of a by-applicant-TYPE claim — the one thing the state-presence award rule forbids. The names are
 // never even in the prompt (reduceAwardHistory drops them), so this should be impossible; the eval proves it.
@@ -131,7 +135,7 @@ describe.skipIf(!RUN)("fit-analysis narrative eval (live Opus)", () => {
     // Covers the axes in the majority: eligibility, the funded theme (mission↔funds), and the role.
     expect.soft(majority(nonEmpty.map((n) => /eligib|applicant|community college/i.test(n))), "names eligibility").toBe(true);
     expect.soft(majority(nonEmpty.map((n) => /workforce|training|career|technical|employer/i.test(n))), "names the funded work").toBe(true);
-  });
+  }, EVAL_TIMEOUT_MS);
 
   it("[CONDITIONAL 2] names the real hurdle honestly — no oversell", async () => {
     // A prime-ineligible specialist nonprofit routed to a SUPPORTING seat under a government prime.
@@ -171,7 +175,7 @@ describe.skipIf(!RUN)("fit-analysis narrative eval (live Opus)", () => {
       majority(nonEmpty.map((n) => /prime|partner|sub|county|lead applicant|before the deadline/i.test(n))),
       "names the partner/prime hurdle",
     ).toBe(true);
-  });
+  }, EVAL_TIMEOUT_MS);
 
   it("[SPARSE] thin profile → a SHORTER honest note, not mail-merge filler", async () => {
     const sparseClient = clientOf({
@@ -195,5 +199,5 @@ describe.skipIf(!RUN)("fit-analysis narrative eval (live Opus)", () => {
     }
     // SHORTER: a thin-but-honest note is brief — the majority should be at most 3 sentences.
     expect.soft(majority(nonEmpty.map((n) => sentenceCount(n) <= 3)), "brief (≤3 sentences) in the majority").toBe(true);
-  });
+  }, EVAL_TIMEOUT_MS);
 });
