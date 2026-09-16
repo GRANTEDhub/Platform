@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { ListGroup, ListGroupHeader, ListGroupRow } from "@/components/ui/list-group";
 import { Badge } from "@/components/ui/badge";
 import { getProspectFeed } from "@/lib/grants/gate";
+import { prepareProspectFeed } from "@/lib/report/prospect-sort";
 import { IngestForm } from "@/app/(app)/grants/ingest-form";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +19,11 @@ export const dynamic = "force-dynamic";
 export default async function GrantProspectingPage() {
   await requireAdmin();
   const supabase = createClient();
-  const feed = await getProspectFeed(supabase);
+  // getProspectFeed returns ingested_at-desc from gate.ts (protected). Prepare it in the view:
+  // drop genuinely-expired grants (deadline strictly passed; rolling/undated stays), then sort so
+  // a single same-timestamp ingest batch (the ~40 AR state grants, #532) can't wall off the top —
+  // actionable grants first, then by deadline urgency (nulls last). See lib/report/prospect-sort.
+  const feed = prepareProspectFeed(await getProspectFeed(supabase));
 
   return (
     <div className="space-y-6 p-6">
