@@ -31,20 +31,25 @@ let cachedFontCss: string | null = null;
 export async function loadFontCss(): Promise<string> {
   if (!cachedFontCss) {
     const dir = path.join(ROOT, "lib/contracts/fonts");
-    const [serifReg, serifSemi, interReg, interSemi] = await Promise.all([
+    const [serifReg, serifSemi, interReg, interSemi, monoReg] = await Promise.all([
       fs.readFile(path.join(dir, "SourceSerif4-Regular.ttf")),
       fs.readFile(path.join(dir, "SourceSerif4-SemiBold.ttf")),
       fs.readFile(path.join(dir, "InterTight-Regular.ttf")),
       fs.readFile(path.join(dir, "InterTight-SemiBold.ttf")),
+      // JetBrains Mono (woff2, latin-400) — vendored from Design's Claude Design export for the alert's
+      // monospace kicker + micro-labels. One weight; the range mapping resolves any weight to it (the
+      // template only asks for 400 mono), the same "cover a range" trick the other faces use.
+      fs.readFile(path.join(dir, "JetBrainsMono-Regular.woff2")),
     ]);
-    const face = (family: string, buf: Buffer, weight: string) =>
+    const face = (family: string, buf: Buffer, weight: string, fmt: "truetype" | "woff2" = "truetype") =>
       `@font-face{font-family:'${family}';font-style:normal;font-weight:${weight};font-display:swap;` +
-      `src:url(data:font/ttf;base64,${buf.toString("base64")}) format('truetype');}`;
+      `src:url(data:font/${fmt === "woff2" ? "woff2" : "ttf"};base64,${buf.toString("base64")}) format('${fmt}');}`;
     cachedFontCss = [
       face("Source Serif 4", serifReg, "400 500"),
       face("Source Serif 4", serifSemi, "600 700"),
       face("Inter Tight", interReg, "400 500"),
       face("Inter Tight", interSemi, "600 700"),
+      face("JetBrains Mono", monoReg, "400 700", "woff2"),
     ].join("");
   }
   return cachedFontCss;

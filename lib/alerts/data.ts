@@ -1,6 +1,9 @@
-import { format } from "date-fns";
-import { formatAwardRange, compactCostShare, formatDeadline } from "@/lib/grants/format";
+import { formatAwardRange, compactCostShare, formatDeadline, formatAwardStatTile, formatDeadlineStatTile, isPlaceholderAward } from "@/lib/grants/format";
 import { sanitizeRichText, sanitizeText } from "@/lib/sanitize/html";
+import { resolveFit } from "@/lib/report/qa-override";
+import { FIT_BAND } from "@/lib/report/shape";
+import { computeEligibility } from "@/lib/intellengine/eligibility";
+import { fitNarrativeEnabled } from "@/lib/grants/fit-narrative";
 import { PROSPECT_CREDENTIAL } from "./copy";
 import type { Grant, ReviewCard } from "@/types/database";
 import type { AlertData, AlertEnrichment, AlertStat } from "./types";
@@ -15,15 +18,6 @@ function esc(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
-}
-
-// "Jul 8" when the deadline parses; else a trimmed raw token for the stat tile.
-function shortDeadline(raw: string | null | undefined): string {
-  const s = (raw ?? "").trim();
-  if (!s) return "TBD";
-  const d = new Date(s);
-  if (!isNaN(d.getTime()) && /\d{4}/.test(s)) return format(d, "MMM d");
-  return s.length > 12 ? s.slice(0, 12) : s;
 }
 
 function fiscalYear(g: Grant): string {
@@ -78,6 +72,11 @@ export function clampAtSentence(raw: string, max: number): string {
 // then the band off the page, which is the failure these constants exist to prevent.
 const CONCEPT_MAX = 620;
 const INTRO_MAX = 520;
+// The "Grant Intelligence" paragraph (resolveFit's narrative) sits in the same grid cell the concept box
+// used, so it carries the same layout budget as CONCEPT_MAX. Clamped on a sentence boundary because the
+// alert is ONE letter page with a hard pageRanges:"1" clamp (render.ts) -- an unclamped ~1,000-char fit
+// narrative would be silently CLIPPED. The full, untruncated narrative shows on the portal.
+const GRANT_INTEL_MAX = 620;
 
 function introSource(g: Grant): string {
   const brief = (g.description_brief || "").trim();
@@ -140,15 +139,18 @@ function shortAwards(raw: string): string {
   return num[0];
 }
 
-// Deterministic stats, deadline last + highlighted; cap at 4. Per-field bounding
-// (NOT a blanket char cap, which would clip a legitimately wide award range like
-// "$10.5M – $100.5M"): the only free-text field is num_awards -> shortAwards();
-// award range/match/deadline come pre-bounded from their formatters. The
-// template's nowrap/ellipsis is the visual safety net for any residual overflow.
+// Deterministic stats, deadline last + highlighted; cap at 4. TWO LAYERS keep the fixed strip intact on the
+// AR-state grants that dump long free-text into fields built for tidy numbers (Shannon, 2026-09-15 — mirrors
+// the grant-list column fix): (1) NORMALIZE — the free-text money/date fields go through formatAwardStatTile
+// / formatDeadlineStatTile, which reuse the list column's placeholder logic to collapse junk to clean labels
+// ("Not stated" / "No deadline" / "Rolling") instead of an ellipsized sentence; num_awards → shortAwards();
+// match → compactCostShare, both pre-bounded. (2) CLAMP — every tile in the template hard-truncates
+// (min-width:0; overflow:hidden; ellipsis; nowrap on a minmax(0,1fr) grid) so NO value, however long, can
+// overflow/wrap/clip the strip. NORMALIZE keeps the value readable; CLAMP is the universal safety net.
 function buildStats(g: Grant): AlertStat[] {
   const stats: AlertStat[] = [];
-  const award = formatAwardRange(g.award_range_min, g.award_range_max);
-  if (award !== "—") stats.push({ value: award, label: g.award_range_is_estimate ? "award · est." : "award range" });
+  const award = formatAwardStatTile(g.award_range_min, g.award_range_max);
+  if (award) stats.push({ value: award, label: g.award_range_is_estimate ? "award · est." : "award range" });
   // Share the web pages' rule verbatim (grant-detail.tsx GrantStatBand): "None"
   // for no cost share, else the clean amount -- compactCostShare strips trailing
   // "match"/"cost share" wording, since the "match required" label already says it.
@@ -156,9 +158,102 @@ function buildStats(g: Grant): AlertStat[] {
   // template's ellipsis is the backstop for any pathologically long value.
   const cs = compactCostShare(g.cost_share);
   if (cs !== "—") stats.push({ value: cs, label: "match required" });
-  if (stats.length < 3 && g.num_awards) stats.push({ value: shortAwards(g.num_awards), label: "awards" });
-  stats.push({ value: shortDeadline(g.submission_deadline), label: "deadline", highlight: true });
+  if (stats.length < 3 && g.num_awards) {
+    const n = shortAwards(g.num_awards);
+    // Drop a placeholder count ("Unknown" / "Not available") rather than surface junk as an award count.
+    if (!isPlaceholderAward(n)) stats.push({ value: n, label: "awards" });
+  }
+  // Deadline shows the ABSOLUTE date only (formatDeadlineStatTile: a real date → "Sep 15", the rolling
+  // family → "Rolling", empty/placeholder junk → "No deadline") — a frozen grant fact that never drifts.
+  // The old "N days left" countdown sub-line was REMOVED (Shannon, 2026-09-15): a time-relative value
+  // baked into a save-once draft goes stale on the calendar clock, which is what forced the deadline into
+  // the freshness check and drove the day-tick re-enrich + send-time churn. A static date needs no such
+  // handling — see draftStillFresh (deadline no longer participates).
+  stats.push({
+    value: formatDeadlineStatTile(g.submission_deadline),
+    label: "deadline",
+    highlight: true,
+  });
   return stats.slice(-4); // keep the deadline (last) if we overflow
+}
+
+// The report page's eligibility HARD-KILL pin, mirrored so the alert's client-facing fit-score block can't
+// read "3 / Strong fit" on a grant the console/portal pin to no-go (both review bots flagged this on #570).
+// computeEligibility returns `ineligible` ONLY on a genuine structural note / skip_reason — never a keyword
+// miss (the PR #24 no-false-block discipline) — so it is a GRANT fact independent of the client and is
+// computed with null client fields, exactly as the roadmap page does. Gated on FIT_NARRATIVE_ENABLED, the
+// SAME flag that turns the pin on for the console/portal, so with the flag off this is inert.
+function grantStructurallyIneligible(g: Grant): boolean {
+  return (
+    computeEligibility({
+      eligibleEntityTypes: g.eligible_entity_types,
+      ineligibleEntities: g.ineligible_entities,
+      hardDisqualifiers: g.hard_disqualifiers,
+      skipReason: g.skip_reason,
+      geographicEligibility: g.geographic_eligibility,
+      clientOrgType: null,
+      clientState: null,
+    }).level === "ineligible"
+  );
+}
+
+// The card-derived alert fields (displayed fit score + the "Grant Intelligence" paragraph) that resolveFit
+// produces, with the eligibility hard-kill pin applied on top. The resolveFit half changes AFTER a draft is
+// saved on a CARD write with no grant/enrichment edit — a QA apply (qa_*), the fit-analysis drain
+// (fit_narrative*), or an engine rematch (fit_score) all move it. buildAlertData writes the snapshot from
+// this, and the draft staleness check (getOrCreateDraftAlert) re-derives from it, so the two can never
+// drift on how the value is computed. Clamped identically to the render path. This is the ONLY post-save
+// drift the alert has: every other field is a frozen grant fact (the deadline is now the absolute date only
+// — no time-relative countdown — so it never goes stale), and the pin is deterministic on the grant's
+// frozen eligibility facts + the deploy-time flag, so it re-derives stably too.
+//
+// `grant` is REQUIRED (not optional) precisely so the pin can never be silently skipped on one path but not
+// another: the write side (buildAlertData) and the freshness side (draftFitStillFresh) MUST apply the
+// identical pin, or the snapshot and its re-derivation disagree and the draft regenerates forever.
+export function alertFitSignature(card: ReviewCard, grant: Grant): { fitScore: 1 | 2 | 3 | null; grantIntelligence: string | null } {
+  const resolved = resolveFit(card);
+  const conceptSynopsis = clampAtSentence((card.concept_synopsis || "").trim(), CONCEPT_MAX) || null;
+  const narrative = resolved.narrative ? clampAtSentence(resolved.narrative.trim(), GRANT_INTEL_MAX) || null : null;
+  // Eligibility hard-kill PIN: flag on + structurally-ineligible grant → pin the DISPLAYED fit to 1 so the
+  // alert reads no-go exactly as the console/portal do. Only ever DEMOTES an existing score — a null fit
+  // stays null, so an ineligible card that never had a fit gets no fabricated "1 / Weak" block.
+  const fitScore =
+    resolved.fitScore !== null && fitNarrativeEnabled() && grantStructurallyIneligible(grant)
+      ? 1
+      : resolved.fitScore;
+  return { fitScore, grantIntelligence: narrative ?? conceptSynopsis };
+}
+
+// True when a saved draft's snapshotted fit score + Grant Intelligence still match what the live card would
+// render — i.e. no QA / fit-analysis / rematch write (nor a change in the eligibility-pin inputs) has moved
+// them since the draft was generated. A save-once draft is reused VERBATIM for preview AND send, and the
+// QA/fit-analysis/rematch writers do NOT call invalidateDraftAlert, so a false here means the draft must be
+// regenerated before it ships or it would send a PDF whose fit score / narrative contradicts the platform's
+// current verdict. Re-derives through the SAME alertFitSignature (grant included) so the pin is applied
+// identically on both sides and a re-clamp is stable.
+export function draftFitStillFresh(
+  stored: { fitScore?: 1 | 2 | 3 | null; grantIntelligence?: string | null },
+  card: ReviewCard,
+  grant: Grant,
+): boolean {
+  const sig = alertFitSignature(card, grant);
+  return (stored.fitScore ?? null) === sig.fitScore && (stored.grantIntelligence ?? null) === sig.grantIntelligence;
+}
+
+// The ONE freshness predicate for a saved DRAFT — shared by the single-send guard (getOrCreateDraftAlert)
+// AND the multi-select BATCH path (prepare skip / send / preview reuse, which read drafts via a raw
+// getDraftAlert), so a batch can never ship a draft the single-send path would have regenerated (#570
+// Claude Code Review). A WARM-CLIENT draft is fresh only while its snapshotted fit signature
+// (draftFitStillFresh — displayed fit score + Grant Intelligence narrative) still matches the LIVE card; a
+// QA apply / fit-analysis drain / engine rematch moves that WITHOUT calling invalidateDraftAlert. That is
+// the ONLY thing that can go stale: the deadline shows the absolute date (a frozen grant fact), no longer a
+// time-relative countdown, so it never drifts and is not checked here (Shannon, 2026-09-15 — removing the
+// countdown killed the day-tick re-enrich cost + send-time churn at the source). Cold outreach
+// (prospect/lead) is ALWAYS fresh — that template renders no fit signature. Structural ctx param (not the
+// AlertContext import) to keep this module decoupled.
+export function draftStillFresh(stored: AlertData, ctx: { card: ReviewCard; grant: Grant; isLead: boolean }): boolean {
+  const isColdOutreach = ctx.card.card_type === "prospect" || ctx.isLead;
+  return isColdOutreach || draftFitStillFresh(stored, ctx.card, ctx.grant);
 }
 
 export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichment | null): AlertData {
@@ -174,6 +269,12 @@ export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichme
   const awardsFull = (g.num_awards || "").trim();
   const awardsFootnote =
     awardsFull.length > 24 && shortAwards(awardsFull) !== awardsFull ? awardsFull : null;
+
+  // The DISPLAYED (QA-coalesced) fit + the client-facing "Grant Intelligence" narrative, from the ONE
+  // read-layer resolver (the same seam the console/portal render through). loadAlertContext selects the
+  // whole card, so every resolveFit input column (qa_*, fit_narrative*) is present.
+  const conceptSynopsis = clampAtSentence((card.concept_synopsis || "").trim(), CONCEPT_MAX) || null;
+  const { fitScore: displayedFit, grantIntelligence } = alertFitSignature(card, g);
 
   return {
     // ── narrative (model, with fallbacks) ──
@@ -197,7 +298,12 @@ export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichme
     // band off the page. 400 is real headroom (a typical synopsis runs ~290), so this bites
     // rarely rather than constantly. A limit can only fix overflow; short text still leaves
     // whitespace, which the grid's height:100% absorbs.
-    conceptSynopsis: clampAtSentence((card.concept_synopsis || "").trim(), CONCEPT_MAX) || null,
+    conceptSynopsis,
+    // The fit-score block (hero) + the Grant Intelligence paragraph (the concept box, swapped): the fit
+    // narrative when present, else the matcher synopsis, else (both null) a static line in the template.
+    fitScore: displayedFit,
+    fitScoreLabel: displayedFit ? FIT_BAND[displayedFit].label : null,
+    grantIntelligence,
     stats: buildStats(g),
     statsFootnote: awardsFootnote,
     // Concise, grounded eligibility from the model; deterministic tight fallback.

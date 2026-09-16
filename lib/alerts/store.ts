@@ -6,7 +6,7 @@ import { mintAccessToken } from "@/lib/tokens";
 import { enrichAlert } from "./enrich";
 import { ensureGrantBrief } from "@/lib/grants/brief";
 import { conceptHookForCard } from "@/lib/concept/store";
-import { buildAlertData, buildAlertEmailBody, buildProspectEmailBody } from "./data";
+import { buildAlertData, buildAlertEmailBody, buildProspectEmailBody, draftStillFresh } from "./data";
 import { senderFirstName } from "./sender";
 import { renderAlertPdf, renderHorizonPdf, launchAlertBrowser, closeBrowserOnReject } from "./render";
 import { mergeAlertPdfs } from "./merge-pdf";
@@ -243,10 +243,22 @@ export async function getOrCreateDraftAlert(
   opts?: { withHorizon?: boolean; withDecisionLinks?: boolean },
 ): Promise<GrantAlertRow> {
   const existing = await getDraftAlert(ctx.card.id);
-  const draft = existing
+  // STALENESS GUARD. The alert is save-once — this row is reused VERBATIM for preview AND send — so a
+  // frozen field that has drifted since the draft was generated would ship a PDF contradicting the card's
+  // current state. The ONE such drift is the fit-score block + Grant Intelligence narrative, a snapshot of
+  // resolveFit(ctx.card) that a QA apply (qa_*), the fit-analysis drain (fit_narrative*), or an engine
+  // rematch (fit_score) can move AFTER save, and none of those paths calls invalidateDraftAlert. Stale →
+  // DROP the drifted draft so it regenerates fresh (covers every writer in one place, including the
+  // protected pipeline rematch we can't hook). Every other field is a frozen grant FACT that never drifts —
+  // the deadline shows the absolute date (no time-relative countdown), so it needs no freshness check.
+  // Cold outreach (prospect/lead) renders no fit signature so it is always fresh. The SAME draftStillFresh
+  // predicate guards the multi-select batch path (lib/alerts/batch-send.ts), so that second read seam can't
+  // ship a stale draft this one would regenerate.
+  const usable = existing && draftStillFresh(existing.alert_data, ctx) ? existing : null;
+  const draft = usable
     ? opts?.withHorizon
-      ? await ensureHorizon(ctx, existing)
-      : existing
+      ? await ensureHorizon(ctx, usable)
+      : usable
     : await generateDraftAlert(ctx, userId, origin, opts);
   return opts?.withHorizon || opts?.withDecisionLinks
     ? ensureDecisionLinks(ctx, draft, userId, origin)

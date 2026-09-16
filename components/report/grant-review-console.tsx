@@ -736,7 +736,7 @@ function RationaleCard({
         <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-brand-navy/[0.06]">
           <Puzzle className="h-4 w-4 text-brand-navy" aria-hidden="true" />
         </span>
-        <h2 className="font-serif text-[17px] font-bold text-brand-navy">IntellEngine Intel</h2>
+        <h2 className="font-serif text-[17px] font-bold text-brand-navy">Grant Intelligence</h2>
         <div className="ml-auto flex items-center gap-3">
           {/* Staff-only edit affordance (null on the client portal). */}
           {narrativeEditor}
