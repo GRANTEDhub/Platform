@@ -366,9 +366,17 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                     <p className={EYEBROW}>
                       Discovered prospects{prospectCards.length > 0 ? ` (${prospectCards.length})` : ""}
                     </p>
+                    {/* Close is the ONLY UI to remove a grant from the prospect feed, so it must show for any
+                        feed-visible, not-yet-closed grant. Restores the original box-visibility condition
+                        (canProspect || canAdd || prospectCards.length > 0): canProspect covers an actively-
+                        prospectable grant; prospectCards>0 covers a grant whose prospects outlive a
+                        re-shred/rematch (gate flips to not_ready); canAdd covers a domestic, feed-visible grant
+                        that can NEVER be prospected (summary-shred / no ideal_applicant_profile) yet still sits
+                        in the feed with no other close path (Claude Code Review #576). Not gated on the scoring
+                        gate — closing prospecting has no dependency on match status. */}
                     {grant.prospecting_closed_at ? (
                       <Badge variant="warning">Closed</Badge>
-                    ) : gate !== "not_ready" ? (
+                    ) : canProspect || canAdd || prospectCards.length > 0 ? (
                       <CloseProspectingButton grantId={grant.id} />
                     ) : null}
                   </div>
@@ -376,11 +384,20 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                     <div className="mt-2.5">
                       <ProspectList prospects={prospectRows} />
                     </div>
-                  ) : (
+                  ) : canProspect ? (
                     <p className="mt-2 text-[12.5px] leading-[1.6] text-ink-subtle">
                       No prospects surfaced yet. Use <span className="font-semibold text-brand-navy">Prospect</span>{" "}
                       in the action panel to discover candidate orgs that fit this grant&apos;s ideal-applicant
                       profile.
+                    </p>
+                  ) : (
+                    // Prospecting isn't available here (blocked / closed / not yet scored), so the "Prospect"
+                    // button the copy above points to isn't rendered — name the real reason instead of a
+                    // control that isn't on the page (Claude Code Review #575).
+                    <p className="mt-2 text-[12.5px] leading-[1.6] text-ink-subtle">
+                      {grant.prospecting_closed_at
+                        ? "Prospecting is closed for this grant — no prospects were surfaced."
+                        : prospectHint ?? "Prospecting isn't available for this grant yet — see the action panel."}
                     </p>
                   )}
                 </div>
