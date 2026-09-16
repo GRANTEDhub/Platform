@@ -84,6 +84,17 @@ describe("buildAlertData — fit-score block + Grant Intelligence (PR B)", () =>
     expect(awardTile("50000", "250000")).toBe("$50K – $250K");
   });
 
+  it("a single prose-with-a-number award bound shows 'Not stated', never a fabricated '$N' on the tile", () => {
+    // The client PDF tile must not mine a bare number out of prose: "up to 10 sites" → "$10" was reachable
+    // through the single-bound formatAwardRange path the >22 guard misses (Claude Code Review, #571).
+    expect(awardTile("", "up to 10 sites")).toBe("Not stated");
+    // A real figure alongside a prose bound keeps the REAL figure, not a fabricated low bound.
+    expect(awardTile("up to 10 sites", "500000")).toBe("$500K");
+    // But a REAL award phrased with qualifier words carries a currency signal → shown, not suppressed (VADE #571).
+    expect(awardTile("$1.5 million", "")).toBe("$1.5M");
+    expect(awardTile("up to $50,000", "")).toBe("$50K");
+  });
+
   it("the deadline tile normalizes junk to 'No deadline' and a rolling intake to 'Rolling'", () => {
     expect(deadlineTile("Not available - verify at fly.arkansas.gov")).toBe("No deadline");
     expect(deadlineTile("Unknown -- funding varies by federal fiscal year appropriation")).toBe("No deadline");
@@ -91,13 +102,45 @@ describe("buildAlertData — fit-score block + Grant Intelligence (PR B)", () =>
     expect(deadlineTile("2027-01-15")).toBe("Jan 15"); // a real date still renders clean
   });
 
-  it("a junk award-COUNT tile is dropped, not surfaced as 'Unknown'", () => {
+  it("the strip is ALWAYS 4 tiles; a junk/missing award-COUNT shows 'Not stated', never dropped", () => {
+    // Shannon, 2026-09-15: always 4 tiles for visual consistency — a junk/missing value shows "Not stated"
+    // rather than dropping the tile (reversing the earlier junk-drop that left a 3-cell row).
     const stats = buildAlertData(
       grant({ award_range_min: "50000", award_range_max: "250000", num_awards: "Unknown" }),
       card(),
       null,
     ).stats;
-    expect(stats.find((s) => s.label === "awards")).toBeUndefined();
+    expect(stats).toHaveLength(4);
+    expect(stats.map((s) => s.label)).toEqual(["award range", "match required", "awards", "deadline"]);
+    expect(stats.find((s) => s.label === "awards")?.value).toBe("Not stated");
+    // A LONG placeholder count ("Not available", 13 chars) → "Not stated", NOT the truncated "Not availab…"
+    // (placeholder checked on the raw string before shortAwards slices it) — Claude Code Review.
+    const longPlaceholder = buildAlertData(grant({ award_range_min: "50000", award_range_max: "250000", num_awards: "Not available" }), card(), null).stats;
+    expect(longPlaceholder.find((s) => s.label === "awards")?.value).toBe("Not stated");
+    // A grant missing award + match + count entirely is STILL a full 4-wide strip of clean labels.
+    const bare = buildAlertData(grant({ award_range_min: null, award_range_max: null, cost_share: null, num_awards: null, submission_deadline: null }), card(), null).stats;
+    expect(bare.map((s) => s.value)).toEqual(["Not stated", "Not stated", "Not stated", "No deadline"]);
+  });
+
+  it("the 'award · est.' qualifier only labels a REAL figure, never the 'Not stated' fallback", () => {
+    // engine sets award_range_is_estimate=true precisely when BOTH bounds are null → the label must not read
+    // "award · est." over a "Not stated" value (an estimate of nothing) — Claude Code Review #571.
+    const nullEst = buildAlertData(grant({ award_range_min: null, award_range_max: null, award_range_is_estimate: true }), card(), null).stats[0];
+    expect(nullEst.value).toBe("Not stated");
+    expect(nullEst.label).toBe("award range");
+    // A real estimate figure keeps the "· est." qualifier.
+    const realEst = buildAlertData(grant({ award_range_min: "50000", award_range_max: "250000", award_range_is_estimate: true }), card(), null).stats[0];
+    expect(realEst.value).toBe("$50K – $250K");
+    expect(realEst.label).toBe("award · est.");
+  });
+
+  it("headlineHtml wraps the distinctive word in an orange-italic <em> (EmphasizedTitle parity); headline stays plain", () => {
+    const d = buildAlertData(grant({ title: "Airport Aid Program" }), card({ fit_score: 2 }), null);
+    expect(d.headline).toBe("Airport Aid Program");
+    expect(d.headlineHtml).toContain('<em style="font-style:italic;color:#E4761F;">Airport</em>');
+    expect((d.headlineHtml.match(/<em /g) || []).length).toBe(1); // exactly one emphasized word
+    // The plain words are escaped, not wrapped.
+    expect(d.headlineHtml).toContain("Aid Program");
   });
 
   it("an applied QA demote drives the DISPLAYED fit + its narrative (resolveFit coalesce)", () => {
