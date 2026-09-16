@@ -103,6 +103,18 @@ export function deadlineDaysLeft(raw: string | null | undefined): number | null 
   return Math.ceil((d.getTime() - Date.now()) / 86_400_000);
 }
 
+// A grant is EXPIRED when its deadline has STRICTLY passed — a real negative day count. This is
+// the ONE platform-wide expiry definition: PR #574's prospecting-feed filter (isExpiredFeedItem)
+// and the Ledger's "Expired" flag both go through it, and it matches the closed-sweep boundary
+// (deadlineDaysLeft < 0). CRITICAL: null (rolling / TBD / undated / unparseable) is NEVER expired —
+// it has no known close date, so it must keep surfacing. A large share of the AR-state repository is
+// rolling / always-open, so treating a null as expired would wrongly nuke it. negative = expired;
+// null = not; due TODAY (days === 0) = not (a due-today grant is still winnable).
+export function isExpired(raw: string | null | undefined): boolean {
+  const days = deadlineDaysLeft(raw);
+  return days !== null && days < 0;
+}
+
 // Whether a deadline is close enough to block a terminal action: today or already gone.
 //
 // DELIBERATELY WIDER THAN "CLOSED" (`daysLeft < 0`), which drives the Grant Report's
