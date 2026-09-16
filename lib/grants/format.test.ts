@@ -240,13 +240,15 @@ describe("formatAwardStatTile", () => {
     expect(formatAwardStatTile("0", "0")).toBeNull(); // formatAwardRange drops a $0 sentinel → "—"
   });
 
-  it("keeps a real bound when the other is long prose — 'Not stated' means NO figure known, not 'too long'", () => {
-    // The exact finding: a real min + a long prose max must keep "$50K", not nuke the known floor.
-    expect(formatAwardStatTile("50000", "Maximum per project set at the beginning of each funding cycle")).toBe("$50K");
-    // Symmetric: a long prose min + a real max.
-    expect(formatAwardStatTile("Amount varies by the specific project scope", "250000")).toBe("$250K");
-    // NEITHER bound is a real figure → still "Not stated".
-    expect(formatAwardStatTile("Not stated", "Maximum per project set at the beginning of each funding cycle")).toBe("Not stated");
+  it("collapses a long free-text pairing to 'Not stated' — never a FABRICATED figure from a prose number", () => {
+    // A >22 combined string (≥1 long prose bound) → "Not stated", so a bare number embedded in prose (a
+    // percentage / count / year) can't be surfaced as a dollar award — the mixed-branch regression parseAmount
+    // introduced ("Not to exceed 25% …" → a bogus "$25"). Claude Code Review #571.
+    expect(formatAwardStatTile("Not to exceed 25% of the total project cost", "varies by the size and scope of the applicant organization")).toBe("Not stated");
+    // A real min + a long prose max: safely "Not stated" (hiding a known floor beats inventing one).
+    expect(formatAwardStatTile("50000", "Maximum per project set at the beginning of each funding cycle")).toBe("Not stated");
+    // A genuinely clean short range is still kept verbatim.
+    expect(formatAwardStatTile("50000", "250000")).toBe("$50K – $250K");
   });
 });
 

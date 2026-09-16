@@ -266,18 +266,13 @@ export function formatAwardStatTile(min: string | null | undefined, max: string 
   const range = formatAwardRange(min, max);
   if (range === "—") return null;
   if (isPlaceholderAward(range)) return "Not stated";
-  if (range.length <= 22) return range;
-  // The combined string is long, so ≥1 bound is prose (a clean numeric range is always short). If exactly
-  // ONE bound is a real parsed figure, keep it ("$50K") rather than nuking a KNOWN amount — "Not stated"
-  // must mean no figure is known at all, not "the paired text was too long" (Claude Code Review). Only when
-  // NEITHER bound is a real figure is the whole tile "Not stated".
-  const loN = parseAmount(min);
-  const hiN = parseAmount(max);
-  const lo = loN !== null && loN > 0 ? abbrevDollars(loN) : null;
-  const hi = hiN !== null && hiN > 0 ? abbrevDollars(hiN) : null;
-  if (lo && !hi) return lo;
-  if (hi && !lo) return hi;
-  return "Not stated";
+  // A clean numeric range is ALWAYS short, so a >22 combined string means ≥1 bound is free-text prose.
+  // Collapse the whole tile to "Not stated" rather than try to salvage a bound: parseAmount matches ANY bare
+  // digit run ($ optional), so "Not to exceed 25% of project cost" / "up to 10 sites" would surface a
+  // FABRICATED "$25"/"$10" as the award (Claude Code Review). "Not stated" is the safe floor — it means no
+  // figure is trustworthy, which on a prose pairing is exactly right; a genuinely-known floor with a prose
+  // ceiling is rare and hiding it beats inventing one.
+  return range.length <= 22 ? range : "Not stated";
 }
 
 // A "no value" token the AR-state shred writes into submission_deadline when it found no date. A leading
