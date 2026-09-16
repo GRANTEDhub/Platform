@@ -1,5 +1,29 @@
 import { describe, it, expect } from "vitest";
-import { toReportItem, type ReportCardRow } from "./shape";
+import { toReportItem, isExpired, type ReportCardRow } from "./shape";
+
+// The ONE platform-wide "deadline strictly passed" predicate (#573). The prospecting feed filter
+// (#574) and the Ledger's Expired flag both go through it, matching the closed-sweep boundary.
+describe("isExpired", () => {
+  it("is expired ONLY for a genuinely-passed date (deadlineDaysLeft < 0)", () => {
+    expect(isExpired("2000-01-01")).toBe(true);
+    expect(isExpired("2999-12-31")).toBe(false);
+  });
+
+  it("NEVER expires a rolling / undated / unparseable / empty deadline (null) — the AR guard", () => {
+    // A large share of the AR-state repository is rolling; a null must keep surfacing, never expire.
+    expect(isExpired(null)).toBe(false);
+    expect(isExpired(undefined)).toBe(false);
+    expect(isExpired("")).toBe(false);
+    expect(isExpired("Rolling")).toBe(false);
+    expect(isExpired("Varies")).toBe(false);
+    expect(isExpired("TBD")).toBe(false);
+  });
+
+  it("a deadline due TODAY is not yet expired (days === 0, still winnable)", () => {
+    // Its own UTC date parses to today's midnight, which is <= now → deadlineDaysLeft 0, not < 0.
+    expect(isExpired(new Date().toISOString().slice(0, 10))).toBe(false);
+  });
+});
 
 // The QA-override client/staff trust boundary in toReportItem: a CLIENT surface may carry ONLY an
 // `applied` verdict into its (RSC-serialized) props; the internal unverified/failed states are staff-only.

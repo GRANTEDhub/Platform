@@ -25,15 +25,13 @@
 // Pure + unit-tested so the filter and the ordering are verified without the async server page.
 
 import type { ProspectFeedItem } from "@/lib/grants/gate";
-import { deadlineDaysLeft } from "@/lib/report/shape";
+import { deadlineDaysLeft, isExpired } from "@/lib/report/shape";
 
-// GENUINELY expired: a real negative day count. deadlineDaysLeft returns null for a rolling /
-// undated / unparseable deadline, and that null is NEVER expired (it stays in the feed). The
-// null-guard is load-bearing: `null < 0` is false in JS, but we assert the intent explicitly so
-// no future refactor can let a rolling grant read as expired.
+// GENUINELY expired: a real negative day count, with rolling/undated/null NEVER expired. Delegates
+// to the shared `isExpired` (lib/report/shape.ts) so the feed filter and the Ledger's "Expired" flag
+// share ONE expiry definition and can never drift (the #573 generalization of this #574 predicate).
 export function isExpiredFeedItem(item: ProspectFeedItem): boolean {
-  const days = deadlineDaysLeft(item.grant.submission_deadline);
-  return days !== null && days < 0;
+  return isExpired(item.grant.submission_deadline);
 }
 
 // A grant is actionable when it has a live thread: at least one surfaced prospect OR at least one

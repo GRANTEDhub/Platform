@@ -3,6 +3,7 @@ import { format, parseISO } from "date-fns";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { formatDeadlineShort } from "@/lib/grants/format";
+import { isExpired } from "@/lib/report/shape";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { IngestForm } from "./ingest-form";
@@ -60,13 +61,17 @@ function embedName(e: { name: string } | { name: string }[] | null): string | nu
 export default async function LedgerPage({
   searchParams,
 }: {
-  searchParams: { q?: string; tier?: string; intl?: string };
+  searchParams: { q?: string; tier?: string; intl?: string; expired?: string };
 }) {
   await requireUser(); // admins + contractors
   const supabase = createClient();
 
   const search = (searchParams.q ?? "").trim();
   const activeTier = (searchParams.tier ?? "all") as DispositionTier | "all";
+  // Expired-only filter (#573). Orthogonal to the funnel tier — a grant can be "Alerted" AND
+  // expired — so it's a separate axis like the international toggle, not a tier. A passed-deadline
+  // grant is flagged in place (badge), never purged from this record; this just isolates them.
+  const showExpiredOnly = searchParams.expired === "1";
   // International grants are stored (is_domestic=false) but hidden from the Ledger
   // by default -- domestic-only mandate. Purely a DISPLAY filter: the rows still
   // exist and are reachable via ?intl=1 (the "Show international" toggle); nothing
@@ -157,8 +162,12 @@ export default async function LedgerPage({
         },
         cardsByGrant.get(g.id!) ?? [],
       ),
+      // Same platform-wide predicate the prospecting feed / closed-sweep use — keys on the
+      // free-text submission_deadline; null (rolling/undated) is never expired.
+      expired: isExpired(g.submission_deadline),
     }))
-    .filter((r) => activeTier === "all" || r.disposition.tier === activeTier);
+    .filter((r) => activeTier === "all" || r.disposition.tier === activeTier)
+    .filter((r) => !showExpiredOnly || r.expired);
 
   return (
     <div>
@@ -171,11 +180,12 @@ export default async function LedgerPage({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap gap-1.5">
               {TIER_FILTERS.map((f) => {
-                // Preserve q + intl across tier switches so the toggle sticks.
+                // Preserve q + intl + expired across tier switches so the toggles stick.
                 const p = new URLSearchParams();
                 if (f.value !== "all") p.set("tier", f.value);
                 if (search) p.set("q", search);
                 if (showIntl) p.set("intl", "1");
+                if (showExpiredOnly) p.set("expired", "1");
                 const qs = p.toString();
                 const href = qs ? `/grants?${qs}` : "/grants";
                 const active = activeTier === f.value;
@@ -196,11 +206,33 @@ export default async function LedgerPage({
             </div>
             <div className="flex items-center gap-2">
               {(() => {
-                // Toggle to the OPPOSITE state, preserving tier + q.
+                // Expired-only toggle — orthogonal to the tier chips, preserving tier + q + intl.
+                const p = new URLSearchParams();
+                if (activeTier !== "all") p.set("tier", activeTier);
+                if (search) p.set("q", search);
+                if (showIntl) p.set("intl", "1");
+                if (!showExpiredOnly) p.set("expired", "1");
+                const qs = p.toString();
+                return (
+                  <Link
+                    href={qs ? `/grants?${qs}` : "/grants"}
+                    className={`rounded-md border px-2.5 py-1 text-xs font-medium ${
+                      showExpiredOnly
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-card text-muted-foreground hover:bg-accent/60"
+                    }`}
+                  >
+                    {showExpiredOnly ? "Expired only ✓" : "Expired only"}
+                  </Link>
+                );
+              })()}
+              {(() => {
+                // Toggle to the OPPOSITE state, preserving tier + q + expired.
                 const p = new URLSearchParams();
                 if (activeTier !== "all") p.set("tier", activeTier);
                 if (search) p.set("q", search);
                 if (!showIntl) p.set("intl", "1");
+                if (showExpiredOnly) p.set("expired", "1");
                 const qs = p.toString();
                 return (
                   <Link
@@ -214,6 +246,7 @@ export default async function LedgerPage({
               <form method="get" className="flex gap-2">
                 {activeTier !== "all" && <input type="hidden" name="tier" value={activeTier} />}
                 {showIntl && <input type="hidden" name="intl" value="1" />}
+                {showExpiredOnly && <input type="hidden" name="expired" value="1" />}
                 <input
                   type="text"
                   name="q"
@@ -236,7 +269,7 @@ export default async function LedgerPage({
                 </tr>
               </thead>
               <tbody>
-                {rows.map(({ grant: g, disposition: d }) => (
+                {rows.map(({ grant: g, disposition: d, expired }) => (
                   <tr key={g.id} className="border-b align-top last:border-0 hover:bg-muted/30">
                     <td className="px-4 py-3">
                       <Link href={`/grants/${g.id}`} className="font-medium hover:underline">
@@ -254,6 +287,9 @@ export default async function LedgerPage({
                     </td>
                     <td className="px-4 py-3">
                       <Badge variant={TIER_BADGE[d.tier].variant}>{d.label}</Badge>
+                      {/* Expired is orthogonal to the funnel tier — a grant can be Alerted AND
+                          expired — so it rides as a second, muted flag beside the tier badge. */}
+                      {expired && <Badge variant="outline" className="ml-1.5">Expired</Badge>}
                       {d.detail && (
                         <p className="mt-1 max-w-md text-xs text-muted-foreground">{d.detail}</p>
                       )}
@@ -269,7 +305,7 @@ export default async function LedgerPage({
                 {rows.length === 0 && (
                   <tr>
                     <td colSpan={4} className="px-4 py-12 text-center text-muted-foreground">
-                      {search || activeTier !== "all"
+                      {search || activeTier !== "all" || showExpiredOnly
                         ? "No grants match this filter."
                         : "No grants yet. Paste a link or NOFO on the right, or let the scheduled ingest pull new opportunities."}
                     </td>
