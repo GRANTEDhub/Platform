@@ -5,7 +5,7 @@ import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { Badge } from "@/components/ui/badge";
 import { AutoRefresh } from "@/components/ui/auto-refresh";
-import { ScoreBadge, DecisionBadge, GrantStatusBadge } from "@/components/grants/badges";
+import { GrantStatusBadge } from "@/components/grants/badges";
 import { OverviewCard, type ReviewKeyDetail } from "@/components/report/grant-review-console";
 import { ProgramAwardMap } from "@/components/report/program-award-map";
 import type { ProgramAwardSummary } from "@/lib/grants/program-awards";
@@ -15,8 +15,9 @@ import { compactCostShare, formatDeadline } from "@/lib/grants/format";
 import { MatchOutcomes, type OutcomeCard } from "@/components/grants/match-outcomes";
 import { getGrantGateStatus, undecidedClientCount } from "@/lib/grants/gate";
 import { getSentAlertsByCards } from "@/lib/alerts/sent-status";
+import { prospectCredibility } from "@/lib/prospects/credibility";
 import { ProspectButton } from "../prospect-button";
-import { ProspectAlertButton } from "../prospect-alert-button";
+import { ProspectList, type ProspectRow } from "../prospect-list";
 import { CloseProspectingButton } from "../close-prospecting-button";
 import { AddToClientControl } from "@/app/(app)/grants/[id]/add-to-client";
 import type { Grant, ReviewCard, Client, Prospect, IdealApplicantProfile as IAP } from "@/types/database";
@@ -30,17 +31,18 @@ export const dynamic = "force-dynamic";
 //     of Funds, the source link, the facts strip). Default OverviewCard is untouched → client report
 //     renders byte-identical.
 //   · INTELLENGINE SECTION → the report's two-column [narrative | fit-factors] shell, substituted here for
-//     [ Ideal-application narrative | Program Award History map (the SAME component the report uses) ].
-//   · RIGHT RAIL (the report's ScoreCard slot) → a navy action box (Prospect + Add-to-client), then the
-//     client-match summary (who among our clients matched + the conflict gate) below it.
-//   · The discovered prospect orgs — prospecting's core output, no report analog — sit in a full-width
-//     "Prospects" section below the IntellEngine section.
+//     [ Ideal-application narrative | DISCOVERED PROSPECTS (prospecting's core output, expand-in-place) ].
+//     Clicking an org expands its stored why-it-matched rationale + credibility inline (no navigation).
+//   · RIGHT RAIL (the report's ScoreCard slot) → a navy action box (Prospect + Add-to-client controls),
+//     then the client-match summary (who among our clients matched + the conflict gate), then the Program
+//     Award History map as its own tile (the SAME component the report mounts, moved here to de-congest
+//     the IntellEngine section).
 // Make-or-break + risk factors are dropped (not in this layout).
 const EYEBROW = "text-[10px] font-bold uppercase tracking-[0.11em] text-ink-muted";
 
 type CardRow = ReviewCard & {
   clients: Pick<Client, "id" | "name"> | null;
-  prospects: Pick<Prospect, "id" | "name" | "org_type" | "source_url"> | null;
+  prospects: Pick<Prospect, "id" | "name" | "org_type" | "source_url" | "capability_summary"> | null;
 };
 
 export default async function ProspectDetailPage({ params }: { params: { id: string } }) {
@@ -57,7 +59,7 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
 
   const { data: cards } = await supabase
     .from("review_cards")
-    .select("*, clients(id, name), prospects(id, name, org_type, source_url)")
+    .select("*, clients(id, name), prospects(id, name, org_type, source_url, capability_summary)")
     .eq("grant_id", params.id)
     .order("fit_score", { ascending: false })
     // Generic-over-specific demote: an inferred-nexus card sinks within its fit tier. Inert while
@@ -201,9 +203,35 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
   const iap = grant.ideal_applicant_profile as IAP | null | undefined;
   const iapArchetypes = iap?.archetypes ?? [];
 
-  // ── Program award map (right column). Reuse the report's component + its exact data source, untouched. ──
+  // ── Program award map (now a standalone RAIL tile). Reuse the report's component + its exact data source. ──
   const hasCfda = Array.isArray(grant.assistance_listings) && grant.assistance_listings.length > 0;
   const programAwardSummary = (grant.program_award_summary as unknown as ProgramAwardSummary | null) ?? null;
+
+  // ── Discovered-prospects rows for the IntellEngine output column (expand-in-place). Built here from
+  // fields the page ALREADY selects: the prose rationale (why_this_org / concept_synopsis) rides on the
+  // review_cards `*` select, and the credibility snapshot is a deterministic, read-time derivation of the
+  // prospect's source_url + capability_summary (no model call, no query change). No factor_scores — a
+  // prospect card has none, so the client match card's bar graphic is deliberately not reused here. ──
+  const prospectDeadlineLabel = grant.submission_deadline ? formatDeadline(grant.submission_deadline) : null;
+  const prospectRows: ProspectRow[] = prospectCards.map((pc) => ({
+    cardId: pc.id,
+    name: pc.prospects?.name ?? "Prospect org",
+    orgType: pc.prospects?.org_type ?? null,
+    fitScore: (pc.fit_score ?? null) as 1 | 2 | 3 | null,
+    decision: pc.decision,
+    sentAt: pc.sent_at,
+    sentTo: sentByCard.get(pc.id)?.sentTo ?? null,
+    alerted: sentByCard.has(pc.id),
+    whyThisOrg: pc.why_this_org,
+    conceptSynopsis: pc.concept_synopsis,
+    credibility: prospectCredibility({
+      source_url: pc.prospects?.source_url ?? null,
+      capability_summary: pc.prospects?.capability_summary ?? null,
+    }),
+    daysLeft: days,
+    deadlineLabel: prospectDeadlineLabel,
+    backHref: `/intel/${grant.id}`,
+  }));
 
   return (
     <div className="min-h-full bg-ground">
@@ -270,7 +298,7 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                 </span>
                 <h2 className="font-serif text-[17px] font-bold text-brand-navy">IntellEngine</h2>
                 <span className="ml-auto rounded-full bg-brand-navy/[0.06] px-3 py-1 text-[11px] font-semibold text-brand-navy">
-                  Ideal application · award history
+                  Ideal application · discovered prospects
                 </span>
               </div>
               <div className="grid gap-6 px-5 py-[18px] lg:grid-cols-[1.3fr_1.65fr]">
@@ -329,14 +357,31 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                   )}
                 </div>
 
-                {/* RIGHT — Program Award History map, the SAME component the report uses (reused as-is). */}
+                {/* RIGHT — DISCOVERED PROSPECTS (prospecting's core output), expand-in-place. Moved here from
+                    the cramped rail so surfaced orgs get room; the Prospect action stays in the rail action
+                    box, and the award-history map moved to its own rail tile. Clicking an org expands its
+                    stored "why it matched" rationale + credibility inline — no navigation to /review. */}
                 <div className="min-w-0">
-                  {hasCfda ? (
-                    <ProgramAwardMap compact awardTable grantId={grant.id} initialSummary={programAwardSummary} hasCfda />
-                  ) : (
-                    <div className="flex h-full min-h-[140px] items-center justify-center rounded-sharp border border-edge bg-brand-cream/40 px-4 py-6 text-center text-[12px] text-ink-subtle">
-                      No CFDA on this grant — no program award history to map.
+                  <div className="flex items-center justify-between gap-2">
+                    <p className={EYEBROW}>
+                      Discovered prospects{prospectCards.length > 0 ? ` (${prospectCards.length})` : ""}
+                    </p>
+                    {grant.prospecting_closed_at ? (
+                      <Badge variant="warning">Closed</Badge>
+                    ) : gate !== "not_ready" ? (
+                      <CloseProspectingButton grantId={grant.id} />
+                    ) : null}
+                  </div>
+                  {prospectCards.length > 0 ? (
+                    <div className="mt-2.5">
+                      <ProspectList prospects={prospectRows} />
                     </div>
+                  ) : (
+                    <p className="mt-2 text-[12.5px] leading-[1.6] text-ink-subtle">
+                      No prospects surfaced yet. Use <span className="font-semibold text-brand-navy">Prospect</span>{" "}
+                      in the action panel to discover candidate orgs that fit this grant&apos;s ideal-applicant
+                      profile.
+                    </p>
                   )}
                 </div>
               </div>
@@ -352,107 +397,48 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                 Add-to-client is the navy SECONDARY, distinct from the hero, kept on a contained LIGHT input
                 panel because AddToClientControl is the shared Ledger control — its select, soft-block confirm
                 and messages are built for a light surface, so this brands the shell WITHOUT overriding that
-                shared control's internals. JUDGMENT CALL (flagged for Shannon): the discovered-prospects table
-                stays on a legible LIGHT card inside the branded shell — its score chips / status / decision
-                badges are fine-grained and lose legibility reversed onto chrome. Brand tokens only, no hex. */}
+                shared control's internals. The discovered-prospects list is no longer in this box — it moved to
+                the IntellEngine output column, so this box is controls only. Brand tokens only, no hex. */}
             <section className="rounded-sharp bg-brand-chrome p-4 text-white shadow-sm">
               <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-white/[0.55]">
                 IntellEngine Action
               </p>
-              {canProspect || canAdd || prospectCards.length > 0 ? (
-                <div className="mt-3 space-y-4">
-                  {/* Controls — the orange left-accent + cream captions the ScoreCard uses on "Your decision".
-                      Rendered only when there is a control or hint to show (an existing-prospects-only box on a
-                      closed grant collapses straight to the table). */}
-                  {(canProspect || canAdd || prospectHint) && (
-                    <div className="space-y-3.5 border-l-2 border-brand-orange pl-3.5">
-                      {canProspect ? (
-                        <div>
-                          <p className="text-[11.5px] leading-[1.5] text-white/[0.72]">Prospect to a non-client</p>
-                          {/* ORANGE hero. ProspectButton exposes no variant prop, so its single <Button> is
-                              restyled page-locally (important-flagged to beat the default navy). The status
-                              line lifts to cream so it reads on the chrome — scoped to .text-muted-foreground
-                              so the sibling error <p> (text-destructive) KEEPS its red, or a failed discovery
-                              run would look identical to a successful one on the dark shell. */}
-                          <div className="mt-1.5 [&_button]:w-full [&_button]:!bg-brand-orangeFill [&_button]:!text-white [&_button:hover]:!bg-brand-orangeFillHover [&_.text-muted-foreground]:!text-white/70">
-                            <ProspectButton grantId={grant.id} />
-                          </div>
-                        </div>
-                      ) : (
-                        prospectHint && (
-                          <p className="text-[11.5px] leading-[1.5] text-white/[0.72]">{prospectHint}</p>
-                        )
-                      )}
-                      {canAdd && (
-                        <div>
-                          <p className="text-[11.5px] leading-[1.5] text-white/[0.72]">Add to an existing client</p>
-                          {/* Navy SECONDARY (default Button) on its own light panel — visually distinct from the
-                              orange hero, and the shared control's light-native internals render unchanged.
-                              text-foreground RESETS the section's inherited text-white (a background doesn't
-                              reset color): without it the bg-card <select> value and the ghost Cancel buttons
-                              render white-on-white. */}
-                          <div className="mt-1.5 rounded-sharp bg-white p-2.5 text-foreground">
-                            <AddToClientControl grantId={grant.id} clients={activeClients} />
-                          </div>
-                        </div>
-                      )}
+              {canProspect || canAdd || prospectHint ? (
+                <div className="mt-3 space-y-3.5 border-l-2 border-brand-orange pl-3.5">
+                  {/* Controls ONLY — the orange left-accent + cream captions the ScoreCard uses on "Your
+                      decision". The discovered-prospects list moved OUT of this box to the roomier IntellEngine
+                      output column (with the /review link dropped for expand-in-place); Prospect + Add-to-client
+                      stay here, and CloseProspectingButton moved to that output column's header. */}
+                  {canProspect ? (
+                    <div>
+                      <p className="text-[11.5px] leading-[1.5] text-white/[0.72]">Prospect to a non-client</p>
+                      {/* ORANGE hero. ProspectButton exposes no variant prop, so its single <Button> is
+                          restyled page-locally (important-flagged to beat the default navy). The status
+                          line lifts to cream so it reads on the chrome — scoped to .text-muted-foreground
+                          so the sibling error <p> (text-destructive) KEEPS its red, or a failed discovery
+                          run would look identical to a successful one on the dark shell. */}
+                      <div className="mt-1.5 [&_button]:w-full [&_button]:!bg-brand-orangeFill [&_button]:!text-white [&_button:hover]:!bg-brand-orangeFillHover [&_.text-muted-foreground]:!text-white/70">
+                        <ProspectButton grantId={grant.id} />
+                      </div>
+                    </div>
+                  ) : (
+                    prospectHint && (
+                      <p className="text-[11.5px] leading-[1.5] text-white/[0.72]">{prospectHint}</p>
+                    )
+                  )}
+                  {canAdd && (
+                    <div>
+                      <p className="text-[11.5px] leading-[1.5] text-white/[0.72]">Add to an existing client</p>
+                      {/* Navy SECONDARY (default Button) on its own light panel — visually distinct from the
+                          orange hero, and the shared control's light-native internals render unchanged.
+                          text-foreground RESETS the section's inherited text-white (a background doesn't
+                          reset color): without it the bg-card <select> value and the ghost Cancel buttons
+                          render white-on-white. */}
+                      <div className="mt-1.5 rounded-sharp bg-white p-2.5 text-foreground">
+                        <AddToClientControl grantId={grant.id} clients={activeClients} />
+                      </div>
                     </div>
                   )}
-                  {/* Prospects — LIGHT card (legibility judgment call). The header always renders when the box
-                      shows (CloseProspectingButton is the only UI entry to close-prospecting, and a closed grant
-                      needs its badge even with zero cards); only the LIST is gated on prospects existing
-                      (Shannon: no empty-state table). Same data + markup as before, now on white.
-                      text-foreground resets the section's inherited text-white so the outline Close button
-                      and its ghost Cancel (no color of their own) don't render white-on-white. */}
-                  <div className="rounded-sharp bg-white p-3 text-foreground">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-[11.5px] text-ink-subtle">Prospects ({prospectCards.length})</p>
-                      {grant.prospecting_closed_at ? (
-                        <Badge variant="warning">Closed</Badge>
-                      ) : (
-                        <CloseProspectingButton grantId={grant.id} />
-                      )}
-                    </div>
-                    {prospectCards.length > 0 && (
-                      <ul className="mt-2 max-h-[220px] divide-y divide-brand-navy/[0.08] overflow-y-auto text-[13px]">
-                        {prospectCards.map((pc) => (
-                          <li key={pc.id} className="flex items-center justify-between gap-2 py-2">
-                            <Link
-                              href={`/review/${pc.id}`}
-                              className="min-w-0 truncate font-medium text-brand-navy hover:underline"
-                            >
-                              {pc.prospects?.name || "Prospect org"}
-                            </Link>
-                            <div className="flex shrink-0 items-center gap-1.5">
-                              <ScoreBadge score={(pc.fit_score ?? 2) as 1 | 2 | 3} />
-                              {sentByCard.has(pc.id) ? (
-                                <Badge variant="success">✓ Alerted</Badge>
-                              ) : (
-                                <>
-                                  <DecisionBadge decision={pc.decision} />
-                                  {/* Reuse the existing AlertSend flow (autoOpen modal) right here — draft +
-                                      cold one-pager send without leaving /intel. Only on not-yet-alerted rows;
-                                      a sent row shows the badge above and this unmounts on the post-send
-                                      router.refresh(). */}
-                                  <ProspectAlertButton
-                                    cardId={pc.id}
-                                    sentAt={pc.sent_at}
-                                    sentTo={sentByCard.get(pc.id)?.sentTo}
-                                    contactName={pc.prospects?.name ?? null}
-                                    // Overdue gate (grant-level): warns before a cold email on a
-                                    // closed/closing-today grant, matching the roadmap prospect path.
-                                    daysLeft={days}
-                                    deadlineLabel={grant.submission_deadline ? formatDeadline(grant.submission_deadline) : null}
-                                    backHref={`/intel/${grant.id}`}
-                                  />
-                                </>
-                              )}
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
                 </div>
               ) : (
                 <p className="mt-2 text-[12.5px] leading-[1.5] text-white/80">
@@ -498,6 +484,22 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
               </div>
               <div className="mt-4 border-t border-hairline-strong pt-4">
                 <MatchOutcomes cards={carryOver} emptyText="No client matches on this grant." />
+              </div>
+            </section>
+
+            {/* PROGRAM AWARD HISTORY — its own standalone rail tile now (moved out of the IntellEngine
+                section to de-congest it; the discovered-prospects output took that column). The SAME
+                component the grant report mounts in its rail foot, reused as-is. */}
+            <section className="rounded-sharp border border-edge bg-white p-5">
+              <p className={EYEBROW}>Program award history</p>
+              <div className="mt-3">
+                {hasCfda ? (
+                  <ProgramAwardMap compact awardTable grantId={grant.id} initialSummary={programAwardSummary} hasCfda />
+                ) : (
+                  <div className="flex min-h-[120px] items-center justify-center rounded-sharp border border-edge bg-brand-cream/40 px-4 py-6 text-center text-[12px] text-ink-subtle">
+                    No CFDA on this grant — no program award history to map.
+                  </div>
+                )}
               </div>
             </section>
           </aside>
