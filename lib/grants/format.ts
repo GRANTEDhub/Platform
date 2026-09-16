@@ -302,10 +302,12 @@ export function formatAwardStatTile(min: string | null | undefined, max: string 
 // A "no value" token the AR-state shred writes into submission_deadline when it found no date. A leading
 // match is enough ("Not available - verify at fly.arkansas.gov", "Unknown -- funding varies…") — the note
 // after the placeholder is the shred telling the client where to look, which the tiny tile can't carry.
-const DEADLINE_PLACEHOLDER =
+// Exported so lib/grants/deadline-parse.ts reuses the IDENTICAL "no fixed date" families the alert tile
+// uses — the expiry parser and the display tile must agree on what counts as rolling / undated.
+export const DEADLINE_PLACEHOLDER =
   /^(?:not\s+(?:stated|available|specified|listed|given|provided|posted)|unspecified|unknown|undetermined|to\s+be\s+determined|tbd|n\/?a|none)\b/i;
 // The rolling/continuous family — a real intake with no single fixed date.
-const ROLLING_DEADLINE =
+export const ROLLING_DEADLINE =
   /\b(?:rolling|continuous(?:ly)?|ongoing|year[-\s]?round|open[-\s]?until[-\s]?filled|accepted\s+(?:on\s+a\s+)?rolling|no\s+(?:fixed\s+)?deadline)\b/i;
 
 // The deadline value for the ALERT PDF stat TILE. A real date → "Sep 15"; the rolling/continuous family →

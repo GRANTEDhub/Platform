@@ -14,6 +14,7 @@ import type {
   ReviewCard,
 } from "@/types/database";
 import { awardRangeOrEstimate, formatDeadlineShort, compactCostShare } from "@/lib/grants/format";
+import { nextDeadlineFrom } from "@/lib/grants/deadline-parse";
 import { resolveFit, type QaVerdictView } from "@/lib/report/qa-override";
 
 export type FactorKey = keyof FactorScores;
@@ -93,13 +94,15 @@ export function factorViews(scores: FactorScores | null, keys: FactorKey[] = ALL
   });
 }
 
-// Whole days until the deadline (negative once past). null when the date is
-// rolling / TBD / unparseable — mirrors the grant-detail sublabel logic.
+// Whole days until the deadline (negative once past), or null when the date is rolling / TBD /
+// undated / carries no explicit-year date. Delegates to `nextDeadlineFrom` (the ONE shared free-text
+// parser), which resolves multi-cycle and open-then-deadline prose to its latest-future date — the
+// naive `new Date(raw)` this replaced returned Invalid Date on all of those, which is what let
+// genuinely-closed AR-state grants sit in live reports as "new matches". Every expiry gate reads
+// through here (isExpired below, the closed-sweep, the prospecting filter, the Ledger's Expired flag).
 export function deadlineDaysLeft(raw: string | null | undefined): number | null {
-  const s = (raw ?? "").trim();
-  if (!s || !/\d{4}/.test(s)) return null;
-  const d = new Date(s);
-  if (isNaN(d.getTime())) return null;
+  const d = nextDeadlineFrom(raw);
+  if (d === null) return null;
   return Math.ceil((d.getTime() - Date.now()) / 86_400_000);
 }
 
