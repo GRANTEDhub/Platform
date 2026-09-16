@@ -78,12 +78,14 @@ export default async function LedgerPage({
   // is dropped and the flag is untouched.
   const showIntl = searchParams.intl === "1";
 
-  // The default "all" browse is capped for speed, but a SELECTED tier must be
-  // COMPLETE -- disposition is derived in-memory over the fetched rows, so a cap
-  // would silently truncate the tier (e.g. Profile gap, a triage queue that must
-  // show every qualifying grant). When a tier is active, fetch uncapped (small
-  // text columns; internal admin page; 561 grants today, headroom to 2000).
-  const rowCap = activeTier === "all" ? 200 : 2000;
+  // The default "all" browse is capped for speed, but any IN-MEMORY POST-FILTER must see a
+  // COMPLETE set -- disposition AND the expired flag are derived over the fetched rows, so a cap
+  // would silently truncate the result (e.g. Profile gap, a triage queue that must show every
+  // qualifying grant; or Expired only, whose matches skew toward OLDER ingests well outside the
+  // newest 200 -- capping there would show a misleadingly-small list). So uncap whenever a
+  // selected tier OR the expired filter is active (small text columns; internal admin page; 561
+  // grants today, headroom to 2000).
+  const rowCap = activeTier === "all" && !showExpiredOnly ? 200 : 2000;
 
   let grantQuery = supabase
     .from("grants")
