@@ -239,6 +239,40 @@ describe("formatAwardStatTile", () => {
     expect(formatAwardStatTile(null, null)).toBeNull();
     expect(formatAwardStatTile("0", "0")).toBeNull(); // formatAwardRange drops a $0 sentinel → "—"
   });
+
+  it("collapses a long free-text pairing to 'Not stated' — never a FABRICATED figure from a prose number", () => {
+    // A >22 combined string (≥1 long prose bound) → "Not stated", so a bare number embedded in prose (a
+    // percentage / count / year) can't be surfaced as a dollar award — the mixed-branch regression parseAmount
+    // introduced ("Not to exceed 25% …" → a bogus "$25"). Claude Code Review #571.
+    expect(formatAwardStatTile("Not to exceed 25% of the total project cost", "varies by the size and scope of the applicant organization")).toBe("Not stated");
+    // A real min + a long prose max: safely "Not stated" (hiding a known floor beats inventing one).
+    expect(formatAwardStatTile("50000", "Maximum per project set at the beginning of each funding cycle")).toBe("Not stated");
+    // A genuinely clean short range is still kept verbatim.
+    expect(formatAwardStatTile("50000", "250000")).toBe("$50K – $250K");
+  });
+
+  it("drops a SINGLE prose-with-a-number bound so it can never fabricate a short '$N' (the >22 blind spot)", () => {
+    // When ONE bound is empty, formatAwardRange collapses the other prose bound to a SHORT "$10" that slips
+    // UNDER the >22 guard — so the fabricating bound is dropped BEFORE it is mined (Claude Code Review, #571).
+    expect(formatAwardStatTile("", "up to 10 sites")).toBeNull(); // no fabricated "$10" (buildStats → "Not stated")
+    expect(formatAwardStatTile("Not to exceed 25% of project cost", "")).toBeNull(); // no fabricated "$25"
+    // A prose-with-a-number bound alongside a CLEAN figure drops the prose and keeps the REAL figure.
+    expect(formatAwardStatTile("up to 10 sites", "500000")).toBe("$500K");
+    // A non-numeric token has no number to mine → kept verbatim; a clean numeric range is unchanged.
+    expect(formatAwardStatTile("Varies", null)).toBe("Varies");
+    expect(formatAwardStatTile("50000", "250000")).toBe("$50K – $250K");
+  });
+
+  it("PRESERVES a real $ figure wrapped in qualifier words — a currency signal is not prose (Vercel Agent Review, #571)", () => {
+    // "$1.5 million" / "up to $50,000" / "$500,000 per year" carry a $ or spelled magnitude → real money, KEPT
+    // (the prose-drop only fires on a number with NO currency signal, so these are never suppressed).
+    expect(formatAwardStatTile("$1.5 million", null)).toBe("$1.5M");
+    expect(formatAwardStatTile("up to $50,000", null)).toBe("$50K");
+    expect(formatAwardStatTile("$500,000 per year", null)).toBe("$500K");
+    // A spelled magnitude without a $ is still money; a $ range with qualifiers on both bounds is kept.
+    expect(formatAwardStatTile("1.5 million", null)).toBe("$1.5M");
+    expect(formatAwardStatTile("$25,000", "$1.5 million")).toBe("$25K – $1.5M");
+  });
 });
 
 describe("formatDeadlineStatTile", () => {

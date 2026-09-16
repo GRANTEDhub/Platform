@@ -33,6 +33,10 @@ export interface AlertData {
   fiscalYear: string;
   fon: string | null;
   headline: string;
+  // CLIENT template only: `headline` rendered as HTML with the distinctive word italic-orange (the shared
+  // EmphasizedTitle / titleParts treatment). Built in buildAlertData; the plain `headline` stays the source
+  // for the email subject. The outreach template renders plain {{headline}} and ignores this.
+  headlineHtml: string;
   introHtml: string;
   statePassThrough: boolean;
   state?: string;
