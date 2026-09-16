@@ -366,14 +366,17 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                     <p className={EYEBROW}>
                       Discovered prospects{prospectCards.length > 0 ? ` (${prospectCards.length})` : ""}
                     </p>
-                    {/* Close is available whenever prospecting isn't already closed AND there's something to
-                        close — existing prospects (which can outlive a re-shred/rematch that flips gate to
-                        not_ready) OR an actively-prospectable grant. NOT gated on the scoring gate alone:
-                        closing prospecting has no dependency on match status, so a rematch of a grant with
-                        surfaced prospects must still be closable (Claude Code Review #575). */}
+                    {/* Close is the ONLY UI to remove a grant from the prospect feed, so it must show for any
+                        feed-visible, not-yet-closed grant. Restores the original box-visibility condition
+                        (canProspect || canAdd || prospectCards.length > 0): canProspect covers an actively-
+                        prospectable grant; prospectCards>0 covers a grant whose prospects outlive a
+                        re-shred/rematch (gate flips to not_ready); canAdd covers a domestic, feed-visible grant
+                        that can NEVER be prospected (summary-shred / no ideal_applicant_profile) yet still sits
+                        in the feed with no other close path (Claude Code Review #576). Not gated on the scoring
+                        gate — closing prospecting has no dependency on match status. */}
                     {grant.prospecting_closed_at ? (
                       <Badge variant="warning">Closed</Badge>
-                    ) : prospectCards.length > 0 || canProspect ? (
+                    ) : canProspect || canAdd || prospectCards.length > 0 ? (
                       <CloseProspectingButton grantId={grant.id} />
                     ) : null}
                   </div>
