@@ -11,8 +11,8 @@
 // the Ledger's Expired flag), so free-text is the raw truth and ONE parser is the single derivation.
 //
 // THE CONTRACT — strict, latest-future-else-latest-past:
-//   1. Rolling / placeholder families short-circuit to null FIRST, before any date is read (reusing
-//      the IDENTICAL ROLLING_DEADLINE / DEADLINE_PLACEHOLDER families the alert tile uses, format.ts).
+//   1. Rolling / placeholder families short-circuit to null FIRST, before any date is read (the
+//      ROLLING_DEADLINE / DEADLINE_PLACEHOLDER families defined here and reused by the format.ts tile).
 //      So a non-deadline date sitting inside such a note — a press-release date in "Not specified …
 //      see press release dated August 19, 2026" — is never mistaken for a deadline.
 //   2. Extract only dates carrying an EXPLICIT 4-digit year (ISO, "Month D, YYYY", or M/D/YYYY). A bare
@@ -30,7 +30,17 @@
 //
 // Deterministic + fully unit-tested against the real 40-string AR-state corpus (deadline-parse.test.ts).
 
-import { DEADLINE_PLACEHOLDER, ROLLING_DEADLINE } from "@/lib/grants/format";
+import { format } from "date-fns";
+
+// The "no fixed date" families — the single source of truth for what counts as an unstated / rolling
+// deadline. Defined here (next to the parser that gates on them) and imported by the format.ts display
+// tiles, so the expiry parser and every deadline tile agree on "no date". A leading match is enough for
+// the placeholder family ("Not available - verify at …" → the trailing note is where-to-look guidance).
+export const DEADLINE_PLACEHOLDER =
+  /^(?:not\s+(?:stated|available|specified|listed|given|provided|posted)|unspecified|unknown|undetermined|to\s+be\s+determined|tbd|n\/?a|none)\b/i;
+// The rolling/continuous family — a real intake with no single fixed date.
+export const ROLLING_DEADLINE =
+  /\b(?:rolling|continuous(?:ly)?|ongoing|year[-\s]?round|open[-\s]?until[-\s]?filled|accepted\s+(?:on\s+a\s+)?rolling|no\s+(?:fixed\s+)?deadline)\b/i;
 
 const MONTHS: Record<string, number> = {
   jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
@@ -97,4 +107,30 @@ export function nextDeadlineFrom(raw: string | null | undefined, now: Date = new
   const future = dates.filter((d) => d.getTime() >= todayStart);
   const pool = future.length > 0 ? future : dates;
   return pool.reduce((latest, d) => (d.getTime() > latest.getTime() ? d : latest));
+}
+
+// The DISPLAY sibling of nextDeadlineFrom: format the resolved deadline in a date-fns pattern, or null
+// when the text has no resolvable explicit-year date. Phase 1 unified deadline EXPIRY on nextDeadlineFrom
+// but left the label formatters on a naive `new Date(prose)`, so a multi-cycle / prose-with-a-date string
+// showed "Not stated" / raw prose while the same page's countdown (deadlineDaysLeft) read "Closed N days
+// ago" — the split this closes. Reads the parser's UTC-midnight date as a CALENDAR date (a LOCAL date
+// built from its UTC y/m/d) so the label is timezone-stable: no west-of-UTC off-by-one (the same guard
+// formatDeadlineCompact documents — `new Date("2026-09-15")` is UTC midnight and renders as the previous
+// day west of UTC when `format` uses local time).
+export function formatResolvedDeadline(raw: string | null | undefined, pattern: string): string | null {
+  const d = nextDeadlineFrom(raw);
+  if (!d) return null;
+  return format(new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()), pattern);
+}
+
+// The value for the review-console DEADLINE facts tile (staff roadmap + client portal). A resolvable
+// deadline → its date ("Apr 30, 2026"); a rolling/continuous intake → "Rolling"; anything else (undated /
+// placeholder / unreadable prose) → "Not stated". NEVER the raw prose — the gap that let a closed AR grant
+// render "Not stated" beside its own "Closed 139 days ago". Full-month-less "MMM d, yyyy" fits the tile.
+export function formatDeadlineTile(raw: string | null | undefined): string {
+  const resolved = formatResolvedDeadline(raw, "MMM d, yyyy");
+  if (resolved) return resolved;
+  const s = (raw ?? "").trim();
+  if (s && ROLLING_DEADLINE.test(s)) return "Rolling";
+  return "Not stated";
 }

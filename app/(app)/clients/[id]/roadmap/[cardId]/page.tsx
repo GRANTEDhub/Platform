@@ -29,7 +29,8 @@ import { resolveFit } from "@/lib/report/qa-override";
 import { buildRecommendation, buildVerdict, type HardKill } from "@/lib/report/recommendation";
 import { fitNarrativeEnabled } from "@/lib/grants/fit-narrative";
 import { MarkRead } from "@/components/report/mark-read";
-import { awardRangeOrEstimate, compactCostShare, compactTerm } from "@/lib/grants/format";
+import { awardStatTileOrEstimate, compactCostShare, compactTerm } from "@/lib/grants/format";
+import { formatDeadlineTile } from "@/lib/grants/deadline-parse";
 import type { ProgramAwardSummary } from "@/lib/grants/program-awards";
 import { isUnconvertedLead } from "@/lib/leads/stage";
 import { readAllowableUses } from "@/lib/grants/allowable-uses";
@@ -92,15 +93,6 @@ type CardRow = {
 function grantOf(g: CardRow["grants"]) {
   if (!g) return null;
   return Array.isArray(g) ? g[0] ?? null : g;
-}
-
-function fmtDate(d: string | null | undefined): string | null {
-  if (!d) return null;
-  try {
-    return format(parseISO(d), "MMM d, yyyy");
-  } catch {
-    return null;
-  }
 }
 
 // Cut an engine string at a sentence boundary. The rationale reads as prose and a
@@ -272,7 +264,7 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
 
   const days = deadlineDaysLeft(g.submission_deadline);
   const overdue = isOverdue(days);
-  const deadlineLabel = fmtDate(g.submission_deadline);
+  const deadlineLabel = formatDeadlineTile(g.submission_deadline);
 
   // ── The go/no-go VERDICT LEAD (flag-gated: FIT_NARRATIVE_ENABLED) ───────────────────────────
   // A deterministic directional call that OPENS the IntellEngine Intel paragraph, PINNED to the
@@ -311,10 +303,10 @@ export default async function ClientRoadmapDetail({ params }: { params: { id: st
 
   const meta: ReviewMeta[] = [
     // Never a bare blank when the size is knowable: real range → pool÷awards estimate → "—".
-    { label: "Award range", value: awardRangeOrEstimate(g.award_range_min, g.award_range_max, g.total_funding, g.num_awards) },
+    { label: "Award range", value: awardStatTileOrEstimate(g.award_range_min, g.award_range_max, g.total_funding, g.num_awards) },
     {
       label: "Deadline",
-      value: deadlineLabel ?? "Not stated",
+      value: deadlineLabel,
       // The one thing on this row that can invalidate the whole page, so it stops looking
       // like the award range. See the `tone` note on ReviewMeta.
       ...(overdue ? { tone: "danger" as const } : {}),

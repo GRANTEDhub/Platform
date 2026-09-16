@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { format, parseISO } from "date-fns";
+import { formatDeadlineTile } from "@/lib/grants/deadline-parse";
 import { ArrowRight, Sparkles } from "lucide-react";
 import { requireClient } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -17,7 +17,7 @@ import { resolveFit } from "@/lib/report/qa-override";
 import { buildRecommendation, buildVerdict, type HardKill } from "@/lib/report/recommendation";
 import { fitNarrativeEnabled } from "@/lib/grants/fit-narrative";
 import { MarkRead } from "@/components/report/mark-read";
-import { awardRangeOrEstimate, compactCostShare, compactTerm } from "@/lib/grants/format";
+import { awardStatTileOrEstimate, compactCostShare, compactTerm } from "@/lib/grants/format";
 import { referralTrackingEnabled } from "@/lib/report/referral";
 import type { ProgramAwardSummary } from "@/lib/grants/program-awards";
 import { BRAND } from "@/lib/brand";
@@ -85,15 +85,6 @@ type CardRow = {
 function grantOf(g: CardRow["grants"]) {
   if (!g) return null;
   return Array.isArray(g) ? g[0] ?? null : g;
-}
-
-function fmtDate(d: string | null | undefined): string | null {
-  if (!d) return null;
-  try {
-    return format(parseISO(d), "MMM d, yyyy");
-  } catch {
-    return null;
-  }
 }
 
 // Cut an engine string at a sentence boundary — only ever CUT, never paraphrased, so
@@ -192,7 +183,7 @@ export default async function PortalGrantDetail({
   };
 
   const days = deadlineDaysLeft(g.submission_deadline);
-  const deadlineLabel = fmtDate(g.submission_deadline);
+  const deadlineLabel = formatDeadlineTile(g.submission_deadline);
 
   // The go/no-go VERDICT LEAD — CLIENT side (flag-gated: FIT_NARRATIVE_ENABLED). Identical derivation to
   // the staff page (same pin, same hard kills), so the same card reads the same number on both sides. side
@@ -220,10 +211,10 @@ export default async function PortalGrantDetail({
 
   const meta: ReviewMeta[] = [
     // Never a bare blank when the size is knowable: real range → pool÷awards estimate → "—".
-    { label: "Award range", value: awardRangeOrEstimate(g.award_range_min, g.award_range_max, g.total_funding, g.num_awards) },
+    { label: "Award range", value: awardStatTileOrEstimate(g.award_range_min, g.award_range_max, g.total_funding, g.num_awards) },
     {
       label: "Deadline",
-      value: deadlineLabel ?? "Not stated",
+      value: deadlineLabel,
       ...(isOverdue(days) ? { tone: "danger" as const } : {}),
     },
     { label: "Match required", value: compactCostShare(g.cost_share) },

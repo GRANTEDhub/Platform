@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { awardRangeOrEstimate, formatAwardRange, formatAwardListLabel, compactTerm, parseAwardCount, formatDeadlineCompact, formatDeadlineListLabel, formatAwardStatTile, formatDeadlineStatTile } from "./format";
+import { awardRangeOrEstimate, awardStatTileOrEstimate, formatAwardRange, formatAwardListLabel, compactTerm, parseAwardCount, formatDeadline, formatDeadlineShort, formatDeadlineCompact, formatDeadlineListLabel, formatAwardStatTile, formatDeadlineStatTile } from "./format";
 
 // Deterministic — no model, no network. Locks the two PR-A grant-report fixes:
 //   ① Award range never renders a bare blank when the size is deducible (pool ÷ awards, labeled "est.").
@@ -146,15 +146,18 @@ describe("formatDeadlineListLabel", () => {
     expect(formatDeadlineListLabel("Varies")).toBe("Varies");
   });
 
-  it("soft-truncates a verbose free-text deadline so a list cell can't overflow", () => {
-    // The AR-shred failure mode: a whole sentence (or an error note) in submission_deadline.
+  it("resolves a verbose multi-date shred to its explicit-year date (was a truncated 'February…' fragment)", () => {
+    // The AR-shred multi-date failure mode: the label used to soft-truncate this; now it resolves to the
+    // real explicit-year date it carries (September 30, 2026) — the display half of the Phase-1 parser fix.
     const para = "February/March Intent to Apply (cycle year TBD): September 30, 2026; Full Application: November 6";
-    const out = formatDeadlineListLabel(para);
+    expect(formatDeadlineListLabel(para)).toBe("Sep 30, 2026");
+  });
+
+  it("soft-truncates a verbose DATELESS free-text deadline so a list cell can't overflow", () => {
+    const out = formatDeadlineListLabel("Not extracted — full program page not available at source");
     expect(out.length).toBeLessThanOrEqual(23); // CAP 22 + the ellipsis
     expect(out.endsWith("…")).toBe(true);
-    expect(out).not.toMatch(/\s…$/); // no dangling space before the ellipsis
-    expect(out.startsWith("February")).toBe(true);
-    expect(formatDeadlineListLabel("Not extracted — full program page not available at source").endsWith("…")).toBe(true);
+    expect(out).not.toMatch(/[\s—–-]…$/); // no dangling space/dash before the ellipsis
   });
 
   it("never dangles a trailing dash (incl. em dash) or splits a surrogate pair", () => {
@@ -298,5 +301,36 @@ describe("formatDeadlineStatTile", () => {
     const out = formatDeadlineStatTile("Due 30 days after the annual program announcement is posted");
     expect(out.length).toBeLessThanOrEqual(15); // CAP 14 + the ellipsis
     expect(out.endsWith("…")).toBe(true);
+  });
+});
+
+// The DISPLAY half of the Phase-1 parser fix: every deadline label resolves the explicit-year date inside a
+// prose / multi-cycle string via nextDeadlineFrom, instead of the naive new Date() that returned it raw.
+describe("deadline formatters resolve a prose-with-a-date string (the RTP display fix)", () => {
+  // RTP's live bug: the deadline tile read "Not stated" while the same page said "Closed 139 days ago".
+  const RTP = "2026 application cycle closed April 30, 2026 at 4:00 p.m. CDT -- cycle is now closed";
+  it("formatDeadline → full-month date", () => expect(formatDeadline(RTP)).toBe("April 30, 2026"));
+  it("formatDeadlineShort → medium date", () => expect(formatDeadlineShort(RTP)).toBe("Apr 30, 2026"));
+  it("formatDeadlineListLabel → medium date, never raw prose", () => expect(formatDeadlineListLabel(RTP)).toBe("Apr 30, 2026"));
+  it("formatDeadlineStatTile → month + day", () => expect(formatDeadlineStatTile(RTP)).toBe("Apr 30"));
+  it("formatDeadlineCompact → month + day", () => expect(formatDeadlineCompact(RTP)).toBe("Apr 30"));
+
+  it("a rolling / undated string is unchanged (only prose-with-a-date changes)", () => {
+    expect(formatDeadlineStatTile("Applications accepted on a rolling basis")).toBe("Rolling");
+    expect(formatDeadline("Applications accepted on a rolling basis")).toBe("Applications accepted on a rolling basis");
+    expect(formatDeadlineShort("Rolling")).toBe("Rolling");
+    expect(formatDeadlineListLabel(null)).toBe("—");
+  });
+});
+
+describe("awardStatTileOrEstimate — the review-console award tile", () => {
+  it("collapses AR-shred prose to 'Not stated' (RTP), keeps a real range, deduces the pool÷awards estimate", () => {
+    // The screenshot bug: the tile rendered raw "Not stated – Maximum per project set at the beginning of…".
+    expect(
+      awardStatTileOrEstimate("Not stated", "Maximum per project set at the beginning of each funding cycle", null, null),
+    ).toBe("Not stated");
+    expect(awardStatTileOrEstimate("$100,000", "$500,000", null, null)).toBe("$100K – $500K");
+    expect(awardStatTileOrEstimate(null, null, "$10,000,000", "20")).toBe("~$500K est.");
+    expect(awardStatTileOrEstimate(null, null, null, null)).toBe("—");
   });
 });
