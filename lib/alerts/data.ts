@@ -2,6 +2,8 @@ import { formatAwardRange, compactCostShare, formatDeadline, formatAwardStatTile
 import { sanitizeRichText, sanitizeText } from "@/lib/sanitize/html";
 import { resolveFit } from "@/lib/report/qa-override";
 import { FIT_BAND } from "@/lib/report/shape";
+import { computeEligibility } from "@/lib/intellengine/eligibility";
+import { fitNarrativeEnabled } from "@/lib/grants/fit-narrative";
 import { PROSPECT_CREDENTIAL } from "./copy";
 import type { Grant, ReviewCard } from "@/types/database";
 import type { AlertData, AlertEnrichment, AlertStat } from "./types";
@@ -175,31 +177,66 @@ function buildStats(g: Grant): AlertStat[] {
   return stats.slice(-4); // keep the deadline (last) if we overflow
 }
 
-// The card-derived alert fields (displayed fit score + the "Grant Intelligence" paragraph) that
-// resolveFit produces. These change AFTER a draft is saved on a CARD write with no grant/enrichment edit —
-// a QA apply (qa_*), the fit-analysis drain (fit_narrative*), or an engine rematch (fit_score) all move
-// them. buildAlertData writes the snapshot from this, and the draft staleness check (getOrCreateDraftAlert)
-// re-derives from it, so the two can never drift on how the value is computed. Clamped identically to the
-// render path. This is the ONLY post-save drift the alert has: every other field is a frozen grant fact
-// (the deadline is now the absolute date only — no time-relative countdown — so it never goes stale).
-export function alertFitSignature(card: ReviewCard): { fitScore: 1 | 2 | 3 | null; grantIntelligence: string | null } {
+// The report page's eligibility HARD-KILL pin, mirrored so the alert's client-facing fit-score block can't
+// read "3 / Strong fit" on a grant the console/portal pin to no-go (both review bots flagged this on #570).
+// computeEligibility returns `ineligible` ONLY on a genuine structural note / skip_reason — never a keyword
+// miss (the PR #24 no-false-block discipline) — so it is a GRANT fact independent of the client and is
+// computed with null client fields, exactly as the roadmap page does. Gated on FIT_NARRATIVE_ENABLED, the
+// SAME flag that turns the pin on for the console/portal, so with the flag off this is inert.
+function grantStructurallyIneligible(g: Grant): boolean {
+  return (
+    computeEligibility({
+      eligibleEntityTypes: g.eligible_entity_types,
+      ineligibleEntities: g.ineligible_entities,
+      hardDisqualifiers: g.hard_disqualifiers,
+      skipReason: g.skip_reason,
+      geographicEligibility: g.geographic_eligibility,
+      clientOrgType: null,
+      clientState: null,
+    }).level === "ineligible"
+  );
+}
+
+// The card-derived alert fields (displayed fit score + the "Grant Intelligence" paragraph) that resolveFit
+// produces, with the eligibility hard-kill pin applied on top. The resolveFit half changes AFTER a draft is
+// saved on a CARD write with no grant/enrichment edit — a QA apply (qa_*), the fit-analysis drain
+// (fit_narrative*), or an engine rematch (fit_score) all move it. buildAlertData writes the snapshot from
+// this, and the draft staleness check (getOrCreateDraftAlert) re-derives from it, so the two can never
+// drift on how the value is computed. Clamped identically to the render path. This is the ONLY post-save
+// drift the alert has: every other field is a frozen grant fact (the deadline is now the absolute date only
+// — no time-relative countdown — so it never goes stale), and the pin is deterministic on the grant's
+// frozen eligibility facts + the deploy-time flag, so it re-derives stably too.
+//
+// `grant` is REQUIRED (not optional) precisely so the pin can never be silently skipped on one path but not
+// another: the write side (buildAlertData) and the freshness side (draftFitStillFresh) MUST apply the
+// identical pin, or the snapshot and its re-derivation disagree and the draft regenerates forever.
+export function alertFitSignature(card: ReviewCard, grant: Grant): { fitScore: 1 | 2 | 3 | null; grantIntelligence: string | null } {
   const resolved = resolveFit(card);
   const conceptSynopsis = clampAtSentence((card.concept_synopsis || "").trim(), CONCEPT_MAX) || null;
   const narrative = resolved.narrative ? clampAtSentence(resolved.narrative.trim(), GRANT_INTEL_MAX) || null : null;
-  return { fitScore: resolved.fitScore, grantIntelligence: narrative ?? conceptSynopsis };
+  // Eligibility hard-kill PIN: flag on + structurally-ineligible grant → pin the DISPLAYED fit to 1 so the
+  // alert reads no-go exactly as the console/portal do. Only ever DEMOTES an existing score — a null fit
+  // stays null, so an ineligible card that never had a fit gets no fabricated "1 / Weak" block.
+  const fitScore =
+    resolved.fitScore !== null && fitNarrativeEnabled() && grantStructurallyIneligible(grant)
+      ? 1
+      : resolved.fitScore;
+  return { fitScore, grantIntelligence: narrative ?? conceptSynopsis };
 }
 
-// True when a saved draft's snapshotted fit score + Grant Intelligence still match what the live card
-// would render — i.e. no QA / fit-analysis / rematch write has moved them since the draft was generated.
-// A save-once draft is reused VERBATIM for preview AND send, and the QA/fit-analysis/rematch writers do
-// NOT call invalidateDraftAlert, so a false here means the draft must be regenerated before it ships or
-// it would send a PDF whose fit score / narrative contradicts the platform's current verdict. Compares
-// the clamped values (both sides go through alertFitSignature / buildAlertData), so a re-clamp is stable.
+// True when a saved draft's snapshotted fit score + Grant Intelligence still match what the live card would
+// render — i.e. no QA / fit-analysis / rematch write (nor a change in the eligibility-pin inputs) has moved
+// them since the draft was generated. A save-once draft is reused VERBATIM for preview AND send, and the
+// QA/fit-analysis/rematch writers do NOT call invalidateDraftAlert, so a false here means the draft must be
+// regenerated before it ships or it would send a PDF whose fit score / narrative contradicts the platform's
+// current verdict. Re-derives through the SAME alertFitSignature (grant included) so the pin is applied
+// identically on both sides and a re-clamp is stable.
 export function draftFitStillFresh(
   stored: { fitScore?: 1 | 2 | 3 | null; grantIntelligence?: string | null },
   card: ReviewCard,
+  grant: Grant,
 ): boolean {
-  const sig = alertFitSignature(card);
+  const sig = alertFitSignature(card, grant);
   return (stored.fitScore ?? null) === sig.fitScore && (stored.grantIntelligence ?? null) === sig.grantIntelligence;
 }
 
@@ -214,9 +251,9 @@ export function draftFitStillFresh(
 // countdown killed the day-tick re-enrich cost + send-time churn at the source). Cold outreach
 // (prospect/lead) is ALWAYS fresh — that template renders no fit signature. Structural ctx param (not the
 // AlertContext import) to keep this module decoupled.
-export function draftStillFresh(stored: AlertData, ctx: { card: ReviewCard; isLead: boolean }): boolean {
+export function draftStillFresh(stored: AlertData, ctx: { card: ReviewCard; grant: Grant; isLead: boolean }): boolean {
   const isColdOutreach = ctx.card.card_type === "prospect" || ctx.isLead;
-  return isColdOutreach || draftFitStillFresh(stored, ctx.card);
+  return isColdOutreach || draftFitStillFresh(stored, ctx.card, ctx.grant);
 }
 
 export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichment | null): AlertData {
@@ -237,7 +274,7 @@ export function buildAlertData(g: Grant, card: ReviewCard, enrich: AlertEnrichme
   // read-layer resolver (the same seam the console/portal render through). loadAlertContext selects the
   // whole card, so every resolveFit input column (qa_*, fit_narrative*) is present.
   const conceptSynopsis = clampAtSentence((card.concept_synopsis || "").trim(), CONCEPT_MAX) || null;
-  const { fitScore: displayedFit, grantIntelligence } = alertFitSignature(card);
+  const { fitScore: displayedFit, grantIntelligence } = alertFitSignature(card, g);
 
   return {
     // ── narrative (model, with fallbacks) ──

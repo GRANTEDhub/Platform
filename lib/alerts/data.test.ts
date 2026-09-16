@@ -129,13 +129,13 @@ describe("buildAlertData — fit-score block + Grant Intelligence (PR B)", () =>
 describe("draft staleness — alertFitSignature / draftFitStillFresh", () => {
   it("alertFitSignature: narrative wins over synopsis, else synopsis, else null", () => {
     expect(
-      alertFitSignature(card({ fit_score: 3, fit_narrative: "why this fits", fit_narrative_fit_score: 3, concept_synopsis: "syn" })),
+      alertFitSignature(card({ fit_score: 3, fit_narrative: "why this fits", fit_narrative_fit_score: 3, concept_synopsis: "syn" }), grant()),
     ).toEqual({ fitScore: 3, grantIntelligence: "why this fits" });
-    expect(alertFitSignature(card({ fit_score: 2, fit_narrative: null, concept_synopsis: "syn" }))).toEqual({
+    expect(alertFitSignature(card({ fit_score: 2, fit_narrative: null, concept_synopsis: "syn" }), grant())).toEqual({
       fitScore: 2,
       grantIntelligence: "syn",
     });
-    expect(alertFitSignature(card({ fit_score: 1, fit_narrative: null, concept_synopsis: null }))).toEqual({
+    expect(alertFitSignature(card({ fit_score: 1, fit_narrative: null, concept_synopsis: null }), grant())).toEqual({
       fitScore: 1,
       grantIntelligence: null,
     });
@@ -143,7 +143,7 @@ describe("draft staleness — alertFitSignature / draftFitStillFresh", () => {
 
   it("FRESH when the stored snapshot matches the card's current resolveFit", () => {
     const c = card({ fit_score: 3, fit_narrative: "why this fits", fit_narrative_fit_score: 3 });
-    expect(draftFitStillFresh({ fitScore: 3, grantIntelligence: "why this fits" }, c)).toBe(true);
+    expect(draftFitStillFresh({ fitScore: 3, grantIntelligence: "why this fits" }, c, grant())).toBe(true);
   });
 
   it("STALE when a QA demote lands after the draft (displayed fit moved 3 → 2)", () => {
@@ -157,16 +157,16 @@ describe("draft staleness — alertFitSignature / draftFitStillFresh", () => {
       fit_narrative: "an affirmative paragraph the demote overrides",
       fit_narrative_fit_score: 2,
     });
-    expect(draftFitStillFresh({ fitScore: 3, grantIntelligence: "the old paragraph" }, c)).toBe(false);
+    expect(draftFitStillFresh({ fitScore: 3, grantIntelligence: "the old paragraph" }, c, grant())).toBe(false);
   });
 
   it("STALE when only the narrative changed (fit score unchanged)", () => {
     const c = card({ fit_score: 2, fit_narrative: "the regenerated paragraph", fit_narrative_fit_score: 2 });
-    expect(draftFitStillFresh({ fitScore: 2, grantIntelligence: "the original paragraph" }, c)).toBe(false);
+    expect(draftFitStillFresh({ fitScore: 2, grantIntelligence: "the original paragraph" }, c, grant())).toBe(false);
   });
 
   it("a legacy draft with no snapshotted signature reads STALE (regenerates into the new format)", () => {
-    expect(draftFitStillFresh({}, card({ fit_score: 3, fit_narrative: "x", fit_narrative_fit_score: 3 }))).toBe(false);
+    expect(draftFitStillFresh({}, card({ fit_score: 3, fit_narrative: "x", fit_narrative_fit_score: 3 }), grant())).toBe(false);
   });
 });
 
@@ -200,5 +200,61 @@ describe("draft staleness — draftStillFresh (shared single-send + batch predic
     // the deadline PASSING does NOT make it stale — the countdown is gone, so the deadline is a frozen date
     // the freshness check no longer considers (this is what killed the day-tick re-enrich + send churn).
     expect(draftStillFresh(stored, ctxOf(c, grant({ submission_deadline: daysFromNow(-5) })))).toBe(true);
+  });
+});
+
+// The eligibility HARD-KILL pin, folded into #570 from the roadmap page (both review bots flagged the
+// alert showing an un-pinned score). With FIT_NARRATIVE_ENABLED on, a structurally-ineligible grant (a
+// skip_reason / structural note — computeEligibility's ONLY `ineligible` trigger, never a keyword miss)
+// pins the DISPLAYED alert fit to 1 so the client-facing fit-score block reads no-go exactly as the
+// console/portal do. The write side (buildAlertData) and the freshness side (draftStillFresh) apply the
+// SAME pin, so a pinned draft still reads FRESH — no infinite regeneration. Flag OFF is byte-identical.
+describe("eligibility hard-kill pin (FIT_NARRATIVE_ENABLED)", () => {
+  const withFlag = <T>(on: boolean, fn: () => T): T => {
+    const prev = process.env.FIT_NARRATIVE_ENABLED;
+    process.env.FIT_NARRATIVE_ENABLED = on ? "true" : "false";
+    try {
+      return fn();
+    } finally {
+      if (prev === undefined) delete process.env.FIT_NARRATIVE_ENABLED;
+      else process.env.FIT_NARRATIVE_ENABLED = prev;
+    }
+  };
+  // computeEligibility reports `ineligible` ONLY on a structural note / skip_reason (client-independent).
+  const ineligible = grant({ skip_reason: "Single national award to one intermediary; sub-grants only." });
+  const eligible = grant({ skip_reason: null });
+  const strong = card({ fit_score: 3, fit_narrative: "an affirmative paragraph", fit_narrative_fit_score: 3 });
+
+  it("flag ON + structurally-ineligible grant → displayed fit PINNED to 1 (Weak)", () => {
+    withFlag(true, () => {
+      expect(alertFitSignature(strong, ineligible).fitScore).toBe(1);
+      const d = buildAlertData(ineligible, strong, null);
+      expect(d.fitScore).toBe(1);
+      expect(d.fitScoreLabel).toBe("Weak");
+      // The narrative still rides — the client keeps its rationale, matching the client-side report page.
+      expect(d.grantIntelligence).toBe("an affirmative paragraph");
+    });
+  });
+
+  it("flag ON + ELIGIBLE grant (no skip_reason) → no pin", () => {
+    withFlag(true, () => {
+      expect(alertFitSignature(strong, eligible).fitScore).toBe(3);
+      expect(buildAlertData(eligible, strong, null).fitScoreLabel).toBe("Strong fit");
+    });
+  });
+
+  it("flag OFF → byte-identical, no pin even on an ineligible grant", () => {
+    withFlag(false, () => {
+      expect(alertFitSignature(strong, ineligible).fitScore).toBe(3);
+      expect(buildAlertData(ineligible, strong, null).fitScore).toBe(3);
+    });
+  });
+
+  it("write side and freshness side apply the SAME pin → a pinned draft reads FRESH (no infinite regen)", () => {
+    withFlag(true, () => {
+      const stored = buildAlertData(ineligible, strong, null); // the snapshot pins fitScore → 1
+      expect(stored.fitScore).toBe(1);
+      expect(draftStillFresh(stored, { card: strong, grant: ineligible, isLead: false })).toBe(true);
+    });
   });
 });
