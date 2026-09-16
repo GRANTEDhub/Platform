@@ -1,5 +1,10 @@
 import { format } from "date-fns";
 import type { Grant } from "@/types/database";
+import {
+  DEADLINE_PLACEHOLDER,
+  ROLLING_DEADLINE,
+  formatResolvedDeadline,
+} from "@/lib/grants/deadline-parse";
 
 // Shared grant-detail formatting, used by both the Matches review Grant tab
 // (/review/[id]) and the Prospects grant detail (/intel/[id]) so the two render
@@ -151,9 +156,10 @@ export function compactCostShare(raw: string | null | undefined): string {
 export function formatDeadline(raw: string | null | undefined): string {
   const s = (raw ?? "").trim();
   if (!s) return "—";
-  const d = new Date(s);
-  if (!isNaN(d.getTime()) && /\d{4}/.test(s)) return format(d, "MMMM d, yyyy");
-  return s;
+  // Resolve via nextDeadlineFrom first (multi-cycle / prose-with-a-date → its date), else keep the
+  // verbatim free-text (a rolling / "See NOFO" note reads as itself). Only the prose-with-a-date class
+  // changes; a clean single date and a non-date string are byte-identical to the old new Date() path.
+  return formatResolvedDeadline(raw, "MMMM d, yyyy") ?? s;
 }
 
 // Compact deadline ("Sep 15, 2026") for the NARROW hero stat tile, where a full
@@ -163,33 +169,20 @@ export function formatDeadline(raw: string | null | undefined): string {
 export function formatDeadlineShort(raw: string | null | undefined): string {
   const s = (raw ?? "").trim();
   if (!s) return "—";
-  const d = new Date(s);
-  if (!isNaN(d.getTime()) && /\d{4}/.test(s)) return format(d, "MMM d, yyyy");
-  return s;
+  return formatResolvedDeadline(raw, "MMM d, yyyy") ?? s;
 }
 
 // Month + day only ("Sep 15") for compact LIST rows (dashboards, portal, portfolio),
 // returning null — not the verbatim string — when the value is not a real date, so the
 // row simply omits the deadline rather than printing "Rolling" mid-table.
 //
-// It uses the SAME lenient `new Date()` parser as deadlineDaysLeft (lib/report/shape.ts),
-// which is the load-bearing choice: those rows gate on deadlineDaysLeft, so a value that
-// passes that gate MUST format here too. The old code called date-fns `parseISO`, which
-// accepts ONLY ISO-8601 — so a non-ISO-but-Date-parseable deadline from a free-text shred
-// ("9/15/2026", "Sep 15, 2026") passed the days-left gate and then threw
-// "RangeError: Invalid time value" out of `format(parseISO(...))`, 500-ing the whole page.
-// Never throws: a bad/garbled/undated value returns null.
+// Delegates to formatResolvedDeadline (nextDeadlineFrom), the same resolver deadlineDaysLeft gates on,
+// so a value that passes the days-left gate formats here too — and a multi-cycle / prose-with-a-date
+// string resolves to its date instead of being dropped. Timezone-stable (formats the parser's
+// UTC-midnight date as a local calendar date), so a client-rendered row never shows the west-of-UTC
+// previous day. Never throws: a bad / garbled / undated value returns null.
 export function formatDeadlineCompact(raw: string | null | undefined): string | null {
-  const s = (raw ?? "").trim();
-  if (!s) return null;
-  // A bare YYYY-MM-DD is a CALENDAR date, not an instant: `new Date("2026-09-15")` is UTC
-  // midnight, which `format` then renders in the viewer's local timezone — so a client-
-  // rendered row (portfolio-browser) shows the PREVIOUS day west of UTC (e.g. "Sep 14" in
-  // Central). Append a local midnight time so it reads as the local calendar date, exactly
-  // as the old parseISO path did. Other formats ("9/15/2026", "Sep 15, 2026") already parse
-  // as local via new Date().
-  const d = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(`${s}T00:00:00`) : new Date(s);
-  return !isNaN(d.getTime()) && /\d{4}/.test(s) ? format(d, "MMM d") : null;
+  return formatResolvedDeadline(raw, "MMM d");
 }
 
 // Deadline for a FIXED-WIDTH LIST cell (the Grant Report / roadmap rows): a real date when
@@ -220,9 +213,10 @@ function softTruncateLabel(s: string, cap: number, minWordBoundary: number): str
 export function formatDeadlineListLabel(raw: string | null | undefined): string {
   const s = (raw ?? "").trim();
   if (!s) return "—";
-  const d = new Date(s);
-  if (!isNaN(d.getTime()) && /\d{4}/.test(s)) return format(d, "MMM d, yyyy");
-  return softTruncateLabel(s, 22, 10);
+  // Resolvable date → its label; otherwise soft-truncate the free-text so the cell can't overflow. A
+  // verbose string that CONTAINS a real date (a multi-cycle AR shred) now resolves to that date instead
+  // of a truncated prose fragment.
+  return formatResolvedDeadline(raw, "MMM d, yyyy") ?? softTruncateLabel(s, 22, 10);
 }
 
 // A "no value" token the AR-state shred writes into the free-text award_range_* columns when it found no
@@ -299,27 +293,32 @@ export function formatAwardStatTile(min: string | null | undefined, max: string 
   return range.length <= 22 ? range : "Not stated";
 }
 
-// A "no value" token the AR-state shred writes into submission_deadline when it found no date. A leading
-// match is enough ("Not available - verify at fly.arkansas.gov", "Unknown -- funding varies…") — the note
-// after the placeholder is the shred telling the client where to look, which the tiny tile can't carry.
-// Exported so lib/grants/deadline-parse.ts reuses the IDENTICAL "no fixed date" families the alert tile
-// uses — the expiry parser and the display tile must agree on what counts as rolling / undated.
-export const DEADLINE_PLACEHOLDER =
-  /^(?:not\s+(?:stated|available|specified|listed|given|provided|posted)|unspecified|unknown|undetermined|to\s+be\s+determined|tbd|n\/?a|none)\b/i;
-// The rolling/continuous family — a real intake with no single fixed date.
-export const ROLLING_DEADLINE =
-  /\b(?:rolling|continuous(?:ly)?|ongoing|year[-\s]?round|open[-\s]?until[-\s]?filled|accepted\s+(?:on\s+a\s+)?rolling|no\s+(?:fixed\s+)?deadline)\b/i;
+// The award value for the review-console AWARD RANGE facts tile (staff roadmap + client portal), the award
+// sibling of formatDeadlineTile. formatAwardStatTile normalizes the free-text bounds — a clean $ range /
+// short token passes through, prose junk collapses to "Not stated", and a fabricating prose-with-a-number
+// bound is dropped — so the AR-shred "Not stated – Maximum per project set at the beginning of…" no longer
+// renders raw in the tile. When there is no clean range (null), fall back to the pool÷awards estimate
+// (awardRangeOrEstimate) so a size that's only DEDUCIBLE from total÷count still shows, else "—".
+export function awardStatTileOrEstimate(
+  min: string | null | undefined,
+  max: string | null | undefined,
+  totalFunding: string | null | undefined,
+  numAwards: string | null | undefined,
+): string {
+  const tile = formatAwardStatTile(min, max);
+  if (tile) return tile;
+  return awardRangeOrEstimate(null, null, totalFunding, numAwards);
+}
 
-// The deadline value for the ALERT PDF stat TILE. A real date → "Sep 15"; the rolling/continuous family →
-// "Rolling"; a genuinely empty OR placeholder value → "No deadline"; any other free-text soft-truncates (the
-// tile's CSS clamp is the final net). REPLACES the old hard 12-char slice that produced mid-word junk like
-// "Not availabl" from "Not available - verify at fly.arkansas.gov". Mirrors the list column's
-// date-else-normalize discipline; month+day only (no year) because the tile is narrow.
+// The deadline value for the ALERT PDF stat TILE. A resolvable deadline → "Sep 15" (nextDeadlineFrom, so a
+// multi-cycle / prose-with-a-date string resolves instead of soft-truncating to junk); the rolling/continuous
+// family → "Rolling"; a genuinely empty OR placeholder value → "No deadline"; any other free-text soft-truncates
+// (the tile's CSS clamp is the final net). month+day only (no year) because the tile is narrow.
 export function formatDeadlineStatTile(raw: string | null | undefined): string {
+  const resolved = formatResolvedDeadline(raw, "MMM d");
+  if (resolved) return resolved;
   const s = (raw ?? "").trim();
   if (!s) return "No deadline";
-  const d = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(`${s}T00:00:00`) : new Date(s);
-  if (!isNaN(d.getTime()) && /\d{4}/.test(s)) return format(d, "MMM d");
   if (ROLLING_DEADLINE.test(s)) return "Rolling";
   if (DEADLINE_PLACEHOLDER.test(s)) return "No deadline";
   return softTruncateLabel(s, 14, 7);

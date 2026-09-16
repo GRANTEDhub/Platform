@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { nextDeadlineFrom } from "./deadline-parse";
+import { format } from "date-fns";
+import { nextDeadlineFrom, formatDeadlineTile } from "./deadline-parse";
 import { deadlineDaysLeft, isExpired } from "@/lib/report/shape";
 
 // The guardrail for the free-text deadline parser, locked against the REAL 40-string AR-state
@@ -153,6 +154,39 @@ describe("nextDeadlineFrom — real 40-string AR-state corpus (today 2026-09-16,
       "FUN Park Grants",
       "Matching Grants – Outdoor Recreation",
     ]);
+  });
+});
+
+// The TILE RENDER, not just the parse (Shannon's flip-gate for the display fix): the review-console DEADLINE
+// tile must show a resolved date, "Rolling", or "Not stated" for EVERY real prod string — never the raw prose
+// that let RTP render "Not stated" beside its own "Closed 139 days ago".
+describe("formatDeadlineTile — clean tile render for every real AR-state string", () => {
+  it.each(CORPUS)("%s", (_title, submissionDeadline, expectedDate) => {
+    const tile = formatDeadlineTile(submissionDeadline);
+    if (expectedDate) {
+      const [y, m, d] = expectedDate.split("-").map(Number);
+      expect(tile).toBe(format(new Date(y, m - 1, d), "MMM d, yyyy"));
+    } else {
+      // No resolvable date → a clean rolling/undated label, NEVER the raw prose.
+      expect(["Rolling", "Not stated"]).toContain(tile);
+    }
+  });
+
+  it("RTP renders its resolved deadline, not 'Not stated' (the shipped bug)", () => {
+    expect(
+      formatDeadlineTile("2026 application cycle closed April 30, 2026 at 4:00 p.m. CDT -- cycle is now closed"),
+    ).toBe("Apr 30, 2026");
+  });
+
+  it("the rolling family renders 'Rolling', never raw prose", () => {
+    for (const s of [
+      "Rolling",
+      "Ongoing (rolling deadline)",
+      "No deadline -- funding opportunities through ARORP are ongoing",
+      "Not stated; requests accepted on a rolling annual basis (one per city per calendar year)",
+    ]) {
+      expect(formatDeadlineTile(s)).toBe("Rolling");
+    }
   });
 });
 
