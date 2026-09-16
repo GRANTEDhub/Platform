@@ -90,6 +90,9 @@ describe("buildAlertData — fit-score block + Grant Intelligence (PR B)", () =>
     expect(awardTile("", "up to 10 sites")).toBe("Not stated");
     // A real figure alongside a prose bound keeps the REAL figure, not a fabricated low bound.
     expect(awardTile("up to 10 sites", "500000")).toBe("$500K");
+    // But a REAL award phrased with qualifier words carries a currency signal → shown, not suppressed (VADE #571).
+    expect(awardTile("$1.5 million", "")).toBe("$1.5M");
+    expect(awardTile("up to $50,000", "")).toBe("$50K");
   });
 
   it("the deadline tile normalizes junk to 'No deadline' and a rolling intake to 'Rolling'", () => {

@@ -262,6 +262,17 @@ describe("formatAwardStatTile", () => {
     expect(formatAwardStatTile("Varies", null)).toBe("Varies");
     expect(formatAwardStatTile("50000", "250000")).toBe("$50K – $250K");
   });
+
+  it("PRESERVES a real $ figure wrapped in qualifier words — a currency signal is not prose (Vercel Agent Review, #571)", () => {
+    // "$1.5 million" / "up to $50,000" / "$500,000 per year" carry a $ or spelled magnitude → real money, KEPT
+    // (the prose-drop only fires on a number with NO currency signal, so these are never suppressed).
+    expect(formatAwardStatTile("$1.5 million", null)).toBe("$1.5M");
+    expect(formatAwardStatTile("up to $50,000", null)).toBe("$50K");
+    expect(formatAwardStatTile("$500,000 per year", null)).toBe("$500K");
+    // A spelled magnitude without a $ is still money; a $ range with qualifiers on both bounds is kept.
+    expect(formatAwardStatTile("1.5 million", null)).toBe("$1.5M");
+    expect(formatAwardStatTile("$25,000", "$1.5 million")).toBe("$25K – $1.5M");
+  });
 });
 
 describe("formatDeadlineStatTile", () => {
