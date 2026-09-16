@@ -111,6 +111,18 @@ describe("buildAlertData — fit-score block + Grant Intelligence (PR B)", () =>
     expect(bare.map((s) => s.value)).toEqual(["Not stated", "Not stated", "Not stated", "No deadline"]);
   });
 
+  it("the 'award · est.' qualifier only labels a REAL figure, never the 'Not stated' fallback", () => {
+    // engine sets award_range_is_estimate=true precisely when BOTH bounds are null → the label must not read
+    // "award · est." over a "Not stated" value (an estimate of nothing) — Claude Code Review #571.
+    const nullEst = buildAlertData(grant({ award_range_min: null, award_range_max: null, award_range_is_estimate: true }), card(), null).stats[0];
+    expect(nullEst.value).toBe("Not stated");
+    expect(nullEst.label).toBe("award range");
+    // A real estimate figure keeps the "· est." qualifier.
+    const realEst = buildAlertData(grant({ award_range_min: "50000", award_range_max: "250000", award_range_is_estimate: true }), card(), null).stats[0];
+    expect(realEst.value).toBe("$50K – $250K");
+    expect(realEst.label).toBe("award · est.");
+  });
+
   it("headlineHtml wraps the distinctive word in an orange-italic <em> (EmphasizedTitle parity); headline stays plain", () => {
     const d = buildAlertData(grant({ title: "Airport Aid Program" }), card({ fit_score: 2 }), null);
     expect(d.headline).toBe("Airport Aid Program");

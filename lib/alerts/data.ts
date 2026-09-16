@@ -169,10 +169,15 @@ function buildStats(g: Grant): AlertStat[] {
   // either way; the raw check covers the long ones too.
   const rawAwards = (g.num_awards || "").trim();
   const awardsTile = !rawAwards || isPlaceholderAward(rawAwards) ? "Not stated" : shortAwards(rawAwards);
+  // The "· est." qualifier only makes sense over a REAL shown figure — engine.ts sets award_range_is_estimate
+  // TRUE precisely when both award_floor/ceiling are null, so an unconditional label would pair "award · est."
+  // with the "Not stated" fallback (an estimate of nothing). Gate the qualifier on a real value (Claude Code
+  // Review #571).
+  const awardValue = formatAwardStatTile(g.award_range_min, g.award_range_max);
   return [
     {
-      value: formatAwardStatTile(g.award_range_min, g.award_range_max) ?? "Not stated",
-      label: g.award_range_is_estimate ? "award · est." : "award range",
+      value: awardValue ?? "Not stated",
+      label: awardValue && g.award_range_is_estimate ? "award · est." : "award range",
     },
     // "—" (unknown whether a match is required) → "Not stated". "Required · TBD" (a match IS required, amount
     // not in our data) → "Required": the "· TBD" is redundant under the "match required" label and clipped in
