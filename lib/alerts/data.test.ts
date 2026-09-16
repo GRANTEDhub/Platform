@@ -84,6 +84,14 @@ describe("buildAlertData — fit-score block + Grant Intelligence (PR B)", () =>
     expect(awardTile("50000", "250000")).toBe("$50K – $250K");
   });
 
+  it("a single prose-with-a-number award bound shows 'Not stated', never a fabricated '$N' on the tile", () => {
+    // The client PDF tile must not mine a bare number out of prose: "up to 10 sites" → "$10" was reachable
+    // through the single-bound formatAwardRange path the >22 guard misses (Claude Code Review, #571).
+    expect(awardTile("", "up to 10 sites")).toBe("Not stated");
+    // A real figure alongside a prose bound keeps the REAL figure, not a fabricated low bound.
+    expect(awardTile("up to 10 sites", "500000")).toBe("$500K");
+  });
+
   it("the deadline tile normalizes junk to 'No deadline' and a rolling intake to 'Rolling'", () => {
     expect(deadlineTile("Not available - verify at fly.arkansas.gov")).toBe("No deadline");
     expect(deadlineTile("Unknown -- funding varies by federal fiscal year appropriation")).toBe("No deadline");

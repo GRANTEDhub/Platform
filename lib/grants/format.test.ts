@@ -250,6 +250,18 @@ describe("formatAwardStatTile", () => {
     // A genuinely clean short range is still kept verbatim.
     expect(formatAwardStatTile("50000", "250000")).toBe("$50K – $250K");
   });
+
+  it("drops a SINGLE prose-with-a-number bound so it can never fabricate a short '$N' (the >22 blind spot)", () => {
+    // When ONE bound is empty, formatAwardRange collapses the other prose bound to a SHORT "$10" that slips
+    // UNDER the >22 guard — so the fabricating bound is dropped BEFORE it is mined (Claude Code Review, #571).
+    expect(formatAwardStatTile("", "up to 10 sites")).toBeNull(); // no fabricated "$10" (buildStats → "Not stated")
+    expect(formatAwardStatTile("Not to exceed 25% of project cost", "")).toBeNull(); // no fabricated "$25"
+    // A prose-with-a-number bound alongside a CLEAN figure drops the prose and keeps the REAL figure.
+    expect(formatAwardStatTile("up to 10 sites", "500000")).toBe("$500K");
+    // A non-numeric token has no number to mine → kept verbatim; a clean numeric range is unchanged.
+    expect(formatAwardStatTile("Varies", null)).toBe("Varies");
+    expect(formatAwardStatTile("50000", "250000")).toBe("$50K – $250K");
+  });
 });
 
 describe("formatDeadlineStatTile", () => {
