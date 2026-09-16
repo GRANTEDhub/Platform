@@ -366,9 +366,14 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                     <p className={EYEBROW}>
                       Discovered prospects{prospectCards.length > 0 ? ` (${prospectCards.length})` : ""}
                     </p>
+                    {/* Close is available whenever prospecting isn't already closed AND there's something to
+                        close — existing prospects (which can outlive a re-shred/rematch that flips gate to
+                        not_ready) OR an actively-prospectable grant. NOT gated on the scoring gate alone:
+                        closing prospecting has no dependency on match status, so a rematch of a grant with
+                        surfaced prospects must still be closable (Claude Code Review #575). */}
                     {grant.prospecting_closed_at ? (
                       <Badge variant="warning">Closed</Badge>
-                    ) : gate !== "not_ready" ? (
+                    ) : prospectCards.length > 0 || canProspect ? (
                       <CloseProspectingButton grantId={grant.id} />
                     ) : null}
                   </div>
@@ -376,11 +381,20 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                     <div className="mt-2.5">
                       <ProspectList prospects={prospectRows} />
                     </div>
-                  ) : (
+                  ) : canProspect ? (
                     <p className="mt-2 text-[12.5px] leading-[1.6] text-ink-subtle">
                       No prospects surfaced yet. Use <span className="font-semibold text-brand-navy">Prospect</span>{" "}
                       in the action panel to discover candidate orgs that fit this grant&apos;s ideal-applicant
                       profile.
+                    </p>
+                  ) : (
+                    // Prospecting isn't available here (blocked / closed / not yet scored), so the "Prospect"
+                    // button the copy above points to isn't rendered — name the real reason instead of a
+                    // control that isn't on the page (Claude Code Review #575).
+                    <p className="mt-2 text-[12.5px] leading-[1.6] text-ink-subtle">
+                      {grant.prospecting_closed_at
+                        ? "Prospecting is closed for this grant — no prospects were surfaced."
+                        : prospectHint ?? "Prospecting isn't available for this grant yet — see the action panel."}
                     </p>
                   )}
                 </div>
