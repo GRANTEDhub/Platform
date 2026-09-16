@@ -262,10 +262,40 @@ export function formatAwardListLabel(awardRange: string | null | undefined): str
 // the list column; returns null (no tile) when there is genuinely no award. A real range is ALWAYS short
 // (abbrevAmount collapses "$1,000,000" → "$1M", so "$10.5M – $100.5M" is 16), so ≤ CAP keeps every real
 // figure and a legitimate short token ("Varies", "See NOFO"); only genuine long free-text is collapsed.
+// A bound whose number is embedded in PROSE with NO currency signal ("up to 10 sites", "Not to exceed 25% of
+// project cost") is NOT a trustworthy figure: parseAmount mines the bare digits ($ optional) and
+// formatAwardRange would surface a FABRICATED "$10" / "$25" as the award. The >22 guard in formatAwardStatTile
+// catches the case where BOTH bounds are present (the combined string runs long), but when ONE bound is empty
+// formatAwardRange collapses the other prose bound to a SHORT "$N" that slips UNDER 22 (Claude Code Review,
+// #571). This discriminator drops such a bound BEFORE formatAwardRange sees it — but ONLY when the number
+// carries NO currency signal, so a REAL award phrased with qualifier words is preserved (Vercel Agent Review,
+// #571): a "$", a spelled magnitude (thousand/million/billion), or "dollars" all mark real money and are KEPT
+// even inside prose ("$1.5 million", "up to $50,000", "$500,000 per year", "$50K"). Only a number with none of
+// those AND leftover alphabetic prose (after stripping money-formatting chars + a lone k/m/b unit) is a
+// fabrication risk. A clean numeric token ("50000", "1.5M") strips to nothing → kept; a non-numeric token
+// ("Varies", "See NOFO") has no number to mine → kept verbatim; a placeholder ("Not available") has no number
+// → kept, so it still reaches the isPlaceholderAward → "Not stated" path.
+function awardBoundFabricates(raw: string | null | undefined): boolean {
+  const s = (raw ?? "").trim();
+  if (!s || parseAmount(s) === null) return false;
+  // A currency signal ($ / spelled magnitude / "dollars") means the number IS money, even amid qualifier
+  // words — keep it. parseAmount reads the figure through the same qualifiers ("up to $50,000" → 50000).
+  if (/[$]|\b(?:dollars?|hundred|thousand|million|billion|trillion)\b/i.test(s)) return false;
+  const residue = s.replace(/[0-9.,\s%]/g, "").replace(/^[kmb]$/i, "");
+  return /[a-z]/i.test(residue);
+}
+
 export function formatAwardStatTile(min: string | null | undefined, max: string | null | undefined): string | null {
-  const range = formatAwardRange(min, max);
+  // Drop a prose-with-a-number bound so a mined "$10" / "$25" can never surface; a clean figure, a bare
+  // non-numeric token ("Varies"), and a placeholder ("Not available") all pass through unchanged.
+  const range = formatAwardRange(
+    awardBoundFabricates(min) ? "" : min,
+    awardBoundFabricates(max) ? "" : max,
+  );
   if (range === "—") return null;
   if (isPlaceholderAward(range)) return "Not stated";
+  // Backstop: a clean numeric range is ALWAYS short, so a >22 string is still residual free-text prose (e.g.
+  // both bounds are prose WITHOUT a minable number) → "Not stated" rather than an ellipsized sentence.
   return range.length <= 22 ? range : "Not stated";
 }
 
