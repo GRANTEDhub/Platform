@@ -222,7 +222,11 @@ export function ClientDashboard({
     <div className="flex min-h-full flex-col bg-ground">
       {hero}
       {isStaff && matchNote}
-      <div className="gc-contour gc-contour--corner relative flex flex-1 flex-col overflow-hidden px-[34px] pb-[15px] pt-[13px]">
+      <div className="relative flex flex-1 flex-col overflow-hidden px-[34px] pb-[15px] pt-[13px]">
+        {/* The contour rides ConsoleDecor (a modal-free background layer), NOT this
+            content div — this div wraps the non-portal CheckGrant modal (`fixed z-50`),
+            and `.gc-contour`'s `isolation: isolate` here would trap that modal below the
+            app-wide GrantBotSwitcher (`fixed z-40`). See ConsoleDecor. */}
         <ConsoleDecor ghost={ghost} />
         <div className="relative z-[1] flex min-h-0 flex-1 flex-col">
           <ConsoleBody
@@ -258,7 +262,11 @@ export function ClientDashboard({
 // off, z-0, and everything real sits above it.
 function ConsoleDecor({ ghost }: { ghost?: number | null }) {
   return (
-    <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-0">
+    // Carries the contour --corner accent for the dashboard body. It lives here, on this
+    // dedicated background layer, rather than on the parent content div, so `.gc-contour`'s
+    // `isolation: isolate` stays on a modal-free branch and never traps the CheckGrant modal.
+    // `!absolute` keeps this layer absolutely positioned (`.gc-contour` sets position:relative).
+    <div aria-hidden="true" className="gc-contour gc-contour--corner pointer-events-none !absolute inset-0 z-0">
       <span className="absolute inset-y-0 right-[325px] hidden w-px bg-brand-navy/[0.07] xl:block" />
       <span className="absolute inset-y-0 left-0 w-px bg-brand-navy/10" />
       <span className="absolute inset-y-0 right-0 w-px bg-brand-navy/10" />
