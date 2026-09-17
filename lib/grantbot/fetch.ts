@@ -39,6 +39,18 @@ export type { LookupFn };
 export const FETCH_TIMEOUT_MS = 10_000;
 export const MAX_RESPONSE_BYTES = 1_500_000; // ~1.5MB of source text, truncated (and declared) past this
 export const MAX_REDIRECTS = 3;
+// A best-effort wall-clock bound on the PDF parse step. pdf-parse/pdfjs does not honour the abort
+// signal (guard 3 above), so the network timeout does not cover the parse — a large NOFO PDF that pdfjs
+// chews slowly was previously bounded only by the route's 300s maxDuration, which is what let a GrantBot
+// turn hang for minutes on a fetched PDF. A Promise.race cannot preempt a truly SYNCHRONOUS parse (Node
+// is single-threaded; a tight CPU loop never yields to let the timer fire), but pdfjs parses
+// INCREMENTALLY and yields between pages/objects on a large document, so the race DOES fire for the
+// common slow-but-yielding case, turning a multi-minute parse into a typed pdf_parse_timeout the model
+// relays. A hard bound on a pathological non-yielding parse would need a worker thread that can be
+// killed; that residual case stays bounded by maxDuration (unchanged), and GrantBot now reads such a
+// grant's already-parsed text from grants.raw_text instead of fetching (lib/grantbot/stored-nofo.ts),
+// so the fetch-and-parse path is the fallback for un-ingested grants, not the common path.
+export const PDF_PARSE_TIMEOUT_MS = 25_000;
 
 // Content types we read as text, decoded honouring the response's declared charset (legacy .gov
 // pages are not all UTF-8). PDF is handled separately (PDF_CONTENT_TYPE) because federal NOFOs are
@@ -63,6 +75,7 @@ export type FetchFailReason =
   | "timeout" // headers or body exceeded the time budget
   | "unsupported_type" // content-type not in ALLOWED_CONTENT_TYPES and not a PDF
   | "pdf_parse_failed" // a PDF whose bytes pdf-parse could not read (corrupt, encrypted, or truncated past the cap)
+  | "pdf_parse_timeout" // a PDF whose parse exceeded PDF_PARSE_TIMEOUT_MS (pdfjs ignores the abort signal) -- report, never guess
   | "pdf_no_text" // a PDF that parsed but yielded no text layer (a scanned image) -- refuse to guess its content
   | "http_error" // non-2xx/3xx status
   | "fetch_error"; // network/transport failure
@@ -125,6 +138,9 @@ export interface FetchGrantSourceOptions {
   timeoutMs?: number;
   maxBytes?: number;
   maxRedirects?: number;
+  // Best-effort bound on the PDF parse step (see PDF_PARSE_TIMEOUT_MS). Injectable so the timeout
+  // branch is unit-tested with a deliberately slow pdfExtract seam and no real PDF.
+  pdfParseTimeoutMs?: number;
   // Extra exact hosts to allow beyond the .gov rule, for THIS call only (see isAllowlistedHost).
   // Default undefined = the shared .gov-only allowlist, so a caller that omits it is byte-identical
   // to before (the intel QA grounding path relies on this).
@@ -182,6 +198,7 @@ export async function fetchGrantSource(rawUrl: string, opts: FetchGrantSourceOpt
   const timeoutMs = opts.timeoutMs ?? FETCH_TIMEOUT_MS;
   const maxBytes = opts.maxBytes ?? MAX_RESPONSE_BYTES;
   const maxRedirects = opts.maxRedirects ?? MAX_REDIRECTS;
+  const pdfParseTimeoutMs = opts.pdfParseTimeoutMs ?? PDF_PARSE_TIMEOUT_MS;
   // Normalise the per-call extra hosts ONCE (lowercase, trailing dot stripped) so the exact-match in
   // isAllowlistedHost is reliable. undefined when none were passed -> the .gov-only allowlist.
   const extraAllowed = opts.extraAllowedHosts?.length
@@ -254,14 +271,18 @@ export async function fetchGrantSource(rawUrl: string, opts: FetchGrantSourceOpt
         }
         let text: string;
         try {
-          // The abort timer stays armed, but pdf-parse/pdfjs never inspects controller.signal, so this
-          // parse step is the one place FETCH_TIMEOUT_MS is not enforced: a pathologically slow parse of
-          // an under-cap PDF is bounded only by the route's maxDuration (300s). True cancellation would
-          // need a worker thread that can be killed outright; a Promise.race cannot preempt pdfjs's
-          // mostly-synchronous CPU work.
-          text = await pdfExtract(read.bytes);
+          // pdf-parse/pdfjs never inspects controller.signal, so FETCH_TIMEOUT_MS does not cover this
+          // parse. We race it against PDF_PARSE_TIMEOUT_MS: pdfjs parses INCREMENTALLY and yields on a
+          // large document, so the race fires for the common slow-but-yielding case (the multi-minute
+          // hang), returning a typed pdf_parse_timeout. It cannot preempt a truly synchronous parse
+          // (that residual stays bounded by the route's maxDuration), but the timer's own callback is a
+          // macrotask that runs the instant pdfjs next yields. See PDF_PARSE_TIMEOUT_MS.
+          text = await raceParseTimeout(pdfExtract(read.bytes), pdfParseTimeoutMs);
         } catch (err) {
           // A truncated PDF (over the byte cap) usually lands here too: its trailer/xref was cut.
+          if (err instanceof PdfParseTimeout) {
+            return { ok: false, reason: "pdf_parse_timeout", detail: `PDF parse exceeded ${pdfParseTimeoutMs}ms` };
+          }
           return { ok: false, reason: "pdf_parse_failed", detail: err instanceof Error ? err.message : String(err) };
         }
         if (!text.trim()) {
@@ -331,6 +352,26 @@ function makeAbort(): Error {
   const e = new Error("aborted");
   e.name = "AbortError";
   return e;
+}
+
+// Distinct from a parse FAILURE so the caller can report "took too long" vs "could not read". The
+// losing parse promise keeps running in the background but its result is discarded — acceptable, since
+// the whole turn is bounded by the route's maxDuration and the timed-out parse produced no usable text.
+class PdfParseTimeout extends Error {
+  constructor() {
+    super("pdf parse timeout");
+    this.name = "PdfParseTimeout";
+  }
+}
+
+function raceParseTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new PdfParseTimeout()), ms);
+  });
+  // unref so a background parse that outlives the reject never keeps the process alive on its own.
+  (timer! as unknown as { unref?: () => void })?.unref?.();
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
 }
 
 // Read up to maxBytes from the response, decoding with the given charset (UTF-8 when null) in

@@ -28,6 +28,16 @@ export const PER_CLIENT_MAX_TOOL_ROUNDS = 3;
 // budget when nothing has elapsed — which is part of what keeps flag-off byte-identical.
 export const TURN_DEADLINE_MS = 220_000;
 
+// Per-DISPATCH wall-clock bound, opt-in via runToolLoop({ dispatchTimeoutMs }). The loop's deadline is
+// only checked BETWEEN rounds, so a single slow tool execution (e.g. a fetched PDF whose parse yields
+// slowly) is not interrupted by the round-level check. This bounds one dispatch: when it expires the
+// loop feeds a typed "tool did not finish" tool_result and proceeds to the final answer, so a slow tool
+// can never make the turn hang returning nothing. Belt-and-suspenders to each tool's OWN internal bound
+// (the fetch timeout + PDF_PARSE_TIMEOUT_MS, the data-tools' 15s). Callers that omit dispatchTimeoutMs
+// (intel, the tests) are byte-identical — the wrap is skipped entirely. Generous so a legitimate fetch
+// + parse or a national+in-state data lookup completes well within it.
+export const DISPATCH_TIMEOUT_MS = 45_000;
+
 // How the call treats tools:
 //   off  -> no `tools` parameter at all. The all-flags-off path is always this, which is what makes it
 //           byte-identical to the pre-tools single-shot call.
@@ -74,11 +84,34 @@ export async function runToolLoop(opts: {
   now: () => number;
   deadlineMs?: number;
   maxToolRounds?: number;
+  // Opt-in per-dispatch bound (see DISPATCH_TIMEOUT_MS). Omitted (intel, tests) = no wrap, byte-identical.
+  dispatchTimeoutMs?: number;
 }): Promise<{ text: string; usage: TurnUsage | null; stopReason: string | null }> {
   const deadlineMs = opts.deadlineMs ?? TURN_DEADLINE_MS;
   const maxToolRounds = opts.maxToolRounds ?? MAX_TOOL_ROUNDS;
   const start = opts.now();
   const working = [...opts.messages];
+
+  // Run one dispatch, bounded by dispatchTimeoutMs when set. On expiry it RESOLVES (never rejects) with a
+  // typed tool_result so the loop continues to a final answer rather than hanging on the tool; the real
+  // dispatch keeps running in the background (its audit side-effects still fire) but its result is
+  // ignored. Without dispatchTimeoutMs this is exactly `opts.dispatch(tu)` — the byte-identical path.
+  const dispatchBounded = (tu: { id: string; name: string; input: unknown }): Promise<{ resultText: string }> => {
+    if (opts.dispatchTimeoutMs == null) return opts.dispatch(tu);
+    const budget = Math.min(opts.dispatchTimeoutMs, Math.max(deadlineMs - (opts.now() - start), 1_000));
+    let timer: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<{ resultText: string }>((resolve) => {
+      timer = setTimeout(
+        () =>
+          resolve({
+            resultText: `The tool "${tu.name}" did not finish within its time budget and was skipped. Do not wait for it — answer from what you already have, or tell the staffer to check the official source.`,
+          }),
+        budget,
+      );
+    });
+    (timer! as unknown as { unref?: () => void })?.unref?.();
+    return Promise.race([opts.dispatch(tu), timeout]).finally(() => clearTimeout(timer));
+  };
 
   let usage: TurnUsage | null = null;
   let stopReason: string | null = null;
@@ -108,7 +141,7 @@ export async function runToolLoop(opts: {
       working.push({ role: "assistant", content: res.rawContent });
       const toolResults: unknown[] = [];
       for (const tu of res.toolUses) {
-        const { resultText } = await opts.dispatch(tu);
+        const { resultText } = await dispatchBounded(tu);
         toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: resultText });
       }
       working.push({ role: "user", content: toolResults });

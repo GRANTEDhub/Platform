@@ -29,7 +29,7 @@ import {
   WEB_FETCH_TOOL_NAME,
   type FetchAuditRecord,
 } from "@/lib/grantbot/web-fetch";
-import { runToolLoop, TURN_DEADLINE_MS, PER_CLIENT_MAX_TOOL_ROUNDS, type CallModel, type ToolDispatch } from "@/lib/grantbot/tool-loop";
+import { runToolLoop, TURN_DEADLINE_MS, PER_CLIENT_MAX_TOOL_ROUNDS, DISPATCH_TIMEOUT_MS, type CallModel, type ToolDispatch } from "@/lib/grantbot/tool-loop";
 import {
   grantbotArtifactsEnabled,
   executeArtifactTool,
@@ -75,6 +75,16 @@ import {
   type WebSearchAuditRecord,
 } from "@/lib/grantbot/web-search";
 import { loadFocusGrant, buildFocusGrantBlock } from "@/lib/grantbot/focus-grant";
+import {
+  grantbotStoredNofoEnabled,
+  loadGrantNofoFields,
+  buildStoredNofoFieldsBlock,
+  executeStoredNofo,
+  READ_STORED_NOFO_TOOL,
+  READ_STORED_NOFO_TOOL_NAME,
+  STORED_NOFO_INSTRUCTION_BLOCK,
+  type NofoReadAuditRecord,
+} from "@/lib/grantbot/stored-nofo";
 
 // One conversational turn: assemble, call, store. The orchestrator between the pure renderer and
 // the store, and the only place that knows anything about the model.
@@ -214,13 +224,20 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
   const crossThreadEnabled = grantbotCrossThreadEnabled();
   const dataToolsEnabled = grantbotDataToolsEnabled();
   const webSearchEnabled = grantbotWebSearchEnabled();
-  const toolsEnabled = webFetchEnabled || artifactsEnabled || crossThreadEnabled || dataToolsEnabled || webSearchEnabled;
+  const storedNofoEnabled = grantbotStoredNofoEnabled();
+  const toolsEnabled =
+    webFetchEnabled || artifactsEnabled || crossThreadEnabled || dataToolsEnabled || webSearchEnabled || storedNofoEnabled;
 
   // The grant anchor (Ask GrantBot from a grant card): when this conversation is tied to a grant, load
   // its public facts and add a grounding block below. focusGrantId is the STORED anchor (the route reads
   // it); the block text comes from the grant's own row, never the request body. A general thread
   // (focusGrantId null, or the grant no longer resolves) adds no block → byte-identical.
   const focusGrant = input.focusGrantId ? await loadFocusGrant(input.db, input.focusGrantId) : null;
+  // LAYER 1 (stored-NOFO): when the flag is on AND this thread is anchored, load the anchored grant's
+  // STORED structured NOFO fields (what it funds, eligibility, allowable uses, requirements) so most asks
+  // are answered with no tool round. Null when the flag is off, the thread is unanchored, or the grant
+  // carries no structured detail (a husk) → no block, byte-identical. Never raw_text (the tool's job).
+  const nofoFields = storedNofoEnabled && focusGrant ? await loadGrantNofoFields(input.db, focusGrant.id) : null;
   // Each instruction block is cacheable:false and appended ONLY when its flag is on, so it never
   // enters the shared cached prefix -- the flag-off system prompt is unchanged and existing caches
   // are not busted. When ALL flags are off, effectiveTurnBlocks equals input.turnBlocks and the
@@ -230,7 +247,12 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
     // The grant-anchor grounding, when this thread was opened from a grant card. cacheable:false and
     // present only for an anchored thread, so a general thread's prompt is unchanged.
     ...(focusGrant ? [buildFocusGrantBlock(focusGrant)] : []),
+    // LAYER 1 stored-NOFO fields for the anchored grant (flag-gated; only when there is detail to show).
+    ...(nofoFields ? [buildStoredNofoFieldsBlock(nofoFields)] : []),
     ...(webFetchEnabled ? [FETCH_INSTRUCTION_BLOCK] : []),
+    // The stored-NOFO tool instruction: prefer read_stored_nofo over fetching, and never claim a source
+    // you did not read this turn. cacheable:false, only when the flag is on → flag-off byte-identical.
+    ...(storedNofoEnabled ? [STORED_NOFO_INSTRUCTION_BLOCK] : []),
     ...(artifactsEnabled ? [ARTIFACT_INSTRUCTION_BLOCK] : []),
     ...(crossThreadEnabled ? [CROSS_THREAD_INSTRUCTION_BLOCK] : []),
     ...(dataToolsEnabled ? [DATA_TOOLS_INSTRUCTION_BLOCK] : []),
@@ -276,6 +298,8 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
   // audit straight from each round's response content into this sink -- the same "recorded as it runs,
   // so a mid-loop throw still keeps the audit of what already ran" discipline as the four above.
   const searches: WebSearchAuditRecord[] = [];
+  // Which grants' stored NOFO the model read from the grant row (read_stored_nofo) instead of fetching.
+  const nofoReads: NofoReadAuditRecord[] = [];
 
   try {
     const anthropic = getAnthropicClient();
@@ -291,6 +315,9 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
       ...(artifactsEnabled ? [CREATE_ARTIFACT_TOOL, EDIT_ARTIFACT_TOOL] : []),
       ...(crossThreadEnabled ? [LIST_CONVERSATIONS_TOOL, READ_CONVERSATION_TOOL] : []),
       ...(dataToolsEnabled ? [PROGRAM_AWARDS_TOOL, ORG_HISTORY_TOOL, SAM_ENTITY_TOOL] : []),
+      // LAYER 2: the read-only stored-NOFO tool — reads the platform's already-parsed copy instead of
+      // re-fetching + re-parsing the PDF. Flag-gated; absent when off → byte-identical tool set.
+      ...(storedNofoEnabled ? [READ_STORED_NOFO_TOOL] : []),
       // Anthropic's server-side web_search: it executes on Anthropic's servers (no dispatch branch
       // below, and runToolLoop resumes the pause_turn it produces), so it appears only in the tool set.
       ...(webSearchEnabled ? [grantbotWebSearchTool()] : []),
@@ -381,6 +408,16 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
         dataLookups.push(audit);
         return { resultText };
       }
+      if (tu.name === READ_STORED_NOFO_TOOL_NAME) {
+        // Reads the anchored grant's stored NOFO (focusGrantId, server-side — never the request body),
+        // or a grant the model names by opportunity number. Postgres text read: no PDF, no network.
+        const { resultText, audit } = await executeStoredNofo(
+          { input: tu.input },
+          { db: input.db, focusGrantId: input.focusGrantId ?? null },
+        );
+        nofoReads.push(audit);
+        return { resultText };
+      }
       return { resultText: `Unknown tool "${tu.name}". Nothing was done.` };
     };
 
@@ -394,6 +431,9 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
       // 3, not the default 2 — a grounded who-wins answer wants national + in-state + synthesis (the
       // data-tools eval's run-1 truncation). Still bounded by TURN_DEADLINE_MS.
       maxToolRounds: PER_CLIENT_MAX_TOOL_ROUNDS,
+      // Bound each single tool execution so a slow tool (a fetched PDF's parse) can't make the turn hang
+      // returning nothing — the loop feeds a typed timeout tool_result and finishes. See DISPATCH_TIMEOUT_MS.
+      dispatchTimeoutMs: DISPATCH_TIMEOUT_MS,
     });
 
     answer = loop.text;
@@ -423,6 +463,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
     crossThreadReads,
     dataLookups,
     searches,
+    nofoReads,
   });
   await touchConversation(input.db, input.conversationId);
 
