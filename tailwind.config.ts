@@ -61,10 +61,14 @@ const config: Config = {
           orange: BRAND.orange,
           orangeHover: BRAND.orangeHover,
           orangeDeep: BRAND.orangeDeep,
+          // Accent on LIGHT for large text (≥24px) and dark-labeled rules/icons. NOT for
+          // small text or white-label fills — see the note in lib/brand.ts.
+          orangeOnLight: BRAND.orangeOnLight,
           // Solid orange UNDER WHITE TEXT only — see the note in lib/brand.ts. `orange`
           // stays the fill for anything with no type on it.
           orangeFill: BRAND.orangeFill,
           orangeFillHover: BRAND.orangeFillHover,
+          orangeFillActive: BRAND.orangeFillActive,
           amberOnDark: BRAND.amberOnDark,
           // Green reversed out of navy chrome (GrantBot's live badge). NOT `success` --
           // see the note in lib/brand.ts: that value fails contrast on a dark ground.
@@ -91,6 +95,7 @@ const config: Config = {
         hairline: {
           DEFAULT: LINE.hairline,
           strong: LINE.hairlineStrong,
+          dark: LINE.onDark,
         },
         edge: LINE.edge,
         // Pipeline stages. One color per stage, used only for that stage.

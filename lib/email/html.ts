@@ -60,9 +60,9 @@ export interface DecisionBox {
 // the padding, wrapping the anchor. A styled bare <a> is NOT a button in Outlook --
 // it ignores padding on inline elements and you get coloured text.
 function buttonCell(href: string, label: string, tone: "primary" | "quiet"): string {
-  const bg = tone === "primary" ? "#B85A17" : "#FFFFFF";
+  const bg = tone === "primary" ? "#A8501A" : "#FFFFFF";
   const fg = tone === "primary" ? "#FFFFFF" : "#4A5261";
-  const border = tone === "primary" ? "#B85A17" : "#CFCAC0";
+  const border = tone === "primary" ? "#A8501A" : "#CFCAC0";
   return [
     `<td style="background-color:${bg};border:1px solid ${border};border-radius:2px;padding:0" bgcolor="${bg}">`,
     `<a href="${href}" style="display:inline-block;padding:10px 18px;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:14px;font-weight:700;color:${fg};text-decoration:none">${label}</a>`,
@@ -98,7 +98,7 @@ function renderCta(cta: CtaButton): string | null {
     // Small, muted, and word-breaking: a setup URL is long, and an unbroken one blows out
     // the layout on a phone. Shown as its own line rather than inline so it reads as the
     // fallback it is.
-    `<p style="margin:0 0 14px;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:12.5px;line-height:1.5;color:#6E7683">`,
+    `<p style="margin:0 0 14px;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:12.5px;line-height:1.5;color:#6E6F78">`,
     `Button not working? Use this link:<br>`,
     `<a href="${href}" style="color:#8F4413;text-decoration:underline;word-break:break-all">${href}</a>`,
     `</p>`,
@@ -116,12 +116,12 @@ function renderBox(box: DecisionBox): string | null {
   return [
     `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 18px;border-collapse:separate">`,
     `<tr><td bgcolor="#FFFFFF" style="background-color:#FFFFFF;border:1px solid #CFCAC0;border-radius:2px;padding:18px 20px">`,
-    `<p style="margin:0 0 2px;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#6E7683">Your decision</p>`,
-    `<p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:17px;font-weight:700;line-height:1.35;color:#0B1E3A">${escapeHtml(box.grantTitle)}</p>`,
+    `<p style="margin:0 0 2px;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#6E6F78">Your decision</p>`,
+    `<p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:17px;font-weight:700;line-height:1.35;color:#0C121F">${escapeHtml(box.grantTitle)}</p>`,
     // The deadline earns a line: without it "Interested" is a decision made with no
     // urgency attached, and it is the one fact that makes this time-sensitive.
     box.deadline
-      ? `<p style="margin:6px 0 0;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:13px;color:#4A5261">Applications due <strong style="color:#0B1E3A">${escapeHtml(box.deadline)}</strong></p>`
+      ? `<p style="margin:6px 0 0;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:13px;color:#4A5261">Applications due <strong style="color:#0C121F">${escapeHtml(box.deadline)}</strong></p>`
       : "",
     `<p style="margin:6px 0 14px;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:13px;color:#4A5261">The full one-pager is attached as a PDF.</p>`,
     // ASYMMETRIC ON PURPOSE. Equal weight would make this a 50/50 question, and it is
@@ -237,7 +237,7 @@ export function plainTextToHtml(
   if (box && !placed) out.push(box);
 
   return [
-    `<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.55;color:#0B1E3A">`,
+    `<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.55;color:#0C121F">`,
     ...out,
     `</div>`,
   ].join("");

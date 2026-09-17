@@ -10,17 +10,18 @@
 // change navy/orange/cream here, update the matching HSL comment block in
 // globals.css too -- that is the one place the palette is duplicated.
 export const BRAND = {
-  navy: "#0B1E3A",        // primary
-  navyHover: "#12305A",   // primary button hover, IntellEngine gradient end
-  navyDeep: "#081627",    // darker navy for gradient ends
+  navy: "#0C121F",        // primary — 2026 handoff: a cooler, less-saturated near-black (was #0B1E3A)
+  navyHover: "#1C2740",   // primary button hover, IntellEngine gradient end
+  navyDeep: "#070B14",    // darker navy for gradient ends
   // The ink direction's CHROME: the command band, both mastheads, and the IntellEngine
-  // panel. A near-black with only a trace of blue, and deliberately NOT `navy`.
+  // panel. A near-black with only a trace of blue, and historically distinct from `navy`.
   //
-  // Navy is a text colour first — it is INK.DEFAULT, it is on every heading and body
-  // paragraph in the product — so it cannot be retuned to suit a dark surface without
-  // repainting all of that. As a large dark FIELD it also reads hazy: white cards against
-  // it look soft rather than crisp, which is most of what separated the first ink build
-  // from the reference. Two tokens because they have two jobs.
+  // The 2026 refresh pulled `navy` itself down to a cooler near-black (#0C121F), so the
+  // old reason chrome existed — the mid-navy #0B1E3A read hazy as a large dark FIELD, and
+  // white cards on it looked soft rather than crisp — is largely gone: the new navy is
+  // crisp as a field. chrome is KEPT as its own token (now near-identical to navy) rather
+  // than folded in, so nothing that reads `chrome` shifts; collapsing the two into one
+  // dark is a deliberate later cleanup, not this PR.
   chrome: "#0A1420",
   orange: "#E4761F",      // accent / action
   orangeHover: "#C9631A", // orange button hover / press
@@ -70,11 +71,21 @@ export const BRAND = {
   // display figures, and anything on ink. They are not interchangeable — the pair exists
   // so "orange small text" has a right answer instead of being quietly illegible.
   orangeDeep: "#A8501A",
+  // Brand orange for ACCENT ON LIGHT that is neither small text nor a white-label fill:
+  // large orange text (≥24px / ≥19px bold), and rules or icons that carry or sit beside a
+  // DARK label on the light surface. #C4651F is 3.76:1 on SURFACE.page — it clears the
+  // 3:1 bar for large text and non-text UI, but NOT the 4.5:1 body-text floor, so it is
+  // never correct under 24px (use orangeDeep) and never under a white label (use
+  // orangeFill). `orange` #E4761F still owns no-text marks (bars/dots/rules with no label)
+  // on any ground and the accent on dark; this is the one-step-darker answer for when
+  // orange must carry weight on light. (2026 palette handoff.)
+  orangeOnLight: "#C4651F",
   // Brand orange as a FILL UNDER WHITE TEXT. The mirror of orangeDeep, one layer out:
   // orangeDeep exists because orange type on a light ground is illegible, this exists
   // because white type on an orange ground is too. White on #E4761F is 3.04:1 — every
-  // primary button in the product sat there. #B85A17 takes it to 4.65:1 and is the
-  // shallowest darkening that clears AA, so the buttons stay recognisably brand orange.
+  // primary button in the product sat there. #A8501A takes it to 5.49:1 (2026 handoff),
+  // and deliberately COINCIDES with orangeDeep so "small orange text on light" and
+  // "orange fill under white" have one burnt-orange answer instead of two.
   //
   // NOT a replacement for `orange`. Use this ONLY where white (or cream) text sits on a
   // solid orange field: primary buttons, count badges, the active bucket pill. `orange`
@@ -82,11 +93,11 @@ export const BRAND = {
   // figures, the left-edge accents — because those carry no contrast obligation and
   // darkening them would drain the accent out of the product for no gain.
   //
-  // The pair is deliberately NOT `orangeHover`: that value (#C9631A, 3.97:1 under white)
-  // was tuned as a press state for #E4761F and is itself below AA, so it cannot be the
-  // hover for this one. `orangeFillHover` is the matching darker step.
-  orangeFill: "#B85A17",
-  orangeFillHover: "#9C4A12",
+  // Press states are the handoff's light-ground button ramp: hover #8F430F, active
+  // #6F340B. (orangeHover #C9631A stays the dark-ground accent press.)
+  orangeFill: "#A8501A",
+  orangeFillHover: "#8F430F",
+  orangeFillActive: "#6F340B",
   // The warm accent ON INK, and the mirror image of orangeDeep — which is the part that
   // is easy to get backwards. On a light ground the accent must go DARKER to clear
   // contrast; on a dark one it must go LIGHTER. Brand orange on #0A1420 falls below AA,
@@ -111,7 +122,7 @@ export const BRAND = {
 // page texture: the old topo-map wash sat on top of the hierarchy, so flat white
 // cards read as holes punched in the page rather than as surfaces above it.
 export const SURFACE = {
-  page: "#F1EEE8",   // page background — flat, no texture
+  page: "#FAF7F2",   // page background — flat, no texture (2026 handoff; = legacy BRAND.cream value, left in place)
   card: "#FFFFFF",   // every card
   sunken: "#FBFAF8", // inset fields inside white cards
   // The "ink" direction's page ground — a full step darker and greyer than `page`.
@@ -131,27 +142,33 @@ export const SURFACE = {
 // different media, so they are not folded into one token -- naming them both "ink"
 // is the trap this comment exists to flag.
 export const INK = {
-  DEFAULT: "#0B1E3A", // primary text (= navy)
-  muted: "#5B6472",   // body / secondary text
-  // Labels, metadata, counts of hidden rows. Was #8A93A0, which is 3.11:1 on white and
-  // failed AA at every one of the ~30 places it appears — all of them small type, which
-  // is the worst case for it. #6E7683 is 4.58:1 on white: the lightest value on this hue
-  // that clears the 4.5 floor, so the step between `muted` and `subtle` survives.
+  DEFAULT: "#0C121F", // primary text (= navy)
+  muted: "#3C4150",   // body / secondary text — 2026 handoff neutral (9.52:1 on page)
+  // Labels, metadata, counts of hidden rows. The 2026 handoff caption grey #6E6F78
+  // (4.67:1 on SURFACE.page) replaces the prior #6E7683 — effectively the same value on a
+  // cooler-neutral hue, and still the lightest grey that clears the 4.5 floor for small
+  // type, so the step between `muted` and `subtle` survives.
   //
-  // It still does NOT clear AA on SURFACE.ground (3.70:1). That is by design and not a
-  // gap to close by darkening further — ground-level small type uses `muted`, and the
-  // ink screens already do. See the note at the top of components/clients/portfolio-browser.tsx.
-  subtle: "#6E7683",
+  // It still does NOT clear AA on SURFACE.ground. That is by design and not a gap to close
+  // by darkening further — ground-level small type uses `muted`, and the ink screens
+  // already do. See the note at the top of components/clients/portfolio-browser.tsx.
+  subtle: "#6E6F78",
   faint: "#B0B6BF",   // placeholder text, disabled chevrons
 } as const;
 
 // ── Lines ───────────────────────────────────────────────────────────────────
-// Three weights, by job. Kept as rgba rather than flattened to hex so they compose
-// over both white cards and the warm page.
+// Light-ground hairlines are WARM SOLID literals from the 2026 handoff, not derived from
+// the primary: the refreshed primary #0C121F is much less saturated than the old navy, so
+// a hairline tinted from it comes out cool and near-neutral — wrong against the warm page.
+// The two warm values (subtle #EFE8DC, stronger #D9D2C3) keep every rule on the cream
+// surface warm. Dark-ground dividers can't take a warm line, so `onDark` (#27334A, from
+// the primary) is their separate token — never put a warm hairline on a navy/chrome field,
+// and never put `onDark` on the light surface.
 export const LINE = {
-  hairline: "rgba(11,30,58,0.06)",       // row dividers inside cards
-  hairlineStrong: "rgba(11,30,58,0.09)", // section / header bottom borders
-  edge: "rgba(11,30,58,0.13)",           // secondary button + input borders
+  hairline: "#EFE8DC",       // row dividers inside cards / subtle rules on light
+  hairlineStrong: "#D9D2C3", // section / header bottom borders on light
+  edge: "#D9D2C3",           // secondary button + input borders on light
+  onDark: "#27334A",         // dividers / borders on the dark ground
 } as const;
 
 // ── Pipeline stage scale ────────────────────────────────────────────────────
@@ -217,7 +234,7 @@ export const STAGE = {
 // darker companion -- a workaround for a value never checked against that use. Navy is the
 // darkest thing in the palette, so both of these clear it comfortably.
 export const STAGE_PORTAL = {
-  client: { color: "#0B1E3A", tint: "rgba(11,30,58,0.07)", border: "rgba(11,30,58,0.14)", text: "#0B1E3A" },
+  client: { color: "#0C121F", tint: "rgba(12,18,31,0.07)", border: "rgba(12,18,31,0.14)", text: "#0C121F" },
   approved: { color: "#3F5B7A", tint: "rgba(63,91,122,0.08)", border: "rgba(63,91,122,0.16)" },
 } as const;
 
