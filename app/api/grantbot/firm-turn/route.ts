@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getProfile } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
-import { conversationTitle } from "@/lib/grantbot/store";
+import { conversationTitle, getFocusGrantId } from "@/lib/grantbot/store";
 import { createFirmConversation, getFirmConversation } from "@/lib/grantbot/firm-store";
 import { firmGrantbotEnabled, runFirmTurn, MAX_MESSAGE_CHARS } from "@/lib/grantbot/firm-turn";
+import { grantbotAskFromProspectingEnabled } from "@/lib/grantbot/firm-ask-intent";
 
 // One FIRM GrantBot turn. STAFF (admin-only), read-only, roster-wide, PERSISTED (Memory / Brick 2).
 //
@@ -29,7 +30,7 @@ export async function POST(req: NextRequest) {
   if (!profile) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   if (profile.role !== "admin") return NextResponse.json({ error: "Admin only" }, { status: 403 });
 
-  let body: { message?: unknown; conversationId?: unknown };
+  let body: { message?: unknown; conversationId?: unknown; focusGrantId?: unknown; focusGrantTitle?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -40,6 +41,16 @@ export async function POST(req: NextRequest) {
   if (!message.trim()) {
     return NextResponse.json({ error: "message is required" }, { status: 400 });
   }
+
+  // The grant anchor (Ask GrantBot from the prospecting page). Honoured ONLY when
+  // GRANTBOT_ASK_FROM_PROSPECTING_ENABLED is on, so a body that sends these while the flag is off is
+  // ignored and the turn is byte-identical to before. The id is a POINTER used at create time to store
+  // the anchor on the firm conversation row; the title is only ever the thread's display name; the
+  // grounding text the model reads is composed server-side from the grant's own row + surfaced prospects
+  // (firm-focus.ts), never from these fields — so no client-supplied text reaches the prompt.
+  const askEnabled = grantbotAskFromProspectingEnabled();
+  const focusGrantId = askEnabled && typeof body.focusGrantId === "string" ? body.focusGrantId : "";
+  const focusGrantTitle = askEnabled && typeof body.focusGrantTitle === "string" ? body.focusGrantTitle : "";
   // Length is validated HERE, before any conversation is created — a 4xx with no conversationId, so
   // nothing is stored and the page restores the draft. Deferring this to runFirmTurn (which also
   // guards it) would first create an empty thread and then return 200 + { conversationId }, which the
@@ -58,18 +69,29 @@ export async function POST(req: NextRequest) {
   // firm turn onto a client's thread. Everything past this line is PERSISTED, so a subsequent model
   // failure returns 200 + { conversationId, error } (not a 4xx) — the page keeps its bubble and
   // continues the same thread, matching the recorded turn.
+  // The STORED anchor to ground this turn on. Resolved server-side: on create it is the just-stored id;
+  // on an existing thread it is read back from the conversation row (getFocusGrantId, flag-gated +
+  // fail-soft), so a browser cannot re-anchor a thread mid-conversation. Null on the flag-off path
+  // (byte-identical). getFocusGrantId is conversationId-scoped (not client-gated); the row here is already
+  // known to be a firm thread (getFirmConversation filtered scope='firm'), so reusing it is safe.
+  let focusForTurn: string | null = null;
   let conversationId = typeof body.conversationId === "string" ? body.conversationId : "";
   if (conversationId) {
     const existing = await getFirmConversation(db, conversationId);
     if (!existing) return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+    if (askEnabled) focusForTurn = await getFocusGrantId(db, conversationId);
   } else {
     const created = await createFirmConversation(db, {
-      title: conversationTitle(message),
+      // A firm thread opened from a grant's prospecting page is auto-named after the grant (so the rail
+      // reads as "this grant" and the staffer finds it later); otherwise the usual first-message title.
+      title: focusGrantId && focusGrantTitle ? conversationTitle(focusGrantTitle) : conversationTitle(message),
       startedBy: profile.id,
       startedByEmail: profile.email ?? null,
+      focusGrantId: focusGrantId || null,
     });
     if (!created) return NextResponse.json({ error: "Could not start a conversation" }, { status: 500 });
     conversationId = created.id;
+    focusForTurn = focusGrantId || null;
   }
 
   const outcome = await runFirmTurn({
@@ -78,6 +100,9 @@ export async function POST(req: NextRequest) {
     message,
     generatedBy: profile.email ?? "unknown",
     actorRole: "admin",
+    // The grant anchor for this turn (from the stored conversation, never the raw body) — see the note
+    // above. runFirmTurn composes the grant+prospects grounding block from the grant's own row; null → none.
+    focusGrantId: focusForTurn,
   });
 
   if (!outcome.ok) {

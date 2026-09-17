@@ -112,6 +112,27 @@ describe("createFirmConversation", () => {
     expect(convo?.id).toBe("firm-new");
     expect(convo && "clientId" in convo).toBe(false);
   });
+
+  // The safe-before-0098 property: focus_grant_id is written ONLY for an anchored firm thread (Ask
+  // GrantBot from the prospecting page), so a general firm thread's INSERT is byte-identical and carries
+  // no dependency on migration 0098 — exactly the createConversation discipline for the per-client bot.
+  it("a GENERAL firm thread's INSERT does NOT touch focus_grant_id (no column dependency)", async () => {
+    const { db, inserted } = fakeDb({ conversations: [] });
+    await createFirmConversation(db, { title: "t" });
+    expect("focus_grant_id" in inserted[0]).toBe(false);
+  });
+
+  it("an ANCHORED firm thread's INSERT includes focus_grant_id", async () => {
+    const { db, inserted } = fakeDb({ conversations: [] });
+    await createFirmConversation(db, { title: "t", focusGrantId: "g-1" });
+    expect(inserted[0].focus_grant_id).toBe("g-1");
+  });
+
+  it("a null/empty focusGrantId is a general thread (no column touch)", async () => {
+    const { db, inserted } = fakeDb({ conversations: [] });
+    await createFirmConversation(db, { title: "t", focusGrantId: null });
+    expect("focus_grant_id" in inserted[0]).toBe(false);
+  });
 });
 
 describe("getFirmConversation — scope boundary", () => {

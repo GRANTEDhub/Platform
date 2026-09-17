@@ -39,6 +39,13 @@ export const draftKey = (clientId: string) => `grantbot:draft:${clientId}`;
 // cannot drift, the same drift-guard reason as draftKey / BLANK_CONVERSATION.
 export const askContextKey = (clientId: string) => `grantbot:ask-context:${clientId}`;
 
+// The FIRM sibling of askContextKey: the "Ask GrantBot" button on the prospecting page (/intel/[id])
+// stashes a GRANT ANCHOR here before opening the FIRM bot, and the firm chat reads-and-clears it on mount.
+// A FIXED key (no client id — the firm bot has no client), shared HERE so the button's write and the firm
+// chat's read cannot drift. Carries the SAME AskContext shape (grantId + grantTitle) — the anchor is the
+// grant, stored as focus_grant_id on the firm conversation on first send (firm-ask-intent.ts).
+export const firmAskContextKey = "grantbot:firm-ask-context";
+
 // What the tile button stashes and the chat consumes: the grant this new thread should be anchored to.
 // grantId is the durable anchor (stored as focus_grant_id on first send); grantTitle names the thread
 // and seeds the in-conversation starter chips.

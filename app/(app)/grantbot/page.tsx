@@ -12,8 +12,15 @@ import { FirmGrantBotChat } from "@/components/grantbot/firm-grantbot-chat";
 // Gated twice: requireAdmin (the roster aggregates internal profile fields — admin-only for the
 // proof) and GRANTBOT_FIRM_ENABLED (notFound when off, so it is undiscoverable until flipped +
 // redeployed, mirroring the route's 404).
-export default async function FirmGrantBotPage() {
+export default async function FirmGrantBotPage({
+  searchParams,
+}: {
+  searchParams?: { ask?: string };
+}) {
   await requireAdmin();
   if (!firmGrantbotEnabled()) notFound();
-  return <FirmGrantBotChat />;
+  // The switcher-OFF fallback of the prospecting page's "Ask GrantBot" navigates here with ?ask=1 so the
+  // chat starts a NEW blank thread (the grant anchor rides the firm ask-context stash, read on mount).
+  // With the Switcher ON (the prod default) the button opens the corner in place and never reaches here.
+  return <FirmGrantBotChat initialBlank={searchParams?.ask === "1"} />;
 }

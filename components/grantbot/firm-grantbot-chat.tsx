@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Sparkles, Plus, Pencil, MessagesSquare } from "lucide-react";
 import { BRAND } from "@/lib/brand";
 import type { GrantBotThread, GrantBotMsg } from "@/lib/grantbot/wire";
+import { takeFirmAskContext, firmAskStarters } from "@/lib/grantbot/firm-ask-intent";
 
 // The FIRM GrantBot chat. Memory (Brick 2): firm threads PERSIST — a thread rail on the left, the
 // active transcript on the right, and a refresh reloads the thread instead of a clean slate. The
@@ -32,12 +33,18 @@ const toTurns = (msgs: GrantBotMsg[] | undefined): Turn[] =>
 export function FirmGrantBotChat({
   variant = "full",
   initialConversationId,
+  initialBlank,
 }: {
   variant?: "corner" | "full";
   // Corner only (S3): open ON this firm thread on mount — a Recent-view pick from the Switcher —
   // instead of the most-recent one. The Switcher remounts (a changed key) to open a different thread,
   // mirroring the per-client chat's initialConversationId.
   initialConversationId?: string | null;
+  // Ask GrantBot from the prospecting page: start on a NEW blank thread (don't load the most-recent one),
+  // ready for the grant anchor read below. A STABLE prop from the Switcher (corner) or the full page (the
+  // switcher-off fallback), so the blank-start is StrictMode-safe — decoupled from the read-and-clear of
+  // the grant stash, exactly like the per-client chat's initialBlank vs. takeAskContext split.
+  initialBlank?: boolean;
 }) {
   const isCorner = variant === "corner";
   // Corner-only: the rail slides over the transcript rather than sitting beside it.
@@ -46,6 +53,11 @@ export function FirmGrantBotChat({
   const [messages, setMessages] = useState<Turn[]>([]);
   // null = a blank, unsent thread (no server id yet). A real id names a persisted thread.
   const [conversationId, setConversationId] = useState<string | null>(null);
+  // The grant this thread is anchored to (Ask GrantBot from the prospecting page). Drives the anchored
+  // empty-state (banner + starter chips) and rides the FIRST send as focusGrantId/focusGrantTitle; the
+  // route stores it on the conversation and re-reads it from the row on every later turn, so it can be
+  // cleared here on a thread switch / New without losing the anchor. Null = a general firm thread.
+  const [focusGrant, setFocusGrant] = useState<{ id: string; title: string } | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [loadingThread, setLoadingThread] = useState(false);
@@ -79,6 +91,18 @@ export function FirmGrantBotChat({
     let alive = true;
     (async () => {
       try {
+        // Ask GrantBot from the prospecting page opens a NEW blank anchored thread: DON'T load the
+        // most-recent thread — leave the composer blank (conversationId stays null, messages empty) and
+        // just populate the rail so saved threads stay reachable. The grant anchor is read separately (the
+        // effect below). initialBlank is a stable prop (not the stash), so this branch is StrictMode-safe.
+        if (initialBlank) {
+          const res = await fetch("/api/grantbot/firm-context?threadsOnly=1");
+          if (!res.ok) return;
+          const data = (await res.json()) as { conversations?: GrantBotThread[] };
+          if (!alive || epochRef.current !== epoch) return;
+          setThreads(data.conversations ?? []);
+          return;
+        }
         // Open the requested firm thread (an S3 Recent-view pick) if given, else the most-recent one.
         // firm-context returns the rail + that thread's transcript in one shot; on a stale/deleted id
         // (404) fall back to the default so the rail + composer still load rather than blanking.
@@ -106,6 +130,17 @@ export function FirmGrantBotChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Ask GrantBot from the prospecting page stashes a grant anchor under the firm ask-context key; read-
+  // and-clear it on mount to drive the anchored empty-state (banner + starter chips) and the first send.
+  // SEPARATE from the initial-load effect (which starts blank via the initialBlank prop) so the read-and-
+  // clear is StrictMode-safe: a dev double-invoke reads null on the second run and the `if (ctx)` guard
+  // leaves focusGrant set from the first run. Mount-only, like the initial load.
+  useEffect(() => {
+    const ctx = takeFirmAskContext();
+    if (ctx) setFocusGrant({ id: ctx.grantId, title: ctx.grantTitle });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, busy, loadingThread]);
@@ -127,6 +162,7 @@ export function FirmGrantBotChat({
     const epoch = ++epochRef.current;
     setLoadingThread(true);
     setError(null);
+    setFocusGrant(null); // switching to an existing thread drops the pending anchor (it belonged to the new thread)
     try {
       const res = await fetch(`/api/grantbot/firm-context?conversationId=${encodeURIComponent(id)}`);
       if (!res.ok) {
@@ -154,6 +190,7 @@ export function FirmGrantBotChat({
     setError(null);
     setInput("");
     setLoadingThread(false);
+    setFocusGrant(null); // a fresh general thread — not tied to the grant the Ask opened
     taRef.current?.focus();
   }
 
@@ -230,7 +267,15 @@ export function FirmGrantBotChat({
       const res = await fetch("/api/grantbot/firm-turn", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, conversationId: convoAtSend }),
+        // The grant anchor rides the FIRST send (convoAtSend null) so the route stores it on the new
+        // conversation; on later turns convoAtSend is set and the route ignores the body anchor, reading
+        // the stored one — so sending it every turn is harmless. Undefined when this is a general thread.
+        body: JSON.stringify({
+          message,
+          conversationId: convoAtSend,
+          focusGrantId: focusGrant?.id,
+          focusGrantTitle: focusGrant?.title,
+        }),
       });
       const data = (await res.json()) as { text?: string; error?: string; conversationId?: string };
       if (!res.ok) {
@@ -379,6 +424,37 @@ export function FirmGrantBotChat({
     </div>
   );
 
+  // Anchored empty-state (Ask GrantBot from the prospecting page): a banner naming the grant + the three
+  // prospecting starter chips (fill the composer on click). Shared by both surfaces so the two can't
+  // drift. Null when this is a general thread — the generic copilot copy shows instead.
+  const focusEmpty = focusGrant ? (
+    <div className={isCorner ? "mt-2" : "mx-auto mt-10 max-w-md"}>
+      <p className="mb-1 flex items-center gap-1.5 text-[13px] font-semibold text-brand-navy">
+        <Sparkles className="h-3.5 w-3.5" style={{ color: BRAND.orange }} />
+        {focusGrant.title || "This grant"}
+      </p>
+      <p className={`${isCorner ? "text-[12.5px]" : "text-[13px]"} leading-relaxed text-muted-foreground`}>
+        This thread is tied to this grant and the prospects we surfaced for it — ask why we surfaced them,
+        who actually wins it, or prime-vs-sub eligibility. It reads every active client&apos;s profile too.
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {firmAskStarters(focusGrant.title).map((s) => (
+          <button
+            key={s.key}
+            type="button"
+            onClick={() => {
+              setInput(s.question);
+              taRef.current?.focus();
+            }}
+            className="inline-flex items-center rounded-pill border border-edge px-3 py-1.5 text-[12px] font-medium text-brand-navy transition-colors hover:border-brand-navy/25 hover:bg-white"
+          >
+            {s.chip}
+          </button>
+        ))}
+      </div>
+    </div>
+  ) : null;
+
   // ── CORNER ──
   // The Switcher panel supplies the navy header, so this is headerless: a toolbar (Conversations
   // toggle + New), the scrolling transcript-or-rail, and the composer.
@@ -464,16 +540,19 @@ export function FirmGrantBotChat({
                   <Loader2 className="h-4 w-4 animate-spin" />
                 </div>
               )}
-              {empty && (
-                <div className="mt-2 text-[12.5px] leading-relaxed text-muted-foreground">
-                  <p className="mb-1 font-medium text-brand-navy">Your GRANTED copilot.</p>
-                  <p>
-                    Grants and triage, but also BD, pricing, drafting and strategy. When a task is about
-                    client fit it reads every active client&apos;s live profile. Read-only, saved across
-                    sessions.
-                  </p>
-                </div>
-              )}
+              {empty &&
+                (focusGrant ? (
+                  focusEmpty
+                ) : (
+                  <div className="mt-2 text-[12.5px] leading-relaxed text-muted-foreground">
+                    <p className="mb-1 font-medium text-brand-navy">Your GRANTED copilot.</p>
+                    <p>
+                      Grants and triage, but also BD, pricing, drafting and strategy. When a task is about
+                      client fit it reads every active client&apos;s live profile. Read-only, saved across
+                      sessions.
+                    </p>
+                  </div>
+                ))}
               {bubbles}
             </>
           )}
@@ -574,16 +653,19 @@ export function FirmGrantBotChat({
               <Loader2 className="h-4 w-4 animate-spin" />
             </div>
           )}
-          {empty && (
-            <div className="mx-auto mt-10 max-w-md text-center text-[13px] leading-relaxed text-muted-foreground">
-              <p className="mb-2 font-medium text-brand-navy">Your GRANTED copilot.</p>
-              <p>
-                Grants and triage, but also BD and pricing, drafting, meeting prep, and strategy — the
-                same work you do in your IntellEngine project. When a task is about client fit, it reads
-                every active client&apos;s live profile from the platform. Read-only, and saved across sessions.
-              </p>
-            </div>
-          )}
+          {empty &&
+            (focusGrant ? (
+              focusEmpty
+            ) : (
+              <div className="mx-auto mt-10 max-w-md text-center text-[13px] leading-relaxed text-muted-foreground">
+                <p className="mb-2 font-medium text-brand-navy">Your GRANTED copilot.</p>
+                <p>
+                  Grants and triage, but also BD and pricing, drafting, meeting prep, and strategy — the
+                  same work you do in your IntellEngine project. When a task is about client fit, it reads
+                  every active client&apos;s live profile from the platform. Read-only, and saved across sessions.
+                </p>
+              </div>
+            ))}
           {bubbles}
         </div>
 

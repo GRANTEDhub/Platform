@@ -15,7 +15,9 @@ import {
   touchConversation,
   type TurnUsage,
 } from "@/lib/grantbot/store";
-import type { ContextBlockRecord } from "@/lib/grantbot/prompt";
+import type { ContextBlockRecord, PromptBlock } from "@/lib/grantbot/prompt";
+import { loadFocusGrant } from "@/lib/grantbot/focus-grant";
+import { loadSurfacedProspects, buildFirmFocusBlock } from "@/lib/grantbot/firm-focus";
 import { runToolLoop, TURN_DEADLINE_MS, type CallModel, type ToolDispatch } from "@/lib/grantbot/tool-loop";
 import {
   executeFirmCrossThreadTool,
@@ -143,6 +145,12 @@ export interface FirmTurnInput {
   message: string;
   generatedBy: string;
   actorRole: string;
+  // The grant this firm thread is anchored to (Ask GrantBot from the prospecting page). The ROUTE
+  // resolves it server-side — the just-stored id on create, or getFocusGrantId on a later turn — never
+  // the request body, so a browser cannot re-anchor mid-conversation. When set, a cacheable:false
+  // grant+prospects grounding block (composed from the grant's own row + surfaced prospects, firm-focus.ts)
+  // is appended after the cache breakpoint. Null/absent → a general firm thread, byte-identical to before.
+  focusGrantId?: string | null;
   now?: () => Date;
 }
 
@@ -233,12 +241,28 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
       actorRole: input.actorRole,
       generatedAt: now().toISOString(),
     });
+    // The grant anchor (Ask GrantBot from the prospecting page): when this thread is tied to a grant,
+    // load its public facts + the prospects we surfaced and add a grounding block. focusGrantId is the
+    // STORED anchor (the route reads it from the conversation row, never the request body). Both loaders
+    // are fail-soft (loadFocusGrant → null, loadSurfacedProspects → []), so a read hiccup degrades to a
+    // grant-only or absent block rather than failing the turn. Unanchored → no block, byte-identical.
+    const focusBlocks: PromptBlock[] = [];
+    if (input.focusGrantId) {
+      const focusGrant = await loadFocusGrant(db, input.focusGrantId);
+      if (focusGrant) {
+        const prospects = await loadSurfacedProspects(db, input.focusGrantId);
+        focusBlocks.push(buildFirmFocusBlock(focusGrant, prospects));
+      }
+    }
+
     // The cross-thread tool how-to rides as a turn block: appended after the cache breakpoint, before
     // the closing restatement (assembleSystem's order), so the stable prefix is unchanged.
-    // buildFirmSystemPrompt takes it as data, staying pure.
+    // buildFirmSystemPrompt takes it as data, staying pure. The grant-anchor block leads the turn blocks
+    // when present (cacheable:false too), so an unanchored thread's turnBlocks are byte-identical.
     const prompt = buildFirmSystemPrompt({
       pack,
       turnBlocks: [
+        ...focusBlocks,
         FIRM_CROSS_THREAD_INSTRUCTION_BLOCK,
         // Each only when its flag is on — cacheable:false, so a flag-off prompt is byte-identical.
         ...(webFetchEnabled ? [FIRM_FETCH_INSTRUCTION_BLOCK] : []),
