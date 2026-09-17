@@ -331,6 +331,25 @@ describe("fetchGrantSource — PDF", () => {
     }
   });
 
+  it("returns a typed pdf_parse_timeout when the parse exceeds the budget — bounds the hang", async () => {
+    // The exact GrantBot fetch-hang: a large NOFO PDF whose pdfjs parse takes minutes. pdf-parse ignores
+    // the abort signal, so PDF_PARSE_TIMEOUT_MS races it. A parse that yields (a promise that resolves
+    // only after the budget) loses the race → a typed pdf_parse_timeout the model relays, never a hang.
+    const { impl } = fetchSequence([new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: pdfHeaders })]);
+    const r = await fetchGrantSource("https://grants.gov/slow.pdf", {
+      fetchImpl: impl,
+      lookup: lookupWith(),
+      pdfParseTimeoutMs: 20,
+      // A parse that "yields" but never finishes within the budget.
+      pdfExtract: () => new Promise<string>((resolve) => setTimeout(() => resolve("too late"), 10_000)),
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe("pdf_parse_timeout");
+      expect(r.detail).toContain("exceeded");
+    }
+  });
+
   it("returns pdf_no_text for a PDF with no extractable text layer (scanned image)", async () => {
     const { impl } = fetchSequence([new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: pdfHeaders })]);
     const r = await fetchGrantSource("https://grants.gov/scan.pdf", {

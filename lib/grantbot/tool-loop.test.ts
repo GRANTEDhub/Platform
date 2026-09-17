@@ -169,4 +169,95 @@ describe("runToolLoop", () => {
     });
     expect(calls[0].remainingMs).toBe(220_000);
   });
+
+  it("dispatchTimeoutMs bounds a HUNG dispatch: feeds a typed timeout tool_result, then answers", async () => {
+    // The belt-and-suspenders for the fetch hang: a tool execution that never returns must not hang the
+    // turn. With dispatchTimeoutMs set, the loop resolves the dispatch with a typed timeout tool_result
+    // and proceeds to the final answer — so the turn always returns text, never nothing.
+    let round1Messages: unknown[] = [];
+    let call = 0;
+    const callModel: CallModel = async ({ messages }) => {
+      call += 1;
+      if (call === 1)
+        return turn({
+          toolUses: [toolUse("t1", "https://grants.gov/slow.pdf")],
+          stopReason: "tool_use",
+          rawContent: [{ type: "tool_use", id: "t1" }],
+        });
+      round1Messages = messages as unknown[];
+      return turn({ text: "answered without the hung tool" });
+    };
+    const dispatch: ToolDispatch = () => new Promise(() => {}); // never resolves
+    const r = await runToolLoop({
+      messages: [{ role: "user", content: "q" }],
+      toolsEnabled: true,
+      callModel,
+      dispatch,
+      now: () => 0,
+      dispatchTimeoutMs: 20,
+    });
+    expect(r.text).toBe("answered without the hung tool");
+    const toolResultTurn = round1Messages[round1Messages.length - 1] as { content: { content: string }[] };
+    expect(toolResultTurn.content[0].content).toMatch(/did not finish within its time budget/i);
+  });
+
+  it("boundableDispatchTools EXCLUDES a write tool: its dispatch is never abandoned (Codex #586)", async () => {
+    // A write tool (create_artifact) not in the boundable set must run to completion even past the
+    // dispatch timeout — abandoning it could commit a write the model was told was skipped.
+    let round1: unknown[] = [];
+    let call = 0;
+    const callModel: CallModel = async ({ messages }) => {
+      call += 1;
+      if (call === 1)
+        return turn({
+          toolUses: [{ id: "w1", name: "create_artifact", input: {} }],
+          stopReason: "tool_use",
+          rawContent: [{ type: "tool_use", id: "w1" }],
+        });
+      round1 = messages as unknown[];
+      return turn({ text: "done after the write" });
+    };
+    // Resolves AFTER the 20ms budget — if the write were bounded it would be abandoned; it must not be.
+    const dispatch: ToolDispatch = () => new Promise((res) => setTimeout(() => res({ resultText: "WROTE_ARTIFACT" }), 60));
+    const r = await runToolLoop({
+      messages: [{ role: "user", content: "q" }],
+      toolsEnabled: true,
+      callModel,
+      dispatch,
+      now: () => 0,
+      dispatchTimeoutMs: 20,
+      boundableDispatchTools: new Set(["fetch_grant_source"]),
+    });
+    expect(r.text).toBe("done after the write");
+    const toolResultTurn = round1[round1.length - 1] as { content: { content: string }[] };
+    expect(toolResultTurn.content[0].content).toBe("WROTE_ARTIFACT"); // the real write result, not a timeout
+  });
+
+  it("without dispatchTimeoutMs a dispatch is awaited in full (byte-identical to today)", async () => {
+    // Omitting the option must not wrap the dispatch at all — the real resultText flows through.
+    let seen = "";
+    const callModel: CallModel = (() => {
+      let c = 0;
+      return async () => {
+        c += 1;
+        return c === 1
+          ? turn({ toolUses: [toolUse("t", "https://grants.gov/a")], stopReason: "tool_use" })
+          : turn({ text: "done" });
+      };
+    })();
+    const dispatch: ToolDispatch = async () => ({ resultText: "REAL_RESULT" });
+    const r = await runToolLoop({
+      messages: [{ role: "user", content: "q" }],
+      toolsEnabled: true,
+      callModel,
+      dispatch: async (tu) => {
+        const out = await dispatch(tu);
+        seen = out.resultText;
+        return out;
+      },
+      now: () => 0,
+    });
+    expect(seen).toBe("REAL_RESULT");
+    expect(r.text).toBe("done");
+  });
 });

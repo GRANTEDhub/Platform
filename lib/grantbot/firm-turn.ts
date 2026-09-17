@@ -18,7 +18,17 @@ import {
 import type { ContextBlockRecord, PromptBlock } from "@/lib/grantbot/prompt";
 import { loadFocusGrant } from "@/lib/grantbot/focus-grant";
 import { loadSurfacedProspects, buildFirmFocusBlock } from "@/lib/grantbot/firm-focus";
-import { runToolLoop, TURN_DEADLINE_MS, type CallModel, type ToolDispatch } from "@/lib/grantbot/tool-loop";
+import {
+  grantbotStoredNofoEnabled,
+  loadGrantNofoFields,
+  buildStoredNofoFieldsBlock,
+  executeStoredNofo,
+  READ_STORED_NOFO_TOOL,
+  READ_STORED_NOFO_TOOL_NAME,
+  STORED_NOFO_INSTRUCTION_BLOCK,
+  type NofoReadAuditRecord,
+} from "@/lib/grantbot/stored-nofo";
+import { runToolLoop, TURN_DEADLINE_MS, DISPATCH_TIMEOUT_MS, type CallModel, type ToolDispatch } from "@/lib/grantbot/tool-loop";
 import {
   executeFirmCrossThreadTool,
   FIRM_CROSS_THREAD_INSTRUCTION_BLOCK,
@@ -218,6 +228,10 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
   const webFetchEnabled = firmWebFetchEnabled();
   const dataToolsEnabled = firmDataToolsEnabled();
   const webSearchEnabled = firmWebSearchEnabled();
+  // Stored-NOFO: the SAME shared flag as the per-client bot (GRANTBOT_STORED_NOFO_ENABLED). When on and
+  // this firm thread is anchored to a grant, Layer 1 injects its stored structured NOFO fields and Layer 2
+  // adds read_stored_nofo; off → neither, byte-identical.
+  const storedNofoEnabled = grantbotStoredNofoEnabled();
 
   let answer = "";
   let usage: TurnUsage | null = null;
@@ -231,6 +245,8 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
   // web_search has no dispatch branch (server-side), so callModel below extracts its audit straight from
   // each round's response into this sink.
   const searches: WebSearchAuditRecord[] = [];
+  // Which grants' stored NOFO the firm bot read from the grant row instead of fetching (read_stored_nofo).
+  const nofoReads: NofoReadAuditRecord[] = [];
 
   try {
     // gatherFirmPack THROWS on a query error (never a fake-empty roster), so a roster-load failure
@@ -252,6 +268,13 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
       if (focusGrant) {
         const prospects = await loadSurfacedProspects(db, input.focusGrantId);
         focusBlocks.push(buildFirmFocusBlock(focusGrant, prospects));
+        // LAYER 1 stored-NOFO fields for the anchored grant (flag-gated, fail-soft): the grant's stored
+        // structured detail so the firm bot answers "is the deadline realistic / who's eligible" without
+        // re-fetching. Null (no detail / flag off) → no block, byte-identical.
+        if (storedNofoEnabled) {
+          const nofoFields = await loadGrantNofoFields(db, focusGrant.id);
+          if (nofoFields) focusBlocks.push(buildStoredNofoFieldsBlock(nofoFields));
+        }
       }
     }
 
@@ -266,6 +289,7 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
         FIRM_CROSS_THREAD_INSTRUCTION_BLOCK,
         // Each only when its flag is on — cacheable:false, so a flag-off prompt is byte-identical.
         ...(webFetchEnabled ? [FIRM_FETCH_INSTRUCTION_BLOCK] : []),
+        ...(storedNofoEnabled ? [STORED_NOFO_INSTRUCTION_BLOCK] : []),
         ...(dataToolsEnabled ? [FIRM_DATA_TOOLS_INSTRUCTION_BLOCK] : []),
         ...(webSearchEnabled ? [FIRM_WEB_SEARCH_INSTRUCTION_BLOCK] : []),
       ],
@@ -298,6 +322,8 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
       LIST_FIRM_CONVERSATIONS_TOOL,
       READ_FIRM_CONVERSATION_TOOL,
       ...(webFetchEnabled ? [WEB_FETCH_TOOL] : []),
+      // LAYER 2: read the platform's already-parsed NOFO instead of re-fetching. Flag-gated; absent off.
+      ...(storedNofoEnabled ? [READ_STORED_NOFO_TOOL] : []),
       ...(dataToolsEnabled ? [PROGRAM_AWARDS_TOOL, ORG_HISTORY_TOOL, SAM_ENTITY_TOOL] : []),
       // Anthropic's server-side web_search: it runs on Anthropic's servers (no dispatch branch below,
       // and runToolLoop resumes the pause_turn it produces), so it appears only in the tool set.
@@ -374,6 +400,17 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
         dataLookups.push(audit);
         return { resultText };
       }
+      if (tu.name === READ_STORED_NOFO_TOOL_NAME) {
+        // The exact per-client stored-NOFO executor: reads the anchored grant (input.focusGrantId,
+        // server-side) or a grant the model names by opportunity number, from our own grant row. Only
+        // reachable when the stored-NOFO flag added the tool above.
+        const { resultText, audit } = await executeStoredNofo(
+          { input: tu.input },
+          { db, focusGrantId: input.focusGrantId ?? null },
+        );
+        nofoReads.push(audit);
+        return { resultText };
+      }
       return { resultText: `Unknown tool "${tu.name}". Nothing was done.` };
     };
 
@@ -389,6 +426,13 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
       deadlineMs: TURN_DEADLINE_MS,
       // 3 rounds so the list → read → fetch combined workflow completes (Codex #543); still deadline-bounded.
       maxToolRounds: FIRM_MAX_TOOL_ROUNDS,
+      // Bound each single tool execution so a slow tool can't hang the turn returning nothing (a fetched
+      // PDF's parse). See DISPATCH_TIMEOUT_MS. ONLY the .gov fetch may be abandoned — the firm bot's other
+      // tools (cross-thread, read_stored_nofo, data-tools) are fast/self-bounded reads. The firm bot has no
+      // write tool today; when artifacts-for-firm lands, it MUST NOT be added here (an abandoned write can
+      // still commit — Codex #586).
+      dispatchTimeoutMs: DISPATCH_TIMEOUT_MS,
+      boundableDispatchTools: new Set([WEB_FETCH_TOOL_NAME]),
     });
 
     answer = loop.text;
@@ -430,6 +474,8 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
     // so a turn that ran neither is byte-identical.
     dataLookups,
     searches,
+    // Empty unless the stored-NOFO flag is on AND the model read a stored NOFO; omitted when empty.
+    nofoReads,
   }).catch((e) => console.error("Firm GrantBot assistant-row append failed", e instanceof Error ? e.message : e));
   await touchConversation(db, conversationId);
 

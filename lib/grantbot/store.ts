@@ -238,6 +238,11 @@ export async function appendAssistant(
     // Same NON-TEXT-block mechanism (normalizeContent drops it on read); omitted when empty, so a turn
     // that searched nothing (the flag-off default) is byte-identical to before.
     searches?: unknown[] | null;
+    // Stored-NOFO reads for this turn -- which grants' already-parsed NOFO the model read from the grant
+    // row instead of re-fetching (lib/grantbot/stored-nofo.ts). Same NON-TEXT-block mechanism
+    // (normalizeContent drops it on read); omitted when empty, so a turn that read no stored NOFO (the
+    // flag-off default) is byte-identical to before.
+    nofoReads?: unknown[] | null;
   },
 ): Promise<void> {
   const content: unknown[] = [{ type: "text", text: opts.text }];
@@ -255,6 +260,9 @@ export async function appendAssistant(
   }
   if (opts.searches && opts.searches.length > 0) {
     content.push({ type: "web_search_audit", searches: opts.searches });
+  }
+  if (opts.nofoReads && opts.nofoReads.length > 0) {
+    content.push({ type: "nofo_read_audit", reads: opts.nofoReads });
   }
   const { error } = await db.from("grantbot_messages").insert({
     conversation_id: opts.conversationId,
