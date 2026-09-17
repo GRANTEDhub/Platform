@@ -16,9 +16,8 @@
      stack (Your Call band + footer) pinned to the fixed letter page.
 
      Colours are CONFORMED to lib/brand.ts, not copied: the design's #A8501A eyebrow IS the
-     platform's orangeDeep; the design's deep-orange deadline fill #B3541E conforms to
-     orangeFill #B85A17 (the sanctioned white-on-orange fill — the banned #b3541e never
-     appears). Brand orange #E4761F, navy #0B1E3A elsewhere.
+     platform's orangeDeep; the deep-orange deadline fill is orangeFill #A8501A (the sanctioned white-on-orange
+     fill, 2026 refresh — the banned #b3541e never appears). Brand orange #E4761F, navy #0C121F elsewhere.
 
      Fonts embedded as local @font-face data URIs at render time (lib/alerts/render.ts):
      Source Serif 4 (display), Inter Tight (body), JetBrains Mono (the .mono kicker +
@@ -43,7 +42,7 @@
   <div style="height:4px; background:#E4761F; flex-shrink:0;"></div>
 
   <!-- ===================== HERO (navy dot band) ===================== -->
-  <div style="flex-shrink:0; background:#0B1E3A radial-gradient(rgba(255,255,255,.055) 1px, transparent 1.2px) 0 0/22px 22px; padding:30px 46px 60px 46px;">
+  <div style="flex-shrink:0; background:#0C121F radial-gradient(rgba(255,255,255,.055) 1px, transparent 1.2px) 0 0/22px 22px; padding:30px 46px 60px 46px;">
 
     <!-- REAL brand lockup (public/granted-lockup-dark.svg, white artwork), inlined as a data URI by
          render.ts — mark + GRANTED wordmark + "More Grants. Less Grind." tagline in one authentic asset,
@@ -101,14 +100,14 @@
   <div style="flex-shrink:0; margin:-52px 46px 0 46px; position:relative; display:grid; grid-template-columns:repeat({{stats.length}}, minmax(0, 1fr)); background:#fff; box-shadow:0 10px 28px rgba(11,30,58,.14);">
     {{#each stats}}
     {{#if this.highlight}}
-    <div style="min-width:0; overflow:hidden; background:#B85A17; padding:18px 12px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px;">
+    <div style="min-width:0; overflow:hidden; background:#A8501A; padding:18px 12px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px;">
       <div style="width:100%; text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:'Source Serif 4', serif; font-weight:600; font-size:26px; line-height:28px; color:#fff;">{{this.value}}</div>
       <div class="mono" style="width:100%; text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:8px; letter-spacing:0.16em; text-transform:uppercase; color:rgba(255,255,255,.85);">{{this.label}}</div>
     </div>
     {{else}}
     <div style="min-width:0; overflow:hidden; padding:18px 12px; {{#unless @first}}border-left:1px solid #e8e2d6; {{/unless}}display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px;">
-      <div style="width:100%; text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:'Source Serif 4', serif; font-weight:600; font-size:26px; line-height:28px; color:#0B1E3A;">{{this.value}}</div>
-      <div class="mono" style="width:100%; text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:8px; letter-spacing:0.16em; text-transform:uppercase; color:#6E7683;">{{this.label}}</div>
+      <div style="width:100%; text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:'Source Serif 4', serif; font-weight:600; font-size:26px; line-height:28px; color:#0C121F;">{{this.value}}</div>
+      <div class="mono" style="width:100%; text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:8px; letter-spacing:0.16em; text-transform:uppercase; color:#6E6F78;">{{this.label}}</div>
     </div>
     {{/if}}
     {{/each}}
@@ -148,14 +147,14 @@
        preview; one-click lives in the EMAIL). -->
   <div style="flex-shrink:0;">
     <div style="height:3px; background:#E4761F;"></div>
-    <div style="height:124px; background:#0B1E3A; padding:0 46px; box-sizing:border-box; display:flex; align-items:center; justify-content:space-between; gap:40px;">
+    <div style="height:124px; background:#0C121F; padding:0 46px; box-sizing:border-box; display:flex; align-items:center; justify-content:space-between; gap:40px;">
       <div style="max-width:430px;">
         <div class="mono" style="font-size:10px; letter-spacing:0.22em; text-transform:uppercase; color:#E4761F;">Your call</div>
         <p style="margin:10px 0 0; font-size:12.5px; line-height:18px; color:rgba(255,255,255,.92); text-wrap:pretty;">Tell us how to proceed. <strong style="font-weight:700; color:#fff;">Interested</strong> moves this into your grant report for full analysis; <strong style="font-weight:700; color:#fff;">Pass</strong> clears it off your list.</p>
         <p style="margin:8px 0 0; font-size:10.5px; line-height:14.5px; color:rgba(255,255,255,.62); text-wrap:pretty;">You can answer in one click straight from the alert email, or just reply to it. Not ready this cycle? Pass and we position you for the next one.</p>
       </div>
       {{#if portalUrl}}
-      <a href="{{portalUrl}}" style="width:306px; height:44px; flex-shrink:0; background:#E4761F; text-decoration:none; display:flex; align-items:center; justify-content:center; gap:12px;">
+      <a href="{{portalUrl}}" style="width:306px; height:44px; flex-shrink:0; background:#A8501A; text-decoration:none; display:flex; align-items:center; justify-content:center; gap:12px;">
         <span style="font-size:13px; font-weight:700; color:#fff;">Review and decide in your portal</span>
         <span style="font-size:15px; color:#fff; line-height:1;">&rarr;</span>
       </a>
@@ -172,7 +171,7 @@
            and fits the 50px band (aspect ratio is preserved by width:auto; the fix is scale, not geometry). -->
       <img src="assets/granted-lockup-navy.svg" alt="GRANTED — More Grants. Less Grind." style="display:block; height:38px; width:auto; flex-shrink:0;">
       <div style="display:flex; align-items:center; gap:22px; font-size:12.5px;">
-        <span style="font-weight:700; color:#0B1E3A;">grantedco.com</span>
+        <span style="font-weight:700; color:#0C121F;">grantedco.com</span>
         <span style="color:#3c4150;">support@grantedco.com</span>
       </div>
     </div>

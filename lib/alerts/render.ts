@@ -256,8 +256,8 @@ function horizonHtml(items: HorizonRenderItem[], overflow: number, fontCss: stri
     @page { size: letter; margin: 0; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { width: 8.5in; min-height: 11in; }
-    body { font-family: 'Inter Tight', Arial, sans-serif; color: #0B1E3A; background: #faf7f2; }
-    .header { background: #0B1E3A; color: #fff; padding: 40px 56px 30px; }
+    body { font-family: 'Inter Tight', Arial, sans-serif; color: #0C121F; background: #faf7f2; }
+    .header { background: #0C121F; color: #fff; padding: 40px 56px 30px; }
     .header img { height: 24px; margin-bottom: 18px; display: block; }
     .eyebrow { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: #E4761F; font-weight: 600; }
     h1 { font-family: 'Source Serif 4', Georgia, serif; font-size: 29px; font-weight: 600; margin-top: 6px; }
@@ -267,7 +267,7 @@ function horizonHtml(items: HorizonRenderItem[], overflow: number, fontCss: stri
     ul { list-style: none; }
     .item { padding: 12px 0; border-top: 1px solid #e6ded2; }
     .item:first-child { border-top: none; }
-    .title { font-family: 'Source Serif 4', Georgia, serif; font-size: 14px; font-weight: 600; color: #0B1E3A; line-height: 1.3; }
+    .title { font-family: 'Source Serif 4', Georgia, serif; font-size: 14px; font-weight: 600; color: #0C121F; line-height: 1.3; }
     .funder { font-size: 10.5px; color: #8a7a66; margin-top: 3px; }
     .rationale { font-size: 11.5px; color: #3a4a63; line-height: 1.5; margin-top: 5px; }
     .more { margin-top: 14px; font-size: 11px; font-style: italic; color: #8a7a66; }

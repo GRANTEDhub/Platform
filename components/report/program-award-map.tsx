@@ -18,7 +18,7 @@ const STATE_PATHS = STATE_PATHS_JSON as Record<string, string>;
 // Single navy hue, lightness only (magnitude reads regardless of color vision);
 // the legend + tooltip always carry the real numbers so color is never the sole
 // signal. No-data is near-white, clearly lighter than the lowest data bin.
-const FILLS = ["#bcc7d6", "#8b9db8", "#56708f", "#2c4569", "#0B1E3A"];
+const FILLS = ["#bcc7d6", "#8b9db8", "#56708f", "#2c4569", "#0C121F"];
 const NODATA_FILL = "#f5f6f8";
 const NODATA_BORDER = "#d6dbe3";
 const SELECTED_STROKE = "#E4761F";

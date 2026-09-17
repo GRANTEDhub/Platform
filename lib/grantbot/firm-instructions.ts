@@ -257,7 +257,7 @@ announcement, GRANTED hyperlinked:
 BRAND SYSTEM (for any client-facing deliverable)
 ═══════════════════════════════════════════
 
-Colors: Navy #0B1E3A · Burnt orange #b3541e · Cream #faf7f2.
+Colors: Navy #0C121F · Orange #E4761F (on light grounds use #A8501A for orange text & fills) · Cream/page #FAF7F2.
 Fonts: Source Serif 4 (headings) · Inter Tight (body) · JetBrains Mono (mono/labels).
 Tagline: "More Grants. Less Grind."
 
