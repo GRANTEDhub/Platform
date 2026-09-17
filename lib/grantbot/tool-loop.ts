@@ -86,6 +86,14 @@ export async function runToolLoop(opts: {
   maxToolRounds?: number;
   // Opt-in per-dispatch bound (see DISPATCH_TIMEOUT_MS). Omitted (intel, tests) = no wrap, byte-identical.
   dispatchTimeoutMs?: number;
+  // When set, ONLY these tools' dispatches may be abandoned on the dispatch timeout; every other tool
+  // runs to completion. This is the safety boundary for the timeout: a WRITE tool (create_artifact /
+  // edit_artifact) must NEVER be abandoned, because the underlying write can still commit AFTER the model
+  // was told it was skipped — inserting a document/version the model believes does not exist, and letting
+  // a retry duplicate it (Codex #586, P1). Only read-only, hang-prone dispatches (the .gov fetch) belong
+  // here; a read that is abandoned merely discards its result. Absent = bound all (the loop's own tests,
+  // whose only dispatched tool is read-only).
+  boundableDispatchTools?: ReadonlySet<string>;
 }): Promise<{ text: string; usage: TurnUsage | null; stopReason: string | null }> {
   const deadlineMs = opts.deadlineMs ?? TURN_DEADLINE_MS;
   const maxToolRounds = opts.maxToolRounds ?? MAX_TOOL_ROUNDS;
@@ -98,6 +106,9 @@ export async function runToolLoop(opts: {
   // ignored. Without dispatchTimeoutMs this is exactly `opts.dispatch(tu)` — the byte-identical path.
   const dispatchBounded = (tu: { id: string; name: string; input: unknown }): Promise<{ resultText: string }> => {
     if (opts.dispatchTimeoutMs == null) return opts.dispatch(tu);
+    // A tool not in the boundable set (when a set is given) runs to completion — never abandoned. This is
+    // what keeps a WRITE dispatch from being silently skipped-then-committed (Codex #586).
+    if (opts.boundableDispatchTools && !opts.boundableDispatchTools.has(tu.name)) return opts.dispatch(tu);
     const budget = Math.min(opts.dispatchTimeoutMs, Math.max(deadlineMs - (opts.now() - start), 1_000));
     let timer: ReturnType<typeof setTimeout>;
     const timeout = new Promise<{ resultText: string }>((resolve) => {

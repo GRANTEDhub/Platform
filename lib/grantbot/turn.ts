@@ -434,6 +434,12 @@ export async function runTurn(input: RunTurnInput): Promise<TurnOutcome> {
       // Bound each single tool execution so a slow tool (a fetched PDF's parse) can't make the turn hang
       // returning nothing — the loop feeds a typed timeout tool_result and finishes. See DISPATCH_TIMEOUT_MS.
       dispatchTimeoutMs: DISPATCH_TIMEOUT_MS,
+      // ONLY the .gov fetch may be abandoned on that timeout — it is the sole hang-prone, read-only
+      // dispatch (its result is safe to discard). The WRITE tools (create_artifact / edit_artifact) are
+      // deliberately EXCLUDED: an abandoned write can still commit after the model was told it was
+      // skipped (Codex #586). read_stored_nofo / cross-thread / data-tools are fast reads or self-bounded,
+      // so they run to completion too. Add a new hang-prone READ-ONLY tool here; never a write tool.
+      boundableDispatchTools: new Set([WEB_FETCH_TOOL_NAME]),
     });
 
     answer = loop.text;

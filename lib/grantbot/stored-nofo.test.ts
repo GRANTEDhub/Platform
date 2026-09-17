@@ -224,6 +224,11 @@ describe("loadStoredNofoRow / loadGrantNofoFields", () => {
   it("loadGrantNofoFields returns the row when there is structured detail", async () => {
     expect(await loadGrantNofoFields(fakeDb({ byId: grantRow() }), "g-1")).not.toBeNull();
   });
+  it("loadGrantNofoFields returns null for a SUMMARY shred even with detail (no Layer-1 block; Codex #586)", async () => {
+    // A summary shred's fields come from the API summary, and its raw_text is API JSON — Layer 1 rides a
+    // full shred only, so it never claims to have "parsed the NOFO" for a summary grant.
+    expect(await loadGrantNofoFields(fakeDb({ byId: grantRow({ shred_depth: "summary" }) }), "g-1")).toBeNull();
+  });
 });
 
 describe("executeStoredNofo — the Layer-2 tool", () => {
@@ -272,6 +277,25 @@ describe("executeStoredNofo — the Layer-2 tool", () => {
     expect(r.resultText).toMatch(/fetch the official \.gov source/i);
     // Structured fields still ride even without raw text.
     expect(r.resultText).toContain("Award range:");
+  });
+
+  it("a SUMMARY shred's raw_text (API JSON, not the NOFO) is NEVER served as full NOFO text (Codex #586)", async () => {
+    // pipeline.ts stores the Simpler API JSON in raw_text on a summary shred. It must route to the
+    // no-full-text fallback, never be framed as "the NOFO" with a do-not-fetch instruction.
+    const r = await executeStoredNofo(
+      { input: {} },
+      {
+        db: fakeDb({ byId: grantRow({ shred_depth: "summary", raw_text: '{"opportunity":"api json not a nofo"}' }) }),
+        focusGrantId: "g-1",
+        now,
+      },
+    );
+    expect(r.audit.ok).toBe(true);
+    expect(r.audit.hasRawText).toBe(false);
+    expect(r.resultText).toMatch(/NO parsed full NOFO text/i);
+    expect(r.resultText).toMatch(/API summary/i);
+    expect(r.resultText).not.toContain("api json not a nofo"); // the JSON never reaches the model as NOFO
+    expect(r.resultText).toMatch(/fetch the official \.gov source/i);
   });
 
   it("grant NOT in the platform → typed not_found that routes to fetch, never a reconstruction", async () => {

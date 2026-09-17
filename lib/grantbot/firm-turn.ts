@@ -427,8 +427,12 @@ export async function runFirmTurn(input: FirmTurnInput): Promise<FirmTurnOutcome
       // 3 rounds so the list → read → fetch combined workflow completes (Codex #543); still deadline-bounded.
       maxToolRounds: FIRM_MAX_TOOL_ROUNDS,
       // Bound each single tool execution so a slow tool can't hang the turn returning nothing (a fetched
-      // PDF's parse). See DISPATCH_TIMEOUT_MS.
+      // PDF's parse). See DISPATCH_TIMEOUT_MS. ONLY the .gov fetch may be abandoned — the firm bot's other
+      // tools (cross-thread, read_stored_nofo, data-tools) are fast/self-bounded reads. The firm bot has no
+      // write tool today; when artifacts-for-firm lands, it MUST NOT be added here (an abandoned write can
+      // still commit — Codex #586).
       dispatchTimeoutMs: DISPATCH_TIMEOUT_MS,
+      boundableDispatchTools: new Set([WEB_FETCH_TOOL_NAME]),
     });
 
     answer = loop.text;

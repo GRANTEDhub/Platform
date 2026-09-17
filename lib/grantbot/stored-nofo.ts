@@ -173,6 +173,12 @@ export async function loadStoredNofoRow(
 export async function loadGrantNofoFields(db: SupabaseClient, grantId: string): Promise<StoredNofoRow | null> {
   const row = await loadStoredNofoRow(db, { grantId }, { withRawText: false });
   if (!row) return null;
+  // Only a FULL shred is real parsed-NOFO detail. On a SUMMARY shred the platform never parsed the NOFO:
+  // pipeline.ts sets raw_text = the Simpler API JSON and only overwrites it with the real NOFO text on a
+  // successful full shred, so a summary grant's fields come from the API summary. Layer 1 rides a full
+  // shred only, so its "already parsed this grant's NOFO / do NOT fetch" framing is never a false claim
+  // and the model can still fetch the real NOFO for a summary grant (Codex #586).
+  if (row.shredDepth !== "full") return null;
   return hasStructuredDetail(row) ? row : null;
 }
 
@@ -350,7 +356,12 @@ export async function executeStoredNofo(
   const header = `STORED NOFO — ${row.title}${headerFacts(row)}`;
   const fields = formatNofoFields(row);
   const fieldsSection = fields ? `\n\nStored, quote-verified details:\n${fields}` : "";
-  const raw = (row.rawText ?? "").trim();
+  // A SUMMARY shred's raw_text is the Simpler API JSON, NOT parsed NOFO text (pipeline.ts sets raw_text =
+  // rawJson and only overwrites it with nofo.text on a successful full shred). Treat stored text as the
+  // real NOFO ONLY on a full shred — otherwise a summary grant's API JSON would be handed to the model as
+  // "the full NOFO" with a "do NOT fetch" instruction, the exact mislabel this tool exists to prevent
+  // (Codex #586). A summary grant falls through to the no-full-text fallback, which routes it to fetching.
+  const raw = row.shredDepth === "full" ? (row.rawText ?? "").trim() : "";
 
   if (!raw) {
     return {
