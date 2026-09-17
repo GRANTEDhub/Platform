@@ -127,7 +127,7 @@ export function PortfolioBrowser({
 
   return (
     <div className="flex min-h-full flex-col bg-ground">
-      <div className="relative z-[1] shrink-0 bg-brand-chrome px-[34px] pb-3.5">
+      <div className="gc-contour gc-contour--base gc-contour--on-dark relative z-[1] shrink-0 overflow-hidden bg-brand-chrome px-[34px] pb-3.5">
         <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 pb-[11px] pt-3">
           <div>
             <h1 className="font-serif text-[30px] font-bold leading-none tracking-[-0.015em] text-white">
@@ -231,7 +231,7 @@ export function PortfolioBrowser({
           rules are set as a fraction of the width rather than aligned to the card grid,
           because at the drawn 1440 they do not line up with it either. overflow-hidden
           is what clips the figure. */}
-      <div className="relative flex-1 overflow-hidden px-[34px] pb-3.5 pt-3.5">
+      <div className="gc-contour gc-contour--corner relative flex-1 overflow-hidden px-[34px] pb-3.5 pt-3.5">
         <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-0">
           <span className="absolute inset-y-0 left-[26%] w-px bg-brand-navy/[0.07]" />
           <span className="absolute inset-y-0 left-1/2 w-px bg-brand-navy/[0.07]" />

@@ -210,7 +210,7 @@ export function GrantReviewConsole({
         {queueLine && <span className="shrink-0 text-[12px] text-ink-muted">{queueLine}</span>}
       </div>
 
-      <div className="relative flex-1 overflow-hidden px-[30px] pb-5 pt-[18px]">
+      <div className="gc-contour gc-contour--corner relative flex-1 overflow-hidden px-[30px] pb-5 pt-[18px]">
         <Decor ghost={fitScore} />
 
         {/* grid-template-rows: minmax(0,1fr) is REQUIRED, not tidiness. Without it the

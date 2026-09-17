@@ -222,7 +222,7 @@ export function ClientDashboard({
     <div className="flex min-h-full flex-col bg-ground">
       {hero}
       {isStaff && matchNote}
-      <div className="relative flex flex-1 flex-col overflow-hidden px-[34px] pb-[15px] pt-[13px]">
+      <div className="gc-contour gc-contour--corner relative flex flex-1 flex-col overflow-hidden px-[34px] pb-[15px] pt-[13px]">
         <ConsoleDecor ghost={ghost} />
         <div className="relative z-[1] flex min-h-0 flex-1 flex-col">
           <ConsoleBody

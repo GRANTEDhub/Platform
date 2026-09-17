@@ -89,7 +89,7 @@ export function ClientMasthead({
     variant === "console" && backlog !== null && backlog.drawable && backlog.unplaceable <= book.total / 2;
 
   return (
-    <div className="relative z-[1] shrink-0 bg-brand-chrome px-[34px] pb-3.5">
+    <div className="gc-contour gc-contour--base gc-contour--on-dark relative z-[1] shrink-0 overflow-hidden bg-brand-chrome px-[34px] pb-3.5">
       <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 pb-[9px] pt-2.5">
         <div className="min-w-0">
           <div className="flex items-center gap-[9px]">
