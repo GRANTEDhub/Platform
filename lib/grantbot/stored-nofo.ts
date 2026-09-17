@@ -153,12 +153,20 @@ export async function loadStoredNofoRow(
     }
     const fon = selector.fon?.trim();
     if (fon) {
-      // ILIKE with no wildcards is a case-insensitive EXACT match (opportunity numbers are usually
-      // uppercase but a staffer may type them lower). limit(1) + [0] rather than maybeSingle so a rare
-      // duplicate FON returns one row instead of throwing.
-      const { data } = await db.from("grants").select(columns).ilike("fon", fon).limit(1);
+      // Match the FON LITERALLY, not as a LIKE pattern. `.ilike` treats its value as a pattern, so an
+      // unescaped `_` (any single char) or `%` (any run) in the model-supplied opportunity number would
+      // wildcard-match a SIBLING grant, and limit(1) would return it — the tool then presents that wrong
+      // grant's NOFO as "the platform's OWN parsed copy" for the requested FON (Claude Code Review). FONs
+      // commonly contain `_`, so this is real. Escape the metacharacters exactly like sent-status.ts, and
+      // BACKSTOP with a JS case-insensitive exact-match so a sibling row is never mistaken for the ask
+      // (ilike stays for case-insensitivity; a staffer may type a FON in lower case). limit(1) + [0]
+      // rather than maybeSingle so a rare duplicate FON returns one row instead of throwing.
+      const escaped = fon.replace(/[%_\\]/g, (m) => `\\${m}`);
+      const { data } = await db.from("grants").select(columns).ilike("fon", escaped).limit(1);
       const row = Array.isArray(data) ? data[0] : null;
-      return row ? mapRow(row as unknown as RawGrantRow) : null;
+      if (!row) return null;
+      const mapped = mapRow(row as unknown as RawGrantRow);
+      return (mapped.fon ?? "").toLowerCase() === fon.toLowerCase() ? mapped : null;
     }
     return null;
   } catch (err) {

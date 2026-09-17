@@ -65,11 +65,19 @@ function fullRow(over: Partial<StoredNofoRow> = {}): StoredNofoRow {
 
 // db.from("grants").select(cols) then either .eq("id",…).maybeSingle() OR .ilike("fon",…).limit(1).
 // The fake resolves at whichever terminal the loader calls, from the branch its selector took.
-function fakeDb(opts: { byId?: Record<string, unknown> | null; byFon?: Record<string, unknown>[] | null; throwOn?: boolean } = {}): SupabaseClient {
+function fakeDb(opts: {
+  byId?: Record<string, unknown> | null;
+  byFon?: Record<string, unknown>[] | null;
+  throwOn?: boolean;
+  onIlike?: (value: unknown) => void;
+} = {}): SupabaseClient {
   const chain: Record<string, unknown> = {
     select: () => chain,
     eq: () => chain,
-    ilike: () => chain,
+    ilike: (_col: unknown, val: unknown) => {
+      opts.onIlike?.(val);
+      return chain;
+    },
     limit: async () => {
       if (opts.throwOn) throw new Error("boom");
       return { data: opts.byFon ?? null };
@@ -202,6 +210,28 @@ describe("loadStoredNofoRow / loadGrantNofoFields", () => {
     expect(row?.fon).toBe("USDA-NRCS-NHQ-FSCP-26-NOFO0001453");
     expect(row?.cfda).toBe("10.934");
     expect(row?.rawText).toBeNull();
+  });
+  it("escapes LIKE metacharacters in the FON so `_`/`%` cannot wildcard-match a sibling grant (Claude Code Review)", async () => {
+    let passed: unknown;
+    await loadStoredNofoRow(fakeDb({ byFon: [grantRow({ fon: "HHS_2026_ACF_0001" })], onIlike: (v) => (passed = v) }), {
+      fon: "HHS_2026_ACF_0001",
+    });
+    // The value handed to ilike has every `_` backslash-escaped → matched literally, not as a wildcard.
+    expect(passed).toBe("HHS\\_2026\\_ACF\\_0001");
+  });
+  it("BACKSTOPS with a case-insensitive exact match — a returned row whose FON differs is rejected", async () => {
+    // Even if a wildcard slipped through, the row's own fon must equal the requested fon or it is dropped
+    // (→ not_found → the model fetches), never presented as the requested grant's NOFO.
+    const row = await loadStoredNofoRow(fakeDb({ byFon: [grantRow({ fon: "SOME-OTHER-GRANT-999" })] }), {
+      fon: "USDA-NRCS-NHQ-FSCP-26-NOFO0001453",
+    });
+    expect(row).toBeNull();
+  });
+  it("accepts a case-differing FON (ilike stays for case-insensitivity)", async () => {
+    const row = await loadStoredNofoRow(fakeDb({ byFon: [grantRow({ fon: "USDA-NRCS-NHQ-FSCP-26-NOFO0001453" })] }), {
+      fon: "usda-nrcs-nhq-fscp-26-nofo0001453",
+    });
+    expect(row?.fon).toBe("USDA-NRCS-NHQ-FSCP-26-NOFO0001453");
   });
   it("fails soft to null on a thrown read (never propagates — the user-row-orphan window)", async () => {
     expect(await loadStoredNofoRow(fakeDb({ throwOn: true }), { grantId: "g-1" })).toBeNull();
