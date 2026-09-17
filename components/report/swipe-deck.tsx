@@ -191,7 +191,10 @@ export function SwipeDeck({
 
   if (!current) {
     return (
-      <div className="mx-auto max-w-2xl py-16 text-center">
+      // Contour dissolving up from the bottom-left of the empty "All caught up"
+      // state — a bit of personality on an otherwise-blank surface. No background
+      // here, so the lines read faintly against the page (see globals.css).
+      <div className="gc-contour gc-contour--corner mx-auto max-w-2xl py-16 text-center">
         {/* On the client portal, a decision that emptied the deck routes to the dashboard;
             the transition overlay (portal) covers this "All caught up" state until it does. */}
         {overlay}

@@ -30,7 +30,10 @@ const ACTIONS = new Set(["interested", "pass"]);
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-page px-6 text-center">
-      <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-card">
+      {/* A faint contour inset in the card's empty bottom-right corner — this public
+          landing is the de-facto 404, and the texture makes it read as intentional,
+          not broken. Content is centered so the corner stays clear (see globals.css). */}
+      <div className="gc-contour gc-contour--inset w-full max-w-md overflow-hidden rounded-2xl bg-white p-8 shadow-card">
         <p className="font-serif text-xl font-semibold tracking-tight text-brand-navy">GRANTED</p>
         <div className="mt-6">{children}</div>
       </div>

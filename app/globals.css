@@ -132,3 +132,99 @@
     }
   }
 }
+
+/* ── Contour texture (Design handoff, 2026-09) ───────────────────────────────
+   Topographic-line accents for VISUAL PERSONALITY, applied sporadically to a
+   CURATED handful of surfaces — NOT a reversal of the flat-page decision above
+   (lines 11-13). That decision governs app CHROME and page BACKGROUNDS, which
+   stay flat so white cards read as surfaces, not holes. These are the opposite:
+   a scoped `::before` on ONE host element, always dissolved to nothing by a
+   gradient mask (never a visible rectangle), sitting BEHIND its host's content
+   at z-index:-1 and never behind body copy. Unlayered on purpose so the masked
+   ::before wins cleanly; only attach `.gc-contour` to a non-absolutely-
+   positioned host (it sets position:relative + isolation:isolate to anchor the
+   pseudo-element). Baked SVG colours already match the 2026 palette (light:
+   navy #0C121F lines + #C4651F index; dark: cream #FAF7F2 + #E4761F), so
+   nothing here recolours. Discipline: ONE instance per viewport, skip dense/
+   flat chrome, prints as nothing. The six SVGs live in public/assets/contours/.
+   Variants: --corner / --corner-right (radial dissolve from a bottom corner,
+   for section grounds & heroes) · --base (full-width band that tops out ~40%,
+   for footers/CTA bands) · --inset (small corner block, for cards & empty
+   states) · +--on-dark swaps each SVG to its cream-on-navy sibling. */
+.gc-contour {
+  position: relative;
+  isolation: isolate;
+  --gc-contour-opacity: 0.42;
+}
+
+.gc-contour::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-repeat: no-repeat;
+  opacity: var(--gc-contour-opacity);
+}
+
+/* Cream lines on a dark ground carry far less than navy lines on light (the dark
+   SVG's own line alpha is lower AND the navy swallows it), so --on-dark needs more
+   opacity to read at all — without this the texture is invisible on navy. */
+.gc-contour--on-dark {
+  --gc-contour-opacity: 0.72;
+}
+
+/* Bottom-left radial dissolve — heroes, section grounds */
+.gc-contour--corner::before {
+  background-image: url("/assets/contours/contour-field-light.svg");
+  background-position: -20% 128%;
+  background-size: 104% auto;
+  -webkit-mask-image: radial-gradient(105% 85% at -2% 102%, #000 4%, rgba(0, 0, 0, 0.5) 40%, transparent 76%);
+  mask-image: radial-gradient(105% 85% at -2% 102%, #000 4%, rgba(0, 0, 0, 0.5) 40%, transparent 76%);
+}
+.gc-contour--corner.gc-contour--on-dark::before {
+  background-image: url("/assets/contours/contour-field-dark.svg");
+}
+
+/* Mirror — alternate with --corner on consecutive sections */
+.gc-contour--corner-right::before {
+  background-image: url("/assets/contours/contour-field-light.svg");
+  background-position: 120% 128%;
+  background-size: 104% auto;
+  -webkit-mask-image: radial-gradient(105% 85% at 102% 102%, #000 4%, rgba(0, 0, 0, 0.5) 40%, transparent 76%);
+  mask-image: radial-gradient(105% 85% at 102% 102%, #000 4%, rgba(0, 0, 0, 0.5) 40%, transparent 76%);
+}
+.gc-contour--corner-right.gc-contour--on-dark::before {
+  background-image: url("/assets/contours/contour-field-dark.svg");
+}
+
+/* Full-width base — footers, CTA bands. Tops out at 40% height. */
+.gc-contour--base::before {
+  background-image: url("/assets/contours/contour-band-light.svg");
+  background-position: 0 126%;
+  background-size: 100% auto;
+  -webkit-mask-image: linear-gradient(to top, #000 2%, rgba(0, 0, 0, 0.5) 20%, transparent 40%);
+  mask-image: linear-gradient(to top, #000 2%, rgba(0, 0, 0, 0.5) 20%, transparent 40%);
+}
+.gc-contour--base.gc-contour--on-dark::before {
+  background-image: url("/assets/contours/contour-band-dark.svg");
+}
+
+/* Small corner inset — cards, empty states, sidebars */
+.gc-contour--inset::before {
+  background-image: url("/assets/contours/contour-block-light.svg");
+  background-position: 124% 170%;
+  background-size: 62% auto;
+  -webkit-mask-image: radial-gradient(70% 140% at 100% 100%, #000, rgba(0, 0, 0, 0.4) 45%, transparent 80%);
+  mask-image: radial-gradient(70% 140% at 100% 100%, #000, rgba(0, 0, 0, 0.4) 45%, transparent 80%);
+}
+.gc-contour--inset.gc-contour--on-dark::before {
+  background-image: url("/assets/contours/contour-block-dark.svg");
+}
+
+/* Contour lines cost toner and add nothing on paper. */
+@media print {
+  .gc-contour::before {
+    display: none;
+  }
+}

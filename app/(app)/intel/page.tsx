@@ -16,7 +16,14 @@ export default async function ProspectingLandingPage() {
 
   return (
     <div className="space-y-6 p-6">
+      {/* The one clean dark ground in the app that's genuinely sparse (title +
+          subtitle, no stat row). A --base band of cream contour lines dissolves up
+          from the bottom edge (--on-dark swaps to the cream SVG at a higher opacity,
+          set in globals.css — cream on navy needs it). --base reads far better here
+          than a corner: it spans the lighter-left of the gradient instead of burying
+          the texture in the dark bottom-right. overflow-hidden clips it to the band. */}
       <NavyHero
+        className="gc-contour gc-contour--base gc-contour--on-dark overflow-hidden"
         eyebrow="Prospecting"
         title="Prospecting"
         subtitle="Two ways to prospect: work a grant to find fitting non-client orgs, or add a prospective client and map grants for them."

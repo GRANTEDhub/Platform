@@ -15,7 +15,9 @@ const WRAP = "flex min-h-screen flex-col items-center justify-center bg-page px-
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className={WRAP}>
-      <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-card">
+      {/* Faint contour inset in the empty bottom-right corner of the card (centered
+          content keeps it clear) — a touch of personality on the booking landing. */}
+      <div className="gc-contour gc-contour--inset w-full max-w-md overflow-hidden rounded-2xl bg-white p-8 shadow-card">
         <p className="font-serif text-xl font-semibold tracking-tight text-brand-navy">GRANTED</p>
         <div className="mt-6">{children}</div>
       </div>
