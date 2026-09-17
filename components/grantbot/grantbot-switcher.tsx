@@ -11,6 +11,7 @@ import {
   deepLinkNeedsRemount,
   rosterUrl,
   GRANTBOT_OPEN_EVENT,
+  GRANTBOT_OPEN_FIRM_EVENT,
   SWITCHER_TARGET_KEY,
   type OpenGrantBotDetail,
   type RosterClient,
@@ -112,6 +113,9 @@ export function GrantBotSwitcher({
   // its only dep is dashId) can read the CURRENT target when deciding whether leaving a dashboard would
   // merely re-derive the same already-resolved client (a no-op) rather than a real target change.
   const targetRef = useRef(target);
+  // showFirm mirrored to a ref so the firm-open event handler (deps [openPanel]) reads the CURRENT value
+  // without re-subscribing the window listener — a non-admin / firm-off actor's Ask-firm event is ignored.
+  const showFirmRef = useRef(showFirm);
   // The latest dashId, mirrored to a ref so the roster fetch effect (deps [everOpened, rosterAttempt]
   // only — never dashId, so it can't tear itself down) can read the CURRENT dashboard id and pass it as
   // the `?include=` param. That way a refetch fired while on an archived/rejected client's dashboard
@@ -121,6 +125,7 @@ export function GrantBotSwitcher({
   useEffect(() => {
     targetRef.current = target;
     dashIdRef.current = dashId;
+    showFirmRef.current = showFirm;
   });
 
   // ── S3: the unified "Recent" view ──
@@ -135,6 +140,12 @@ export function GrantBotSwitcher({
   // A specific FIRM thread to open on the firm chat's next mount (a Recent pick); paired with a
   // bodyNonce bump that forces the remount which consumes it. (Client threads ride pendingInitial.)
   const [firmPending, setFirmPending] = useState<string | null>(null);
+  // Tell the firm chat's next mount to START BLANK (a NEW anchored thread) rather than the most-recent
+  // one — the "Ask GrantBot" firm-open from the prospecting page. The grant anchor itself rides the firm
+  // ask-context stash (consumed by the chat on mount); this is only the "don't open most-recent" signal,
+  // passed as initialBlank. Cleared whenever a Recent/manual pick or a dashboard visit re-points the firm
+  // target, so a later firm open never inherits a stale blank flag.
+  const [firmBlank, setFirmBlank] = useState(false);
   // Bumped on a Recent pick to force the chat body to remount, so a picked thread opens even when it
   // belongs to the target already showing — the corner chats' initial-load is mount-only (like the
   // full page), so a changed key is how a different thread is opened.
@@ -214,6 +225,31 @@ export function GrantBotSwitcher({
     };
     window.addEventListener(GRANTBOT_OPEN_EVENT, onOpen);
     return () => window.removeEventListener(GRANTBOT_OPEN_EVENT, onOpen);
+  }, [openPanel]);
+
+  // In-place open of the FIRM bot from the prospecting page's "Ask GrantBot" button. Sibling of the
+  // per-client handler above: open the corner on Firm at a NEW blank thread. No detail on the event —
+  // "firm" is the whole target, and the grant anchor rides the firm ask-context stash (consumed by the
+  // firm chat on mount). Guarded by showFirmRef so a non-admin / firm-off actor's stray event is ignored
+  // (the firm routes gate server-side regardless). Task-scoped like the per-client Ask: manualPickRef
+  // sticky for the session but NOT persisted (never overwrites the durable default). ALWAYS bumps
+  // bodyNonce — a fresh anchored thread every time, so the firm chat remounts to re-read the stash even
+  // when Firm was already showing (its initial load is mount-only). firmBlank drives initialBlank so the
+  // remount opens blank rather than the most-recent thread.
+  useEffect(() => {
+    const onOpenFirm = () => {
+      if (!showFirmRef.current) return;
+      manualPickRef.current = true;
+      setPendingInitial(null);
+      setFirmPending(null);
+      setFirmBlank(true);
+      setConvId(null);
+      setTarget({ kind: "firm" });
+      setBodyNonce((n) => n + 1);
+      openPanel();
+    };
+    window.addEventListener(GRANTBOT_OPEN_FIRM_EVENT, onOpenFirm);
+    return () => window.removeEventListener(GRANTBOT_OPEN_FIRM_EVENT, onOpenFirm);
   }, [openPanel]);
 
   // Fetch the roster on first open, on each explicit retry, and on a stale-cache refetch (a dashboard
@@ -332,6 +368,9 @@ export function GrantBotSwitcher({
       // hint on entering a dashboard (mirrors the pendingInitial null above) so a later return to Firm
       // remounts on the true most-recent thread, not the stale picked id (Claude Code Review #547).
       setFirmPending(null);
+      // Same for an Ask-firm blank open: entering a dashboard ends it, so a later return to Firm opens the
+      // most-recent thread rather than a stale blank.
+      setFirmBlank(false);
       // Keep an already-resolved same-client target mounted, and reset convId ONLY on a real client
       // change (or a deep-link, which targets a specific conversation): re-entering the dashboard of the
       // client the corner is already showing shouldn't drop its tracked conversation and open a blank
@@ -432,6 +471,7 @@ export function GrantBotSwitcher({
     setConvId(null);
     setPendingInitial(null); // a manual switch is not the deep-linked thread
     setFirmPending(null); // nor a Recent firm-thread open
+    setFirmBlank(false); // nor an Ask-firm blank open — a manual firm pick opens its most-recent thread
     setRecentOpen(false); // picking a target from the header lands you in its chat, not the Recent list
     persistTarget(t);
   }
@@ -442,6 +482,7 @@ export function GrantBotSwitcher({
   // like a manual pick so it stays the off-dashboard default.
   function pickRecent(t: RecentThread) {
     manualPickRef.current = true;
+    setFirmBlank(false); // a Recent pick opens an EXISTING thread, never the Ask-firm blank
     if (t.scope === "firm") {
       setFirmPending(t.id);
       setPendingInitial(null);
@@ -669,7 +710,12 @@ export function GrantBotSwitcher({
               spinner
             )
           ) : resolved.kind === "firm" ? (
-            <FirmGrantBotChat key={`firm:${bodyNonce}`} variant="corner" initialConversationId={firmPending} />
+            <FirmGrantBotChat
+              key={`firm:${bodyNonce}`}
+              variant="corner"
+              initialConversationId={firmPending}
+              initialBlank={firmBlank}
+            />
           ) : (
             <GrantBotChat
               key={`${resolved.id}:${bodyNonce}`}

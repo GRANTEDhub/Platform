@@ -46,7 +46,7 @@ const FIRM_TITLE_CHARS = 80;
 
 export async function createFirmConversation(
   db: SupabaseClient,
-  opts: { title: string; startedBy?: string | null; startedByEmail?: string | null },
+  opts: { title: string; startedBy?: string | null; startedByEmail?: string | null; focusGrantId?: string | null },
 ): Promise<FirmConversation | null> {
   const { data, error } = await db
     .from("grantbot_conversations")
@@ -58,6 +58,13 @@ export async function createFirmConversation(
       title: opts.title,
       started_by: opts.startedBy ?? null,
       started_by_email: opts.startedByEmail ?? null,
+      // The grant this firm thread is anchored to (Ask GrantBot from the prospecting page; the 0098
+      // focus_grant_id column, reused for firm rows — 0097's CHECK is scope+client_id only, so it does
+      // not constrain this). Included ONLY when set, so a general firm thread's INSERT is byte-identical
+      // to before AND does not touch focus_grant_id at all — safe before 0098 is applied. An anchored
+      // firm thread is only ever created behind GRANTBOT_ASK_FROM_PROSPECTING_ENABLED, whose flip implies
+      // the migration; without it the insert fails soft (returns null) rather than a general thread breaking.
+      ...(opts.focusGrantId ? { focus_grant_id: opts.focusGrantId } : {}),
     })
     .select(FIRM_COLS)
     .maybeSingle();

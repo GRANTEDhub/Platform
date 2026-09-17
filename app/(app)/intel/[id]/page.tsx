@@ -20,6 +20,10 @@ import { ProspectButton } from "../prospect-button";
 import { ProspectList, type ProspectRow } from "../prospect-list";
 import { CloseProspectingButton } from "../close-prospecting-button";
 import { AddToClientControl } from "@/app/(app)/grants/[id]/add-to-client";
+import { AskFirmGrantBotButton } from "@/components/report/ask-firm-grantbot-button";
+import { switcherEnabled } from "@/lib/grantbot/switcher";
+import { firmGrantbotEnabled } from "@/lib/grantbot/firm-turn";
+import { grantbotAskFromProspectingEnabled } from "@/lib/grantbot/firm-ask-intent";
 import type { Grant, ReviewCard, Client, Prospect, IdealApplicantProfile as IAP } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -56,6 +60,13 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
     .single<Grant>();
 
   if (!grant) notFound();
+
+  // "Ask GrantBot" (firm bot, anchored to this grant + its surfaced prospects). Rendered only when the
+  // firm bot AND the ask flag are on; /intel is admin-only, so the firm bot is reachable for whoever sees
+  // it. switcherEnabled decides in-place-corner (prod) vs navigate-to-/grantbot fallback. All flag-off →
+  // the button is absent, byte-identical page.
+  const askFirmEnabled = firmGrantbotEnabled() && grantbotAskFromProspectingEnabled();
+  const switcherOn = switcherEnabled();
 
   const { data: cards } = await supabase
     .from("review_cards")
@@ -366,7 +377,17 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                     <p className={EYEBROW}>
                       Discovered prospects{prospectCards.length > 0 ? ` (${prospectCards.length})` : ""}
                     </p>
-                    {/* Close is the ONLY UI to remove a grant from the prospect feed, so it must show for any
+                    <div className="flex items-center gap-2">
+                      {/* Ask the FIRM GrantBot about this grant + its surfaced prospects (anchored thread,
+                          no retyping). Shown whether or not prospecting has run — it degrades to grant-only. */}
+                      {askFirmEnabled && (
+                        <AskFirmGrantBotButton
+                          grantId={grant.id}
+                          grantTitle={grant.title ?? ""}
+                          switcherEnabled={switcherOn}
+                        />
+                      )}
+                      {/* Close is the ONLY UI to remove a grant from the prospect feed, so it must show for any
                         feed-visible, not-yet-closed grant. Restores the original box-visibility condition
                         (canProspect || canAdd || prospectCards.length > 0): canProspect covers an actively-
                         prospectable grant; prospectCards>0 covers a grant whose prospects outlive a
@@ -374,11 +395,12 @@ export default async function ProspectDetailPage({ params }: { params: { id: str
                         that can NEVER be prospected (summary-shred / no ideal_applicant_profile) yet still sits
                         in the feed with no other close path (Claude Code Review #576). Not gated on the scoring
                         gate — closing prospecting has no dependency on match status. */}
-                    {grant.prospecting_closed_at ? (
-                      <Badge variant="warning">Closed</Badge>
-                    ) : canProspect || canAdd || prospectCards.length > 0 ? (
-                      <CloseProspectingButton grantId={grant.id} />
-                    ) : null}
+                      {grant.prospecting_closed_at ? (
+                        <Badge variant="warning">Closed</Badge>
+                      ) : canProspect || canAdd || prospectCards.length > 0 ? (
+                        <CloseProspectingButton grantId={grant.id} />
+                      ) : null}
+                    </div>
                   </div>
                   {prospectCards.length > 0 ? (
                     <div className="mt-2.5">

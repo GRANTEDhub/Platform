@@ -150,6 +150,21 @@ export function dispatchOpenGrantBot(clientId: string, clientName: string): void
   );
 }
 
+// ── In-place open of the FIRM bot (Ask GrantBot from the prospecting page) ──
+// The firm sibling of GRANTBOT_OPEN_EVENT. The "Ask GrantBot" button on /intel/[id] dispatches this so
+// the mounted Switcher opens the FIRM bot IN PLACE at a NEW blank thread (the staffer stays on the page).
+// NO detail: the firm target needs no id/name to resolve ("firm" is the whole target), and the grant
+// anchor rides the firm ask-context stash (firm-ask-intent.ts), consumed by the firm chat on mount — so,
+// like the per-client event, this only opens the panel + sets the target; the grant never crosses on the
+// event. Fires only when the Switcher flag is on (the button falls back to navigating to /grantbot when
+// it is off). Dormant unless the button dispatches, so no existing Switcher behavior changes.
+export const GRANTBOT_OPEN_FIRM_EVENT = "grantbot:open-firm-in-place";
+
+export function dispatchOpenFirmGrantBot(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(GRANTBOT_OPEN_FIRM_EVENT));
+}
+
 // Whether a dashboard-navigation effect must FORCE the corner chat body to remount (a bodyNonce bump).
 // The body is keyed by the client id, and its "open on this conversation" props + the composer SEED
 // (GrantBotChat's mount-only takeDraft) are consumed ONLY on mount. So a "?grantbot=" deep-link — the
