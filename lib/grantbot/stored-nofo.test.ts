@@ -298,7 +298,8 @@ describe("executeStoredNofo — the Layer-2 tool", () => {
 describe("READ_STORED_NOFO_TOOL + STORED_NOFO_INSTRUCTION_BLOCK", () => {
   it("the tool is read-only-shaped with an optional opportunity_number", () => {
     expect(READ_STORED_NOFO_TOOL.name).toBe(READ_STORED_NOFO_TOOL_NAME);
-    expect(READ_STORED_NOFO_TOOL.input_schema.required).toBeUndefined();
+    // No `required` key at all → the tool is callable with no args (reads the anchored grant).
+    expect("required" in READ_STORED_NOFO_TOOL.input_schema).toBe(false);
     expect(READ_STORED_NOFO_TOOL.description).toMatch(/instead of fetching/i);
   });
   it("the instruction block prefers stored over fetch AND forbids claiming an unread source", () => {
