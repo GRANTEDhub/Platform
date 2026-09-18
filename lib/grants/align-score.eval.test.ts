@@ -596,12 +596,13 @@ async function loadGrant(db: ReturnType<typeof createServiceClient>, fx: Fixture
           scores.filter((s, i) => s >= 2 && roles[i] != null && SUPPORTING_ROLES.includes(roles[i] as string))
             .length >
           RUNS / 2;
-        // AMBIGUOUS band: a genuinely ~50/50 funder-as-partner conditional (AGFF x National Fish Passage). We do
-        // NOT assert the 1-vs-2 direction (it flickers defensibly), only the two ERROR directions that would be
-        // real bugs: never a fabricated strong fit (3), never routed Prime (the #140/#504 funder guard), and
-        // eligible (>=1, not a wrong 0). The funder classification is guarded at the source by
-        // expectedCanPrime:"false" (loadGrant); the sibling AGFF x NAWCA stays a HARD keep (>=2).
-        const ambiguousOk = scores.filter((s, i) => s >= 1 && s <= 2 && roles[i] !== "Prime").length > RUNS / 2;
+        // AMBIGUOUS band: a genuinely ~50/50 funder-as-partner conditional (AGFF x National Fish Passage). Only
+        // the 1-vs-2 DIRECTION is unasserted (it flickers defensibly). The safety invariants hold on EVERY run,
+        // NOT a majority -- a majority predicate would green a [1, 1, 3] or a lone Prime, exactly the regressions
+        // this band claims to guard (Codex #589 P1): never a fabricated strong fit (3), never routed Prime (the
+        // #140/#504 funder guard), and eligible (>=1, not a wrong 0). The funder classification is guarded at the
+        // source by expectedCanPrime:"false" (loadGrant); the sibling AGFF x NAWCA stays a HARD keep (>=2).
+        const ambiguousOk = scores.every((s, i) => s >= 1 && s <= 2 && roles[i] !== "Prime");
         const verdict =
           fx.band === "no-go"
             ? scores.filter((s) => s <= 1).length > RUNS / 2
@@ -647,14 +648,15 @@ async function loadGrant(db: ReturnType<typeof createServiceClient>, fx: Fixture
             )
             .toBe(true);
         } else if (fx.band === "ambiguous") {
-          // A genuinely ~50/50 funder-as-partner conditional: assert the two ERROR directions only (never a
-          // fabricated 3, never routed Prime -- the funder guard -- and eligible >=1), leaving the 1-vs-2
-          // direction unasserted so the gate stops flaking on a defensible flicker. The source-side funder
-          // classification stays hard-guarded by expectedCanPrime:"false" (loadGrant).
+          // A genuinely ~50/50 funder-as-partner conditional: the safety invariants hold on EVERY run (never a
+          // fabricated 3, never routed Prime -- the funder guard -- and eligible >=1); only the 1-vs-2 direction
+          // is unasserted, so the gate stops flaking on a defensible flicker WITHOUT greening a real regression
+          // on any single run (Codex #589 P1). The source-side funder classification stays hard-guarded by
+          // expectedCanPrime:"false" (loadGrant).
           expect
             .soft(
               ambiguousOk,
-              `ambiguous: expected majority eligible non-Prime in fit [1,2] (direction unasserted), got scores [${scores.join(", ")}] roles [${roles.join(", ")}]`,
+              `ambiguous: EVERY run must be eligible non-Prime in fit [1,2] (only the 1-vs-2 direction unasserted), got scores [${scores.join(", ")}] roles [${roles.join(", ")}]`,
             )
             .toBe(true);
         } else {
