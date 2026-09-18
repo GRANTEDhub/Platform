@@ -488,11 +488,17 @@ export function finalizeAlignMatch(
     const capped = Math.min(result.fit_score, 1) as 0 | 1 | 2 | 3;
     if (capped !== result.fit_score) {
       const prior = result.reasoning_context.fit_score_derivation ?? "";
+      // Report the ACTUAL prime-capacity state, not a hardcoded FALSE: the cap now also fires on UNKNOWN
+      // (null) and no-profile, so "can_prime=FALSE" would misattribute a definitive classification to a
+      // state that was actually UNKNOWN/absent -- and this note is persisted + shown in staff reasoning
+      // (#587 Codex P2). The money-mover finding is the real trigger; the state is a parenthetical.
+      const cp = client.client_profile?.prime_capacity?.can_prime;
+      const cpLabel = cp === false ? "can_prime=FALSE" : cp === null ? "can_prime=UNKNOWN" : "no distilled prime capacity";
       result.reasoning_context = {
         ...result.reasoning_context,
         fit_score_derivation:
           `${prior}${prior ? " " : ""}Funder cap: lowered ${result.fit_score}->${capped} -- ` +
-          `can_prime=FALSE money-mover with no concrete role on this grant (topical/mission overlap is not a role).`,
+          `confirmed money-mover with no concrete role on this grant (${cpLabel}; topical/mission overlap is not a role).`,
       };
       result.fit_score = capped;
     }

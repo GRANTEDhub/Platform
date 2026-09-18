@@ -151,12 +151,27 @@ describe("prime-capacity backfill", () => {
     expect(db.__writes.find((w) => w.id === "c1")?.profile.prime_capacity.can_prime).toBe(false);
   });
 
-  it("CAP + resume: limit bounds the run and reports the remainder", async () => {
+  it("CAP: limit bounds the run and reports the remainder + a resume cursor", async () => {
     const db = makeDb(ROSTER());
     const res = await runPrimeCapacityBackfill(db as never, { apply: true, limit: 2 }, { redistill });
     expect(res.processed).toBe(2); // c1, c2 (id order)
     expect(res.written).toBe(2);
     expect(res.remaining).toBe(2); // c3, c7 wait for the next run
+    expect(res.nextCursor).toBe("c2"); // resume past the last processed row
+  });
+
+  it("RESUME: afterId advances past processed rows so funders/errors are not re-done and the run terminates", async () => {
+    const db = makeDb(ROSTER());
+    // Run 1 (cap 2): c1 (funder, stays CANNOT) + c2 (county, heals). Cursor -> c2.
+    const run1 = await runPrimeCapacityBackfill(db as never, { apply: true, limit: 2 }, { redistill });
+    expect(run1.nextCursor).toBe("c2");
+    // Run 2 resumes past c2: only c3 + c7 are eligible. The still-false funder c1 is NOT re-processed (without
+    // the cursor it would re-appear at the front of the bucket every run and burn the cap -- #587 Codex P1).
+    const run2 = await runPrimeCapacityBackfill(db as never, { apply: true, afterId: run1.nextCursor! }, { redistill });
+    expect(run2.results.map((r) => r.name)).toEqual(["Acme Operator", "Boom Corp"]);
+    expect(run2.results.some((r) => r.name === "Funder Foundation")).toBe(false);
+    expect(run2.remaining).toBe(0); // eligible past the cursor is exhausted -> done
+    expect(run2.nextCursor).toBe("c7");
   });
 
   it("error isolation: one failed distill is recorded, not written, and never aborts the batch", async () => {

@@ -59,15 +59,17 @@ export async function GET(req: NextRequest) {
   const result = await runPrimeCapacityBackfill(createServiceClient(), {
     apply: false,
     limit,
+    afterId: url.searchParams.get("after") || undefined,
     nameLike: nameParam(url.searchParams.get("name")),
     deadlineMs: DEADLINE_MS,
   });
   return NextResponse.json({
     dryRun: true,
     scanned: result.scanned, // clients with a distilled profile
-    falseBucket: result.falseBucket, // heal candidates (can_prime === false today)
+    falseBucket: result.falseBucket, // TOTAL still can_prime === false (informational; funders keep it > 0)
     previewed: result.processed, // how many were re-distilled in this sample
-    remaining: result.remaining, // false-bucket clients NOT previewed this run
+    remaining: result.remaining, // eligible past the cursor NOT previewed this run
+    nextCursor: result.nextCursor, // pass as ?after=<id> to preview the next page
     flips: result.flips, // { toUnknown, toCan, stayCannot, errors }
     // Old -> new per client so the split is verifiable (expect MS County / Faulkner in toUnknown/toCan; AGFF
     // in stayCannot). Trimmed to the fields a reviewer needs.
@@ -86,7 +88,7 @@ export async function POST(req: NextRequest) {
   const { error } = await requireAdmin();
   if (error) return error;
 
-  const body = (await req.json().catch(() => ({}))) as { limit?: number; name?: string };
+  const body = (await req.json().catch(() => ({}))) as { limit?: number; name?: string; afterId?: string };
   // Distinguish an explicit 0 (write NOTHING) from absent (no cap): a falsy `> 0` check would coerce {limit:0}
   // to undefined -> "no cap" -> the FULL batch, the opposite of the intent.
   const limit = typeof body.limit === "number" && body.limit >= 0 ? Math.floor(body.limit) : undefined;
@@ -94,6 +96,9 @@ export async function POST(req: NextRequest) {
   const result = await runPrimeCapacityBackfill(createServiceClient(), {
     apply: true,
     limit,
+    // Resume cursor: pass back the prior response's nextCursor so a capped run advances past what it already
+    // processed (funders + errored rows stay can_prime=false and would otherwise be re-done every run).
+    afterId: typeof body.afterId === "string" && body.afterId ? body.afterId : undefined,
     nameLike: typeof body.name === "string" ? nameParam(body.name) : undefined,
     deadlineMs: DEADLINE_MS,
   });
@@ -103,6 +108,7 @@ export async function POST(req: NextRequest) {
     processed: result.processed,
     falseBucket: result.falseBucket,
     remaining: result.remaining,
+    nextCursor: result.nextCursor, // POST again with { afterId: nextCursor } until nextCursor is null / remaining 0
     flips: result.flips,
     errors: result.results.filter((r) => r.error).map((r) => ({ name: r.name, error: r.error })),
   });

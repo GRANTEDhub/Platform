@@ -58,9 +58,10 @@ export interface PrimeBackfillPreview {
 
 export interface PrimeBackfillResult {
   scanned: number; // clients with a distilled profile that were read
-  falseBucket: number; // of those, how many have can_prime === false today (the heal candidates)
+  falseBucket: number; // TOTAL still can_prime === false (informational; funders keep it > 0 forever)
   processed: number; // how many were re-distilled this run (cap / deadline bound the rest)
-  remaining: number; // falseBucket - processed (a cap/deadline catches them on the next run)
+  remaining: number; // eligible (past the cursor) not processed this run -- 0 means this cursor is exhausted
+  nextCursor: string | null; // pass as afterId to the next run to advance past what was just processed
   flips: { toUnknown: number; toCan: number; stayCannot: number; errors: number };
   written: number; // 0 on a dry run
   results: PrimeBackfillPreview[]; // every processed client, old -> new (the "look" for the dry-run)
@@ -164,6 +165,7 @@ export async function runPrimeCapacityBackfill(
   opts: {
     apply: boolean;
     limit?: number; // max clients to re-distill this run; undefined = all
+    afterId?: string; // resume cursor: process only bucket rows with id > afterId (see below)
     nameLike?: string; // optional ilike filter (e.g. "%mississippi%") to spot-check specific clients
     deadlineMs?: number; // stop starting new distills after this many ms (route budget guard)
     pageSize?: number; // client scan page size (overridable so a test proves paging)
@@ -176,9 +178,18 @@ export async function runPrimeCapacityBackfill(
   const clients = await fetchProfiledClients(db, opts.nameLike, opts.pageSize ?? CLIENT_PAGE);
   const bucket = clients.filter(isFalseBucket);
 
-  const cap = typeof opts.limit === "number" ? Math.max(0, Math.floor(opts.limit)) : bucket.length;
+  // Cursor by id (the scan is id-asc): a resumed run starts AFTER the last row processed last time. Genuine
+  // funders and errored rows legitimately STAY can_prime=false, so they never leave the bucket -- without a
+  // cursor a capped/resumed POST would re-distill them from the front every run, burning the cap on rows that
+  // will never change and never terminating (#587 Codex P1). The cursor advances monotonically past every
+  // ATTEMPTED row (healed, stay-CANNOT, or errored), so repeated POSTs reach the whole bucket and reach a
+  // clean done (nextCursor null / remaining 0). falseBucket stays the TOTAL still-false count (it never hits
+  // 0 because funders keep it positive) -- terminate on nextCursor/remaining, not falseBucket.
+  const eligible = opts.afterId ? bucket.filter((c) => c.id > (opts.afterId as string)) : bucket;
+
+  const cap = typeof opts.limit === "number" ? Math.max(0, Math.floor(opts.limit)) : eligible.length;
   const results: PrimeBackfillPreview[] = [];
-  for (const client of bucket) {
+  for (const client of eligible) {
     if (results.length >= cap) break;
     if (opts.deadlineMs !== undefined && now() - start >= opts.deadlineMs) break; // budget exhausted -> resume next run
     results.push(await processOne(db, client, opts.apply, redistill));
@@ -194,7 +205,8 @@ export async function runPrimeCapacityBackfill(
     scanned: clients.length,
     falseBucket: bucket.length,
     processed: results.length,
-    remaining: bucket.length - results.length,
+    remaining: eligible.length - results.length,
+    nextCursor: results.length ? results[results.length - 1].id : null,
     flips,
     written: results.filter((r) => r.written).length,
     results,
