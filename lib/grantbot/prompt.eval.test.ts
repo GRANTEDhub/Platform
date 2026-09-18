@@ -195,4 +195,39 @@ describe.skipIf(!RUN)("GrantBot reasoning eval (live model)", () => {
     },
     RUNS * 120_000,
   );
+
+  it(
+    "4. output contract — answer-first + lean on a simple ask, but depth survives on a real call",
+    async () => {
+      // The behavioural proof for the GRANTED_OUTPUT_CONTRACT block: brevity actually landed AND the
+      // depth escape held (a real determination is not clipped to a thin one-liner). Both halves matter
+      // — a brevity rule that starves a genuine eligibility call is the failure mode the escape guards.
+
+      // 4a BREVITY: a simple factual ask gets a tight, answer-first reply, not a wall.
+      const simple = "Is this client SAM-registered, and what's their org type?";
+      const shortA = await runN(RUNS, () => callGrantBot(makePack(), simple));
+      console.log("[grantbot-eval] brevity:\n" + shortA.map((a, i) => `--- run ${i + 1} ---\n${a}`).join("\n\n"));
+      const leads = shortA.map((a) => /^.{0,160}(active|registered|\byes\b|local[_ ]?gov|county)/i.test(a));
+      const lean = shortA.map((a) => a.length <= 600); // ~4-6 sentences; a wall fails. TUNABLE against the first real run.
+      expect.soft(majority(leads), "a simple factual ask must lead with the answer in the first line").toBe(true);
+      expect.soft(majority(lean), "a simple factual ask must stay tight — no wall of text").toBe(true);
+
+      // 4b DEPTH ESCAPE (load-bearing): a real prime-vs-sub eligibility call must NOT be clipped to a
+      // thin one-liner. COMPLETENESS is the test, not length: no length cap is applied here — the answer
+      // is allowed to be as long as the analysis needs. This is the guard on the escape clause that gets
+      // sanded off first when someone later tightens the brevity rule.
+      const deep =
+        "Could this county prime a federal infrastructure grant, or would it need a partner/sub structure? Walk me through what determines it.";
+      const deepA = await runN(RUNS, () => callGrantBot(makePack(), deep));
+      console.log("[grantbot-eval] depth-escape:\n" + deepA.map((a, i) => `--- run ${i + 1} ---\n${a}`).join("\n\n"));
+      const prime = deepA.map((a) => /\bprime\b|direct recipient|apply (?:directly|on its own)|lead applicant/i.test(a));
+      const partner = deepA.map((a) => /\bsub\b|subaward|partner|co-?applicant|pass-?through|consortium|coalition/i.test(a));
+      const notThin = deepA.map((a) => a.length >= 400); // a real determination is not a one-liner. TUNABLE.
+      const complete = prime.map((p, i) => p && partner[i] && notThin[i]);
+      expect.soft(majority(prime), "the depth escape must let a real eligibility call address the PRIME path").toBe(true);
+      expect.soft(majority(partner), "...and the partner/sub path — brevity must not collapse the prime-vs-sub distinction").toBe(true);
+      expect.soft(majority(complete), "the SAME answer covers both paths with real substance — proof the depth escape survived brevity").toBe(true);
+    },
+    RUNS * 120_000,
+  );
 });

@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { framePastedContent, PASTED_OPEN, PASTED_CLOSE } from "./prompt";
+import { buildSystemPrompt, framePastedContent, isShared, sharedBlocksAreClientFree, PASTED_OPEN, PASTED_CLOSE } from "./prompt";
 import { GRANTBOT_INSTRUCTIONS, INSTRUCTIONS_VERSION } from "./instructions";
 import { GRANTBOT_METHODOLOGY, METHODOLOGY_VERSION } from "./methodology";
+import { GRANTED_OUTPUT_CONTRACT, OUTPUT_CONTRACT_CLOSING_ECHO } from "./output-contract";
+import type { ContextPack } from "./context-pack";
 
 // The pasted-content frame is the load-bearing prompt-injection defence: untrusted text lives
 // between PASTED_OPEN / PASTED_CLOSE, and the model is told to treat everything inside as evidence,
@@ -120,5 +122,55 @@ describe("GrantBot prompt \u2014 the carve-out did NOT loosen the anti-hallucina
     // Stamped onto every assistant message, so a bad answer traces to this instruction/methodology set.
     expect(INSTRUCTIONS_VERSION).toBe("2026-09-10.1");
     expect(METHODOLOGY_VERSION).toBe("2026-09-14.1");
+  });
+});
+
+// ── The output contract (2026-09-18): brevity / answer-first that governs the bot's OWN replies ──
+//
+// The instruction audit found this layer effectively absent — the conciseness rule existed in text but
+// never in the high-recency slot, and much of it was scoped to deliverable drafting rather than the
+// bot's turn output, so the bot ran long. These deterministic locks prove the new block is (a) WIRED
+// into the assembled prompt as a SHARED, cacheable block ahead of methodology, (b) RESTATED last in the
+// closing, and (c) still carries the DEPTH ESCAPE — the clause most likely to be sanded off when someone
+// later tightens brevity. The behavioural proof (does the model actually shorten / keep depth) is
+// prompt.eval.test.ts case 4.
+describe("GrantBot prompt — output contract is present, wired, and keeps the depth escape", () => {
+  const pack: ContextPack = {
+    orgName: "Testville County",
+    generatedAt: "2026-09-18T00:00:00Z",
+    generatedBy: "prompt-test",
+    clientRowTouchedAt: "2026-09-01T00:00:00Z",
+    actorRole: "staff",
+    items: [],
+    gaps: [],
+    omitted: [],
+    stats: { documents: 0, matches: 0, detailedMatches: 0, concepts: 0, drafts: 0, alerts: 0, events: 0, changes: 0, dropped: [] },
+  };
+
+  it("assembles the output-contract as a SHARED, cacheable block between guardrails and methodology", () => {
+    const prompt = buildSystemPrompt({ pack });
+    const kinds = prompt.blocks.map((b) => b.kind);
+    expect(kinds).toContain("output-contract");
+    // Order: guardrails -> output-contract -> methodology (identity, then how-you-answer, then reasoning).
+    expect(kinds.indexOf("output-contract")).toBeGreaterThan(kinds.indexOf("guardrails"));
+    expect(kinds.indexOf("output-contract")).toBeLessThan(kinds.indexOf("methodology"));
+    const block = prompt.blocks.find((b) => b.kind === "output-contract")!;
+    expect(block.cacheable).toBe(true);
+    expect(isShared(block)).toBe(true); // rides the cross-client cache breakpoint
+    expect(block.text).toBe(GRANTED_OUTPUT_CONTRACT);
+    // Static / client-free, so the shared breakpoint stays reusable across clients.
+    expect(sharedBlocksAreClientFree(prompt, "Testville County")).toBe(true);
+  });
+
+  it("restates the contract in the closing block (last-read) with the depth escape intact", () => {
+    const prompt = buildSystemPrompt({ pack });
+    const closing = prompt.blocks.find((b) => b.kind === "closing")!;
+    expect(closing.text).toContain(OUTPUT_CONTRACT_CLOSING_ECHO);
+    // The echo is the LAST line of the closing (highest recency).
+    expect(closing.text.trimEnd().endsWith(OUTPUT_CONTRACT_CLOSING_ECHO)).toBe(true);
+    // The depth escape survives in BOTH the full contract and the echo, worded as a floor, not a ceiling.
+    expect(GRANTED_OUTPUT_CONTRACT).toContain("floor on substance, not a ceiling");
+    expect(GRANTED_OUTPUT_CONTRACT).toMatch(/NEVER a reason to give a thin answer/);
+    expect(OUTPUT_CONTRACT_CLOSING_ECHO).toContain("never thin");
   });
 });

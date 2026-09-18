@@ -3,6 +3,7 @@ import { buildFirmSystemPrompt } from "./firm-prompt";
 import { buildFirmContextPack, type FirmPackClient } from "./firm-context-pack";
 import { FIRM_GRANTBOT_INSTRUCTIONS } from "./firm-instructions";
 import { GRANTED_ONBOARDING_BRIEF, GRANTED_REVIEW_CARD_SPEC } from "./firm-knowledge";
+import { OUTPUT_CONTRACT_CLOSING_ECHO } from "./output-contract";
 import type { PromptBlock } from "./prompt";
 
 // Deterministic — no model. Locks the firm prompt's structural invariants:
@@ -102,6 +103,10 @@ describe("buildFirmSystemPrompt", () => {
     // It must NOT hard-name a tool or hard-deny fetch (either would contradict an enabled fetch tool).
     expect(closing).not.toContain("list_firm_conversations");
     expect(closing).not.toMatch(/cannot fetch/i);
+    // The shared output-contract echo is restated here (last-read) — the firm bot's brevity content
+    // lives in its ported instructions but was never in the high-recency slot (the audit finding).
+    expect(closing).toContain(OUTPUT_CONTRACT_CLOSING_ECHO);
+    expect(closing.trimEnd().endsWith(OUTPUT_CONTRACT_CLOSING_ECHO)).toBe(true);
   });
 
   it("assembles exactly two cache breakpoints, and the last (closing) block is uncached", () => {
