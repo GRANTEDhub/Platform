@@ -58,6 +58,12 @@ interface Fixture {
   // Diagnostic (ALIGN_REDISTILL=1): opt this fixture OUT of the in-memory re-distill so it scores against its
   // REAL stored profile -- for isolating a scorer/render regression (Harbor House) from a profile-lie issue.
   reDistillSkip?: boolean;
+  // Derivation gate (B2 three-state can_prime): when REDISTILL runs, assert the re-distilled prime_capacity.
+  // "false" = must stay CANNOT (a genuine funder / money-mover, e.g. AGFF -- the funder guardrail at the SOURCE:
+  // the distiller must still classify it CANNOT so the scorer never routes it to an implementation Prime).
+  // "not-false" = must heal OFF the old conservative default of false to UNKNOWN(null) or CAN(true) (a
+  // prime-capable client the old default wrongly locked out, e.g. Mississippi County / NWA Council -- the release).
+  expectedCanPrime?: "false" | "not-false";
 }
 
 // Safe defaults so a Partial<Grant> inline fixture never NPEs the scorer's grant/client block builder.
@@ -103,6 +109,7 @@ const FIXTURES: Fixture[] = [
     grantTitleLike: "%Threatened and Endangered Species%",
     band: "no-go",
     stripCrutch: true,
+    expectedCanPrime: "false", // AGFF is a genuine funder -> must stay CANNOT (the funder guardrail at the source)
   },
   {
     label: "GreenLab x Emergency Citrus Disease Research (wrong activity)",
@@ -278,6 +285,7 @@ const FIXTURES: Fixture[] = [
     grantUuid: "e407af15-6c31-41de-80ac-3ffcaf61ea88",
     band: "keep",
     stripCrutch: true,
+    expectedCanPrime: "not-false", // a county gov is not a money-mover -> must heal OFF the old default false (the release)
   },
   {
     label: "Mississippi County x EDA PWEAA -- local gov [needs ingest]",
@@ -285,6 +293,7 @@ const FIXTURES: Fixture[] = [
     grantUuid: "b5365cea-b07c-4e8d-8313-e23ab0fd3766",
     band: "keep",
     stripCrutch: true,
+    expectedCanPrime: "not-false", // a county gov is not a money-mover -> must heal OFF the old default false (the release)
   },
   {
     label: "Mississippi County x DOT BUILD/RAISE -- local gov [needs ingest]",
@@ -292,6 +301,7 @@ const FIXTURES: Fixture[] = [
     grantUuid: "4d8f5775-ff01-4a6f-ab4e-b125899043b3",
     band: "keep",
     stripCrutch: true,
+    expectedCanPrime: "not-false", // a county gov is not a money-mover -> must heal OFF the old default false (the release)
   },
 
   // ── KEEP band, funder-as-partner archetype: AGFF conditional partner-seat 2s (reclassified from NO-GO,
@@ -311,6 +321,7 @@ const FIXTURES: Fixture[] = [
     grantTitleLike: "%NAWCA%",
     band: "keep",
     stripCrutch: true,
+    expectedCanPrime: "false", // still a funder (CANNOT); it earns the conditional 2 via a concrete property/match role, not by priming
   },
   {
     label: "AGFF x National Fish Passage -- property holder / match partner [conditional 2]",
@@ -318,6 +329,7 @@ const FIXTURES: Fixture[] = [
     grantTitleLike: "%National Fish Passage%",
     band: "keep",
     stripCrutch: true,
+    expectedCanPrime: "false", // still a funder (CANNOT); the conditional 2 rides a concrete property/match role
   },
 
   // ── KEEP-SUB anchor: SUPPORTING-ROLE PRESERVATION (issue #510) ────────────────────────────────────────
@@ -404,6 +416,7 @@ const FIXTURES: Fixture[] = [
     grantUuid: "b5365cea-b07c-4e8d-8313-e23ab0fd3766",
     band: "keep-140",
     stripCrutch: true,
+    expectedCanPrime: "not-false", // a regional convener -> UNKNOWN/CAN, never the old default false (the #140 release)
   },
 ];
 
@@ -509,6 +522,22 @@ async function loadGrant(db: ReturnType<typeof createServiceClient>, fx: Fixture
             );
           }
           client = { ...clientRaw, client_profile: fresh };
+
+          // B2 derivation gate: the three-state distiller must classify prime capacity correctly at the SOURCE.
+          // This is the funder guardrail (AGFF -> CANNOT) and the release (Mississippi County / NWA Council ->
+          // UNKNOWN or CAN, never the old default false) proven on the re-distilled profile, before the scorer runs.
+          if (fx.expectedCanPrime) {
+            const cp = (fresh.prime_capacity?.can_prime ?? null) as boolean | null;
+            if (fx.expectedCanPrime === "false") {
+              expect
+                .soft(cp, `${fx.label}: a genuine funder must re-distill to CANNOT (false), got ${JSON.stringify(cp)}`)
+                .toBe(false);
+            } else {
+              expect
+                .soft(cp, `${fx.label}: a prime-capable client must heal OFF false to UNKNOWN/CAN, got ${JSON.stringify(cp)}`)
+                .not.toBe(false);
+            }
+          }
         }
 
         // Diagnostic inferred-suppression: empty inferred[] so the formatter skips it (harness-only toggle).
@@ -604,8 +633,9 @@ async function loadGrant(db: ReturnType<typeof createServiceClient>, fx: Fixture
           // KEEP / KEEP-140: MAJORITY of runs must stay surfaced (fit >= 2). Relaxed from every-run: Harbor
           // House flickered [2,2,1] at temp-0, and a single-run dip is sampling noise, not the funder cap
           // overcorrecting. Over-killing a good match on the MAJORITY (or repeating #140 on the integrative-fit
-          // anchor) is still the expensive error this band guards -- and the cap's guardrails (strict
-          // can_prime===false, money-mover-only) keep it off every KEEP implementer regardless.
+          // anchor) is still the expensive error this band guards -- and the cap's guardrails (a `can_prime !== true`
+          // exclusion that protects a proven prime + a CONFIDENT-only money-mover signal that never flags an
+          // ordinary UNKNOWN implementer) keep it off every KEEP implementer regardless.
           expect
             .soft(surfacedMajority, `expected majority of runs >= 2 (must stay), got scores [${scores.join(", ")}]`)
             .toBe(true);

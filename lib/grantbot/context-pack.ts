@@ -550,13 +550,24 @@ function distilled(input: PackInput, items: ContextItem[]): void {
     at,
   );
   const prime = p.prime_capacity as unknown as Record<string, unknown> | null;
+  // THREE-WAY, never a truthiness coerce: can_prime is true (CAN) / false (CANNOT, a positive money-mover
+  // finding) / null (UNKNOWN, the distiller default on a thin/ordinary intake). null must NOT read as "no" --
+  // that would tell the bot the org can NEVER prime and kneecap a prime-capable client per grant. Mirrors
+  // firm-context-pack.ts and formatClientProfileForScoring (lib/clients/profile.ts).
+  const cp = prime ? (prime.can_prime as boolean | null | undefined) : undefined;
+  const canPrimeLabel =
+    cp === true
+      ? "yes"
+      : cp === false
+        ? "no (funder / money-mover)"
+        : "UNKNOWN (not recorded -- assess per grant from the facts; do not assume it cannot prime)";
   push(
     items,
     "distilled",
     "Prime capacity",
     prime
       ? bullets([
-          `Can prime: ${prime.can_prime ? "yes" : "no"}`,
+          `Can prime: ${canPrimeLabel}`,
           clean(prime.rationale),
           clean(prime.conditional_on) ? `Conditional on: ${clean(prime.conditional_on)}` : null,
         ])

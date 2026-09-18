@@ -293,10 +293,15 @@ export interface ClientProfile {
     scale: "local" | "regional" | "statewide" | "multi_state" | "national";
     states: string[];
   };
-  // Prime-vs-partner: GENERAL capacity, not a per-grant seat. can_prime is
-  // conservative (true only with genuine evidence the org performs a core funded
-  // role as its natural function); the matcher still decides the seat per grant.
-  prime_capacity: { can_prime: boolean; rationale: string; conditional_on?: string };
+  // Prime-vs-partner: GENERAL capacity, not a per-grant seat. can_prime is THREE-STATE:
+  //   true  (CAN)     -- genuine evidence the org performs a core funded role as its natural function
+  //   false (CANNOT)  -- a POSITIVE money-mover finding (funder / grantmaker / fiscal sponsor); the
+  //                      direct-align scorer reads this as "can NEVER be an implementation prime"
+  //   null  (UNKNOWN) -- the DEFAULT on a thin/ordinary intake; the matcher decides prime eligibility
+  //                      per grant from the confirmed facts. null must NOT be read as "cannot prime".
+  // (The DB has always been able to carry null in this jsonb field; the distiller now emits it
+  // deliberately instead of defaulting to false, so the type is honest. No migration -- jsonb.)
+  prime_capacity: { can_prime: boolean | null; rationale: string; conditional_on?: string };
   supporting_roles: string[]; // supporting/partner seats it can genuinely fill
   partnerships: string[];
   funding_priorities: string[]; // what they WANT
