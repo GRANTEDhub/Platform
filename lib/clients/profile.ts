@@ -30,7 +30,10 @@ export interface ClientProfileInput {
   documents?: string; // extracted text from uploads, when present (later stage)
 }
 
-const CLIENT_PROFILE_SYSTEM_PROMPT = `You are GRANTED's client-profile refiner. GRANTED is a U.S.-only grant consulting firm.
+// Exported so a deterministic test can LOCK the three-state can_prime contract (the default is
+// UNKNOWN/null, false is reserved for a positive money-mover finding) without a model call -- the
+// same discipline align-score.ts uses by exporting alignModelRequest.
+export const CLIENT_PROFILE_SYSTEM_PROMPT = `You are GRANTED's client-profile refiner. GRANTED is a U.S.-only grant consulting firm.
 You are GIVEN one organization's intake -- an open-ended strategic dump plus some
 structured and auto-pulled fields -- and you DISTILL it into a match-optimized
 profile that the matching engine will later map against a grant's ideal-applicant
@@ -47,11 +50,26 @@ CORE DISCIPLINE:
    are secondary -- fold them into fiscal_notes when present, never pad them.
 
 PRIME VS PARTNER (never flatten this):
-- prime_capacity.can_prime describes GENERAL capacity: can this org perform a core
-  funded role AS ITS NATURAL FUNCTION, at a scale that could anchor an application?
-  Default can_prime = FALSE. Set it true ONLY with genuine evidence in the intake.
-  Eligibility or topical relatedness is NOT prime capacity. A regional org rarely
-  primes a statewide program -- capture that in conditional_on and in the scale.
+- prime_capacity.can_prime is THREE-STATE -- true (CAN) / false (CANNOT) / null (UNKNOWN) --
+  describing GENERAL capacity: can this org perform a core funded role AS ITS NATURAL
+  FUNCTION, at a scale that could anchor an application? Choose the state deliberately:
+    * true  (CAN)     -- ONLY with genuine evidence in the intake that the org PERFORMS a
+                         core funded role as its natural function (prior primes, operated
+                         programs at scale). Eligibility or topical relatedness is NOT prime
+                         capacity.
+    * false (CANNOT)  -- RESERVE for a POSITIVE funder finding: the org's OWN function is to
+                         RAISE, HOLD, GRANT, or FISCAL-SPONSOR money (a foundation / grantmaker
+                         / fiscal sponsor) rather than to perform the funded work itself (the
+                         AGFF archetype). false asserts the org can NEVER be an implementation
+                         prime, so set it ONLY on that money-mover evidence -- NEVER as a
+                         default for a thin or ordinary intake.
+    * null  (UNKNOWN) -- the DEFAULT when the intake shows NEITHER proven prime capacity NOR a
+                         money-mover identity (a thin or ordinary operating org). null lets the
+                         per-grant matcher decide prime eligibility from the confirmed facts
+                         (entity type on the grant's eligible list, service area, scale); it
+                         must NOT be read as "cannot prime". WHEN IN DOUBT, USE null, NOT false.
+  A regional org rarely primes a statewide program -- capture that in conditional_on and in the
+  scale, NEVER by forcing false.
 - supporting_roles = the supporting / co-applicant / partner seats the org can
   GENUINELY fill (name the real role, e.g. "behavioral-health integration partner",
   not generic "delivery partner"). A strong supporting fit is valuable; capture it.
@@ -167,7 +185,8 @@ function renderInput(input: ClientProfileInput): string {
 }
 
 // The tool input_schema IS the shape validation (mirror of constructIdealApplicantProfile).
-const CLIENT_PROFILE_TOOL = {
+// Exported so a deterministic test can assert can_prime is nullable (three-state) at the schema level.
+export const CLIENT_PROFILE_TOOL = {
   name: "submit_client_profile",
   description:
     "Return the distilled, match-optimized client profile. Call this tool exactly once.",
@@ -206,7 +225,12 @@ const CLIENT_PROFILE_TOOL = {
       prime_capacity: {
         type: "object",
         properties: {
-          can_prime: { type: "boolean" },
+          // THREE-STATE: true (CAN) / false (CANNOT, a positive money-mover finding) / null
+          // (UNKNOWN, the default on a thin/ordinary intake). `required` keeps the key present;
+          // the "null" member lets the distiller emit UNKNOWN instead of defaulting to false and
+          // silently locking a prime-capable org out of the Prime role (the direct-align scorer
+          // reads false as "can NEVER prime, full stop"). See the PRIME VS PARTNER prompt block.
+          can_prime: { type: ["boolean", "null"] },
           rationale: { type: "string" },
           conditional_on: { type: "string" },
         },

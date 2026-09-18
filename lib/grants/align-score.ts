@@ -45,13 +45,17 @@ export function matchDirectAlignEnabled(): boolean {
 }
 
 // The deterministic funder cap (MATCH_FUNDER_CAP_ENABLED, default OFF). When on, finalizeAlignMatch caps a
-// can_prime=FALSE money-mover with NO concrete role on THIS grant at fit_score 1 -- the code lever the prompt
-// alone could not enforce (across two prompt iterations the model kept handing a topical
-// conservation-foundation-on-a-conservation-grant a consolation partner-2 despite the no-go rule). The
-// SEMANTIC read stays with the model (is_money_mover / concrete_role_on_this_grant booleans on the submit
-// tool); code owns only the CONSEQUENCE. OFF is byte-identical at BOTH ends (Codex #505 P2): realRunModel
-// hands the model the pre-PR system prompt + tool schema (no classification ask, no extra required fields),
-// and finalizeAlignMatch never reads the flag -- so an align-ON/cap-OFF world scores exactly as before this PR.
+// money-mover (a funder / grantmaker / fiscal sponsor -- can_prime FALSE **or** UNKNOWN, never a proven prime)
+// with NO concrete role on THIS grant at fit_score 1 -- the code lever the prompt alone could not enforce
+// (across two prompt iterations the model kept handing a topical conservation-foundation-on-a-conservation-grant
+// a consolation partner-2 despite the no-go rule). The TRIGGER is the model's positive money-mover read, NOT the
+// can_prime label -- so a genuine funder that lands can_prime=UNKNOWN (now the distiller default) is still capped,
+// closing the hole that keying on ===false opened. The SEMANTIC read stays with the model (is_money_mover /
+// concrete_role_on_this_grant booleans on the submit tool; is_money_mover is CONFIDENT-only so it does not
+// over-fire on the common UNKNOWN implementers); code owns only the CONSEQUENCE. OFF is byte-identical at BOTH
+// ends (Codex #505 P2): realRunModel hands the model the pre-PR system prompt + tool schema (no classification
+// ask, no extra required fields), and finalizeAlignMatch never reads the flag -- so an align-ON/cap-OFF world
+// scores exactly as before.
 export function matchFunderCapEnabled(): boolean {
   return process.env.MATCH_FUNDER_CAP_ENABLED === "true";
 }
@@ -83,7 +87,7 @@ The #140 razor forbids UNDER-scoring a real fit. This forbids OVER-scoring a man
 QUESTION 1 -- ELIGIBILITY + ROLE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Role vocabulary (proposed_role): Prime | Co-Applicant | Sub | Named Collaborator | Letter of Support | Facilitator | Not Recommended.
-- The client's prime_capacity.can_prime is AUTHORITATIVE for the Prime role. If can_prime is FALSE, the client CANNOT be Prime on this grant -- full stop. Assess instead whether it genuinely fills a partner role (Co-Applicant / Sub / Named Collaborator), a Facilitator / introduction role, or none.
+- The client's prime_capacity.can_prime is THREE-STATE and AUTHORITATIVE for the Prime role. If can_prime is TRUE, the client is prime-capable (see IDENTITY-FIRST above). If can_prime is FALSE, the client is a money-mover (funder / grantmaker / fiscal sponsor) and CANNOT be Prime on this grant -- full stop; assess instead whether it genuinely fills a partner role (Co-Applicant / Sub / Named Collaborator), a Facilitator / introduction role, or none. If can_prime is UNKNOWN (null / not recorded), do NOT assume the client cannot prime: assess prime capability from the CONFIRMED FACTS (its entity type on this grant's eligible-entity list, service area, scale) and assign Prime when they plainly support it, otherwise a partner role or a conservative score. UNKNOWN is not a disqualification.
 - HARD ROLE RULES: a for-profit entity is Facilitator or Named Collaborator ONLY (never Prime / Co-Applicant / Sub). A federal agency is Named Collaborator ONLY.
 - PASS-THROUGH / INTERMEDIARY: a client that is the ultimate recipient but applies THROUGH a state agency / SAA / pass-through is STILL eligible -- record the route, do not disqualify. Only when the intermediary IS the recipient and the client cannot be one (even as a sub) is it ineligible.
 - SUBAWARD PROHIBITED: if the grant prohibits subawards there is no sub / co-applicant structure -- the client is either the sole Prime or a non-recipient (Facilitator / Letter of Support only).
@@ -94,7 +98,7 @@ QUESTION 2 -- FUNCTIONAL ALIGNMENT (the fit test)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Compare the grant's funded PURPOSE against the client's CORE CAPABILITIES / mission / programs: does this org actually PERFORM the funded work, for the funded population and place?
 - A BROAD ASSET OR THEME MATCH IS NOT THE FUNDED WORK. Sharing a topic ("conservation", "education", "health") is not doing the specific funded activity. Having a library is not doing library-innovation research; being a conservation FOUNDATION that funds or fiscal-sponsors habitat work is not IMPLEMENTING field habitat work.
-- Distinguish a FUNDER / grantmaker / fiscal sponsor from an IMPLEMENTER. If the client's capabilities show it raises, holds, or grants money, or fiscal-sponsors others, rather than performing the funded activity itself (typically can_prime=FALSE), it does NOT perform the funded work: it is not a Prime or implementer. A can_prime=FALSE funder / fiscal-sponsor earns a 2 or 3 ONLY when it has a CONCRETE role ON THIS grant -- a real partner/sub slot it actually fills, a fiscal-sponsor tie to a NAMED implementer applying to this grant, or an enumerated supporting function it genuinely performs. SHARED TOPIC OR MISSION OVERLAP IS NOT A ROLE: a conservation foundation on a conservation grant, a health funder on a health program, is topical adjacency, and you must NOT hand it a consolation partner/sub 2 for that overlap. Absent a concrete role on THIS specific grant, the score is AT MOST 1 (a Pass, never a routed 2); it is still 0 when the client is ineligible in every role or has no alignment at all. (This targets money-movers/grantmakers; a can_prime=FALSE org that genuinely IMPLEMENTS a real supporting function is a legitimate sub and is unaffected.)
+- Distinguish a FUNDER / grantmaker / fiscal sponsor from an IMPLEMENTER by its IDENTITY, not by its can_prime label. If the client's OWN function is to raise, hold, or grant money, or to fiscal-sponsor others, rather than performing the funded activity itself, it does NOT perform the funded work: it is not a Prime or implementer -- and this holds WHATEVER its can_prime state reads. A money-mover whose profile was never marked can_prime=FALSE (it reads UNKNOWN) is still a money-mover; judge the identity, not the label. Such a funder / fiscal-sponsor earns a 2 or 3 ONLY when it has a CONCRETE role ON THIS grant -- a real partner/sub slot it actually fills, a fiscal-sponsor tie to a NAMED implementer applying to this grant, or an enumerated supporting function it genuinely performs. SHARED TOPIC OR MISSION OVERLAP IS NOT A ROLE: a conservation foundation on a conservation grant, a health funder on a health program, is topical adjacency, and you must NOT hand it a consolation partner/sub 2 for that overlap. Absent a concrete role on THIS specific grant, the score is AT MOST 1 (a Pass, never a routed 2); it is still 0 when the client is ineligible in every role or has no alignment at all. (This targets money-movers/grantmakers; an org that genuinely IMPLEMENTS a real supporting function is a legitimate sub and is unaffected, whatever its can_prime state.)
 - GEOGRAPHY / POPULATION: the client's service area and populations must overlap what the grant funds. A hard place / region restriction the client is entirely outside is disqualifying; the client's own rurality is a context flag, never a disqualifier.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -126,7 +130,7 @@ Return the evaluation via the submit_match tool exactly once.`;
 // pattern (a prompt block appended only when its flag is on; OFF yields the unchanged base prompt).
 const FUNDER_CAP_INSTRUCTION = `
 
-- is_money_mover / concrete_role_on_this_grant (two booleans, ALWAYS set): record the QUESTION 2 funder read. is_money_mover=TRUE when the client's OWN function is to raise/hold/grant/fiscal-sponsor money rather than implement the funded work (foundation/grantmaker/funder/fiscal sponsor, typically can_prime=FALSE); FALSE for a direct implementer. concrete_role_on_this_grant=TRUE ONLY when it fills a real partner/sub slot, a fiscal-sponsor tie to a NAMED implementer applying to THIS grant, or an enumerated supporting function it genuinely performs matching the funded activity -- NEVER a shared topic/mission overlap, same-theme grantmaking, or "could partner." When genuinely unsure: is_money_mover TRUE and concrete_role_on_this_grant FALSE (the safe direction). Set these to match your QUESTION 2 reasoning; still score fit_score by the rules above.`;
+- is_money_mover / concrete_role_on_this_grant (two booleans, ALWAYS set): record the QUESTION 2 funder read. is_money_mover=TRUE ONLY when you are CONFIDENT the client's OWN function is to raise/hold/grant/fiscal-sponsor money rather than implement the funded work (foundation/grantmaker/funder/fiscal sponsor); FALSE for a direct implementer. Judge this from the IDENTITY, independent of the can_prime label. concrete_role_on_this_grant=TRUE ONLY when it fills a real partner/sub slot, a fiscal-sponsor tie to a NAMED implementer applying to THIS grant, or an enumerated supporting function it genuinely performs matching the funded activity -- NEVER a shared topic/mission overlap, same-theme grantmaking, or "could partner." When genuinely UNSURE whether the org is a money-mover, set is_money_mover FALSE -- an unclear funder-vs-implementer identity must NOT be treated as a funder (unknown prime capacity is common and is not evidence of one); concrete_role_on_this_grant stays FALSE unless a concrete role is confirmed. Set these to match your QUESTION 2 reasoning; still score fit_score by the rules above.`;
 
 // The submit tool -- the SAME MatchResult schema the occupancy path emits, MINUS seat_ref / entity_required
 // (the model no longer picks a seat; code derives seat_ref from the role). Keeping every other field means
@@ -230,7 +234,7 @@ const FUNDER_CAP_TOOL_PROPS = {
   is_money_mover: {
     type: "boolean",
     description:
-      "TRUE if this client's OWN function is to RAISE, HOLD, GRANT, or FISCAL-SPONSOR money (a foundation, grantmaker, funder, or fiscal sponsor) rather than to PERFORM the funded activity itself (typically can_prime=FALSE). FALSE for an organization that directly implements/delivers the funded work. When genuinely unsure, return TRUE (the safe direction: it only engages the cap, which then still requires no concrete role).",
+      "TRUE ONLY when you are CONFIDENT this client's OWN function is to RAISE, HOLD, GRANT, or FISCAL-SPONSOR money (a foundation, grantmaker, funder, or fiscal sponsor) rather than to PERFORM the funded activity itself. FALSE for an organization that directly implements/delivers the funded work. When genuinely UNSURE, return FALSE -- an unclear funder-vs-implementer identity must NOT be treated as a money-mover (unknown prime capacity is common and is not evidence of a funder identity). Judge from the org's IDENTITY, independent of the can_prime label.",
   },
   concrete_role_on_this_grant: {
     type: "boolean",
@@ -458,20 +462,26 @@ export function finalizeAlignMatch(
   enforceAlignFactorDataFloors(result.factor_scores, client, usaSpendingContext);
   applyHardConstraints(result, client, grant);
   // Deterministic funder cap (MATCH_FUNDER_CAP_ENABLED, default OFF). The prompt's no-go rule for a
-  // can_prime=FALSE money-mover with no concrete role could not be enforced by reasoning alone (two prompt
-  // iterations still handed a topical conservation-foundation-on-a-conservation-grant a consolation
-  // partner-2), so code owns the CONSEQUENCE while the model owns the semantic read (is_money_mover /
-  // concrete_role_on_this_grant, off the RAW tool input -- these are classification-only and never join
-  // MatchResult, so no downstream reader changes). Guardrails, each load-bearing: it fires ONLY when
-  //   (1) can_prime === false STRICT -- excludes null (UNKNOWN, e.g. NWA Council) and true (real implementers);
-  //   (2) the model judged it a money-mover; and
+  // money-mover with no concrete role could not be enforced by reasoning alone (two prompt iterations still
+  // handed a topical conservation-foundation-on-a-conservation-grant a consolation partner-2), so code owns
+  // the CONSEQUENCE while the model owns the semantic read (is_money_mover / concrete_role_on_this_grant, off
+  // the RAW tool input -- classification-only, never join MatchResult, so no downstream reader changes).
+  // Guardrails, each load-bearing:
+  //   (1) can_prime !== true -- the TRIGGER is the positive money-mover signal (2) below, NOT the can_prime
+  //       label; this clause is only a narrow EXCLUSION so a PROVEN prime (can_prime===true) can never be capped
+  //       by a stray is_money_mover flag. It fires on can_prime FALSE **and UNKNOWN/null** -- closing the hole
+  //       that keying on ===false opened once the distiller default became UNKNOWN (a genuine funder that lands
+  //       UNKNOWN would otherwise escape). Safe against over-capping the now-common UNKNOWN implementers because
+  //       is_money_mover is CONFIDENT-only (unsure -> FALSE): an ordinary operating org that reads UNKNOWN is not
+  //       flagged a money-mover, so the cap never touches it.
+  //   (2) the model CONFIDENTLY judged it a money-mover (is_money_mover === true); and
   //   (3) it has NO concrete role on this grant (!== true also catches a missing/undefined flag).
   // Math.min never RAISES a score (a 0 stays 0) and caps at 1 (a Pass -- does not surface). Explainable:
   // the note is appended to fit_score_derivation. Placed AFTER hard constraints so a role_ceiling has already
   // resolved, and BEFORE the seat_ref re-derive (the cap touches fit_score only, never the role).
   if (
     matchFunderCapEnabled() &&
-    client.client_profile?.prime_capacity?.can_prime === false &&
+    client.client_profile?.prime_capacity?.can_prime !== true &&
     raw.is_money_mover === true &&
     raw.concrete_role_on_this_grant !== true
   ) {

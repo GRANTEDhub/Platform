@@ -442,18 +442,22 @@ describe("direct-alignment scorer -- funder cap", () => {
     expect(res.reasoning_context.fit_score_derivation).not.toContain("Funder cap");
   });
 
-  it("does NOT fire on can_prime=TRUE (a real implementer, even if flagged money_mover) -> score unchanged", () => {
+  it("does NOT fire on can_prime=TRUE: the `!== true` exclusion protects a PROVEN prime even if flagged money_mover", () => {
     process.env[CAP_FLAG] = "true";
     const client = mkClient({ client_profile: funderProfile(true) });
     const res = finalizeAlignMatch(topicalFunder({ fit_score: 2 }), client, mkGrant());
     expect(res.fit_score).toBe(2);
   });
 
-  it("does NOT fire on can_prime=NULL (UNKNOWN -- e.g. NWA Council; strict === false excludes it) -> score unchanged", () => {
+  it("FIRES on can_prime=NULL (UNKNOWN) + confident money-mover: closes the hole keying on ===false opened", () => {
+    // A genuine funder that lands can_prime=UNKNOWN (now the distiller default) must still be capped -- the
+    // trigger is the positive is_money_mover signal, and `!== true` includes null. Under the old ===false
+    // keying this escaped the cap, the exact hole flipping the distiller default would have opened.
     process.env[CAP_FLAG] = "true";
     const client = mkClient({ client_profile: funderProfile(null) });
     const res = finalizeAlignMatch(topicalFunder({ fit_score: 2 }), client, mkGrant());
-    expect(res.fit_score).toBe(2);
+    expect(res.fit_score).toBe(1);
+    expect(res.reasoning_context.fit_score_derivation).toContain("Funder cap: lowered 2->1");
   });
 
   it("does NOT fire when the money-mover has a CONCRETE role on this grant -> score unchanged", () => {
@@ -487,10 +491,23 @@ describe("direct-alignment scorer -- funder cap", () => {
     expect(res.reasoning_context.fit_score_derivation).not.toContain("Funder cap");
   });
 
-  it("does NOT fire when the flag is on but there is no client_profile (can_prime is not === false)", () => {
+  it("FIRES on a no-profile client the model CONFIDENTLY flags a money-mover (can_prime undefined is not a proven prime)", () => {
+    // No profile -> can_prime is undefined -> `!== true` is true. The cap now trusts the model's confident
+    // is_money_mover read (a prospect/undistilled client the model judged a funder with no concrete role is
+    // capped). is_money_mover is confident-only (unsure -> FALSE), so an ordinary no-profile org is NOT flagged
+    // and is NOT capped -- this fires only on a positive money-mover finding.
     process.env[CAP_FLAG] = "true";
     const client = mkClient({ client_profile: null });
     const res = finalizeAlignMatch(topicalFunder({ fit_score: 2 }), client, mkGrant());
+    expect(res.fit_score).toBe(1);
+  });
+
+  it("still does NOT fire on a no-profile client that is NOT flagged a money-mover (confident-only signal)", () => {
+    // The counterpart to the above: no profile + is_money_mover FALSE -> no cap. Proves the no-profile firing is
+    // driven by the positive money-mover signal, not merely by the absent profile.
+    process.env[CAP_FLAG] = "true";
+    const client = mkClient({ client_profile: null });
+    const res = finalizeAlignMatch(topicalFunder({ fit_score: 2, is_money_mover: false }), client, mkGrant());
     expect(res.fit_score).toBe(2);
   });
 });
