@@ -172,6 +172,19 @@ describe("reduceAwardHistory — state-presence only, names withheld", () => {
     const s = summary([{ state: "OK", name: "Oklahoma", amount: 1_000_000, count: 2 }], 30_000_000, 40);
     expect(reduceAwardHistory(s, null).national).toBeNull();
   });
+
+  it("TRUNCATED fetch → keeps the authoritative amount, DROPS the unreliable count (the EDA $109.6M/1-award artifact)", () => {
+    const s = { ...summary([{ state: "AR", name: "Arkansas", amount: 109_561_625.11, count: 1 }], 109_561_625.11, 500), awardsTruncated: true };
+    const r = reduceAwardHistory(s, "AR");
+    // Amount survives (program-wide geography, authoritative); the top-500-by-amount count (1) is dropped.
+    expect(r.inState).toEqual({ state: "AR", amount: 109_561_625.11, count: null });
+    expect(r.national).toEqual({ amount: 109_561_625.11, count: null });
+  });
+
+  it("TRUNCATED fetch → surfaces amount-only even when the counted awards are 0 (the count is a top-500 floor, not real)", () => {
+    const s = { ...summary([{ state: "AR", name: "Arkansas", amount: 5_000_000, count: 0 }], 40_000_000, 500), awardsTruncated: true };
+    expect(reduceAwardHistory(s, "AR").inState).toEqual({ state: "AR", amount: 5_000_000, count: null });
+  });
 });
 
 // ── isProfileSparse + buildFitContext ────────────────────────────────────────────────────────────────
@@ -240,6 +253,20 @@ describe("buildFitContext — profile-inclusive, band word, award state-line", (
     const noAward = buildFitContext({ grant: grant(), client: client(), card: card(), band: "conditional", award: { inState: null, national: null } });
     expect(noAward).toContain("do not mention awards");
     expect(noAward).toContain("CONDITIONAL MATCH");
+  });
+
+  it("award line under TRUNCATION (count null) → amount-only, forbids a fabricated count, no 'across N'", () => {
+    const ctx = buildFitContext({
+      grant: grant(),
+      client: client(),
+      card: card(),
+      band: "strong",
+      award: { inState: { state: "AR", amount: 109_561_625.11, count: null }, national: { amount: 109_561_625.11, count: null } },
+    });
+    expect(ctx).toContain("In AR: $109.6M awarded to recipients in the state");
+    expect(ctx).toContain("do NOT state or imply a number of awards");
+    expect(ctx).not.toMatch(/across \d+ award/); // the "$109.6M across 1 award" artifact can't be constructed
+    expect(ctx).toContain("Nationally: $109.6M awarded to recipients (exact count not reliably available)");
   });
 
   it("sparse client renders explicit '(not on file)' so the model sees the absence", () => {

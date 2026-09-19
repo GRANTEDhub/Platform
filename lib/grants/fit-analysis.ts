@@ -111,6 +111,7 @@ BUILD THE FIT CASE, in plain language, leading with whatever is most decisive:
 
 5. AWARD HISTORY — STATE PRESENCE ONLY. If in-state award history is provided, you MAY note that the program has awarded $X across N awards to recipients in the client's state (a signal it funds work there). HARD RULES, no exceptions:
    • Use ONLY the state-level total/count you are given.
+   • If an AMOUNT is given but NO award count (the count was withheld as unreliable), say only that the program has awarded $X to recipients in the state — do NOT state, guess, or imply a number of awards.
    • Say NOTHING about what TYPE of applicant wins or doesn't — you have no applicant-type data. Never write "usually goes to counties", "no city has won", "typically universities", or any claim about the kind of organization that receives these awards.
    • If no award history is provided, do not mention awards at all. Never infer or estimate one.
 
@@ -147,10 +148,15 @@ const SUBMIT_TOOL = {
 export interface AwardPresence {
   // The client's-STATE row, only when there is POSITIVE in-state presence. Null → the prompt says nothing
   // about awards (Shannon's silent-on-zero-in-state default — no "no AR awards" absence statement).
-  inState: { state: string; amount: number; count: number } | null;
+  // `count` is NULL when the program's award fetch was TRUNCATED (>500 awards under the CFDA): the per-state
+  // count is then a top-500-by-AMOUNT floor, NOT a real count (it comes from a different query than the
+  // program-wide geography `amount`), so pairing the two produced "$109.6M across 1 award" (EDA, 2026-09-19).
+  // Under truncation we keep the authoritative amount and DROP the count.
+  inState: { state: string; amount: number; count: number | null } | null;
   // The national total, surfaced ONLY alongside a positive in-state signal (both are state-presence scale;
-  // a national line with no in-state line risks reading as a competitiveness claim). Null otherwise.
-  national: { amount: number; count: number } | null;
+  // a national line with no in-state line risks reading as a competitiveness claim). Null otherwise. `count`
+  // is likewise NULL under truncation (totalAwardsFetched is the fetch cap = 500, a floor, not a real count).
+  national: { amount: number; count: number | null } | null;
 }
 
 // Reduce the stored ProgramAwardSummary to STATE-PRESENCE ONLY. The recipient NAMES (topAwards) and the
@@ -162,15 +168,25 @@ export function reduceAwardHistory(
   clientState: string | null | undefined,
 ): AwardPresence {
   if (!summary || !Array.isArray(summary.byState)) return { inState: null, national: null };
+  // TRUNCATION GUARD: when the program's award fetch hit its cap (>500 awards under these CFDAs), the per-state
+  // counts AND totalAwardsFetched are FLOORS — only the nationwide top-500-by-amount awards were counted — while
+  // the geography AMOUNT is program-wide and authoritative (a different query). Pairing them misreads badly
+  // ("$109.6M across 1 award", EDA 2026-09-19), so under truncation we keep the amount and DROP the count (null).
+  const truncated = summary.awardsTruncated === true;
   const st = (clientState ?? "").trim().toUpperCase();
   const row = st ? summary.byState.find((s) => (s?.state ?? "").toUpperCase() === st) : undefined;
+  const amount = row ? Number(row.amount) || 0 : 0;
+  const cnt = row ? Number(row.count) || 0 : 0;
+  // Non-truncated → require a real positive count (exact, coherent with the amount). Truncated → the amount
+  // alone is the authoritative signal; surface it when positive, with the unreliable count dropped to null.
   const inState =
-    row && Number(row.amount) > 0 && Number(row.count) > 0
-      ? { state: row.state, amount: Number(row.amount), count: Number(row.count) }
+    row && amount > 0 && (truncated || cnt > 0)
+      ? { state: row.state, amount, count: truncated ? null : cnt }
       : null;
   const totalAmount = Number(summary.totalAmount) || 0;
   const totalCount = Number(summary.totalAwardsFetched) || 0;
-  const national = inState && totalAmount > 0 ? { amount: totalAmount, count: totalCount } : null;
+  const national =
+    inState && totalAmount > 0 ? { amount: totalAmount, count: truncated ? null : totalCount } : null;
   return { inState, national };
 }
 
@@ -252,9 +268,21 @@ export function buildFitContext(input: {
   const nofoRaw = clean(grant.raw_text);
   const nofo = nofoRaw ? nofoRaw.slice(0, FIT_NOFO_MAX_CHARS) : "";
 
+  const inStateLine =
+    award.inState == null
+      ? ""
+      : award.inState.count == null
+        ? // Truncated fetch → the count is an unreliable floor; give the amount only and forbid a fabricated count.
+          `In ${award.inState.state}: ${fmtUsd(award.inState.amount)} awarded to recipients in the state (~10-yr window; exact award count not reliably available — state total only, do NOT state or imply a number of awards).`
+        : `In ${award.inState.state}: ${fmtUsd(award.inState.amount)} across ${award.inState.count} award${award.inState.count === 1 ? "" : "s"} (~10-yr window).`;
+  const nationalLine =
+    award.national == null
+      ? ""
+      : award.national.count == null
+        ? ` Nationally: ${fmtUsd(award.national.amount)} awarded to recipients (exact count not reliably available).`
+        : ` Nationally: ${fmtUsd(award.national.amount)} across ${award.national.count} awards.`;
   const awardLine = award.inState
-    ? `In ${award.inState.state}: ${fmtUsd(award.inState.amount)} across ${award.inState.count} award${award.inState.count === 1 ? "" : "s"} (~10-yr window).` +
-      (award.national ? ` Nationally: ${fmtUsd(award.national.amount)} across ${award.national.count} awards.` : "")
+    ? inStateLine + nationalLine
     : "No in-state program award history on file — do not mention awards.";
 
   const deadline = clean(grant.submission_deadline) || "(none stated)";
