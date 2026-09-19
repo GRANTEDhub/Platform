@@ -45,6 +45,25 @@ describe("buildFocusGrantBlock — the grant-anchor grounding block", () => {
     expect(t).not.toContain("Submission deadline:");
     expect(t).not.toContain("Opportunity number:");
   });
+
+  it("scopes the answer to the question asked — direct answer to a definitional ask, assessment only when asked (the Firewise fix)", () => {
+    const t = buildFocusGrantBlock(full).text;
+    // The load-bearing new directive: answer at the question's OWN scope.
+    expect(t).toContain("Answer the question they actually asked, at its own scope");
+    // A definitional/factual question gets a direct answer — no bolted-on pursuit memo.
+    expect(t).toMatch(/definitional or factual question/i);
+    expect(t).toMatch(/do NOT append an unrequested/i);
+    // The assessment is CONDITIONAL (context unconditional, assessment on request), not removed.
+    expect(t).toMatch(/When they ask for a pursuit read/i);
+    // Context stays unconditional: the client facts are known background for whatever they ask.
+    expect(t).toContain("treat them as known background");
+    // The OLD unconditional "assess this pursuit on any question" directive is GONE — the Firewise miss.
+    expect(t).not.toContain("use them to reason about this grant specifically");
+  });
+
+  it("stamps the revised block version", () => {
+    expect(buildFocusGrantBlock(full).version).toBe("2026-09-19.1");
+  });
 });
 
 // A minimal fake db: db.from("grants").select(...).eq("id", id).maybeSingle() → { data }.

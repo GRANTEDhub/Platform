@@ -76,6 +76,22 @@ describe("buildFirmFocusBlock — grant + prospects grounding block", () => {
     // Prime-vs-partner + estimates discipline is pinned in the block.
     expect(t).toContain("prime");
   });
+
+  it("scopes the answer to the question asked — direct answer to a definitional ask, assessment only when asked (the Firewise fix)", () => {
+    const t = buildFirmFocusBlock(grant, []).text;
+    expect(t).toContain("Answer the question they actually asked, at its own scope");
+    expect(t).toMatch(/definitional or factual question/i);
+    expect(t).toMatch(/do NOT append an unrequested/i);
+    // The assessment is CONDITIONAL — still fires when the staffer asks for a pursuit/prospect read.
+    expect(t).toMatch(/When they ask for a pursuit or prospect read/i);
+    expect(t).toContain("treat them as known background");
+    // The OLD unconditional "reason about who realistically wins this grant" directive is GONE.
+    expect(t).not.toContain("your read-only tools to reason about who realistically wins this grant");
+  });
+
+  it("stamps the revised block version", () => {
+    expect(buildFirmFocusBlock(grant, []).version).toBe("2026-09-19.1");
+  });
 });
 
 // ── loadSurfacedProspects — the review_cards+prospects loader ───────────────────────────────────────

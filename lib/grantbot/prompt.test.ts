@@ -121,7 +121,7 @@ describe("GrantBot prompt \u2014 the carve-out did NOT loosen the anti-hallucina
   it("both prompt versions were bumped for this revision", () => {
     // Stamped onto every assistant message, so a bad answer traces to this instruction/methodology set.
     expect(INSTRUCTIONS_VERSION).toBe("2026-09-10.1");
-    expect(METHODOLOGY_VERSION).toBe("2026-09-14.1");
+    expect(METHODOLOGY_VERSION).toBe("2026-09-19.1");
   });
 });
 
