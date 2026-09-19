@@ -51,6 +51,16 @@ export function fitAnalysisEnabled(): boolean {
   return process.env.FIT_ANALYSIS_ENABLED === "true";
 }
 
+// Retry-on-cleared (default OFF → byte-identical). A generation returns null when the model came back empty
+// or narrativeGuard nulled a machinery/seat-code leak — the "~3% clear-to-engine" case (Faulkner in the
+// 2026-09-19 backfill). When on, processOne re-rolls the generation ONCE on that null before writing the
+// cleared patch: the model varies per call, so a second attempt usually lands a clean narrative and two
+// consecutive trips are ~0.1%. Fires only on the rare null → negligible added Opus cost. OFF = one call,
+// cleared on null, exactly as before. Applies to BOTH the drain and the on-demand route (shared processOne).
+export function fitRetryOnClearedEnabled(): boolean {
+  return process.env.FIT_ANALYSIS_RETRY_ON_CLEARED === "true";
+}
+
 // Opus, deliberately (Shannon's call): this is the client-facing fit rationale, the paragraph whose quality
 // is the entire reason for the pass — do not cost-optimize it. The per-row model is recorded so a later
 // Sonnet A/B is a one-line change with data to compare. Same string as intel-review's INTEL_MODEL.
@@ -639,6 +649,14 @@ async function processOne(
   let narrative: string | null;
   try {
     narrative = await generateFitNarrative(card, grant, client, band, { generate: deps.generate });
+    // RETRY-ON-CLEARED (flag-gated, default OFF): a null here is a model-empty or narrativeGuard-nulled
+    // generation — the ~3% clear-to-engine case. Re-roll ONCE before writing the cleared patch; the model
+    // varies per call, so a second attempt usually lands a clean narrative (two consecutive trips ~0.1%).
+    // Only fires on the rare null → negligible added cost. OFF is byte-identical (a single call, cleared on
+    // null). A throw on either call still routes to "failed" below (retry is scoped to the null/cleared case).
+    if (narrative == null && fitRetryOnClearedEnabled()) {
+      narrative = await generateFitNarrative(card, grant, client, band, { generate: deps.generate });
+    }
   } catch (err) {
     // A model error is non-fatal: leave the card on the engine paragraph (no stamp) → retried next cron.
     console.error(`[fit-analysis] card ${row.id}: generation failed: ${err instanceof Error ? err.message : String(err)}`);

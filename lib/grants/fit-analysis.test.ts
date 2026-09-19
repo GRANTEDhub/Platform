@@ -486,6 +486,51 @@ describe("runFitAnalysis — flag gate, generate + write, skips, cost cap", () =
     expect(r.eligible).toBe(0);
     expect(store.tables.review_cards[0].fit_narrative).toBeNull();
   });
+
+  it("retry-on-cleared OFF (default): a null generation clears with NO retry (byte-identical)", async () => {
+    vi.stubEnv("FIT_ANALYSIS_ENABLED", "true");
+    vi.stubEnv("FIT_ANALYSIS_RETRY_ON_CLEARED", "false"); // explicit off (robust to env-stub bleed)
+    const store = new Store();
+    seedCard(store);
+    seedGrantClient(store);
+    let calls = 0;
+    const genNull = async () => { calls++; return null; };
+    const r = await runFitAnalysis(asDb(store), { now: () => NOW, generate: genNull });
+    expect(calls).toBe(1); // single call, no re-roll
+    expect(r.cleared).toBe(1);
+    expect(r.generated).toBe(0);
+    expect(store.tables.review_cards[0].fit_narrative).toBeNull();
+  });
+
+  it("retry-on-cleared ON: a null generation is re-rolled once and the retry's narrative is written", async () => {
+    vi.stubEnv("FIT_ANALYSIS_ENABLED", "true");
+    vi.stubEnv("FIT_ANALYSIS_RETRY_ON_CLEARED", "true");
+    const store = new Store();
+    seedCard(store);
+    seedGrantClient(store);
+    let calls = 0;
+    const genNullThenClean = async () => { calls++; return calls === 1 ? null : "A clean fit narrative on the retry."; };
+    const r = await runFitAnalysis(asDb(store), { now: () => NOW, generate: genNullThenClean });
+    expect(calls).toBe(2); // re-rolled exactly once
+    expect(r.generated).toBe(1);
+    expect(r.cleared).toBe(0);
+    expect(store.tables.review_cards[0].fit_narrative).toBe("A clean fit narrative on the retry.");
+  });
+
+  it("retry-on-cleared ON: still clears when BOTH the call and the single retry come back null", async () => {
+    vi.stubEnv("FIT_ANALYSIS_ENABLED", "true");
+    vi.stubEnv("FIT_ANALYSIS_RETRY_ON_CLEARED", "true");
+    const store = new Store();
+    seedCard(store);
+    seedGrantClient(store);
+    let calls = 0;
+    const genNull = async () => { calls++; return null; };
+    const r = await runFitAnalysis(asDb(store), { now: () => NOW, generate: genNull });
+    expect(calls).toBe(2); // one retry, then gives up (no infinite loop)
+    expect(r.cleared).toBe(1);
+    expect(r.generated).toBe(0);
+    expect(store.tables.review_cards[0].fit_narrative).toBeNull();
+  });
 });
 
 // ── runFitAnalysisForCard: the on-demand admin path ──────────────────────────────────────────────────
