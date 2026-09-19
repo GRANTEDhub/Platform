@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
 import { getAnthropicClient, OPUS_MODEL } from "@/lib/anthropic";
-import { assembleSystem, buildSystemPrompt, framePastedContent } from "./prompt";
+import { assembleSystem, buildSystemPrompt, framePastedContent, type PromptBlock } from "./prompt";
+import { buildFocusGrantBlock, type FocusGrant } from "./focus-grant";
 import type { ContextPack } from "./context-pack";
 
 // ── GrantBot reasoning eval — the deduce+label+gate carve-out ──────────────────────────────────────
@@ -70,9 +71,9 @@ function makePack(over: Partial<ContextPack> = {}): ContextPack {
 
 // One GrantBot turn, the flag-off way: real assembled system prompt + one user message, no tools. Mirrors
 // turn.ts's single model call (system is the assembled block array; messages is the one user turn).
-async function callGrantBot(pack: ContextPack, userText: string): Promise<string> {
+async function callGrantBot(pack: ContextPack, userText: string, turnBlocks: PromptBlock[] = []): Promise<string> {
   const prompt = buildSystemPrompt({ pack });
-  const system = assembleSystem(prompt);
+  const system = assembleSystem(prompt, turnBlocks);
   const anthropic = getAnthropicClient();
   const res = await anthropic.messages.create({
     // The DEPLOYED per-client config (turn.ts): Opus 5 with thinking disabled. The eval must exercise
@@ -229,5 +230,68 @@ describe.skipIf(!RUN)("GrantBot reasoning eval (live model)", () => {
       expect.soft(majority(complete), "the SAME answer covers both paths with real substance — proof the depth escape survived brevity").toBe(true);
     },
     RUNS * 120_000,
+  );
+
+  it(
+    "5. anchored thread — a definitional question gets a direct answer, not a bolted-on pursuit memo (the Firewise miss)",
+    async () => {
+      // THE FIREWISE REPRO, on the path the eval never exercised: a thread ANCHORED to a grant. The
+      // focus-grant block rides assembleSystem's turnBlocks seam (appended after the cache breakpoint,
+      // before the closing) — exactly how turn.ts assembles an anchored turn (turn.ts appends
+      // buildFocusGrantBlock to effectiveTurnBlocks). The live miss: asked a DEFINITIONAL question in a
+      // Firewise-anchored thread, the bot answered it AND bolted on an unrequested eligibility /
+      // prime-vs-partner / next-steps pursuit memo. The fix scopes the reply to the question: context stays
+      // unconditional (it still knows the grant), the ASSESSMENT is conditional (5b proves it still fires
+      // when asked).
+      const firewise: FocusGrant = {
+        id: "g-firewise",
+        title: "Firewise USA Community Wildfire Preparedness Grant",
+        funder: "Arkansas Forestry Division",
+        cfda: null,
+        deadline: "March 1, 2026",
+        fon: null,
+      };
+      const anchor = [buildFocusGrantBlock(firewise)];
+
+      // 5a SCOPE: a definitional question → defines the term, no bolted-on pursuit memo.
+      const defn = 'Is "Firewise USA community" an official designation or certification? Just tell me what it is.';
+      const scopeA = await runN(RUNS, () => callGrantBot(makePack(), defn, anchor));
+      console.log("[grantbot-eval] anchored definitional:\n" + scopeA.map((a, i) => `--- run ${i + 1} ---\n${a}`).join("\n\n"));
+      // Defined it: names what Firewise USA actually IS (an NFPA recognition / designation, a voluntary program).
+      const defines = scopeA.map(
+        (a) => /Firewise/i.test(a) && /NFPA|National Fire Protection|recognition|recognized|designation|voluntary/i.test(a),
+      );
+      // The bolted-on memo = the unrequested pursuit assessment. It is characterised by grant-ROLE vocabulary
+      // (prime / sub / co-applicant — words a pure definition has no reason to use), a next-steps plan, or a
+      // go/no-go — AND real length: a one-line "this isn't a grant-eligibility criterion" clarification is NOT
+      // the memo this guards. Length bar TUNABLE against the first real run (the repro: ~700 scoped vs ~1,900 with the memo).
+      const memoSignal = (a: string) =>
+        /\b(?:prime|subrecipient|sub-?award|co-?applicant)\b/i.test(a) ||
+        /next step|action item|to pursue this|to move forward|role (?:the county|they) would play|recommend (?:that )?(?:the county|they|pursuing)/i.test(a) ||
+        /\bgo\/no-?go\b|\bno-?go\b|whether (?:to|it'?s worth) pursu/i.test(a);
+      const noMemo = scopeA.map((a) => !(a.length > 900 && memoSignal(a)));
+      // Per-answer conjunction (matching cases 1-4): the SAME reply defines the term AND withholds the memo.
+      const scoped = defines.map((d, i) => d && noMemo[i]);
+      expect.soft(majority(defines), "an anchored definitional question must still get a direct definition of the term").toBe(true);
+      expect.soft(majority(noMemo), "must NOT bolt on an unrequested eligibility / prime-vs-partner / next-steps pursuit memo — the Firewise miss").toBe(true);
+      expect.soft(majority(scoped), "the SAME answer defines the term AND withholds the unrequested pursuit memo").toBe(true);
+
+      // 5b CONDITIONAL (context unconditional, assessment conditional): asked FOR the pursuit read on the SAME
+      // anchored grant, the assessment SHOULD appear — proof the fix SCOPED the assessment to the question, it
+      // did not muzzle the bot. Guards the over-correction failure mode.
+      const ask = "For this grant, should the client pursue it, and what role would it play — prime, or a partner/sub?";
+      const askA = await runN(RUNS, () => callGrantBot(makePack(), ask, anchor));
+      console.log("[grantbot-eval] anchored pursuit-read:\n" + askA.map((a, i) => `--- run ${i + 1} ---\n${a}`).join("\n\n"));
+      const assesses = askA.map(
+        (a) =>
+          /\b(?:prime|subrecipient|sub-?award|co-?applicant|partner)\b/i.test(a) &&
+          /\b(?:fit|eligib|pursue|role|go|hold|no-?go)\b/i.test(a),
+      );
+      expect.soft(
+        majority(assesses),
+        "when the staffer ASKS for the pursuit read, the anchored bot must still give the full prime-vs-partner assessment — scoped, not suppressed",
+      ).toBe(true);
+    },
+    RUNS * 180_000,
   );
 });

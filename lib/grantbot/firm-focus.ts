@@ -175,7 +175,7 @@ export function buildFirmFocusBlock(grant: FocusGrant, prospects: SurfacedProspe
   return {
     kind: "focus-grant",
     source: "lib/grantbot/firm-focus.ts",
-    version: "2026-09-17.1",
+    version: "2026-09-19.1",
     cacheable: false,
     text: [
       "THIS CONVERSATION IS ANCHORED TO ONE GRANT AND THE PROSPECTS WE SURFACED FOR IT",
@@ -184,7 +184,9 @@ export function buildFirmFocusBlock(grant: FocusGrant, prospects: SurfacedProspe
       facts,
       prospectsSection,
       "",
-      "Answer as if the staffer had named this grant — do NOT ask which grant they mean or make them re-establish the context. The full firm roster (every active client's profile) is already in your context above; use it, these surfaced prospects, and your read-only tools to reason about who realistically wins this grant, which surfaced orgs are the strongest fits and why, prime-vs-partner eligibility, and whether the deadline is realistic. Keep prime vs. partner/sub eligibility distinct and label award figures as estimates. If the staffer clearly shifts to a different grant or a general question, follow them there.",
+      "Answer as if the staffer had named this grant — do NOT ask which grant they mean or make them re-establish the context. The full firm roster (every active client's profile) is already in your context above, along with these surfaced prospects and your read-only tools; treat them as known background.",
+      "",
+      "Answer the question they actually asked, at its own scope. A definitional or factual question about this grant or a surfaced org gets a direct answer — do NOT append an unrequested who-wins, fit, prime-vs-partner/sub, or go/no-go assessment they didn't ask for. When they ask for a pursuit or prospect read — who realistically wins it, which surfaced orgs are the strongest fits and why, eligibility, whether the deadline is realistic — give it fully and fast from the roster, the surfaced prospects, and your tools, keeping prime vs. partner/sub distinct and labeling award figures as estimates. If they shift to a different grant or a general question, follow them there.",
     ].join("\n"),
   };
 }

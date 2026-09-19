@@ -86,7 +86,7 @@ export function buildFocusGrantBlock(grant: FocusGrant): PromptBlock {
   return {
     kind: "focus-grant",
     source: "lib/grantbot/focus-grant.ts",
-    version: "2026-09-14.1",
+    version: "2026-09-19.1",
     cacheable: false,
     text: [
       "THIS CONVERSATION IS ANCHORED TO ONE GRANT",
@@ -94,7 +94,9 @@ export function buildFocusGrantBlock(grant: FocusGrant): PromptBlock {
       "",
       facts,
       "",
-      "Answer as if the staffer had named this grant — do NOT ask which grant they mean or make them re-establish the context. This client's full profile and its matched-grant details are already in your context above; use them to reason about this grant specifically (eligibility as prime vs. partner/sub, who actually wins it, whether the deadline is realistic, real fit). If the staffer clearly shifts to a different grant or a general question, follow them there.",
+      "Answer as if the staffer had named this grant — do NOT ask which grant they mean or make them re-establish the context. This client's full profile and its matched-grant details are already in your context above; treat them as known background for whatever they ask.",
+      "",
+      "Answer the question they actually asked, at its own scope. A definitional or factual question (what a designation is, when it's due, what it funds) gets a direct answer — do NOT append an unrequested fit, eligibility, prime-vs-partner/sub, or go/no-go assessment, or a next-steps plan. When they ask for a pursuit read — fit, go/no-go, what role the client plays, who actually wins it — give it fully and fast from the context above, keeping prime vs. partner/sub distinct and labeling award figures as estimates. If they shift to another grant or a general question, follow them there.",
     ].join("\n"),
   };
 }
