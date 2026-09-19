@@ -62,9 +62,10 @@ const numEnv = (v: string | undefined, d: number): number => {
 };
 const intEnv = (v: string | undefined, d: number): number => Math.floor(numEnv(v, d));
 
-// A single Opus call (no fetch, no loop): ~2-4K input + a short paragraph out. A flat estimate is enough
-// for the daily ceiling (a safety cap, not billing).
-export const FIT_EST_COST_PER_CARD_USD = numEnv(process.env.FIT_ANALYSIS_EST_COST_PER_CARD_USD, 0.1);
+// A single Opus call (no fetch, no loop). Since the deep read now feeds the FULL NOFO (up to
+// FIT_NOFO_MAX_CHARS ~20K tokens) plus the profile, input is ~20-25K tokens + a short paragraph out
+// (~$0.12-0.15/card on Opus 5). A flat estimate is enough for the daily ceiling (a safety cap, not billing).
+export const FIT_EST_COST_PER_CARD_USD = numEnv(process.env.FIT_ANALYSIS_EST_COST_PER_CARD_USD, 0.15);
 // Hard daily ceiling: once today's generated count × the estimate reaches this, the drain stops for the day.
 // Counted off the fit_narrative_at column itself — no separate ledger table.
 export const FIT_ANALYSIS_DAILY_CAP_USD = numEnv(process.env.FIT_ANALYSIS_DAILY_CAP_USD, 20);
@@ -77,29 +78,35 @@ export const FIT_ANALYSIS_CONCURRENCY = intEnv(process.env.FIT_ANALYSIS_CONCURRE
 export const FIT_POLL_MAX_PAGES = intEnv(process.env.FIT_ANALYSIS_POLL_MAX_PAGES, 20);
 export const FIT_POLL_PAGE_SIZE = intEnv(process.env.FIT_ANALYSIS_POLL_PAGE_SIZE, 100);
 export const FIT_NARRATIVE_MAX_TOKENS = intEnv(process.env.FIT_ANALYSIS_MAX_TOKENS, 800);
+// How much of the stored full NOFO (grants.raw_text, itself capped 100K at ingest) to feed the deep read.
+// ~80K chars ≈ 20K tokens — enough for genuine NOFO analysis, bounded for cost + context headroom. The
+// read is the whole point of Phase 1: the pass reasons from the real document, not the 50-word brief.
+export const FIT_NOFO_MAX_CHARS = intEnv(process.env.FIT_ANALYSIS_NOFO_MAX_CHARS, 80_000);
 
 // ── The prompt ─────────────────────────────────────────────────────────────────────────────────────
 
-export const FIT_ANALYSIS_SYSTEM_PROMPT = `You are IntellEngine, writing the "why this client fits this grant" rationale that OPENS a grant's match card. A GRANTED grant strategist is deciding whether to put this opportunity in front of this client, and the client often reads it too. Write the fit case a sharp grants strategist would — clear enough that the reader gets the fit from the first sentence or two, without decoding any score bars.
+export const FIT_ANALYSIS_SYSTEM_PROMPT = `You are IntellEngine, writing the "why this client fits this grant" analysis that OPENS a grant's match card. A GRANTED grant strategist is deciding whether to put this opportunity in front of this client, and the client often reads it too. You are given the grant's FULL NOFO (the authoritative program document) plus GRANTED's own records on the client. Read the NOFO the way a sharp grants analyst reads it — for the specifics that actually decide fit — and write the case clearly enough that the reader gets it from the first sentence or two, without decoding any score bars.
 
-Everything you need is provided below, all from GRANTED's own records. You have NO web access and no other sources — reason only from what is given, and introduce no new specific claim (dollar figures, dates, citations, program requirements) beyond it.
+YOUR PRIMARY SOURCE IS THE FULL NOFO — do NOT just restate the one-line program brief. Read the NOFO for the details that determine whether this client should pursue: the real eligibility language, the specific activities and costs it funds, any cost-share/match requirement, priority populations or competitive preferences, required or encouraged partners, and any deadline or registration reality. Ground the fit case in those specifics — a rationale that could have been written from the brief alone has not done the job. You have NO web access and no other sources: reason only from the NOFO and the client records given, and introduce no new specific claim (dollar figures, dates, citations, requirements) beyond them. If a fit-deciding detail is not in the NOFO provided, say it needs the official source rather than inventing it.
 
-BUILD THE FIT CASE ACROSS FOUR THINGS, in plain language, leading with whatever is most decisive:
+BUILD THE FIT CASE, in plain language, leading with whatever is most decisive:
 
-1. ELIGIBILITY — is this client's entity type an eligible applicant here? State it plainly ("An eligible applicant as a community college", "Eligible to apply as a unit of local government"). Entity-eligibility is the FLOOR, not the case — never let "they're eligible" read as the reason to pursue.
+1. ELIGIBILITY — is this client an eligible applicant under the NOFO's ACTUAL eligibility language, not just its entity type? State it plainly. Eligibility is the FLOOR, not the case — never let "they're eligible" read as the reason to pursue. If the NOFO gates eligibility on something beyond entity type (a designation, a geography, a registration, a required partnership), name it.
 
-2. MISSION & PRIORITY ↔ WHAT IT FUNDS — the heart of it. Connect what this client actually does and wants to fund (its mission, program areas, stated funding priorities) to what THIS program funds (the program brief). Name the specific overlap, not a vague theme. If the fit is thematic but the client's history in the SPECIFIC funded activity is unconfirmed, say so honestly — do not manufacture a program history the record doesn't show.
+2. MISSION & PRIORITY ↔ WHAT THE NOFO FUNDS — the heart of it. Connect what this client actually does and wants to fund (its mission, program areas, stated priorities) to the SPECIFIC activities and priorities the NOFO funds — named from the NOFO, not a vague theme. If the fit is thematic but the client's history in the specific funded activity is unconfirmed, say so honestly — do not manufacture a program history the record doesn't show.
 
-3. ROLE — state the capacity to pursue in and why, in plain terms (why they can prime, or why they'd join under an eligible prime type). Use the role reasoning given; never invent a partner or a structure the record doesn't support.
+3. THE REAL HURDLE — this is where reading the NOFO earns its keep. Name the specific thing IN THE NOFO that decides whether this is worth pursuing: a match/cost-share the client must cover, a priority or competitive preference they do or don't meet, a required partner or lead-applicant structure, a narrower eligible slice than the theme suggests, a registration or deadline reality. State the catch in a clause; a rationale that hides it is worse than useless. Never oversell. This card is marked either a STRONG match or a CONDITIONAL one — for a CONDITIONAL, the catch is the point of the paragraph.
 
-4. AWARD HISTORY — STATE PRESENCE ONLY. If in-state award history is provided, you MAY note that the program has awarded $X across N awards to recipients in the client's state (a signal it funds work there). HARD RULES, no exceptions:
+4. ROLE — state the capacity to pursue in and why, in plain terms (why they can prime, or why they'd join under an eligible prime type). Use the role reasoning given; never invent a partner or a structure the record doesn't support.
+
+5. AWARD HISTORY — STATE PRESENCE ONLY. If in-state award history is provided, you MAY note that the program has awarded $X across N awards to recipients in the client's state (a signal it funds work there). HARD RULES, no exceptions:
    • Use ONLY the state-level total/count you are given.
    • Say NOTHING about what TYPE of applicant wins or doesn't — you have no applicant-type data. Never write "usually goes to counties", "no city has won", "typically universities", or any claim about the kind of organization that receives these awards.
    • If no award history is provided, do not mention awards at all. Never infer or estimate one.
 
-ELIGIBLE ≠ COMPETITIVE — say both when they diverge. An eligible entity can still be functionally weak for the funded work; a genuine-fit org can still be a smaller applicant. Be honest about the real hurdle: this card is marked either a STRONG match or a CONDITIONAL one. For a CONDITIONAL match, name the actual catch in one clause — the partner or match to line up, the unconfirmed program area, the narrower slice than it first appears. A rationale that hides the catch is worse than useless. Never oversell.
+ELIGIBLE ≠ COMPETITIVE — say both when they diverge. An eligible entity can still be functionally weak for the funded work; a genuine-fit org can still be a smaller applicant. Be honest about the real hurdle above; never oversell.
 
-WHEN CLIENT DATA IS SPARSE — a common case, and the one you must NOT paper over. If the client's mission, funding priorities, and capabilities are thin or absent, DO NOT produce mail-merge filler ("This eligible applicant seeks funding for. The program funds…"). Write a SHORTER, honest fit note from what IS known — eligibility, the recommended role, and the funded purpose — and stop. Do NOT fabricate or pad a mission the record doesn't contain, and do not invent program history. A thin-but-honest two sentences beats a padded five. Being brief here is correct, not a failure.
+WHEN THE NOFO OR CLIENT DATA IS SPARSE — do NOT paper over it. If the full NOFO is not provided, reason from the one-line brief and the structured fields, and say plainly that specifics need the official source — do not invent NOFO details. If the client's mission, funding priorities, and capabilities are thin or absent, write a SHORTER honest note from what IS known (eligibility, the recommended role, the funded purpose) and stop — no mail-merge filler ("seeks funding for. The program funds…"), no fabricated mission, no invented program history. A thin-but-honest two sentences beats a padded five. Being brief here is correct, not a failure.
 
 VOICE:
 - Two to five sentences, ONE paragraph, plain prose (fewer is fine when the data is thin). No bullet lists, no headings, no dollar tables beyond the single state-presence figure, and NO numeric fit score.
@@ -192,11 +199,13 @@ export function isProfileSparse(client: Pick<Client, "client_profile" | "primary
   return !mission && priorities.length === 0 && capabilities.length === 0 && needs.length === 0;
 }
 
-// The grant fields the pass reads.
+// The grant fields the pass reads. raw_text is the FULL stored NOFO (capped 100K at ingest) — the deep
+// read's primary source; description_brief stays as the one-line summary + the fallback when raw_text is thin.
 export type FitGrant = Pick<
   Grant,
   | "title"
   | "funder"
+  | "raw_text"
   | "description_brief"
   | "description"
   | "eligible_entity_types"
@@ -226,7 +235,12 @@ export function buildFitContext(input: {
   const serviceArea = list(client.service_area);
   const location = [client.location_city, client.location_state].filter(Boolean).join(", ");
   const eligibleTypes = list(grant.eligible_entity_types).map((t) => t.replace(/_/g, " "));
-  const fundedPurpose = clean(grant.description_brief) || clean(grant.description) || "(no program brief on file)";
+  // The one-line summary (fallback source when there is no full NOFO), and the FULL NOFO itself (the deep
+  // read's primary source), capped. When raw_text is thin/null (a husk or summary-shred grant) the model
+  // falls back to the brief and is told to say what needs the official source — the sparse-NOFO path.
+  const brief = clean(grant.description_brief) || clean(grant.description) || "(no program brief on file)";
+  const nofoRaw = clean(grant.raw_text);
+  const nofo = nofoRaw ? nofoRaw.slice(0, FIT_NOFO_MAX_CHARS) : "";
 
   const awardLine = award.inState
     ? `In ${award.inState.state}: ${fmtUsd(award.inState.amount)} across ${award.inState.count} award${award.inState.count === 1 ? "" : "s"} (~10-yr window).` +
@@ -242,7 +256,7 @@ export function buildFitContext(input: {
     `GRANT\n` +
     `  Title: ${clean(grant.title) || "(untitled)"}\n` +
     `  Funder: ${clean(grant.funder) || "(unknown)"}\n` +
-    `  What it funds (program brief): ${fundedPurpose}\n` +
+    `  Program brief (one-line summary; the FULL NOFO below is your primary source): ${brief}\n` +
     `  Eligible applicants (as extracted): ${eligibleTypes.join("; ") || "(none stated)"}\n` +
     `  Program type: ${clean(grant.program_type) || "(unknown)"}\n` +
     `  Geographic eligibility: ${clean(grant.geographic_eligibility) || "(none stated)"}\n` +
@@ -263,7 +277,11 @@ export function buildFitContext(input: {
     `  Mission: ${mission || "(not on file)"}\n` +
     `  Funding priorities: ${priorities.join("; ") || "(not on file)"}\n` +
     `  Stated funding needs: ${needs.join("; ") || "(not on file)"}\n` +
-    `  Capabilities: ${capabilities.join("; ") || "(not on file)"}`
+    `  Capabilities: ${capabilities.join("; ") || "(not on file)"}\n\n` +
+    `FULL NOFO TEXT (the authoritative program document — your PRIMARY source; read it for the specifics that decide fit)\n` +
+    (nofo
+      ? nofo
+      : "(Full NOFO text not on file for this grant. Reason from the program brief and structured fields above; say plainly if a fit-deciding detail needs the official source — do not invent NOFO specifics.)")
   );
 }
 
@@ -591,7 +609,7 @@ async function processOne(
     db
       .from("grants")
       .select(
-        "title, funder, description_brief, description, eligible_entity_types, program_type, geographic_eligibility, submission_deadline, program_award_summary",
+        "title, funder, raw_text, description_brief, description, eligible_entity_types, program_type, geographic_eligibility, submission_deadline, program_award_summary",
       )
       .eq("id", row.grant_id)
       .maybeSingle<FitGrant & { program_award_summary: ProgramAwardSummary | null }>(),

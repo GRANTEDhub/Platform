@@ -9,6 +9,7 @@ import {
   generateFitNarrative,
   runFitAnalysis,
   runFitAnalysisForCard,
+  FIT_NOFO_MAX_CHARS,
   type FitCard,
   type FitGrant,
   type FitPollRow,
@@ -190,8 +191,39 @@ describe("buildFitContext — profile-inclusive, band word, award state-line", (
     expect(ctx).toContain("Expand workforce and career pathways"); // mission
     expect(ctx).toContain("student support"); // a funding priority
     expect(ctx).toContain("career and technical education"); // a capability
-    expect(ctx).toContain("What it funds"); // the funded-purpose axis
+    expect(ctx).toContain("Program brief"); // the one-line summary line
     expect(ctx).toContain("Recommended role: Prime");
+  });
+
+  it("feeds the FULL NOFO as the primary source when raw_text is present, capped at FIT_NOFO_MAX_CHARS", () => {
+    const marker = "COST SHARE: applicants must provide a 25% non-federal match.";
+    const bigNofo = marker + " " + "x".repeat(FIT_NOFO_MAX_CHARS + 5_000);
+    const ctx = buildFitContext({
+      grant: grant({ raw_text: bigNofo }),
+      client: client(),
+      card: card(),
+      band: "strong",
+      award: { inState: null, national: null },
+    });
+    // The full-NOFO section is present and carries the real document (the NOFO-only match requirement).
+    expect(ctx).toContain("FULL NOFO TEXT");
+    expect(ctx).toContain(marker);
+    // Capped: the fed NOFO slice never exceeds the cap (so a 100K stored NOFO can't blow the prompt/cost).
+    const nofoSlice = ctx.slice(ctx.indexOf("FULL NOFO TEXT"));
+    expect(nofoSlice.length).toBeLessThan(FIT_NOFO_MAX_CHARS + 500); // header + capped body, not the full 85K
+  });
+
+  it("falls back to the brief with an explicit 'not on file' note when raw_text is absent (husk/summary grant)", () => {
+    const ctx = buildFitContext({
+      grant: grant({ raw_text: null }),
+      client: client(),
+      card: card(),
+      band: "conditional",
+      award: { inState: null, national: null },
+    });
+    expect(ctx).toContain("Full NOFO text not on file");
+    expect(ctx).toContain("needs the official source"); // told to flag, not invent
+    expect(ctx).toContain("Program brief"); // the fallback source is still present
   });
 
   it("award line states in-state presence when present, and 'do not mention awards' when absent", () => {

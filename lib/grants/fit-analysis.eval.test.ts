@@ -60,13 +60,34 @@ const clientOf = (over: Partial<Client> = {}): Client =>
     ...over,
   }) as unknown as Client;
 
+// The full NOFO carries decision-driving specifics the ONE-LINE brief does NOT: a 25% non-federal match,
+// a rural / persistent-poverty competitive priority, and a Title IV + existing-CTE eligibility gate. A
+// narrative that surfaces any of these proves it read the DOCUMENT, not the summary — the whole point of
+// Phase 1 (Shannon's "reads like a NOFO analysis, not a longer brief" bar). Kept realistic but compact.
+const SCCWP_NOFO = `NOTICE OF FUNDING OPPORTUNITY — Strengthening Community College Workforce Pipelines (SCCWP)
+
+A. Program Description. The Department funds accredited two-year and technical colleges to design and scale employer-aligned training leading to industry-recognized, STACKABLE credentials in high-demand sectors (advanced manufacturing, healthcare, IT, clean energy). Funded activities include curriculum development, work-based learning and REGISTERED APPRENTICESHIP, training-lab equipment, and student wraparound supports.
+
+B. Eligibility. Eligible applicants are institutions of higher education that are TITLE IV-eligible and hold current regional or national accreditation. An applicant must operate an EXISTING career and technical education (CTE) program in at least one funded sector at the time of application; an institution without a current CTE program is not eligible to apply as the lead.
+
+C. Cost Sharing / Matching. This program requires a NON-FEDERAL MATCH of 25% of total project costs. Match may be cash or documented third-party in-kind; in-kind employer contributions (equipment, instructor time) are encouraged and count toward the match.
+
+D. Competitive Priorities. Applications receive competitive preference points for: (1) projects that primarily serve RURAL communities or areas of PERSISTENT POVERTY (a 20%+ poverty rate over the last 30 years); and (2) a signed commitment from at least one employer partner and the local Workforce Development Board.
+
+E. Award Information. The Department expects approximately 40 awards from $500,000 to $3,000,000 over a four-year period of performance.
+
+F. Deadline & Registration. Applications are due January 15, 2027 via Grants.gov; applicants must hold an active SAM.gov registration at submission.`;
+
 const grantOf = (over: Partial<FitGrant & { program_award_summary: ProgramAwardSummary | null }> = {}) =>
   ({
     title: "Strengthening Community College Workforce Pipelines",
     funder: "U.S. Department of Labor",
+    // The one-line brief stays deliberately generic — the match, the rural/poverty priority, and the
+    // Title IV/existing-CTE gate are ONLY in raw_text, so surfacing them is proof of a real NOFO read.
     description_brief:
       "Funds community and technical colleges to build employer-aligned workforce training programs in high-demand sectors, in partnership with local employers and workforce boards.",
     description: null,
+    raw_text: SCCWP_NOFO,
     eligible_entity_types: ["higher_education", "community_college"],
     program_type: "discretionary",
     geographic_eligibility: "National",
@@ -135,6 +156,17 @@ describe.skipIf(!RUN)("fit-analysis narrative eval (live Opus)", () => {
     // Covers the axes in the majority: eligibility, the funded theme (mission↔funds), and the role.
     expect.soft(majority(nonEmpty.map((n) => /eligib|applicant|community college/i.test(n))), "names eligibility").toBe(true);
     expect.soft(majority(nonEmpty.map((n) => /workforce|training|career|technical|employer/i.test(n))), "names the funded work").toBe(true);
+    // THE PHASE-1 BAR: reads the NOFO, not the brief. Each marker below is a decision factor that appears
+    // ONLY in raw_text (the 25% match, the rural/persistent-poverty competitive priority, the Title IV /
+    // existing-CTE eligibility gate, the SAM registration reality) — none is in the one-line brief. A
+    // narrative that surfaces at least one has genuinely analyzed the document. This is the gate the prompt
+    // is iterated against; if the majority miss it, the prompt is still writing a longer brief.
+    const readsNofo = (n: string) =>
+      /\bmatch\b|cost.?shar|non-?federal|25\s?%/i.test(n) ||
+      /rural|persistent poverty|high[- ]poverty|competitive prefer|preference points/i.test(n) ||
+      /title iv|accredit|existing (cte|career)|registered apprentice|stackable/i.test(n) ||
+      /sam\.gov|sam registration/i.test(n);
+    expect.soft(majority(nonEmpty.map(readsNofo)), "reads the NOFO: surfaces a raw_text-only decision factor, not just the brief").toBe(true);
   }, EVAL_TIMEOUT_MS);
 
   it("[CONDITIONAL 2] names the real hurdle honestly — no oversell", async () => {
@@ -160,6 +192,17 @@ describe.skipIf(!RUN)("fit-analysis narrative eval (live Opus)", () => {
       title: "Second Chance Act Community Reentry",
       description_brief: "Funds units of local government to reduce recidivism through reentry services delivered with community partners.",
       eligible_entity_types: ["local_government"],
+      // Its own NOFO (not the workforce one). The lead-eligibility gate + the MOU are the real hurdle a
+      // reentry nonprofit faces here — raw_text-only specifics the model should surface as the catch.
+      raw_text: `NOTICE OF FUNDING OPPORTUNITY — Second Chance Act Community Reentry Program
+
+A. Eligibility. Eligible applicants are states, units of LOCAL GOVERNMENT, and federally recognized tribes. Nonprofit and community-based organizations are NOT eligible to apply as the lead applicant, but are expected to deliver services as SUBRECIPIENTS under an eligible governmental lead.
+
+B. Required Partnership. Each application must include a MEMORANDUM OF UNDERSTANDING with the corrections or community-supervision agency that will refer participants, and a data-sharing agreement for recidivism tracking.
+
+C. Competitive Priority. Preference points for applications serving jurisdictions with above-average recidivism and for projects that braid in evidence-based case management and workforce reentry.
+
+D. Deadline. Applications due via Grants.gov; an active SAM.gov registration is required at submission.`,
     });
     const out = await sample(card, grant, client, "conditional");
     out.forEach((n, i) => console.log(`\n[CONDITIONAL run ${i + 1}] ${n}`));
